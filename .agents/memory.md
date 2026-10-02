@@ -180,6 +180,7 @@
 - **R2 S3 HMAC 憑證混淆陷阱 (`R2 S3 Token Mismatch Trap`)**: 初次為 Cloudflare 設定金鑰時生成了 R2 API Token（包含 Access Key ID, Secret Access Key 與 S3 Endpoint），嘗試用於 Wrangler CLI 與 Cloudflare MCP 拋出認證失敗。根因在於 R2 憑證僅能用於 S3 相容端點，Wrangler CLI 與 REST MCP Server 必須使用 REST API Token。教訓：Cloudflare 生態圈工具鏈身分認證必須明確區分 S3 HMAC 憑證與以 `cfat_` 開頭之 Account REST API Token。
 - **DuckDuckGo Tarpit 慢阻斷延遲陷阱 (`DuckDuckGo Tarpit Timeout Trap`)**: 後端 Python 呼叫 Cloudflare Worker 代理時偶發 10 秒 `httpx.ReadTimeout` 報警。根因在於 Worker 內部的 `fetch(DDG Lite)` 未設置超時時間，遭遇 DuckDuckGo 對資料中心 IP 實施的 Tarpit 慢連線阻斷時 hold 住連線。教訓：邊緣代理所有外部發起請求必須強制宣告 `signal: AbortSignal.timeout(1500)`，搭配與 Wikipedia 全文 API 雙通道並行競速，根絕單點連線掛死。
 - **未 Mock Tier 2 邊緣檢索導致 CI 假性失敗 (`Unmocked Tier-2 CI False Negative Trap`)**: GitHub Actions CI 在 `test_execute_web_search_fallback_on_ddgs_error` 拋出 AssertionError。根因在於該測試原意為驗證 Tier 3 降級，但在測試案例中漏掉了對 Tier 2（Cloudflare Worker）的 Mock；當 Worker 成功上線後，CI 環境直接連網取回了真實維基百科結果，導致流程直接在 Tier 2 返回而未觸發 Tier 3。教訓：多級 Fallback 管線的單元測試必須對上游所有 Tier 進行完整的獨立 Mock 隔離，防止真實網路呼叫穿透污染測試斷言。
+- **Cloudflare MCP 本機 Stdio 參數覆寫與指令缺失陷阱 (`Cloudflare MCP Missing Command & Undefined Account ID Trap`)**: 在 `mcp_config.json` 啟動 `@cloudflare/mcp-server-cloudflare` 時若僅配置套件名稱，啟動時會拋出 `Error: Unknown command: undefined. Expected 'init' or 'run'` 並導致 MCP client EOF 關閉；若僅追加 `run` 指令，套件內部 `dist/index.js` 的 `config.accountId = accountId` 會無條件將已從環境變數載入的 `config.accountId` 覆寫為 `undefined`，進而退回尋找 `~/.wrangler/config/default.toml` 拋出檔案不存在錯誤。教訓：配置本機 `@cloudflare/mcp-server-cloudflare` 時，`args` 必須完整顯式宣告 `["-y", "@cloudflare/mcp-server-cloudflare", "run", "<account_id>"]`，使 API Token 與 Account ID 同步到位，跳過 OAuth 檔案依賴並正常初始化 89 個 Cloudflare API 工具。
 
 ### 10. 搜尋詞庫語意、DNS 區域、時間狀態機與靜態掃描踩坑
 - **DuckDuckGo 查詢堆疊 `OR` 運算符導致 0 搜尋結果 (`DDG Overloaded OR Query Trap`)**: 後端搜尋在地社群評價時，查詢傳入 `"PTT OR Dcard OR Tabelog 清水寺"`，DDGS 本地搜尋與 DDG Lite 均傳回空陣列。根因在於 DuckDuckGo 語意搜尋將大寫 `OR` 作為布林分組時，對多重複合長句容錯度極低，直接將整串查詢判定為嚴格比對失敗。教訓：詞庫大瘦身，拔除所有 `OR`，精煉為乾淨的主題導向查詢，召回率由 0% 飆升至 100%。
@@ -289,6 +290,7 @@
 - **Wikipedia Full-Text Query Alignment**: 維基百科全文查詢對齊，改採 `action=query&list=search` 全文語意檢索取代前綴比對的 OpenSearch，達成複合詞條（如「京都清水寺」）100% 條目命中。
 - **Dangling Tool Calls Auto-Synthesis**: 懸空工具調用對稱合成，建構對話歷史時若偵測到模型前一輪呼叫了 tool 但使用者未回傳 response，自動合成對稱的虛擬 `functionResponse`，徹底根治 Gemini 400 Bad Request 狀態機崩潰。
 - **Strict 1-to-1 Citation Pruning**: 嚴格 1對1 引文剪裁對齊，正則萃取內文實際引用的標籤並對齊來源，物理剔除未引用的多餘來源，杜絕引用標籤與內文脫節。
+- **Cloudflare Stdio Parameter Invariance**: Cloudflare Stdio 參數不變性，以 `run <account_id>` 完整傳遞 MCP 啟動參數，阻斷套件內部覆寫未定義變數與 OAuth 缺失造成的崩潰。
 
 ### 10. 全球詞庫、時間感知狀態機與實證安全領域
 - **Dynamic Dual-Track Region Resolution**: 動態雙軌區域代碼分流，在地軌按目的地動態映射本地 Region（如 jp-jp），全球軌鎖定 us-en 搜尋 Reddit 國際評價。
