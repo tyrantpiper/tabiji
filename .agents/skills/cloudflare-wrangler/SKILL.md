@@ -15,6 +15,7 @@ triggers:
 ## 1. 核心定位與雙軌體系
 - **遠端感知神經 (Cloudflare MCP Server)**: `https://mcp.cloudflare.com/mcp` (Code Mode: `docs`, `search`, `execute`)，僅佔 ~1,100 tokens 即可操作全域 2,594 個 API。
 - **本地執行手臂 (Wrangler CLI)**: `npx wrangler`，走本地命令列（零 Token 開銷），負責代碼編譯、Miniflare 本地 V8 模擬測試與確定性部署。
+- **本機 Stdio 伺服器 (@cloudflare/mcp-server-cloudflare)**: 若在 `mcp_config.json` 採用 stdio 啟動，`args` 必須明確傳入 `["-y", "@cloudflare/mcp-server-cloudflare", "run", "<account-id>"]`。若漏傳 `run` 會引發 `Unknown command: undefined`；若僅傳 `run` 未帶 `account_id`，套件內部會將 `config.accountId` 覆寫為 `undefined` 並退回尋找 `default.toml` 拋出檔案不存在例外。
 
 ## 2. Wrangler CLI 本地常用指令速查
 
