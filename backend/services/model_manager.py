@@ -320,6 +320,23 @@ SEARCH_WEB_TOOL = types.Tool(function_declarations=[SEARCH_WEB_DECL])
 FETCH_WEBPAGE_TOOL = types.Tool(function_declarations=[FETCH_WEBPAGE_DECL])
 SEARCH_TOOLS = [types.Tool(function_declarations=[SEARCH_WEB_DECL, FETCH_WEBPAGE_DECL])]
 
+# 🌐 2026 世界時間查詢工具宣告 (Server-side ReAct)
+GET_WORLD_TIME_DECL = types.FunctionDeclaration(
+    name="get_world_time",
+    description="Query current accurate time, date, and timezone for any specific global city, country, or timezone identifier. ONLY invoke when the user explicitly asks about time in an external city/country (e.g. '現在倫敦幾點？', '紐約時間').",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "query": types.Schema(
+                type=types.Type.STRING,
+                description="City name, country, or IANA timezone (e.g., 'London', 'New York', 'Paris', 'Europe/London')."
+            )
+        },
+        required=["query"]
+    )
+)
+GET_WORLD_TIME_TOOL = types.Tool(function_declarations=[GET_WORLD_TIME_DECL])
+
 # 組合工具集 (維持既有引用相容)
 NEURAL_LINK_TOOLS = [
     types.Tool(
@@ -331,7 +348,7 @@ NEURAL_LINK_TOOLS = [
     )
 ]
 
-# 🌐 2026: 全功能神經連結 + 聯網工具集 (行程/刪除/記帳/搜尋/精讀一應俱全)
+# 🌐 2026: 全功能神經連結 + 聯網工具集 (行程/刪除/記帳/搜尋/精讀/世界時間一應俱全)
 ALL_CHAT_TOOLS = [
     types.Tool(
         function_declarations=[
@@ -340,6 +357,7 @@ ALL_CHAT_TOOLS = [
             ADD_EXPENSE_DECL,
             SEARCH_WEB_DECL,
             FETCH_WEBPAGE_DECL,
+            GET_WORLD_TIME_DECL,
         ]
     )
 ]
@@ -352,6 +370,7 @@ SEARCH_CHAT_TOOLS = [
             REMOVE_ITINERARY_DECL,
             SEARCH_WEB_DECL,
             FETCH_WEBPAGE_DECL,
+            GET_WORLD_TIME_DECL,
         ]
     )
 ]
@@ -908,7 +927,7 @@ async def call_verifier(
                 config=config,
             )
             return {
-                "verified_data": response.text,
+                "verified_data": extract_clean_response_text(response),
                 "grounding_metadata": _extract_grounding_metadata(response),
             }
         except errors.APIError as e:
@@ -983,7 +1002,7 @@ async def call_extraction(
                 config=config,
             )
 
-            text = response.text or ""
+            text = extract_clean_response_text(response)
             if require_json:
                 text = _clean_json_text(text)
                 # 確保 JSON 可解析
@@ -1180,19 +1199,52 @@ def sanitize_dangling_tool_calls(chat_history: List[types.Content]) -> List[type
     return sanitized
 
 
+def extract_clean_response_text(response: Any) -> str:
+    """
+    從 Gemini Response 或 Chunk 安全提取純文字，徹底杜絕 non-text parts 警告與 ValueError。
+    向後相容標準 Google GenAI SDK GenerateContentResponse 物件與單元測試之 MagicMock。
+    """
+    if response is None:
+        return ""
+    cands = getattr(response, 'candidates', None)
+    if isinstance(cands, list) and cands:
+        text_parts = []
+        for cand in cands:
+            content = getattr(cand, 'content', None)
+            parts = getattr(content, 'parts', None) if content else None
+            if isinstance(parts, list):
+                for p in parts:
+                    txt = getattr(p, 'text', None)
+                    is_thought = getattr(p, 'thought', False)
+                    if isinstance(txt, str) and txt and not is_thought:
+                        text_parts.append(txt)
+        if text_parts:
+            return "".join(text_parts)
+        # 若 candidates 存在且已檢查過 parts (例如僅含 function_call)，不應再去調用 response.text 觸發 SDK warning
+        has_any_part = any(getattr(getattr(cand, 'content', None), 'parts', None) for cand in cands)
+        if has_any_part:
+            return ""
+
+    # 僅在非標準 SDK 物件 (例如 candidates=[] 的 MagicMock) 且 candidates 未提供文字時，才安全回退讀取 .text
+    try:
+        raw_text = getattr(response, 'text', None)
+        return raw_text if isinstance(raw_text, str) else ""
+    except Exception:
+        return ""
+
+
 def _extract_response(response, model_used: str) -> Dict[str, Any]:
     """從 Response 中提取完整資訊"""
-    # 🛡️ response.text 是 property，純 function_call 回應時會拋 ValueError
-    try:
-        text = response.text or ""
-    except (ValueError, AttributeError):
-        text = ""
+    text = extract_clean_response_text(response)
     raw_parts = []
 
-    if hasattr(response, 'candidates') and response.candidates:
-        candidate = response.candidates[0]
-        if hasattr(candidate, 'content') and candidate.content:
-            for part in candidate.content.parts:
+    cands = getattr(response, 'candidates', None)
+    if isinstance(cands, list) and cands:
+        candidate = cands[0]
+        content = getattr(candidate, 'content', None)
+        parts = getattr(content, 'parts', None) if content else None
+        if isinstance(parts, list):
+            for part in parts:
                 raw_parts.append(_serialize_part(part))
 
     if not raw_parts:

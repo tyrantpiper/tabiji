@@ -802,8 +802,11 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                         history: history,
                         image: currentImage,
                         location: tripLocation,
-                        // 🆕 注入精簡版行程上下文
-                        current_itinerary: leanItinerary
+                        // 🆕 注入精簡版行程上下文與即時時間
+                        current_itinerary: leanItinerary,
+                        focused_day: focusedDay,
+                        client_time: new Date().toISOString(),
+                        client_timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei"
                     })
                 })
 

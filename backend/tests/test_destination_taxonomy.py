@@ -167,3 +167,43 @@ def test_generate_dual_queries_long_tail():
     assert "Iceland" in global_q
     assert "reddit" in global_q
     assert meta["matched_destination"] == "冰島"
+    assert meta["local_region"] == "tw-tzh"
+    assert meta["global_region"] == "us-en"
+
+
+def test_resolve_destination_regions():
+    from services.destination_taxonomy import resolve_destination_regions
+    assert resolve_destination_regions("JP", "京都拉麵")[0] == "jp-jp"
+    assert resolve_destination_regions("KR", "首爾烤肉")[0] == "kr-kr"
+    assert resolve_destination_regions("US", "紐約貝果")[0] == "us-en"
+    assert resolve_destination_regions("TW", "台北牛肉麵")[0] == "tw-tzh"
+    assert resolve_destination_regions("HK", "香港點心")[0] == "tw-tzh"
+    # 中文長尾或歐洲預設繁中
+    assert resolve_destination_regions("EU", "巴黎咖啡廳")[0] == "tw-tzh"
+    assert resolve_destination_regions("GLOBAL", "埃及金字塔")[0] == "tw-tzh"
+    # 純英文查詢
+    assert resolve_destination_regions("GLOBAL", "Egypt pyramids tips")[0] == "us-en"
+    # 全球軌固定 us-en
+    assert resolve_destination_regions("JP", "京都拉麵")[1] == "us-en"
+
+
+def test_no_or_operator_in_taxonomies():
+    from services.destination_taxonomy import DESTINATION_TAXONOMY
+    for code, data in DESTINATION_TAXONOMY.items():
+        local_kw = data.get("local_keywords", "")
+        assert " OR " not in local_kw, f"{code} local_keywords still contains bloated ' OR ': {local_kw}"
+
+
+def test_voice_actor_and_anime_noise_filter():
+    from services.destination_taxonomy import classify_and_filter_results
+    raw = [
+        {"title": "林原惠 (維基百科)", "url": "https://zh.wikipedia.org/wiki/hayashibara", "snippet": "日本女性聲優、歌手。出道以來長年作為人氣聲優活躍於各領域。"},
+        {"title": "名偵探柯南配音名單", "url": "https://zh.wikipedia.org/wiki/conan", "snippet": "電視動畫配音員陣容詳細清單。"},
+        {"title": "2026 京都賞楓25選攻略", "url": "https://osaka.letsgojp.com/1", "snippet": "京都最新賞楓景點推薦與紅葉預報。"}
+    ]
+    filtered = classify_and_filter_results(raw, "京都賞楓推薦", dest_code="JP")
+    titles = [item["title"] for item in filtered]
+    assert "林原惠 (維基百科)" not in titles
+    assert "名偵探柯南配音名單" not in titles
+    assert len(filtered) == 1
+    assert "2026 京都賞楓25選攻略" in titles[0]

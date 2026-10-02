@@ -236,10 +236,13 @@ async def _search_ddg_html_fallback(query: str, max_results: int = 3) -> List[Di
 
 
 def _sync_ddgs_call(final_query: str, region: str, max_results: int) -> List[Dict[str, str]]:
-    """以獨立同步執行緒調用 ddgs Dux 多引擎，避免阻塞 AsyncIO 主事件迴圈"""
+    """以獨立同步執行緒調用 ddgs Dux 8 引擎全併發，排除百科避免動漫雜訊"""
     from ddgs import DDGS
-    with DDGS(timeout=3) as ddgs:
-        raw_res = list(ddgs.text(final_query, region=region, max_results=max_results))
+    DDGS.threads = 8  # 🚀 解鎖執行緒池上限，允許所有引擎同時併發
+    # 剔除 wikipedia 與 grokipedia 百科引擎，優先調度真實網路搜尋引擎
+    search_backends = "yahoo,duckduckgo,startpage,brave,mojeek,google"
+    with DDGS(timeout=4) as ddgs:
+        raw_res = list(ddgs.text(final_query, backend=search_backends, region=region, max_results=max_results))
         results: List[Dict[str, str]] = []
         for r in raw_res:
             real_url = unwrap_ddg_redirect(r.get("href", ""))
@@ -255,7 +258,8 @@ def _sync_ddgs_call(final_query: str, region: str, max_results: int) -> List[Dic
 async def execute_web_search(
     query: str,
     site_filter: Optional[str] = None,
-    max_results: int = 3
+    max_results: int = 3,
+    region: Optional[str] = None
 ) -> List[Dict[str, str]]:
     """
     四級抗脆弱零成本非同步搜尋主入口
@@ -269,14 +273,20 @@ async def execute_web_search(
         return []
 
     final_query = f"{trimmed} site:{site_filter}" if site_filter else trimmed
-    is_japanese = any("\u3040" <= c <= "\u30ff" for c in trimmed)
-    region = "jp-jp" if is_japanese else "wt-wt"
+    
+    # 🚀 動態 Region 自適應回退：堅決不使用 wt-wt，中文優先 tw-tzh，英文 us-en
+    if not region:
+        is_japanese = any("\u3040" <= c <= "\u30ff" for c in trimmed)
+        is_cjk = any("\u4e00" <= c <= "\u9fff" for c in trimmed)
+        resolved_region = "jp-jp" if is_japanese else ("tw-tzh" if is_cjk else "us-en")
+    else:
+        resolved_region = region
 
-    # 1. [Tier 1] 本地 Dux 多引擎 (非同步線程，限時 2.8 秒)
+    # 1. [Tier 1] 本地 Dux 多引擎 (非同步線程，限時 5.2 秒覆蓋正常多引擎開銷)
     try:
         results = await asyncio.wait_for(
-            asyncio.to_thread(_sync_ddgs_call, final_query, region, max_results),
-            timeout=2.8
+            asyncio.to_thread(_sync_ddgs_call, final_query, resolved_region, max_results),
+            timeout=5.2
         )
         if results:
             return results

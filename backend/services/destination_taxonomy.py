@@ -16,31 +16,31 @@ from typing import List, Dict, Tuple, Any, Optional
 DESTINATION_TAXONOMY: Dict[str, Dict[str, Any]] = {
     "TW": {
         "names": ["台灣", "臺灣", "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "花蓮", "台東", "臺東", "墾丁", "宜蘭", "Taiwan", "Taipei", "Taichung", "Kaohsiung"],
-        "local_keywords": "ptt OR dcard OR 觀光署 OR 私房美食 OR 在地人推薦",
+        "local_keywords": "ptt dcard 推薦",
         "official_domains": [r"taiwan\.net\.tw", r"travel\.taipei", r"taiwanbus\.tw", r"railway\.gov\.tw", r"\.gov\.tw"],
         "forum_domains": [r"ptt\.cc", r"dcard\.tw", r"mobile01\.com", r"backpackers\.com\.tw"],
         "food_review": [r"walkerland\.com\.tw", r"pixnet\.net", r"ipeen\.com\.tw"],
-        "global_reddit_terms": "Taipei travel reddit hidden gems local food",
+        "global_reddit_terms": "Taipei travel reddit recommendations",
     },
     "JP": {
         "names": ["日本", "東京", "京都", "大阪", "北海道", "沖繩", "福岡", "名古屋", "札幌", "奈良", "神戶", "箱根", "Japan", "Tokyo", "Kyoto", "Osaka", "Hokkaido", "Okinawa"],
-        "local_keywords": "食べログ OR じゃらん OR 観光協会 OR おすすめ OR 穴場",
+        "local_keywords": "食べログ 推薦",
         "official_domains": [r"japan\.travel", r"japan-guide\.com", r"jnto\.go\.jp", r"\.go\.jp"],
         "forum_domains": [r"tabelog\.com", r"retrip\.jp", r"jalan\.net", r"chiebukuro\.yahoo\.co\.jp"],
         "food_review": [r"tabelog\.com", r"retty\.me"],
-        "global_reddit_terms": "JapanTravel reddit hidden gems recommendations",
+        "global_reddit_terms": "JapanTravel reddit recommendations",
     },
     "KR": {
         "names": ["韓國", "首爾", "釜山", "濟州", "弘大", "明洞", "仁川", "大邱", "Korea", "Seoul", "Busan", "Jeju"],
-        "local_keywords": "네이버 OR 맛집 OR 관광공사 OR 在地推薦",
+        "local_keywords": "맛집 推薦",
         "official_domains": [r"visitkorea\.or\.kr", r"english\.visitseoul\.net"],
         "forum_domains": [r"blog\.naver\.com", r"creatrip\.com", r"dcinside\.com"],
         "food_review": [r"mangoplate\.com", r"diningcode\.com"],
-        "global_reddit_terms": "KoreaTravel reddit seoul hidden gems",
+        "global_reddit_terms": "KoreaTravel reddit recommendations",
     },
     "TH": {
         "names": ["泰國", "曼谷", "清邁", "普吉島", "芭達雅", "蘇美島", "Thailand", "Bangkok", "Chiang Mai", "Phuket", "Pattaya"],
-        "local_keywords": "pantip OR 觀光局 OR 泰國必吃 OR night market",
+        "local_keywords": "pantip 推薦 必吃",
         "official_domains": [r"tourismthailand\.org"],
         "forum_domains": [r"pantip\.com"],
         "food_review": [r"wongnai\.com"],
@@ -48,7 +48,7 @@ DESTINATION_TAXONOMY: Dict[str, Dict[str, Any]] = {
     },
     "SG": {
         "names": ["新加坡", "獅城", "Singapore", "SG", "樟宜", "濱海灣", "聖淘沙"],
-        "local_keywords": "hardwarezone OR burpple OR sethlui OR 新加坡必吃 OR hawker center",
+        "local_keywords": "必吃 美食 推薦",
         "official_domains": [r"visitsingapore\.com", r"stb\.gov\.sg"],
         "forum_domains": [r"hardwarezone\.com\.sg", r"burpple\.com", r"sethlui\.com", r"eatbook\.sg"],
         "food_review": [r"burpple\.com", r"sethlui\.com", r"hungrygowhere\.com"],
@@ -56,7 +56,7 @@ DESTINATION_TAXONOMY: Dict[str, Dict[str, Any]] = {
     },
     "VN": {
         "names": ["越南", "河內", "胡志明", "胡志明市", "峴港", "會安", "富國島", "下龍灣", "Vietnam", "Hanoi", "Ho Chi Minh", "Da Nang", "Hoi An", "Phu Quoc"],
-        "local_keywords": "foody.vn OR tinhte OR 越南必吃 OR street food OR quán ngon",
+        "local_keywords": "必吃 美食 推薦 street food",
         "official_domains": [r"vietnam\.travel", r"vietnamtourism\.gov\.vn"],
         "forum_domains": [r"foody\.vn", r"tinhte\.vn", r"voz\.vn", r"diadiemanuong\.com"],
         "food_review": [r"foody\.vn", r"diadiemanuong\.com"],
@@ -64,7 +64,7 @@ DESTINATION_TAXONOMY: Dict[str, Dict[str, Any]] = {
     },
     "EU": {
         "names": ["歐洲", "法國", "巴黎", "英國", "倫敦", "義大利", "羅馬", "佛羅倫斯", "米蘭", "威尼斯", "西班牙", "巴塞隆納", "馬德里", "德國", "柏林", "慕尼黑", "瑞士", "蘇黎世", "荷蘭", "阿姆斯特丹", "Europe", "Paris", "London", "Rome", "Barcelona", "Madrid", "Berlin", "Munich", "Amsterdam"],
-        "local_keywords": "TheFork OR TimeOut OR 官方旅遊局 OR local guide OR 穴場",
+        "local_keywords": "推薦 私房景點 美食",
         "official_domains": [r"france\.fr", r"visitbritain\.com", r"italia\.it", r"spain\.info", r"germany\.travel", r"myswitzerland\.com"],
         "forum_domains": [r"thefork\.", r"timeout\.com", r"lefigaro\.fr", r"visitlondon\.com"],
         "food_review": [r"thefork\.", r"timeout\.com", r"eater\.com"],
@@ -72,7 +72,7 @@ DESTINATION_TAXONOMY: Dict[str, Dict[str, Any]] = {
     },
     "US": {
         "names": ["美國", "紐約", "洛杉磯", "舊金山", "西雅圖", "芝加哥", "拉斯維加斯", "夏威夷", "波士頓", "USA", "United States", "New York", "Los Angeles", "San Francisco", "Seattle", "Chicago", "Las Vegas", "Hawaii"],
-        "local_keywords": "Yelp OR Eater OR The Infatuation OR local food guide",
+        "local_keywords": "Eater 推薦 美食",
         "official_domains": [r"visittheusa\.com", r"nycgo\.com", r"gohawaii\.com"],
         "forum_domains": [r"yelp\.com", r"eater\.com", r"theinfatuation\.com", r"thrillist\.com"],
         "food_review": [r"yelp\.com", r"eater\.com", r"theinfatuation\.com"],
@@ -80,7 +80,7 @@ DESTINATION_TAXONOMY: Dict[str, Dict[str, Any]] = {
     },
     "HK": {
         "names": ["香港", "九龍", "尖沙咀", "中環", "旺角", "銅鑼灣", "澳門", "Hong Kong", "HK", "Macau"],
-        "local_keywords": "lihkg OR openrice OR 旅發局 OR 港式必吃 OR 地道美食",
+        "local_keywords": "OpenRice 必吃 推薦",
         "official_domains": [r"discoverhongkong\.com", r"macaotourism\.gov\.mo"],
         "forum_domains": [r"lihkg\.com", r"openrice\.com", r"discuss\.com\.hk"],
         "food_review": [r"openrice\.com", r"weekendhk\.com"],
@@ -93,7 +93,11 @@ DESTINATION_TAXONOMY: Dict[str, Dict[str, Any]] = {
 NOISE_TITLE_PATTERNS = [
     r'警察', r'犯罪', r'政黨', r'立法院', r'基金會', r'研討會', 
     r'論壇閉幕', r'宣導會', r'判決書', r'招標', r'公報', r'公會理事',
-    r'兩岸論壇', r'高峰會閉幕', r'循環經濟論壇'
+    r'兩岸論壇', r'高峰會閉幕', r'循環經濟論壇',
+    # 封殺百科非旅遊條目 (動漫、虛構人物、角色列表等無關條目)
+    r'角色列表', r'虛構角色', r'登場人物', r'動畫集數', r'配音員', r'漫畫列表',
+    # 補齊詞根：徹底根除聲優與演藝條目穿透
+    r'聲優', r'配音', r'單曲', r'專輯', r'電視動畫'
 ]
 
 # ==================== 3. Query Extraction & Dual Rewriting ====================
@@ -167,8 +171,32 @@ def clean_conversational_query(user_msg: str) -> str:
         user_msg.strip(),
         flags=re.IGNORECASE
     ).strip()
+    clean_msg = re.sub(r'(?:現在的|當前的|推薦的|熱門的|有沒有|我想知道|我想了解|有哪些|哪裡有|告訴我)', ' ', clean_msg)
     clean_msg = re.sub(r'[嗎？\?~～!！\.]+$', '', clean_msg).strip()
+    clean_msg = re.sub(r'\s+', ' ', clean_msg).strip()
     return clean_msg or user_msg
+
+
+def resolve_destination_regions(dest_code: str, query: str) -> Tuple[str, str]:
+    """
+    動態解析搜尋區域代碼 (Dynamic Search Region Resolution)
+    回傳: (local_region, global_region)
+    在地軌優先對齊繁中或指標國，全球軌一律鎖定 us-en 穿透 Reddit
+    """
+    is_cjk = any("\u4e00" <= c <= "\u9fff" for c in query)
+
+    if dest_code == "JP":
+        local_reg = "jp-jp"
+    elif dest_code == "KR":
+        local_reg = "kr-kr"
+    elif dest_code == "US":
+        local_reg = "us-en"
+    elif dest_code in ("TW", "HK"):
+        local_reg = "tw-tzh"
+    else:
+        local_reg = "tw-tzh" if is_cjk else "us-en"
+
+    return local_reg, "us-en"
 
 
 def generate_dual_queries(query: str, history: Optional[List[dict]] = None) -> Tuple[str, str, Dict[str, Any]]:
@@ -181,10 +209,14 @@ def generate_dual_queries(query: str, history: Optional[List[dict]] = None) -> T
     code = dest_info["code"]
     tax = dest_info.get("taxonomy")
 
+    local_reg, global_reg = resolve_destination_regions(code, query)
+
     metadata = {
         "destination_code": code,
         "matched_destination": dest_info["matched_name"],
-        "clean_query": clean_text
+        "clean_query": clean_text,
+        "local_region": local_reg,
+        "global_region": global_reg,
     }
 
     if code != "GLOBAL" and tax:
@@ -205,13 +237,13 @@ def generate_dual_queries(query: str, history: Optional[List[dict]] = None) -> T
         dynamic_country = detect_global_country_entity(query, history=history)
         if dynamic_country:
             c_zh, c_en = dynamic_country
-            local_query = f"{clean_text} 旅遊 攻略 官方推薦".strip() if c_zh in clean_text else f"{c_zh} {clean_text} 旅遊 攻略 官方推薦".strip()
+            local_query = f"{clean_text} 旅遊 推薦".strip() if c_zh in clean_text else f"{c_zh} {clean_text} 旅遊 推薦".strip()
             # 全球軌動態注入地道英文國名，直接擊中 Reddit 國際旅人版！
             global_query = f"{c_en} travel reddit recommendations tips hidden gems".strip()
             metadata["matched_destination"] = c_zh
         else:
             # 通用全球目的地
-            local_query = f"{clean_text} 旅遊 攻略 官方推薦".strip()
+            local_query = f"{clean_text} 旅遊 推薦".strip()
             global_query = f"{clean_text} travel reddit recommendations tips".strip()
 
     return local_query, global_query, metadata

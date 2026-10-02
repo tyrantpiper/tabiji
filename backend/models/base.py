@@ -432,6 +432,8 @@ class ChatRequest(BaseModel):
     location: Optional[dict] = None
     current_itinerary: Optional[dict] = None
     focused_day: Optional[int] = None
+    client_time: Optional[str] = None
+    client_timezone: Optional[str] = None
 
 
 class SummarizeRequest(BaseModel):

@@ -157,11 +157,16 @@ export async function streamChat(
     apiKey: string,
     handlers: SSEHandlers,
     signal?: AbortSignal,
-    // 🆕 新增行程上下文與使用者 ID
+    // 🆕 新增行程上下文、使用者 ID 與時間感知
     itinerary?: unknown,
     focused_day?: number,
-    userId?: string
+    userId?: string,
+    clientTime?: string,
+    clientTimezone?: string
 ): Promise<void> {
+    const defaultTime = clientTime || new Date().toISOString()
+    const defaultTz = clientTimezone || (typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei")
+
     const response = await fetch(`${apiUrl}/api/chat/stream`, {
         method: "POST",
         headers: {
@@ -179,7 +184,10 @@ export async function streamChat(
             thought_signatures: [],  // Round-trip signatures if needed
             // 🆕 帶入行程上下文與焦點天數
             current_itinerary: itinerary,
-            focused_day: focused_day
+            focused_day: focused_day,
+            // 🆕 即時時間與時區感知
+            client_time: defaultTime,
+            client_timezone: defaultTz
         }),
         signal
     })
