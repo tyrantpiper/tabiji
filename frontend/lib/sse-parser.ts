@@ -13,14 +13,22 @@ export interface SSEEvent {
 
 export interface SSEHandlers {
     onStart?: () => void
-    onThinking?: (status: string) => void
+    onThinking?: (status: string, meta?: { query?: string; url?: string; thought?: string }) => void
     onText?: (text: string) => void
     onTool?: (toolCall: { name: string; args: Record<string, unknown> }) => void
     onSignature?: (thought: string) => void
     onDone?: (data: {
         model_used: string;
         raw_parts: { text: string }[];
-        sources?: Array<{ title: string; url?: string; uri?: string }>  // 🆕 相容新舊格式
+        sources?: Array<{
+            title: string;
+            url?: string;
+            uri?: string;
+            citation_index?: number;
+            category?: string;
+            badge?: { text: string; color: string };
+            snippet?: string;
+        }>
     }) => void
     onError?: (error: { message: string; code: number }) => void
     onHeartbeat?: () => void
@@ -80,8 +88,21 @@ export function handleSSEEvent(event: SSEEvent, handlers: SSEHandlers): boolean 
                 break
 
             case "thinking":
-                const thinkingData = JSON.parse(event.data)
-                handlers.onThinking?.(thinkingData.status)
+                try {
+                    const thinkingData = JSON.parse(event.data)
+                    const hasMeta = Boolean(thinkingData.query || thinkingData.url || thinkingData.thought)
+                    if (hasMeta) {
+                        handlers.onThinking?.(thinkingData.status, {
+                            query: thinkingData.query,
+                            url: thinkingData.url,
+                            thought: thinkingData.thought,
+                        })
+                    } else {
+                        handlers.onThinking?.(thinkingData.status)
+                    }
+                } catch {
+                    handlers.onThinking?.(event.data)
+                }
                 break
 
             case "text":

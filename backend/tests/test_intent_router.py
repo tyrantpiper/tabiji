@@ -64,6 +64,48 @@ def test_fast_path_diagnosis():
     assert _fast_path_classify(text) == "DIAGNOSIS"
 
 
+def test_fast_path_search():
+    for text in [
+        "幫我網路搜索這家店的評價",
+        "上網查一下這家燒肉好不好吃",
+        "搜尋黑門市場最新營業時間",
+        "營業時間是幾點？",
+        "請問這間店幾點開？",
+        "查一下公休日",
+        "google晴空塔門票",
+        # 🆕 旅遊探店、在地推薦與各國觀點測試
+        "第一次去京都，請推薦在地人愛的隱藏版拉麵跟外國旅客推薦的店家，在地和全球看法有何不同？",
+        "推薦京都私房小吃與老饕必吃美食",
+        "東京淺草有什麼好吃的早午餐或咖啡廳？",
+        "推薦大阪道頓堀在地人推薦的居酒屋",
+        "這家店外國旅客的評分如何？",
+    ]:
+        assert _fast_path_classify(text) == "SEARCH"
+
+
+def test_fast_path_price_inquiry_not_expense():
+    """驗證詢價問句絕對不可判定為 EXPENSE (防止誤彈記帳卡片)"""
+    for text in [
+        "這家店消費大約多少？",
+        "這家燒肉預估餐費是多少錢？",
+        "這間居酒屋花費會很貴嗎？",
+        "門票費要多少？",
+        "請問兩人預算 3000 元夠嗎？",
+    ]:
+        intent = _fast_path_classify(text)
+        assert intent != "EXPENSE"
+
+
+def test_fast_path_search_with_expense_noun():
+    """驗證同時含有搜尋與花費詞彙時，搜尋意圖優先"""
+    for text in [
+        "幫我網路搜索這家店的消費水準",
+        "上網查一下這間餐廳的平均餐費",
+        "查一下環球影城門票費",
+    ]:
+        assert _fast_path_classify(text) == "SEARCH"
+
+
 @pytest.mark.asyncio
 async def test_classify_chat_intent_fast_path():
     # 1. 閒聊短路

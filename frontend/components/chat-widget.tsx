@@ -20,6 +20,7 @@ import RemoveItemPreviewCard, { extractRemoveFunctionCall } from "@/components/c
 import ExpensePreviewCard, { extractExpenseFunctionCall } from "@/components/chat/ExpensePreviewCard"
 import DeepResearchCard, { type DeepResearchData } from "@/components/chat/DeepResearchCard"
 import { streamChat } from "@/lib/sse-parser"
+import { setSearchCache } from "@/lib/search-cache"
 import { toast } from "sonner"
 import { useWeatherStore } from "@/lib/stores/weatherStore"
 import { debugLog } from "@/lib/debug"
@@ -59,6 +60,13 @@ function tryParseItinerary(text: string): ParsedItinerary | null {
 interface GroundingSource {
     title: string
     uri: string
+    citation_index?: number
+    category?: string
+    badge?: {
+        text: string
+        color?: string
+    }
+    snippet?: string
 }
 
 interface Message {
@@ -230,6 +238,12 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
     ])
     const [input, setInput] = useState("")
     const [isLoading, setIsLoading] = useState(false)
+    // 🆕 即時聯網搜尋/閱讀狀態
+    const [searchStatus, setSearchStatus] = useState<{
+        phase: "thinking" | "searching"
+        query?: string
+        url?: string
+    }>({ phase: "thinking" })
     const [selectedImage, setSelectedImage] = useState<string | null>(null)
     // 🆕 v3.5: 保存失敗的訊息用於重試
     const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null)
@@ -563,6 +577,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
         const isDeepIntent = isDeepResearch || userMsg.startsWith("/research") || userMsg.includes("深度研究") || userMsg.includes("演算法精算")
         if (isDeepIntent && apiKey) {
             setIsLoading(true)
+            setSearchStatus({ phase: "thinking" })
             const cleanPrompt = userMsg.replace(/^\/research\s*/, "").trim()
             try {
                 const res = await fetch(`${API_BASE}/api/agents/research`, {
@@ -648,6 +663,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
 
         // 如果有圖片，跳過 streaming (目前不支援)
         if (!currentImage && apiKey) {
+            setSearchStatus({ phase: "thinking" })
             try {
                 await streamChat(
                     API_BASE,
@@ -658,11 +674,20 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                         onStart: () => {
                             debugLog("🟢 SSE 連線建立")
                         },
-                        onThinking: (status) => {
-                            debugLog("🧠 AI 思考中:", status)
-                            // ThinkingIndicator 已經在 isLoading 時顯示
+                        onThinking: (status, meta) => {
+                            debugLog("🧠 AI 思考中:", status, meta)
+                            if (status === "searching" || status === "reading") {
+                                setSearchStatus({
+                                    phase: "searching",
+                                    query: meta?.query,
+                                    url: meta?.url
+                                })
+                            } else {
+                                setSearchStatus({ phase: "thinking" })
+                            }
                         },
                         onText: (text) => {
+                            setSearchStatus({ phase: "thinking" })
                             streamingText += text
                             // 🆕 即時更新 UI (打字機效果)
                             setMessages(prev => {
@@ -686,14 +711,24 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                         },
                         onDone: (data) => {
                             debugLog("✅ SSE 完成:", data.model_used, "來源數:", data.sources?.length ?? 0)
+                            setSearchStatus({ phase: "thinking" })
                             streamingRawParts = data.raw_parts
                             streamingSuccess = true
 
                             // 更新最終訊息 (🆕 v5.3: 修復純 Tool Call 回應時佔位訊息缺失)
                             const groundingSources = data.sources?.map(s => ({
                                 title: s.title,
-                                uri: s.uri || s.url || ""
+                                uri: s.uri || s.url || "",
+                                citation_index: s.citation_index,
+                                category: s.category,
+                                badge: s.badge,
+                                snippet: s.snippet
                             }))
+
+                            // 🆕 儲存至本機裝置搜尋快取 (IndexedDB / RAM)
+                            if (groundingSources && groundingSources.length > 0 && streamingText.trim()) {
+                                setSearchCache(userMsg, groundingSources, streamingText).catch(() => {})
+                            }
                             setMessages(prev => {
                                 const updated = [...prev]
                                 const lastMsg = updated[updated.length - 1]
@@ -720,6 +755,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                             })
                         },
                         onError: (error) => {
+                            setSearchStatus({ phase: "thinking" })
                             // 🛡️ 如果 onDone 已經成功處理，忽略後續 error 事件
                             if (streamingSuccess) return
                             
@@ -800,6 +836,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
             setLastFailedMessage(null)
         }
 
+        setSearchStatus({ phase: "thinking" })
         setIsLoading(false)
     }
 
@@ -1052,7 +1089,18 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                     </div>
                                     <div className="flex flex-col gap-2">
                                         {/* 🆕 脈衝手風琴 */}
-                                        <ThinkingIndicator phase="thinking" />
+                                        <ThinkingIndicator phase={searchStatus.phase} />
+                                        {searchStatus.phase === "searching" && (searchStatus.query || searchStatus.url) && (
+                                            <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded-xl shadow-2xs animate-in fade-in duration-200 max-w-sm">
+                                                <span className="relative flex h-2 w-2 shrink-0">
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+                                                </span>
+                                                <span className="truncate">
+                                                    {searchStatus.query ? `🔍 ${searchStatus.query}` : `🌐 ${searchStatus.url}`}
+                                                </span>
+                                            </div>
+                                        )}
                                         {/* 🆕 停止按鈕 */}
                                         <button
                                             onClick={() => {
