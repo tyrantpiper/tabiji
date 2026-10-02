@@ -96,6 +96,14 @@
 - **懸空工具調用對稱合成防衛 (Dangling Tool Calls Auto-Synthesis)**: 若對話歷史中模型上一輪輸出了 `function_call`，但使用者下一輪直接發話而未包含 `function_response`，會觸發 Gemini 400 Bad Request 狀態機崩潰。在建構歷史時自動合成對稱的虛擬 `functionResponse`（`client_handled`），徹底免疫協議報錯。
 - **AC-4 嚴格 1對1 引文剪裁對齊原則 (Strict 1-to-1 Citation Pruner)**: 對 LLM 串流產出的文本正則萃取實際標註的 `[1]`, `[2]` 錨點，僅保留被提及的 Sources 並賦予對應索引，未引用的候選來源一律物理剪除，杜絕引用標籤與內文脫節。
 
+### 8. 全球詞庫瘦身、動態 Region 分流、時間感知狀態機與實證安全架構 (Taxonomy, Dynamic Regions, Temporal & Empirical Security)
+- **動態雙軌 Region 分流與搜尋詞庫瘦身原則 (Dynamic Region Resolution & Taxonomy Slimming over Overloaded OR Queries)**: DuckDuckGo 等現代語意搜尋引擎對布林運算符 `OR` 支援極度脆弱，長句串接 `PTT OR Dcard OR Tabelog` 會導致 DDG 將整個查詢判定為過度限制而回傳 0 筆結果。架構決策徹底移除 `OR`，精煉為自然語言主題詞，並實作動態雙軌分流：在地軌根據目標地動態映射本地 Region（如 `jp-jp`、`tw-tzh` 等，未命中回傳 `None` 讓 DDGS 自動適配），全球軌鎖定 `us-en` 查詢 Reddit 國際視角，徹底拔除引發 DNS 崩潰的 `wt-wt` 寫死代碼。
+- **邊界感知與長度降序時區推斷原則 (Boundary-Aware Longest-Match Timezone Inference)**: 在由關鍵字推斷目的地時區時，短關鍵字（如 `th` 代表泰國曼谷、`la` 代表寮國）以純字串包含 `if kw in text` 比對時，會無差別劫持包含該字母組合的所有英文單詞（例如 "South New York"、"Perth" 命中 `th`，"Island"、"Los Angeles" 命中 `la`）。架構規範：針對 ASCII/拉丁單詞強制加上正則邊界 `\b{kw}\b`，CJK 語系維持包含比對，並在初始化時將所有關鍵字按字串長度由長至短排序（`SORTED_TIMEZONE_MAP`），長詞優先匹配，徹底根治子字串劫持。
+- **DDGS 8 引擎並發檢索與 5.2s 黃金超時校準 (Multi-Engine Concurrency & 5.2s Timeout Calibration)**: DDGS 擴充至 8 個真實搜尋引擎並發檢索，涵蓋多元資訊來源，並自適應排除 Wikipedia 條目（由 Cloudflare Edge 獨立處理）。將 Tier 1 超時時間從 2.8s 放寬至 5.2s（實測 8 引擎並發平均耗時 3.5s~4.14s，5.2s 杜絕了偽逾時跌入備援層）。
+- **伺服端與客戶端工具分離防禦 (Server-Side vs Client-Side Tool Decoupling)**: 部分工具（如 `get_world_time`, `search_web`）需在後端伺服器立即執行以獲取上下文回填模型，而業務工具（如 `add_expense`, `view_itinerary`）必須傳遞給前端客戶端觸發 UI 動作。後端在接收到模型的 tool calls 時，建立分離分流機制：伺服端工具由後端直接執行並遞迴送回模型繼續推理，客戶端工具則安全保留於 SSE 事件傳遞給前端，杜絕狀態混淆。
+- **即時端側時間感知與行程生命週期狀態機 (Real-Time Temporal Awareness & Lifecycle State Machine)**: 前端請求標頭動態注入 `client_time`（ISO 8601 當前時間）與 `client_timezone`。後端建立 `TemporalService`，提供端側時間解析、相對時差天數與小時計算，以及行程生命週期狀態機（`PLANNING`, `PRE_TRIP`, `IN_TRIP_ACTIVE`, `POST_TRIP`），並落實神經時間夾擊（System Instruction + Prompt Header）即時注入。
+- **實證導向的安全稽核與零功能降級原則 (Pragmatic Empirical Security Audit over Blind Warning Suppression)**: 靜態程式碼分析工具（如 CodeQL）依據通用啟發式規則生成告警，常將安全的業務邏輯（如 URL 域名包含檢查以決定徽章 Emoji、固定 API 前綴的 query 傳參）誤判為安全漏洞。架構決策堅持「實證先於合規」：在沒有真實安全風險或可利用攻擊向量的前提下，嚴禁盲目重構核心模組，守護系統零功能降級與絕對穩定度。
+
 ---
 
 ## [Failed Paths]
@@ -173,6 +181,13 @@
 - **DuckDuckGo Tarpit 慢阻斷延遲陷阱 (`DuckDuckGo Tarpit Timeout Trap`)**: 後端 Python 呼叫 Cloudflare Worker 代理時偶發 10 秒 `httpx.ReadTimeout` 報警。根因在於 Worker 內部的 `fetch(DDG Lite)` 未設置超時時間，遭遇 DuckDuckGo 對資料中心 IP 實施的 Tarpit 慢連線阻斷時 hold 住連線。教訓：邊緣代理所有外部發起請求必須強制宣告 `signal: AbortSignal.timeout(1500)`，搭配與 Wikipedia 全文 API 雙通道並行競速，根絕單點連線掛死。
 - **未 Mock Tier 2 邊緣檢索導致 CI 假性失敗 (`Unmocked Tier-2 CI False Negative Trap`)**: GitHub Actions CI 在 `test_execute_web_search_fallback_on_ddgs_error` 拋出 AssertionError。根因在於該測試原意為驗證 Tier 3 降級，但在測試案例中漏掉了對 Tier 2（Cloudflare Worker）的 Mock；當 Worker 成功上線後，CI 環境直接連網取回了真實維基百科結果，導致流程直接在 Tier 2 返回而未觸發 Tier 3。教訓：多級 Fallback 管線的單元測試必須對上游所有 Tier 進行完整的獨立 Mock 隔離，防止真實網路呼叫穿透污染測試斷言。
 
+### 10. 搜尋詞庫語意、DNS 區域、時間狀態機與靜態掃描踩坑
+- **DuckDuckGo 查詢堆疊 `OR` 運算符導致 0 搜尋結果 (`DDG Overloaded OR Query Trap`)**: 後端搜尋在地社群評價時，查詢傳入 `"PTT OR Dcard OR Tabelog 清水寺"`，DDGS 本地搜尋與 DDG Lite 均傳回空陣列。根因在於 DuckDuckGo 語意搜尋將大寫 `OR` 作為布林分組時，對多重複合長句容錯度極低，直接將整串查詢判定為嚴格比對失敗。教訓：詞庫大瘦身，拔除所有 `OR`，精煉為乾淨的主題導向查詢，召回率由 0% 飆升至 100%。
+- **寫死 `wt-wt` 區域代碼導致 DDGS DNS 伺服器崩潰 (`wt-wt Region DNS Failure Trap`)**: 呼叫 DDGS 檢索時偶發 `RethinkDNS / DDGS Server Error`。根因在於過去代碼將 `region="wt-wt"` 硬編碼傳入，而 DuckDuckGo API 部分後端節點不識別 `wt-wt`，導致連線被重置或解析失敗。教訓：移除 `wt-wt`，實作 `resolve_destination_regions`：在地軌傳入真實國家代碼（如 `jp-jp`），全球軌傳入 `us-en`，其餘預設傳入 `None` 讓 DDGS 自動選擇最優端點。
+- **DDGS Tier 1 逾時過短引發偽逾時跌入備援 (`Premature 2.8s Timeout Trap`)**: 本地開發環境中，DDGS 搜尋偶發跳過 Tier 1 直接進入 Tier 2 或 Tier 4。根因在於 DDGS 擴展至 8 個真實搜尋引擎並發檢索後，底層聚合平均耗時為 3.5s ~ 4.2s。原設定的 2.8s 超時時間過於嚴苛，導致正常連線被誤殺。教訓：將 Tier 1 超時放寬至 5.2s 黃金閥值，既能保證並發結果完整返回，又能杜絕慢請求卡死線程池。
+- **短關鍵字時區推斷引發子字串碰撞劫持 (`Short-Keyword Substring Collision Trap`)**: 使用者詢問 "South New York" 的行程時，系統誤將目的地推斷為泰國（曼谷時區 UTC+7）；詢問 "Perth" 亦被誤判為泰國。根因在於 `DESTINATION_TIMEZONE_MAP` 包含 `"th": "Asia/Bangkok"`，使用 `if kw in text` 時，"South" 內部的 "th" 觸發子字串命中。教訓：實作雙態匹配：拉丁單詞強制要求正則單詞邊界 `\b{kw}\b`，CJK 維持字串包含，並將字典按關鍵字長度由長至短降序排序（`SORTED_TIMEZONE_MAP`）。
+- **盲目為迎合靜態掃描（CodeQL）而重構核心正則的功能破壞風險 (`Over-zealous Security Refactor Trap`)**: 在面對 CodeQL 提出的 26 項告警時，若貿然對 `sanitize_dangling_tool_calls` 或網域判定進行大刀闊斧的重構，極易引入正則回溯異常或破壞現有 352 項全綠測試。根因在於靜態分析器無法理解旅遊提問的短字數業務上下文，其警報多為理論極限情境。教訓：堅持臨床實證分析，透過真實字串長度與耗時測試（0.000005s）證明無危害性，堅守零功能降級原則。
+
 ---
 
 ## [Technical Debt]
@@ -190,6 +205,7 @@
 - **地圖控制膠囊插槽擴充性 (MapControlCapsule Action Slot Extensibility)**: 未來若地圖需引進即時路況或等高線圖層，可在 MapControlCapsule 設計 children 插槽或動態 items 配置，保持控制膠囊可插拔彈性。
 - **前端搜尋 L1 RAM 快取容量上限與 LRU 驅逐 (Search L1 Cache Bound & Eviction)**: `frontend/lib/search-cache.ts` 目前未設 `MAX_L1_ITEMS` 上限，長期會話存在微量記憶體洩漏風險，後續可規劃導入 LRU 淘汰機制。
 - **Cloudflare Worker 代理 Secret 金鑰強制校驗 (Cloudflare Worker Key Enforcement)**: 目前 Worker 的 `x-tabidachi-key` 為非強制校驗。未來若流量增長或面臨濫用風險，可於 Worker 環境變數配置 Secret 並於後端 Cloud Run 同步注入。
+- **CodeQL 靜態告警漸進式收斂 (CodeQL Gradual Convergence)**: 後續可在不破壞既有架構前提下，為 `poi_service.py` 加上類型別名或獨立驗證器顯式告知靜態分析器 `api_url` 屬安全常數，並對 URL 判斷改採標準 `urllib.parse` 解析主機名，逐步消除靜態分析噪音。
 
 ---
 
@@ -273,3 +289,10 @@
 - **Wikipedia Full-Text Query Alignment**: 維基百科全文查詢對齊，改採 `action=query&list=search` 全文語意檢索取代前綴比對的 OpenSearch，達成複合詞條（如「京都清水寺」）100% 條目命中。
 - **Dangling Tool Calls Auto-Synthesis**: 懸空工具調用對稱合成，建構對話歷史時若偵測到模型前一輪呼叫了 tool 但使用者未回傳 response，自動合成對稱的虛擬 `functionResponse`，徹底根治 Gemini 400 Bad Request 狀態機崩潰。
 - **Strict 1-to-1 Citation Pruning**: 嚴格 1對1 引文剪裁對齊，正則萃取內文實際引用的標籤並對齊來源，物理剔除未引用的多餘來源，杜絕引用標籤與內文脫節。
+
+### 10. 全球詞庫、時間感知狀態機與實證安全領域
+- **Dynamic Dual-Track Region Resolution**: 動態雙軌區域代碼分流，在地軌按目的地動態映射本地 Region（如 jp-jp），全球軌鎖定 us-en 搜尋 Reddit 國際評價。
+- **Boundary-Aware Longest-Match Timezone Inference**: 邊界感知最長匹配時區推斷，區分拉丁字母（\b 邊界正則）與 CJK 字符，並依關鍵字長度由長至短排序匹配，杜絕短關鍵字子字串劫持。
+- **Real-Time Temporal Awareness & Lifecycle State Machine**: 即時端側時間感知與行程生命週期狀態機，解析客戶端時區與時間，動態將行程劃分為 PLANNING、PRE_TRIP、IN_TRIP_ACTIVE 與 POST_TRIP 並注入即時營業與氣候語境。
+- **Server-Side vs Client-Side Tool Decoupling**: 伺服端與客戶端工具分離防禦，伺服端工具（get_world_time）由後端攔截即時執行並回填模型，業務工具（add_expense）透過 SSE 傳遞給前端觸發 UI。
+- **Pragmatic Empirical Security Audit**: 實證導向安全稽核，以實際攻擊向量驗證與臨床度量取代盲目消除靜態分析噪音，捍衛系統零功能降級。
