@@ -93,11 +93,14 @@ async def test_execute_web_search_fallback_on_ddgs_error():
     ]
 
     with patch("ddgs.DDGS", side_effect=Exception("DDGS Cloud IP Block")):
-        with patch("services.web_search_engine._search_ddg_html_fallback", new_callable=AsyncMock) as mock_html:
-            mock_html.return_value = mock_fallback_results
-            results = await execute_web_search("東京美食推薦")
-            assert results == mock_fallback_results
-            mock_html.assert_called_once()
+        with patch("services.web_search_engine._search_cloudflare_edge", new_callable=AsyncMock) as mock_cf:
+            mock_cf.return_value = []
+            with patch("services.web_search_engine._search_ddg_html_fallback", new_callable=AsyncMock) as mock_html:
+                mock_html.return_value = mock_fallback_results
+                results = await execute_web_search("東京美食推薦")
+                assert results == mock_fallback_results
+                mock_cf.assert_called_once()
+                mock_html.assert_called_once()
 
 
 @pytest.mark.asyncio
