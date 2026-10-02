@@ -66,7 +66,8 @@ from services.model_manager import (
     call_with_fallback, call_verifier, call_extraction, 
     detect_diagnosis_intent, sanitize_config_for_model,
     build_effective_routing, NEURAL_LINK_TOOLS, ALL_CHAT_TOOLS, SEARCH_CHAT_TOOLS, build_chat_history,
-    classify_api_error, get_cached_client
+    classify_api_error, get_cached_client, extract_clean_response_text,
+    ADD_ITINERARY_DECL, REMOVE_ITINERARY_DECL
 )
 from services.poi_service import (
     detect_poi_query, search_poi_combined, format_pois_for_ai, 
@@ -465,35 +466,53 @@ def root_status():
 
 # --- AI 聊天機器人 (Ryan) ---
 
-# [NEW] v3.5: 行程上下文格式化函數
-def format_itinerary_context(itinerary: dict, focused_day: int = None) -> str:
+# [NEW] v3.5: 行程上下文格式化函數 (v3.9: 整合 Temporal Service 確定性進度標記)
+def format_itinerary_context(
+    itinerary: Optional[dict],
+    focused_day: int = None,
+    client_time: Optional[str] = None,
+    client_timezone: Optional[str] = None
+) -> str:
     """
-    [BRAIN] 2026 Sliding Window Context Injection
+    [BRAIN] 2026 Sliding Window Context Injection + Resilient Temporal Awareness
     將精簡版行程轉為 AI 可理解的 Markdown 格式，並優化長行程 Token 消耗。
     核心邏輯：完整顯示 Focused Day 的細節，其餘天數僅保留標題與地點。
     """
+    from services.temporal_service import (
+        calculate_temporal_itinerary_context,
+        format_temporal_header
+    )
+
+    temporal_info = calculate_temporal_itinerary_context(
+        itinerary,
+        client_time_iso=client_time,
+        client_tz_str=client_timezone,
+        focused_day=focused_day
+    )
+
+    header_block = format_temporal_header(temporal_info)
+
     if not itinerary:
-        return ""
+        return header_block
     
     itinerary_title = itinerary.get("title", "未命名")
     start_date = itinerary.get("start_date", "?")
     end_date = itinerary.get("end_date", "?")
     total_days = itinerary.get("total_days", 0)
-    # 優先使用傳入的 focused_day，否則使用 itinerary 內的（通常是前端當前視窗）
     actual_focused_day = focused_day or itinerary.get("focused_day") or 1
     weather_context = itinerary.get("weather_context")
     
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-
     lines = [
+        header_block,
         "\n--- SYSTEM CONTEXT: NEURAL ITINERARY CONNECTION (SLIDING WINDOW) ---",
-        f"當前系統時間: {now_str}",
         "以下是使用者目前的行程摘要。為了保持效能，我將重點展示你「目前正在查看」的天數細節（以 [REF] 標記）。",
         f"行程標題: {itinerary_title}",
         f"起訖日期: {start_date} ~ {end_date} (共 {total_days} 天)",
         ""
     ]
     
+    tag_map = {p["place"]: p.get("tag", "") for p in temporal_info.get("items_progress", [])}
+
     days = itinerary.get("days", [])
     for day in days:
         day_num = day.get("day_number", 0)
@@ -524,7 +543,8 @@ def format_itinerary_context(itinerary: dict, focused_day: int = None) -> str:
                 }.get(category, "📍")
                 
                 highlight = "⭐ " if item.get("is_highlight") else ""
-                lines.append(f"  {time} {icon} {highlight}{place}")
+                item_tag = f" {tag_map[place]}" if place in tag_map and tag_map[place] else ""
+                lines.append(f"  {time} {icon} {highlight}{place}{item_tag}")
                 
                 # Notes/Guide/Memo (僅限 Focused Day)
                 notes = item.get("notes")
@@ -830,13 +850,14 @@ async def chat_with_ryan(
         # 將修復後的歷史與定錨結合
         full_history = dummy_history + processed_history
 
-        # [NEW] v3.5: 注入行程上下文
-        itinerary_context = ""
+        # [NEW] v3.5: 注入行程與即時時間上下文 (支援無行程之純時間感知)
+        itinerary_context = format_itinerary_context(
+            body.current_itinerary, 
+            body.focused_day,
+            client_time=body.client_time,
+            client_timezone=body.client_timezone
+        )
         if body.current_itinerary:
-            itinerary_context = format_itinerary_context(
-                body.current_itinerary, 
-                body.focused_day
-            )
             print(f"📅 注入行程上下文: {body.current_itinerary.get('title', '?')}")
             
         # [Phase 2B] 注入即時票價上下文
@@ -1135,6 +1156,8 @@ async def stream_chat_generator(
         full_text = ""
         collected_thought_signature = None
         collected_function_calls = []  # 🟢 準備收集所有 Function Calls
+        initial_sources = copy.deepcopy(sources)
+        initial_contents = copy.deepcopy(contents)
         for i, candidate_model in enumerate(effective_routing):
             try:
                 safe_config = sanitize_config_for_model(stream_config, candidate_model, intent_type=detected_intent)
@@ -1147,16 +1170,19 @@ async def stream_chat_generator(
                 if detected_intent == "SEARCH" and safe_config.tools and not fetched_urls:
                     search_query = None
                     site_filter = None
+                    first_pass = None
                     first_pass_fc = None
                     first_pass_candidate = None
+                    batch_tool_responses = []
+                    executed_world_time = set()
 
                     try:
-                        # 策略 1: 優先嘗試由 Gemini First-Pass 提煉精確搜尋詞 (mode=ANY 強制鎖定 search_web)
+                        # 策略 1: 優先嘗試由 Gemini First-Pass 提煉精確搜尋詞與世界時間查詢 (mode=ANY 強制鎖定)
                         force_config = copy.deepcopy(safe_config)
                         force_config.tool_config = genai.types.ToolConfig(
                             function_calling_config=genai.types.FunctionCallingConfig(
                                 mode=genai.types.FunctionCallingConfigMode.ANY,
-                                allowed_function_names=["search_web", "fetch_webpage"]
+                                allowed_function_names=["search_web", "fetch_webpage", "get_world_time"]
                             )
                         )
                         first_pass = await asyncio.wait_for(
@@ -1165,34 +1191,46 @@ async def stream_chat_generator(
                                 contents=contents,
                                 config=force_config,
                             ),
-                            timeout=3.0
+                            timeout=4.5
                         )
+
                         if first_pass and hasattr(first_pass, 'function_calls') and first_pass.function_calls:
                             for fc in first_pass.function_calls:
                                 if fc.name == "search_web":
                                     search_query = fc.args.get("query", message) if fc.args else message
                                     site_filter = fc.args.get("site_filter") if fc.args else None
                                     first_pass_fc = fc
-                                    if first_pass.candidates:
-                                        first_pass_candidate = first_pass.candidates[0].content
-                                    break
+                                elif fc.name == "get_world_time":
+                                    from services.temporal_service import query_world_time
+                                    target_loc = fc.args.get("query", "London") if fc.args else "London"
+                                    if target_loc not in executed_world_time:
+                                        yield f'event: thinking\ndata: {json.dumps({"status": "thinking", "thought": f"正在查詢 {target_loc} 當前時間與時區..."})}\n\n'
+                                        await asyncio.sleep(0)
+                                        time_data = query_world_time(target_loc)
+                                        executed_world_time.add(target_loc)
+                                    batch_tool_responses.append(genai.types.Part.from_function_response(
+                                        name="get_world_time",
+                                        response=time_data
+                                    ))
                                 elif fc.name == "fetch_webpage":
                                     target_url = fc.args.get("url", "") if fc.args else ""
                                     if target_url and target_url not in fetched_urls:
                                         yield f'event: thinking\ndata: {json.dumps({"status": "reading", "url": target_url})}\n\n'
                                         await asyncio.sleep(0)
                                         page_data = await fetch_jina_reader(target_url)
+                                        fetched_urls.add(target_url)
                                         if page_data.get("url"):
                                             sources.append({"title": page_data.get("url"), "uri": page_data.get("url")})
-                                        if first_pass.candidates and first_pass.candidates[0].content:
-                                            contents.append(first_pass.candidates[0].content)
-                                            contents.append(genai.types.Content(
-                                                role="user",
-                                                parts=[genai.types.Part.from_function_response(
-                                                    name="fetch_webpage",
-                                                    response=page_data
-                                                )]
-                                            ))
+                                        batch_tool_responses.append(genai.types.Part.from_function_response(
+                                            name="fetch_webpage",
+                                            response=page_data
+                                        ))
+                                else:
+                                    # 🛡️ 關鍵防護：若混入客戶端工具，主動補齊確認存根，杜絕 400 Dangling Tool
+                                    batch_tool_responses.append(genai.types.Part.from_function_response(
+                                        name=fc.name,
+                                        response={"status": "queued_for_client_ui"}
+                                    ))
                     except Exception as first_pass_err:
                         print(f"⚠️ [StreamChat] First-Pass 未能產生搜尋詞 ({first_pass_err})，啟動雙軌在地與全球檢索...")
 
@@ -1200,6 +1238,8 @@ async def stream_chat_generator(
                     local_q, global_q, dest_meta = generate_dual_queries(eval_message, history=history)
                     dest_code = dest_meta.get("destination_code", "GLOBAL")
                     dest_name = dest_meta.get("matched_destination", "當地")
+                    local_reg = dest_meta.get("local_region", "tw-tzh")
+                    global_reg = dest_meta.get("global_region", "us-en")
 
                     # 執行搜尋策略：
                     # 若 First-Pass 產出了特定 Function Call (例如指定單一 query)，優先呼叫單一檢索以保持相容性；
@@ -1208,20 +1248,20 @@ async def stream_chat_generator(
                     if first_pass_fc and search_query:
                         yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": search_query})}\n\n'
                         await asyncio.sleep(0)
-                        raw_search_results = await execute_web_search(search_query, site_filter=site_filter)
+                        raw_search_results = await execute_web_search(search_query, site_filter=site_filter, region=local_reg)
                     else:
                         yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": f"{dest_name}: {local_q} | {global_q}"})}\n\n'
                         await asyncio.sleep(0)
-                        # 1. 在地深搜
-                        local_results = await execute_web_search(local_q, max_results=3)
+                        # 1. 在地深搜 (傳入 local_region，如 jp-jp, kr-kr, tw-tzh)
+                        local_results = await execute_web_search(local_q, region=local_reg, max_results=3)
                         # 🛡️ 150ms 錯峰保護，避免 DuckDuckGo 觸發 429 頻率限制
                         await asyncio.sleep(0.15)
-                        # 2. 全球旅人檢索
-                        global_results = await execute_web_search(global_q, max_results=3)
+                        # 2. 全球旅人檢索 (傳入 global_region: us-en 穿透 Reddit)
+                        global_results = await execute_web_search(global_q, region=global_reg, max_results=3)
                         raw_search_results = local_results + global_results
                         if not raw_search_results:
                             fallback_q = dest_meta.get("clean_query", eval_message)
-                            raw_search_results = await execute_web_search(fallback_q, max_results=4)
+                            raw_search_results = await execute_web_search(fallback_q, region=local_reg, max_results=4)
 
                     # 🛡️ AC-2: 雜訊黑名單過濾 (剔除政治/警察/研討會) 與網域分類
                     cleaned_search_data = classify_and_filter_results(raw_search_results, eval_message, dest_code=dest_code)
@@ -1237,18 +1277,15 @@ async def stream_chat_generator(
                             "badge": s_item.get("badge")
                         })
 
-                    # 🟢 若 First Pass 有正常的 candidate 與 function call，使用標準 FunctionResponse 閉環
-                    if first_pass_candidate and first_pass_fc:
-                        contents.append(first_pass_candidate)
-                        contents.append(genai.types.Content(
-                            role="user",
-                            parts=[genai.types.Part.from_function_response(
-                                name="search_web",
-                                response={"results": candidate_sources}
-                            )]
+                    # 🟢 若有 search_web 調用，將搜尋結果也轉換為 FunctionResponse 加入批次清單
+                    if first_pass_fc:
+                        batch_tool_responses.append(genai.types.Part.from_function_response(
+                            name="search_web",
+                            response={"results": candidate_sources}
                         ))
-                    elif candidate_sources:
-                        # 🟢 雙軌在地與全球 Grounding 注入：附帶序號錨定與分類標籤
+
+                    # 🟢 雙軌在地與全球 Grounding 注入：無論 First-Pass 命中或雙軌檢索，統一轉為標準 Grounding 上下文
+                    if candidate_sources:
                         local_items = [c for c in candidate_sources if c.get("category") in ("official", "local_forum", "review")]
                         global_items = [c for c in candidate_sources if c.get("category") in ("global_forum", "general") or c not in local_items]
                         
@@ -1269,6 +1306,7 @@ async def stream_chat_generator(
 1. 你的回答必須**嚴格依據上述搜尋結果**。請對比或整合【📍 在地視角】與【🌐 全球旅人觀點】進行客觀推薦。
 2. 當提及具體事實、景點或推薦時，請在句末標註對應的來源編號（例如：在地人推薦這家拉麵[1]，而國際社群普遍建議[3]...）。
 3. 嚴禁內文與來源脫節（各說各話）。你提及的內容必須能從對應的來源編號中得到印證。若某來源與旅遊無關，切勿採用。
+4. 若使用者的指示包含將景點、天氣備忘或活動加入行程，請同時調用 add_itinerary_item 工具。
 [/即時網路搜尋結果]\n"""
                         if contents and contents[-1].role == "user":
                             contents[-1].parts.append(genai.types.Part.from_text(text=grounding_text))
@@ -1278,9 +1316,12 @@ async def stream_chat_generator(
                                 parts=[genai.types.Part.from_text(text=grounding_text)]
                             ))
 
-                # 🛡️ 關鍵守護：若為 SEARCH 意圖，搜尋已完成且資料已注入 contents，清空 tools 強制模型生成文字回答，嚴禁再次調用工具
+                # 🛡️ 關鍵守護：若為 SEARCH 意圖，搜尋已完成且資料已注入 contents，卸載伺服端搜尋工具 (防止二次聯網)，
+                # 但保留行程工具 (ADD/REMOVE) 供「查詢並加入行程」複合意圖使用
                 if detected_intent == "SEARCH":
-                    safe_config.tools = None
+                    safe_config.tools = [
+                        genai.types.Tool(function_declarations=[ADD_ITINERARY_DECL, REMOVE_ITINERARY_DECL])
+                    ]
 
                 async for chunk in await client.aio.models.generate_content_stream(
                     model=candidate_model,
@@ -1300,10 +1341,11 @@ async def stream_chat_generator(
                         yield f'event: thinking\ndata: {json.dumps({"status": "thinking", "thought": chunk.thought})}\n\n'
                         await asyncio.sleep(0)
                         
-                    # 發送文字 chunk
-                    if hasattr(chunk, 'text') and chunk.text:
-                        full_text += chunk.text
-                        yield f'event: text\ndata: {json.dumps({"text": chunk.text})}\n\n'
+                    # 發送文字 chunk (使用 extract_clean_response_text 安全解析 parts，杜絕 non-text parts 警告)
+                    chunk_text = extract_clean_response_text(chunk)
+                    if chunk_text:
+                        full_text += chunk_text
+                        yield f'event: text\ndata: {json.dumps({"text": chunk_text})}\n\n'
                         await asyncio.sleep(0)
                         
                     # 🛡️ 2026: 提取原生 thought_signature (相容 chunk 頂層與 candidate parts)
@@ -1328,6 +1370,8 @@ async def stream_chat_generator(
                         
                     if fcs:
                         for fc in fcs:
+                            if fc.name in ("search_web", "fetch_webpage", "get_world_time"):
+                                continue  # 🛡️ 伺服端工具不作為前端卡片派發
                             raw_id = getattr(fc, 'id', None)
                             fc_id = str(raw_id) if raw_id is not None and not isinstance(raw_id, (str, int)) else raw_id
                             fc_payload = {
@@ -1354,6 +1398,8 @@ async def stream_chat_generator(
                     return
                 yield f'event: thinking\ndata: {json.dumps({"status": "fallback", "model": candidate_model})}\n\n'
                 full_text = ""  # 重置，避免拼接到殘片
+                sources = copy.deepcopy(initial_sources)  # 🛡️ 還原 sources，杜絕失敗輪次的無效搜尋結果污染下一個模型
+                contents = copy.deepcopy(initial_contents)  # 🛡️ 還原 contents，杜絕失敗輪次的污染
                 collected_thought_signature = None
                 collected_function_calls = []  # 重置
                 last_chunk = None
@@ -1661,14 +1707,15 @@ async def chat_stream(request: Request, body: ChatRequest, api_key: str = Depend
     except Exception as e:
         print(f"⚠️ 三源資料注入失敗 (不影響主流程): {e}")
     
-    # 🆕 v3.8: 智慧神經夾擊 (Neural Sandwich)
-    # 將上下文放在最前面，確保模型在看到問題前已具備背景知識
-    itinerary_context = ""
+    # 🆕 v3.8: 智慧神經夾擊 (Neural Sandwich) + 即時時間感知
+    # 將上下文放在最前面，確保模型在看到問題前已具備背景時間與行程知識
+    itinerary_context = format_itinerary_context(
+        body.current_itinerary, 
+        body.focused_day,
+        client_time=body.client_time,
+        client_timezone=body.client_timezone
+    )
     if body.current_itinerary:
-        itinerary_context = format_itinerary_context(
-            body.current_itinerary, 
-            body.focused_day
-        )
         print(f"📅 串流注入行程上下文: {body.current_itinerary.get('title', '?')}")
     
     # 處理最終訊息: 上下文 -> 原始消息
