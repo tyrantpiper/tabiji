@@ -88,6 +88,14 @@
 - **去中心化 Git 身分投影與官方 ID 隱私信箱標準 (Decoupled Git Identity & ID-Pinned Privacy Standard)**: Git Commit 協議僅傳遞純文字 Name 與 Email，無中心化 GitHub ID 欄位。GitHub 將 Email 視為身分與貢獻熱力圖的對帳代幣，誤填範例信箱（如 `example.com`）會引發第三方帳號碰撞冒領。專案與全域環境一律強制固化採用 GitHub 官方 ID 隱私信箱格式（`223093762+tyrantpiper@users.noreply.github.com`），達成真實私人信箱 100% 隱蔽與貢獻度 100% 唯一綁定。
 - **不可逆獨立封裝備份與租約前置獲取原則 (Hermetic Bundle Backup & Fetch-Before-Lease Invariance)**: 執行歷史重構（`git-filter-repo`）時，因工具預設會遍歷重寫所有 local refs 並移除 origin，備份防禦必須封裝為完全獨立於倉庫外的單一二進位檔案（`.bundle`）並經由 verify 檢驗；重新掛載 remote 後必須先 `git fetch origin main` 同步遠端基準指針，方可安全執行 `--force-with-lease` 覆蓋。
 
+### 7. 零成本搜尋、Cloudflare 邊緣代理與 RAG Grounding 架構 (Zero-Cost Search, Edge Anycast Proxy & Grounding)
+- **邊緣檢索執行器取代傳統 Forward Proxy (Edge Search Runner over TCP CONNECT)**: `ddgs` 依賴的 `primp` 需要標準 HTTP CONNECT TCP 隧道代理，標準 Serverless/Worker 無法透明代理 raw TCP。架構決策將 Worker 升級為「邊緣檢索執行器（Edge Search Runner）」，由全球 Anycast 節點聚合檢索並回傳乾淨 JSON，後端以輕量 HTTPX 呼叫，零機房 ASN 阻擋風險。
+- **雙通道並行競速與超時阻斷 (Parallel Dual-Channel with Strict AbortSignal)**: DuckDuckGo Lite 對資料中心節點實施 Tarpit（慢速阻斷延遲）。Worker 採用 `Promise.all([fetchDDG(), fetchWiki()])` 同時發起 Wikipedia 全文搜尋與 DDG Lite，並將 DDG 鎖死在 1.5s 快速中斷，保證全鏈路 1.1s 內完成結算。
+- **維基百科全文檢索優於前綴補全 (Full-Text Search over Prefix OpenSearch)**: Wikipedia OpenSearch API 為前綴比對，查詢「京都清水寺」時因條目名為「清水寺」回傳空陣列；全面切換至 `action=query&list=search` 全文語意搜尋，達成 100% 條目命中。
+- **搜尋態工具物理卸載防衛 (Physical Tool Unloading in Search Intent)**: LLM 在看到價格數字時極易將詢價誤判為記帳。在 Intent Router 中將 `add_expense` 物理卸載，從根本杜絕幻覺彈窗。
+- **懸空工具調用對稱合成防衛 (Dangling Tool Calls Auto-Synthesis)**: 若對話歷史中模型上一輪輸出了 `function_call`，但使用者下一輪直接發話而未包含 `function_response`，會觸發 Gemini 400 Bad Request 狀態機崩潰。在建構歷史時自動合成對稱的虛擬 `functionResponse`（`client_handled`），徹底免疫協議報錯。
+- **AC-4 嚴格 1對1 引文剪裁對齊原則 (Strict 1-to-1 Citation Pruner)**: 對 LLM 串流產出的文本正則萃取實際標註的 `[1]`, `[2]` 錨點，僅保留被提及的 Sources 並賦予對應索引，未引用的候選來源一律物理剪除，杜絕引用標籤與內文脫節。
+
 ---
 
 ## [Failed Paths]
@@ -160,8 +168,12 @@
 ### 8. 聯盟行銷與即時比價踩坑
 - **12Go Asia 誤用 Travelpayouts 舊 Program ID 產生 404 斷點 (`12Go Promo Not Found Trap`)**: 將 Travelpayouts 舊版 Program ID 1024 誤作為 `tp.media/r` 的 promo tool ID 呼叫，導致所有交通跳轉拋出 HTTP 404 promo not found。教訓：加盟夥伴跳轉格式必須對齊各平台官方最新深層連結規範，不假設通用短鏈結構，優先使用官方直連帶參。
 
----
+### 9. 邊緣檢索、Cloudflare 代理與測試隔離踩坑
+- **R2 S3 HMAC 憑證混淆陷阱 (`R2 S3 Token Mismatch Trap`)**: 初次為 Cloudflare 設定金鑰時生成了 R2 API Token（包含 Access Key ID, Secret Access Key 與 S3 Endpoint），嘗試用於 Wrangler CLI 與 Cloudflare MCP 拋出認證失敗。根因在於 R2 憑證僅能用於 S3 相容端點，Wrangler CLI 與 REST MCP Server 必須使用 REST API Token。教訓：Cloudflare 生態圈工具鏈身分認證必須明確區分 S3 HMAC 憑證與以 `cfat_` 開頭之 Account REST API Token。
+- **DuckDuckGo Tarpit 慢阻斷延遲陷阱 (`DuckDuckGo Tarpit Timeout Trap`)**: 後端 Python 呼叫 Cloudflare Worker 代理時偶發 10 秒 `httpx.ReadTimeout` 報警。根因在於 Worker 內部的 `fetch(DDG Lite)` 未設置超時時間，遭遇 DuckDuckGo 對資料中心 IP 實施的 Tarpit 慢連線阻斷時 hold 住連線。教訓：邊緣代理所有外部發起請求必須強制宣告 `signal: AbortSignal.timeout(1500)`，搭配與 Wikipedia 全文 API 雙通道並行競速，根絕單點連線掛死。
+- **未 Mock Tier 2 邊緣檢索導致 CI 假性失敗 (`Unmocked Tier-2 CI False Negative Trap`)**: GitHub Actions CI 在 `test_execute_web_search_fallback_on_ddgs_error` 拋出 AssertionError。根因在於該測試原意為驗證 Tier 3 降級，但在測試案例中漏掉了對 Tier 2（Cloudflare Worker）的 Mock；當 Worker 成功上線後，CI 環境直接連網取回了真實維基百科結果，導致流程直接在 Tier 2 返回而未觸發 Tier 3。教訓：多級 Fallback 管線的單元測試必須對上游所有 Tier 進行完整的獨立 Mock 隔離，防止真實網路呼叫穿透污染測試斷言。
 
+---
 
 ## [Technical Debt]
 
@@ -176,6 +188,8 @@
 - **離線記帳本機暫存與背景重播隊列 (Offline Mutation Queue)**: 目前記帳頁面新增支出若處於斷網狀態，尚未整合 IndexedDB Background Sync 隊列自動重播。
 - **活動多連結陣列化擴充 (Activity Dynamic Links Array)**: 行程活動項目目前支援單一外部連結，手冊中已標註預留多連結與訂位憑證結構，未來可將 `activity.link` 擴展為 link 物件陣列。
 - **地圖控制膠囊插槽擴充性 (MapControlCapsule Action Slot Extensibility)**: 未來若地圖需引進即時路況或等高線圖層，可在 MapControlCapsule 設計 children 插槽或動態 items 配置，保持控制膠囊可插拔彈性。
+- **前端搜尋 L1 RAM 快取容量上限與 LRU 驅逐 (Search L1 Cache Bound & Eviction)**: `frontend/lib/search-cache.ts` 目前未設 `MAX_L1_ITEMS` 上限，長期會話存在微量記憶體洩漏風險，後續可規劃導入 LRU 淘汰機制。
+- **Cloudflare Worker 代理 Secret 金鑰強制校驗 (Cloudflare Worker Key Enforcement)**: 目前 Worker 的 `x-tabidachi-key` 為非強制校驗。未來若流量增長或面臨濫用風險，可於 Worker 環境變數配置 Secret 並於後端 Cloud Run 同步注入。
 
 ---
 
@@ -252,3 +266,10 @@
 ### 8. 聯盟行銷與即時比價領域
 - **Official Direct Affiliate Parameterization**: 官方直連加盟帶參規範。切斷無效的第三方轉址代理（如 `tp.media/r?p=1024` 引發 404 promo not found），採用 12Go 官方標準帶參格式 `https://12go.asia/en/travel/.../?marker=${marker}`，確保 HTTP 301/200 正常重定向與分潤 Cookie 寫入。
 - **Same-City Flight Zero-Delay Short-Circuit**: 同城起降零延遲短路防衛。前端 SWR hook 與後端 API 同步攔截出發地與目的地相同（`cleanOrigin === cleanDest`）之無效航班查詢，以 0ms 記憶體短路回傳免搭機狀態，消除外部 API 無效調用、超時與 502 Bad Gateway 異常。
+
+### 9. 邊緣檢索與 Grounding 領域
+- **Edge Multi-Engine Search Runner**: 邊緣多引擎檢索執行器，由 Cloudflare Anycast 邊緣節點聚合檢索並回傳乾淨 JSON，後端以輕量 HTTP 呼叫，徹底免疫雲端資料中心 IP 被 DuckDuckGo 封鎖的致命缺陷。
+- **Parallel Dual-Channel Search with Strict Abort**: 嚴格超時雙通道競速檢索，以 `Promise.all` 同時調用維基百科全文 API 與 DDG Lite，並對 DDG Lite 施加 1.5s 快速中斷，根除 DuckDuckGo Tarpit 慢連線陷阱。
+- **Wikipedia Full-Text Query Alignment**: 維基百科全文查詢對齊，改採 `action=query&list=search` 全文語意檢索取代前綴比對的 OpenSearch，達成複合詞條（如「京都清水寺」）100% 條目命中。
+- **Dangling Tool Calls Auto-Synthesis**: 懸空工具調用對稱合成，建構對話歷史時若偵測到模型前一輪呼叫了 tool 但使用者未回傳 response，自動合成對稱的虛擬 `functionResponse`，徹底根治 Gemini 400 Bad Request 狀態機崩潰。
+- **Strict 1-to-1 Citation Pruning**: 嚴格 1對1 引文剪裁對齊，正則萃取內文實際引用的標籤並對齊來源，物理剔除未引用的多餘來源，杜絕引用標籤與內文脫節。
