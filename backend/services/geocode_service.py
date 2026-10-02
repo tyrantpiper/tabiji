@@ -31,8 +31,8 @@ import json
 # Load API Key
 ARCGIS_API_KEY = (os.getenv("ARCGIS_API_KEY") or "").strip()
 
-# 🌐 Country Name → ISO 3166-1 Alpha-2 (動態 Nominatim countrycodes 鎖定)
-COUNTRY_TO_ISO = {
+# 🌐 全域 190+ 國名稱 → ISO 3166-1 Alpha-2 完整資料庫
+GLOBAL_COUNTRY_TO_ISO = {
     # ─── 東亞 ───
     "台灣": "tw", "臺灣": "tw", "Taiwan": "tw", "Taiwan, Province of China": "tw",
     "日本": "jp", "Japan": "jp",
@@ -169,6 +169,9 @@ COUNTRY_TO_ISO = {
     "列支敦士登": "li", "Liechtenstein": "li",
     "安道爾": "ad", "Andorra": "ad",
 }
+
+# 🌐 保持向後相容別名
+COUNTRY_TO_ISO = GLOBAL_COUNTRY_TO_ISO
 
 def country_to_iso(name: str) -> str:
     """將國家名稱轉為 ISO 3166-1 alpha-2 碼，找不到返回空字串"""
@@ -1671,8 +1674,10 @@ COUNTRY_NAME_TO_CODE = {
     "philippines": "PH", "菲律賓": "PH", "菲律宾": "PH",
 }
 
-# 🆕 別名兼容：確保呼叫 COUNTRY_TO_ISO 時能正確取得國家代碼
-COUNTRY_TO_ISO = COUNTRY_NAME_TO_CODE
+# 🆕 別名兼容：將額外中文/英文別名安全融入，保護全域 190+ 國資料庫
+for _k, _v in COUNTRY_NAME_TO_CODE.items():
+    if _k not in GLOBAL_COUNTRY_TO_ISO:
+        GLOBAL_COUNTRY_TO_ISO[_k] = _v.lower()
 
 def extract_region_for_search(region: str) -> str:
     """從 'Tokyo 東京' 或 '北海道5日遊' 提取乾淨的地域關鍵字 'Tokyo' 或 '北海道'"""
@@ -1712,7 +1717,7 @@ async def smart_geocode_logic(
             country_code = c_upper
         else:
             normalized_country = country.strip().lower()
-            country_code = next((v for k, v in COUNTRY_TO_ISO.items() if k.lower() == normalized_country), None)
+            country_code = next((v.upper() for k, v in COUNTRY_TO_ISO.items() if k.lower() == normalized_country), None)
         if country_code:
             api_country_lock = country_code
             log_debug(f"   🎯 Frontend Country Filter (Lock) → {country_code}")
@@ -1721,7 +1726,7 @@ async def smart_geocode_logic(
     user_explicit_country = False
     norm_query = query.strip().lower()
     # 修正：使用正確的變數名稱 COUNTRY_TO_ISO，並支援大小寫不敏感查詢
-    found_explicit_code = next((v for k, v in COUNTRY_TO_ISO.items() if k.lower() == norm_query), None)
+    found_explicit_code = next((v.upper() for k, v in COUNTRY_TO_ISO.items() if k.lower() == norm_query), None)
     if found_explicit_code:
         country_code = found_explicit_code
         user_explicit_country = True

@@ -22,6 +22,8 @@ import random
 import string
 import logging
 import re
+import uuid
+import copy
 from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks, Request, Response
@@ -63,7 +65,7 @@ from services.geocode_service import HTTPX_CLIENT
 from services.model_manager import (
     call_with_fallback, call_verifier, call_extraction, 
     detect_diagnosis_intent, sanitize_config_for_model,
-    build_effective_routing, NEURAL_LINK_TOOLS, build_chat_history,
+    build_effective_routing, NEURAL_LINK_TOOLS, ALL_CHAT_TOOLS, SEARCH_CHAT_TOOLS, build_chat_history,
     classify_api_error, get_cached_client
 )
 from services.poi_service import (
@@ -71,7 +73,13 @@ from services.poi_service import (
     enrich_poi_complete, format_enriched_poi_for_ai, get_source_urls
 )
 from services.memory_service import MemoryService
-from services.intent_router import classify_chat_intent
+from services.intent_router import classify_chat_intent, GREETING_PATTERN
+from services.web_search_engine import execute_web_search, fetch_jina_reader
+from services.destination_taxonomy import (
+    generate_dual_queries,
+    classify_and_filter_results,
+    prune_and_align_citations
+)
 from utils.deps import get_gemini_key, get_verified_user, get_supabase
 from utils.ai_config import DAILY_ROUTING, WORKHORSE_MODEL
 from google.genai import errors as genai_errors
@@ -580,6 +588,12 @@ SYSTEM_PROMPT = """
     *   👉 必須調用 `add_expense`，**必填**欄位：`day`, `title`, `amount`, `currency`。
     *   ⚠️ `currency` 是**強制必填**的，必須提供正確的貨幣代碼（如 `JPY`, `USD`, `TWD`, `EUR`）。請根據旅遊目的地或用戶描述推斷。
     *   💡 選填但強烈推薦：`category`（分類：food/transport/ticket/shopping 等）, `payment_method`（現金/刷卡等）, `notes`（備註）, `items`（逐項明細列表，含 original_name/translated_name/amount）。
+3.  **聯網搜尋 (search_web)**：當用戶要求「網路搜索」、「上網查」、「搜尋」，或詢問景點/餐廳的最新營業時間、公休日、門票價格、即時現況、評價等資訊時，必須主動調用 `search_web` 進行即時網路檢索。
+
+【記帳工具 add_expense 嚴格禁令】：
+- 僅當使用者明確表達「記帳」、「幫我記下來」、「記一筆」、「花了某金額」等明確的記帳動作指令時，才可調用 `add_expense`。
+- 絕對禁止在使用者詢問價格、預估花費、菜單價格、網路搜尋、詢問景點資訊或追問細節時擅自調用 `add_expense`！
+- 當使用者只是詢問花費或要求搜尋時，一律直接在回覆文字中說明，絕對不要調用記帳工具！
 
 *注意*：如果用戶沒有指定天數 (day)，請預設使用當前正處於聚焦的焦點天數（即 `[用戶當前行程]` 中標記為 `👉` 的天數）。調用工具後，系統會在前端介面自動為用戶渲染對應的確認/預覽卡片，不需要你手動輸出卡片 HTML。
 """
@@ -613,7 +627,7 @@ def detect_admin_hijack_attempt(text: str) -> Optional[str]:
     has_leak = any(p in normalized for p in leak_patterns)
     
     if has_admin or has_leak:
-        return "您好！我是您的專屬 AI 旅遊顧問 Ryan 🌸\n\n本系統為專屬旅遊助手，不存在管理員或資料庫維護模式，亦無法提供內部架構資訊。\n請問有什麼日本各地的景點、美食推薦或行程規劃我可以為您服務的呢？😊"
+        return "您好！我是您的專屬 AI 旅遊顧問 Ryan 🌸\n\n本系統為專屬旅遊助手，不存在管理員或資料庫維護模式，亦無法提供內部架構資訊。\n請問有什麼世界各地的景點、美食推薦或行程規劃我可以為您服務的呢？😊"
         
     return None
 
@@ -703,14 +717,15 @@ async def chat_with_ryan(
         if poi_detection and body.location:
             # 自動查詢 POI 資料
             try:
-                lat = body.location.get("lat", 35.6895)  # 預設東京
-                lng = body.location.get("lng", 139.6917)
-                location_name = body.location.get("name", "當前位置")
-                category = poi_detection["category"]
-                
-                print(f"[GEO] POI 查詢觸發: {category} @ ({lat}, {lng})")
-                
-                pois = await search_poi_combined(lat, lng, category, radius=1000)
+                lat = body.location.get("lat")
+                lng = body.location.get("lng")
+                if lat is not None and lng is not None:
+                    location_name = body.location.get("name", "當前位置")
+                    category = poi_detection["category"]
+                    
+                    print(f"[GEO] POI 查詢觸發: {category} @ ({lat}, {lng})")
+                    
+                    pois = await search_poi_combined(lat, lng, category, radius=1000)
                 
                 if pois:
                     pois_text = format_pois_for_ai(pois, max_items=5)
@@ -934,12 +949,64 @@ async def chat_with_ryan(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def extract_search_query(user_msg: str, history: Optional[List[dict]] = None) -> str:
+    """從使用者訊息與對話歷史提煉搜尋詞 (含前文實體關聯感知)"""
+    clean_msg = re.sub(
+        r'^(?:你好|您好|哈囉|嗨|嗨嗨|早安|午安|晚安|請|麻煩|幫我|我想|想要|我想要|請你|你可以|能不能|可以|要你|\s)*(?:幫我|替我|\s)*(?:網路搜索|網路搜尋|搜尋|搜索|google|谷歌|上網查|查一下|查看|找一下|查詢|看一下|\s)*',
+        '',
+        user_msg.strip(),
+        flags=re.IGNORECASE
+    ).strip()
+    clean_msg = re.sub(r'[嗎？\?~～!！\.]+$', '', clean_msg).strip()
+
+    # 判斷是否為短語或代名詞（如「營業時間」、「公休日」、「評價」、「這家店」）
+    vague_patterns = [r'^營業時間$', r'^公休(日)?$', r'^評價$', r'^電話$', r'^菜單$', r'^這家(店)?', r'^那家(店)?', r'^門票$', r'^即時現況$']
+    is_vague = len(clean_msg) < 4 or any(re.search(p, clean_msg) for p in vague_patterns)
+
+    recent_entity = ""
+    if is_vague and history:
+        for msg in reversed(history[-4:]):
+            text = ""
+            raw_parts = msg.get("rawParts") or msg.get("parts") or []
+            for p in raw_parts:
+                if isinstance(p, dict) and p.get("text"):
+                    text += p["text"]
+                elif isinstance(p, str):
+                    text += p
+            if not text and (msg.get("content") or msg.get("displayContent")):
+                text = str(msg.get("content") or msg.get("displayContent") or "")
+
+            # 優先找引號中的店名/地名
+            quoted = re.findall(r'「([^」]+)」|『([^』]+)』|"([^"]+)"|【([^】]+)】', text)
+            if quoted:
+                for match_tuple in quoted:
+                    entity = next((m for m in match_tuple if m), None)
+                    if entity and len(entity) >= 2:
+                        return f"{entity} {clean_msg}".strip()
+
+            m = re.findall(r'[\u4e00-\u9fa5A-Za-z0-9\s]{2,14}(?:店|市場|寺|神社|宮|閣|塔|燒肉|拉麵|壽司|居酒屋|天滿宮|公園|館)', text)
+            if m:
+                recent_entity = m[-1].strip()
+                break
+
+    # 3. 旅遊語意搜尋改寫 (避免「論壇」被搜尋引擎誤判為「警察/政治會議」)
+    if re.search(r'(國外|外國|老外|歐美|背包客)?\s*(論壇|社區|討論區|reddit)', clean_msg, flags=re.I):
+        dest_match = re.search(r'([\u4e00-\u9fa5A-Za-z0-9\s]{2,10}(?:市|縣|區|台北|台中|台南|高雄|花蓮|東京|大阪|京都|首爾|曼谷|巴黎|倫敦)?)', clean_msg)
+        dest = dest_match.group(1).strip() if dest_match and len(dest_match.group(1).strip()) >= 2 else "Taipei"
+        return f"{dest} trending travel hidden gems reddit"
+
+    if recent_entity:
+        return f"{recent_entity} {clean_msg}".strip()
+    return clean_msg or user_msg
+
+
 # ==================== [NEW] SSE Streaming Chat API ====================
 
 async def stream_chat_generator(
     api_key: str,
     history: List[dict],
     message: str,
+    raw_user_message: Optional[str] = None,
     thought_signatures: Optional[List[dict]] = None,
     sources: Optional[List[dict]] = None,  # [NEW] v3.7.1: 來源 URLs
     system_instruction: Optional[str] = None
@@ -983,42 +1050,238 @@ async def stream_chat_generator(
         # 1. 初始化模型與安全配置
         model_name = DAILY_ROUTING[0]
         last_chunk = None
+        if sources is None:
+            sources = []
+        candidate_sources: List[Dict[str, Any]] = []
         
-        # 構建串流 config（注入神經連結卡片，供後續自動過濾與搜尋增強疊加）
+        # 1.1 執行兩階段意圖分流
+        eval_message = raw_user_message or message
+        detected_intent, _ = await classify_chat_intent(eval_message, api_key=api_key)
+        
+        # 🛡️ 核心工具調度矩陣 (對齊 4010f79 核心架構)：
+        # - 若為短問候語 (len <= 8 且命中 GREETING_PATTERN)：卸載工具以防幻覺
+        # - 若為 SEARCH 意圖：掛載 SEARCH_CHAT_TOOLS (具備搜尋/精讀 + 行程新增刪除，物理排除 add_expense 杜絕誤彈記帳卡片)
+        # - 其餘所有情況：100% 常駐掛載 NEURAL_LINK_TOOLS (行程新增、刪除、記帳永遠就緒)
+        trimmed_eval = eval_message.strip()
+        is_pure_greeting = len(trimmed_eval) <= 8 and bool(GREETING_PATTERN.match(trimmed_eval))
+        
+        if is_pure_greeting:
+            active_tools = None
+        elif detected_intent == "SEARCH":
+            active_tools = SEARCH_CHAT_TOOLS
+        else:
+            active_tools = NEURAL_LINK_TOOLS
+        
         stream_config = genai.types.GenerateContentConfig(
             max_output_tokens=2048,
             temperature=1.0,
-            tools=NEURAL_LINK_TOOLS,
+            tools=active_tools,
             system_instruction=system_instruction
         )
         
-        # 建構對話歷史 — 呼叫 model_manager 的無損解析歷史格式 (相容並恢復過去所有 Tool Calls / Thought 節點)
-        chat_history = build_chat_history(history)
-        
+        # 🟢 修復連續 User 訊息錯誤 (400 Bad Request): 
+        # 如果最後一筆是 user (例如剛剛補上的 functionResponse)，直接合併 text part，不要新增 Content
+        # 🌐 2026: 確定性 URL 主動預爬取與 RAG Grounding 融合
+        # 若使用者訊息中含有明確網址，不依賴 LLM 是否輸出 tool call，保證 100% 聯網爬取
+        detected_urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', eval_message)
+        fetched_urls = set()
+        grounding_context_text = ""
+        if detected_urls and not is_pure_greeting:
+            for raw_u in detected_urls[:2]:
+                target_url = ("https://" + raw_u) if raw_u.startswith("www.") else raw_u
+                fetched_urls.add(target_url)
+                yield f'event: thinking\ndata: {json.dumps({"status": "reading", "url": target_url})}\n\n'
+                await asyncio.sleep(0)
+                
+                try:
+                    page_data = await asyncio.wait_for(
+                        fetch_jina_reader(target_url),
+                        timeout=4.0
+                    )
+                    if page_data.get("url"):
+                        sources.append({"title": page_data.get("title") or page_data.get("url"), "uri": page_data.get("url")})
+                    
+                    content_body = page_data.get("markdown", "").strip() or page_data.get("description", "").strip()
+                    if content_body:
+                        safe_body = content_body[:4000] + ("\n...(略)" if len(content_body) > 4000 else "")
+                        grounding_context_text += (
+                            f"\n\n[系統即時解析外部網頁資訊 (來源: {target_url})]\n"
+                            f"標題: {page_data.get('title', '')}\n"
+                            f"內容摘要:\n{safe_body}\n"
+                            f"[/系統即時解析外部網頁資訊]\n"
+                        )
+                except Exception as prefetch_err:
+                    print(f"⚠️ [StreamChat] URL 主動預爬取失敗 (平滑降級): {prefetch_err}")
+
+        # 🟢 將 Grounding Context 安全附加於 User 訊息，徹底免疫 thought_signature 400 協議報錯
+        user_prompt_text = message
+        if grounding_context_text:
+            user_prompt_text = f"{grounding_context_text}\n使用者需求：{message}"
+
         # 🟢 修復連續 User 訊息錯誤 (400 Bad Request): 
         # 如果最後一筆是 user (例如剛剛補上的 functionResponse)，直接合併 text part，不要新增 Content
         if chat_history and chat_history[-1].role == "user":
-            chat_history[-1].parts.append(genai.types.Part.from_text(text=message))
+            chat_history[-1].parts.append(genai.types.Part.from_text(text=user_prompt_text))
             contents = chat_history
         else:
             contents = chat_history + [genai.types.Content(
                 role="user",
-                parts=[genai.types.Part.from_text(text=message)]
+                parts=[genai.types.Part.from_text(text=user_prompt_text)]
             )]
         
         # 嘗試路由陣列中的每個模型 (使用智慧路由：含熔斷與 Gemma 備援)
-        effective_routing = build_effective_routing("CHAT", DAILY_ROUTING)
+        effective_routing = build_effective_routing(detected_intent, DAILY_ROUTING)
         stream_success = False
         full_text = ""
         collected_thought_signature = None
         collected_function_calls = []  # 🟢 準備收集所有 Function Calls
         for i, candidate_model in enumerate(effective_routing):
             try:
-                safe_config = sanitize_config_for_model(stream_config, candidate_model, intent_type="CHAT")
+                safe_config = sanitize_config_for_model(stream_config, candidate_model, intent_type=detected_intent)
                 model_name = candidate_model
                 label = "[BRAIN] Primary" if i == 0 else f"[REF] Fallback #{i}"
-                print(f"{label} Stream: {candidate_model}")
+                print(f"{label} Stream: {candidate_model} (Intent: {detected_intent})")
                 
+                # 🌐 2026: 雙軌在地與全球搜尋 Grounding 閉環 (Dual-Track Local & Global Grounding)
+                # 若已主動預爬取獲取了所有網址資料，且無額外搜尋關鍵字，可略過降低延遲
+                if detected_intent == "SEARCH" and safe_config.tools and not fetched_urls:
+                    search_query = None
+                    site_filter = None
+                    first_pass_fc = None
+                    first_pass_candidate = None
+
+                    try:
+                        # 策略 1: 優先嘗試由 Gemini First-Pass 提煉精確搜尋詞 (mode=ANY 強制鎖定 search_web)
+                        force_config = copy.deepcopy(safe_config)
+                        force_config.tool_config = genai.types.ToolConfig(
+                            function_calling_config=genai.types.FunctionCallingConfig(
+                                mode=genai.types.FunctionCallingConfigMode.ANY,
+                                allowed_function_names=["search_web", "fetch_webpage"]
+                            )
+                        )
+                        first_pass = await asyncio.wait_for(
+                            client.aio.models.generate_content(
+                                model=candidate_model,
+                                contents=contents,
+                                config=force_config,
+                            ),
+                            timeout=3.0
+                        )
+                        if first_pass and hasattr(first_pass, 'function_calls') and first_pass.function_calls:
+                            for fc in first_pass.function_calls:
+                                if fc.name == "search_web":
+                                    search_query = fc.args.get("query", message) if fc.args else message
+                                    site_filter = fc.args.get("site_filter") if fc.args else None
+                                    first_pass_fc = fc
+                                    if first_pass.candidates:
+                                        first_pass_candidate = first_pass.candidates[0].content
+                                    break
+                                elif fc.name == "fetch_webpage":
+                                    target_url = fc.args.get("url", "") if fc.args else ""
+                                    if target_url and target_url not in fetched_urls:
+                                        yield f'event: thinking\ndata: {json.dumps({"status": "reading", "url": target_url})}\n\n'
+                                        await asyncio.sleep(0)
+                                        page_data = await fetch_jina_reader(target_url)
+                                        if page_data.get("url"):
+                                            sources.append({"title": page_data.get("url"), "uri": page_data.get("url")})
+                                        if first_pass.candidates and first_pass.candidates[0].content:
+                                            contents.append(first_pass.candidates[0].content)
+                                            contents.append(genai.types.Content(
+                                                role="user",
+                                                parts=[genai.types.Part.from_function_response(
+                                                    name="fetch_webpage",
+                                                    response=page_data
+                                                )]
+                                            ))
+                    except Exception as first_pass_err:
+                        print(f"⚠️ [StreamChat] First-Pass 未能產生搜尋詞 ({first_pass_err})，啟動雙軌在地與全球檢索...")
+
+                    # 雙軌目的地識別與關鍵字生成 (在地論壇/官網 + 全球旅人社群)
+                    local_q, global_q, dest_meta = generate_dual_queries(eval_message, history=history)
+                    dest_code = dest_meta.get("destination_code", "GLOBAL")
+                    dest_name = dest_meta.get("matched_destination", "當地")
+
+                    # 執行搜尋策略：
+                    # 若 First-Pass 產出了特定 Function Call (例如指定單一 query)，優先呼叫單一檢索以保持相容性；
+                    # 若為直通 Fallback 或多面向檢索，啟動 150ms 間隔的雙軌在地與全球深搜
+                    raw_search_results = []
+                    if first_pass_fc and search_query:
+                        yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": search_query})}\n\n'
+                        await asyncio.sleep(0)
+                        raw_search_results = await execute_web_search(search_query, site_filter=site_filter)
+                    else:
+                        yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": f"{dest_name}: {local_q} | {global_q}"})}\n\n'
+                        await asyncio.sleep(0)
+                        # 1. 在地深搜
+                        local_results = await execute_web_search(local_q, max_results=3)
+                        # 🛡️ 150ms 錯峰保護，避免 DuckDuckGo 觸發 429 頻率限制
+                        await asyncio.sleep(0.15)
+                        # 2. 全球旅人檢索
+                        global_results = await execute_web_search(global_q, max_results=3)
+                        raw_search_results = local_results + global_results
+                        if not raw_search_results:
+                            fallback_q = dest_meta.get("clean_query", eval_message)
+                            raw_search_results = await execute_web_search(fallback_q, max_results=4)
+
+                    # 🛡️ AC-2: 雜訊黑名單過濾 (剔除政治/警察/研討會) 與網域分類
+                    cleaned_search_data = classify_and_filter_results(raw_search_results, eval_message, dest_code=dest_code)
+                    candidate_sources = cleaned_search_data[:5]
+
+                    for idx, s_item in enumerate(candidate_sources, 1):
+                        s_item["citation_index"] = idx
+                        sources.append({
+                            "title": s_item.get("title", "網頁來源"),
+                            "uri": s_item.get("url", ""),
+                            "citation_index": idx,
+                            "category": s_item.get("category"),
+                            "badge": s_item.get("badge")
+                        })
+
+                    # 🟢 若 First Pass 有正常的 candidate 與 function call，使用標準 FunctionResponse 閉環
+                    if first_pass_candidate and first_pass_fc:
+                        contents.append(first_pass_candidate)
+                        contents.append(genai.types.Content(
+                            role="user",
+                            parts=[genai.types.Part.from_function_response(
+                                name="search_web",
+                                response={"results": candidate_sources}
+                            )]
+                        ))
+                    elif candidate_sources:
+                        # 🟢 雙軌在地與全球 Grounding 注入：附帶序號錨定與分類標籤
+                        local_items = [c for c in candidate_sources if c.get("category") in ("official", "local_forum", "review")]
+                        global_items = [c for c in candidate_sources if c.get("category") in ("global_forum", "general") or c not in local_items]
+                        
+                        grounding_text = f"\n\n[即時網路搜尋結果 (雙軌在地與全球情報)]\n目的地: {dest_name}\n"
+                        if local_items:
+                            grounding_text += "【📍 在地視角情報 (Local Perspective)】\n"
+                            for item in local_items:
+                                b_text = item.get("badge", {}).get("text", "在地情報")
+                                grounding_text += f"[{item['citation_index']}] 《{item.get('title')}》: {item.get('snippet')} (網址: {item.get('url')}) [{b_text}]\n"
+                        if global_items:
+                            grounding_text += "\n【🌐 全球旅人情報 (Global Perspective)】\n"
+                            for item in global_items:
+                                b_text = item.get("badge", {}).get("text", "國際情報")
+                                grounding_text += f"[{item['citation_index']}] 《{item.get('title')}》: {item.get('snippet')} (網址: {item.get('url')}) [{b_text}]\n"
+
+                        grounding_text += """
+【嚴格雙重視角引用與對齊指示】：
+1. 你的回答必須**嚴格依據上述搜尋結果**。請對比或整合【📍 在地視角】與【🌐 全球旅人觀點】進行客觀推薦。
+2. 當提及具體事實、景點或推薦時，請在句末標註對應的來源編號（例如：在地人推薦這家拉麵[1]，而國際社群普遍建議[3]...）。
+3. 嚴禁內文與來源脫節（各說各話）。你提及的內容必須能從對應的來源編號中得到印證。若某來源與旅遊無關，切勿採用。
+[/即時網路搜尋結果]\n"""
+                        if contents and contents[-1].role == "user":
+                            contents[-1].parts.append(genai.types.Part.from_text(text=grounding_text))
+                        else:
+                            contents.append(genai.types.Content(
+                                role="user",
+                                parts=[genai.types.Part.from_text(text=grounding_text)]
+                            ))
+
+                # 🛡️ 關鍵守護：若為 SEARCH 意圖，搜尋已完成且資料已注入 contents，清空 tools 強制模型生成文字回答，嚴禁再次調用工具
+                if detected_intent == "SEARCH":
+                    safe_config.tools = None
+
                 async for chunk in await client.aio.models.generate_content_stream(
                     model=candidate_model,
                     contents=contents,
@@ -1065,7 +1328,8 @@ async def stream_chat_generator(
                         
                     if fcs:
                         for fc in fcs:
-                            fc_id = getattr(fc, 'id', None)
+                            raw_id = getattr(fc, 'id', None)
+                            fc_id = str(raw_id) if raw_id is not None and not isinstance(raw_id, (str, int)) else raw_id
                             fc_payload = {
                                 "name": fc.name,
                                 "args": dict(fc.args) if fc.args else {},
@@ -1099,6 +1363,17 @@ async def stream_chat_generator(
             yield f'event: error\ndata: {json.dumps({"message": "所有模型均不可用", "code": 503})}\n\n'
             return
         
+        # 🛡️ 兜底保障：若模型未輸出文字，但已有搜尋結果，自動從搜尋來源合成回答，杜絕空白回答
+        if not full_text and sources:
+            fallback_reply = "為您查詢到以下即時資訊：\n\n"
+            for s in sources[:3]:
+                title = s.get("title", "相關資訊")
+                uri = s.get("uri", "")
+                fallback_reply += f"• **{title}**\n  {uri}\n\n"
+            full_text = fallback_reply
+            yield f'event: text\ndata: {json.dumps({"text": fallback_reply})}\n\n'
+            await asyncio.sleep(0)
+
         # 🟢 重構：將 function_calls 與 thought_signature 合併回 raw_parts 以供歷史紀錄與前端使用
         raw_parts = []
         if full_text:
@@ -1130,14 +1405,30 @@ async def stream_chat_generator(
                                 "type": "maps"
                             })
         
-        # 發送完成事件（含引文來源，確保格式統一為 {title, uri}）
+        # 發送完成事件（含引文來源，確保格式統一為 {title, uri, citation_index, category, badge}）
         final_sources = []
-        raw_collection = citations or sources or []
-        for s in raw_collection:
-            final_sources.append({
-                "title": s.get("title", "Source"),
-                "uri": s.get("uri") or s.get("url") or ""
-            })
+        if candidate_sources:
+            # 🛡️ AC-4: 嚴格 1對1 引文對齊與索引錨定
+            final_sources = prune_and_align_citations(full_text, candidate_sources)
+            if not final_sources:
+                for s in candidate_sources[:2]:
+                    final_sources.append({
+                        "citation_index": s.get("citation_index", 1),
+                        "title": s.get("title", "Source"),
+                        "uri": s.get("url") or s.get("uri", ""),
+                        "category": s.get("category"),
+                        "badge": s.get("badge")
+                    })
+        else:
+            raw_collection = citations or sources or []
+            for s in raw_collection:
+                final_sources.append({
+                    "title": s.get("title", "Source"),
+                    "uri": s.get("uri") or s.get("url") or "",
+                    **({"citation_index": s.get("citation_index")} if s.get("citation_index") else {}),
+                    **({"category": s.get("category")} if s.get("category") else {}),
+                    **({"badge": s.get("badge")} if s.get("badge") else {})
+                })
 
         done_data = {
             "model_used": model_name,
@@ -1325,17 +1616,23 @@ async def chat_stream(request: Request, body: ChatRequest, api_key: str = Depend
     enriched_message = safe_message
     poi_sources = []  # 🆕 v3.7.1: 收集來源 URLs
     try:
-        # 偵測景點相關關鍵字 (簡單方法: 檢查是否包含景點名稱模式)
+        # 🌐 全球景點後綴與特徵庫 (涵蓋東西方歷史建築、文化場館、自然地理與交通地標)
         poi_keywords = ["怎麼樣", "推薦", "介紹", "告訴我", "什麼", "好玩", "好吃", "值得"]
-        place_indicators = ["寺", "神社", "城", "塔", "公園", "站", "車站", "廟", "宮", "殿", "館", "園"]
+        place_indicators = [
+            "寺", "神社", "廟", "宮", "殿", "堂", "教堂", "大教堂", "座堂", "修道院", "清真寺",
+            "城", "城堡", "堡", "塔", "鐵塔", "門", "凱旋門", "遺址", "古蹟",
+            "館", "博物館", "美術館", "劇院", "歌劇院", "展覽館", "園", "公園", "花園", "植物園", "動物園",
+            "廣場", "街", "老街", "大道", "市集", "市場", "碼頭", "港", "港口", "橋", "大橋",
+            "山", "峰", "湖", "潭", "海灘", "沙灘", "島", "群島", "半島", "海灣", "峽谷", "大峽谷", "瀑布",
+            "站", "車站", "機場", "航廈"
+        ]
         
         has_poi_question = any(kw in body.message for kw in poi_keywords)
         has_place = any(ind in body.message for ind in place_indicators)
         
         if has_poi_question and has_place:
-            # 嘗試提取景點名稱 (簡單方法: 找到包含指示詞的詞)
-            # 尋找景點名稱: 2-10 個中文字符，後面跟著指示詞
-            place_pattern = r'([\u4e00-\u9fa5]{2,10}(?:寺|神社|城|塔|公園|站|車站|廟|宮|殿|館|園))'
+            indicator_regex = "|".join(place_indicators)
+            place_pattern = rf'([\u4e00-\u9fa5A-Za-z0-9\s]{{2,12}}(?:{indicator_regex}))'
             matches = re.findall(place_pattern, body.message)
             
             if matches:
@@ -1386,6 +1683,7 @@ async def chat_stream(request: Request, body: ChatRequest, api_key: str = Depend
             api_key=api_key,
             history=full_history,
             message=final_message,
+            raw_user_message=body.message,  # 🆕 傳入未污染的使用者真實輸入
             thought_signatures=body.thought_signatures,
             sources=poi_sources,  # 🆕 v3.7.1: 傳遞來源
             system_instruction=system_instruction_payload

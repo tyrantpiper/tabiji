@@ -239,7 +239,7 @@ REMOVE_ITINERARY_DECL = types.FunctionDeclaration(
 
 ADD_EXPENSE_DECL = types.FunctionDeclaration(
     name="add_expense",
-    description="Add a new estimated expense to the user's daily budget.",
+    description="Record a confirmed expense or explicit logging request to the user's travel expense tracker. ONLY invoke when the user explicitly requests to record or log an expense (e.g., '記帳', '幫我記一筆', '花了xxx'). DO NOT invoke for price inquiries, general questions, or search requests.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -273,6 +273,53 @@ ADD_ITINERARY_TOOL = types.Tool(function_declarations=[ADD_ITINERARY_DECL])
 REMOVE_ITINERARY_TOOL = types.Tool(function_declarations=[REMOVE_ITINERARY_DECL])
 EXPENSE_TOOL = types.Tool(function_declarations=[ADD_EXPENSE_DECL])
 
+# 🌐 2026 零成本聯網搜尋與網頁閱讀工具宣告
+SEARCH_WEB_DECL = types.FunctionDeclaration(
+    name="search_web",
+    description="Search the live internet for up-to-date travel information, real-time ticket prices, opening hours, weather, or recent news.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "query": types.Schema(
+                type=types.Type.STRING,
+                description="Search query terms (e.g., 'Tokyo Skytree opening hours', 'Shinjuku Gyoen weather today')."
+            ),
+            "site_filter": types.Schema(
+                type=types.Type.STRING,
+                description="Optional domain to restrict search to (e.g., 'tokyo-skytree.jp', 'tabelog.com')."
+            )
+        },
+        required=["query"]
+    )
+)
+
+FETCH_WEBPAGE_DECL = types.FunctionDeclaration(
+    name="fetch_webpage",
+    description="Read and extract clean markdown text from a specific web URL (official sites, blog posts, travel guides).",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "url": types.Schema(
+                type=types.Type.STRING,
+                description="The complete http/https URL to read."
+            ),
+            "wait_for_selector": types.Schema(
+                type=types.Type.STRING,
+                description="Optional CSS selector to wait for before extracting (useful for dynamic single-page applications)."
+            ),
+            "target_selector": types.Schema(
+                type=types.Type.STRING,
+                description="Optional CSS selector to narrow down extraction to a specific article or table container."
+            )
+        },
+        required=["url"]
+    )
+)
+
+SEARCH_WEB_TOOL = types.Tool(function_declarations=[SEARCH_WEB_DECL])
+FETCH_WEBPAGE_TOOL = types.Tool(function_declarations=[FETCH_WEBPAGE_DECL])
+SEARCH_TOOLS = [types.Tool(function_declarations=[SEARCH_WEB_DECL, FETCH_WEBPAGE_DECL])]
+
 # 組合工具集 (維持既有引用相容)
 NEURAL_LINK_TOOLS = [
     types.Tool(
@@ -284,11 +331,36 @@ NEURAL_LINK_TOOLS = [
     )
 ]
 
+# 🌐 2026: 全功能神經連結 + 聯網工具集 (行程/刪除/記帳/搜尋/精讀一應俱全)
+ALL_CHAT_TOOLS = [
+    types.Tool(
+        function_declarations=[
+            ADD_ITINERARY_DECL,
+            REMOVE_ITINERARY_DECL,
+            ADD_EXPENSE_DECL,
+            SEARCH_WEB_DECL,
+            FETCH_WEBPAGE_DECL,
+        ]
+    )
+]
+
+# 🌐 2026: 搜尋專屬工具集 (徹底排除 ADD_EXPENSE_DECL，杜絕搜尋態誤彈記帳卡片)
+SEARCH_CHAT_TOOLS = [
+    types.Tool(
+        function_declarations=[
+            ADD_ITINERARY_DECL,
+            REMOVE_ITINERARY_DECL,
+            SEARCH_WEB_DECL,
+            FETCH_WEBPAGE_DECL,
+        ]
+    )
+]
+
 # 意圖分群
 INTENTS_REQUIRING_JSON = {"EXTRACTION", "PLANNING"}
 INTENTS_ALLOW_GEMMA_LAST_RESORT = {
     "PLANNING", "SUMMARIZE", "POI_ENRICH", "DIAGNOSIS", "CHAT", "GEOCODE",
-    "ITINERARY", "REMOVE_ITINERARY", "EXPENSE", "COMPOSITE", "INTENT_PARSE"
+    "ITINERARY", "REMOVE_ITINERARY", "EXPENSE", "COMPOSITE", "INTENT_PARSE", "SEARCH"
 }
 
 
@@ -564,8 +636,11 @@ def sanitize_config_for_model(
     if hasattr(safe, 'media_resolution') and not caps.supports_media_resolution:
         safe.media_resolution = None
 
-    # 3. 🚀 2026 搜尋與地圖雙增強注入 (僅限 Gemini 家族與非結構化任務)
-    if caps.family == "gemini" and caps.supports_grounding and intent_type in ["CHAT", "DIAGNOSIS", "ITINERARY", "COMPOSITE"]:
+    # 3. 🚀 2026 搜尋與地圖雙增強注入 (僅限非自定義 SEARCH 意圖，防禦免費 Key 觸發 400 崩潰)
+    if intent_type == "SEARCH":
+        # 🛡️ 嚴格約束：若為 SEARCH 意圖，純粹使用我們的自定義零成本 search_web 工具，絕對禁止追加 Google 原生付費 Grounding
+        pass
+    elif caps.family == "gemini" and caps.supports_grounding and intent_type in ["CHAT", "DIAGNOSIS", "ITINERARY", "COMPOSITE"]:
         if not safe.tools:
             safe.tools = []
         # 2026 官方 Tool Combination: 同時注入 Google Search 與 Google Maps
@@ -1061,7 +1136,48 @@ def build_chat_history(history: List[Dict]) -> List[types.Content]:
                 parts=sdk_parts
             ))
 
-    return chat_history
+    return sanitize_dangling_tool_calls(chat_history)
+
+
+def sanitize_dangling_tool_calls(chat_history: List[types.Content]) -> List[types.Content]:
+    """
+    🛡️ 修復歷史紀錄中的懸空 Function Call，防止 Gemini 400 Bad Request
+    規則：若 Content(role='model') 包含 function_call，但下一則 Content 並非對應的 function_response，
+    自動補齊合成的 function_response (status: 'client_handled')。
+    """
+    sanitized: List[types.Content] = []
+    i = 0
+    while i < len(chat_history):
+        content = chat_history[i]
+        sanitized.append(content)
+        if content.role == "model":
+            pending_fcs = [
+                part.function_call for part in content.parts 
+                if hasattr(part, 'function_call') and part.function_call
+            ]
+            if pending_fcs:
+                # 檢查下一個 Content 是否已為包含 function_response 的 user content
+                next_content = chat_history[i + 1] if i + 1 < len(chat_history) else None
+                has_response = (
+                    next_content is not None and 
+                    next_content.role == "user" and 
+                    any(hasattr(p, 'function_response') and p.function_response for p in next_content.parts)
+                )
+                if not has_response:
+                    # 自動補齊合法的對稱 response (附帶匹配的 call id 與 name)
+                    dummy_responses = [
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name=fc.name,
+                                response={"status": "client_handled", "note": "Processed by client UI"},
+                                id=getattr(fc, 'id', None)
+                            )
+                        )
+                        for fc in pending_fcs
+                    ]
+                    sanitized.append(types.Content(role="user", parts=dummy_responses))
+        i += 1
+    return sanitized
 
 
 def _extract_response(response, model_used: str) -> Dict[str, Any]:
