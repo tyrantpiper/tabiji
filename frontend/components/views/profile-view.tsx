@@ -31,7 +31,7 @@ import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { debugLog } from "@/lib/debug"
-import { usersApi, appApi } from "@/lib/api"
+import { usersApi, appApi, API_HOST } from "@/lib/api"
 import type { UserPreference } from "@/lib/api"
 import { UsageGuideDialog } from "@/components/UsageGuideDialog"
 import { UsageGuideContent } from "@/components/UsageGuideContent"
@@ -374,8 +374,7 @@ export function ProfileView() {
             const userId = localStorage.getItem("user_uuid")
             if (!userId) throw new Error(t('profile_user_not_found'))
 
-            const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://tyrantpiper-ryan-travel-api.hf.space"
-            const res = await fetch(`${API_BASE}/api/user/${userId}/data`, {
+            const res = await fetch(`${API_HOST}/api/user/${userId}/data`, {
                 method: "DELETE",
                 headers: {
                     "X-User-ID": userId

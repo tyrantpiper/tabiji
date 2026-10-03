@@ -1,10 +1,8 @@
 import useSWR from "swr"
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { travelDataApi } from './api'
+import { travelDataApi, API_HOST } from './api'
 import { getTripSnapshotSync, saveTripSnapshot, preloadTripSnapshot, getTripsListSnapshotSync, preloadTripsListSnapshot, saveTripsListSnapshot } from './idb-storage'
 import type { Trip } from './itinerary-types'
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008"
 
 
 import { toast } from "sonner"
@@ -17,7 +15,7 @@ export class HttpError extends Error {
 }
 
 export const fetcherWithUserId = ([url, uid]: [string, string]) =>
-    fetch(API_BASE + url, { headers: { "X-User-ID": uid } })
+    fetch(API_HOST + url, { headers: { "X-User-ID": uid } })
         .then(async r => {
             if (!r.ok) {
                 const errorBody = await r.json().catch(() => ({}))
@@ -93,7 +91,7 @@ export function useTripDetail(
     const { data, error, mutate, isValidating } = useSWR<any>(
         swrKey,
         ([url, uid]: [string, string]) =>
-            fetch(API_BASE + url, {
+            fetch(API_HOST + url, {
                 headers: { "X-User-ID": uid }
             }).then(async r => {
                 if (!r.ok) {

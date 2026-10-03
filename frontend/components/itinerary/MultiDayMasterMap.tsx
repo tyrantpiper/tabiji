@@ -28,9 +28,7 @@ import { toast } from "sonner"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { MapControlCapsule } from "@/components/MapControlCapsule"
-
-// API 基礎路徑 (模組頂部常數化，避免在並行閉包內重複解析 process.env)
-const ROUTE_API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008"
+import { API } from "@/lib/api"
 
 interface MultiDayMasterMapProps {
     trip?: Trip
@@ -381,7 +379,7 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
             globalController.signal.addEventListener('abort', onGlobalAbort, { once: true })
 
             try {
-                const res = await fetch(`${ROUTE_API_BASE}/api/route`, {
+                const res = await fetch(API.ROUTE, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({

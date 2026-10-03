@@ -34,7 +34,7 @@ import { useExpenses, useHaptic, useTripDetail } from "@/lib/hooks"
 import { useTargetExpenseId, useTripStore } from "@/lib/stores/tripStore"
 import { debugLog } from "@/lib/debug"
 import { ExpenseDialog } from "@/components/expense-dialog"
-import { expensesApi, tripsApi, aiApi } from "@/lib/api"
+import { expensesApi, tripsApi, aiApi, API_HOST } from "@/lib/api"
 import { ActuaryDialogCard } from "@/components/ActuaryDialogCard"
 import { useOfflineMutation } from "@/lib/sync-hooks"
 import { SyncStatusBadge } from "@/components/ui/SyncStatusBadge"
@@ -103,8 +103,6 @@ interface ExpenseItemProps {
     onDelete: (id: string) => void
     isHighlighted?: boolean
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008"
 
 const PAYMENT_METHODS = [
     { id: "Cash", label: "Cash", icon: Wallet, color: "text-green-600" },
@@ -339,7 +337,7 @@ export function ToolsView() {
         setIsSharing(true)
         try {
             const userId = localStorage.getItem("user_uuid") || ""
-            const res = await fetch(`${API_BASE}/api/trips/${activeTripId}/ledger-share`, {
+            const res = await fetch(`${API_HOST}/api/trips/${activeTripId}/ledger-share`, {
                 method: "PATCH",
                 headers: { "x-user-id": userId }
             })
@@ -398,7 +396,7 @@ export function ToolsView() {
         try {
             // 🧠 v4.1: Integrate with Offline Engine & Atomic RPC
             const userId = localStorage.getItem("user_uuid") || ""
-            const url = `${API_BASE}/api/trips/${activeTripId}/info`
+            const url = `${API_HOST}/api/trips/${activeTripId}/info`
             const payload = {
                 credit_cards: mergedSharedCards // 🕵️ Forensic Fix: Send ONLY cards to prevent clobbering
             }
