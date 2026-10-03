@@ -2,7 +2,7 @@
 
 > **報告目標**: 提供《iOS 26 Liquid Glass 智慧伴侶重塑》之超微步（Micro-Step）拆解與程式碼精確行號對照，徹底杜絕任何業務邏輯、自癒機制或功能組件被意外刪改。  
 > **目標檔案**: `frontend/components/chat-widget.tsx` (共 1063 行)  
-> **關聯規格**: `docs/specs/ios-liquid-glass-chat-spec.md`
+> **關聯規格**: [`docs/specs/ui-motion/ios-liquid-glass-chat-spec.md`](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ui-motion/ios-liquid-glass-chat-spec.md)
 
 ---
 

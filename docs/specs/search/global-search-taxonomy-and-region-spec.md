@@ -2,7 +2,7 @@
 
 > **版本**: 1.0.0  
 > **狀態**: 草案審核通過 / 待實作 (Ready for Implementation)  
-> **關聯規範**: [DDGS Multi-Engine Spec](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ddgs-multi-engine-and-query-slimming-spec.md) | [Realtime Temporal Spec](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/realtime-temporal-awareness-spec.md)
+> **關聯規範**: [DDGS Multi-Engine Spec](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/search/ddgs-multi-engine-and-query-slimming-spec.md) ([相對路徑](./ddgs-multi-engine-and-query-slimming-spec.md)) | [Realtime Temporal Spec](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ai/realtime-temporal-awareness-spec.md) ([相對路徑](../ai/realtime-temporal-awareness-spec.md))
 
 ---
 

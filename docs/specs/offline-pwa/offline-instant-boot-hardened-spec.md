@@ -2,7 +2,7 @@
 
 > **版本**：v1.0.0  
 > **目標**：根治 iOS Standalone PWA 刷掉後斷網重新打開卡死在純白屏（Deadlock/Crash）的缺陷，達成 100% 確定性的 0 網路離線瞬間啟動。  
-> **關聯規格**：[`offline-first-instant-boot-spec.md`](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/offline-first-instant-boot-spec.md)
+> **關聯規格**：[`offline-first-instant-boot-spec.md`](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/offline-pwa/offline-first-instant-boot-spec.md) ([同目錄相對路徑](./offline-first-instant-boot-spec.md))
 
 ---
 
