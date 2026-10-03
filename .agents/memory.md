@@ -111,6 +111,7 @@
 - **PWA 本地資料沙箱雙軌共存原則 (Dual-Active PWA Storage Preservation over Forced Redirect)**: 瀏覽器 Local-First 存儲（IndexedDB / Cache Storage）受限於同源策略（Same-Origin Policy）。在新網域上線時若對舊網域（`travel-pwa-five.vercel.app`）實施強制 308 重定向，已安裝於手機桌面的老使用者將因 Origin 變更而遺失本機歷史行程。確立舊網域保持運作並透過伺服端同源代理呼叫後端，維持雙軌共存與資料安全。
 - **多態 API Host 衍生與尾部斜線防禦架構 (Polymorphic API Host Derivation & Defensive Slash Sanitization)**: 前端 `getApiHost()` 在客戶端瀏覽器環境回傳空字串 `""`，伺服端優先回退 `INTERNAL_BACKEND_URL` / `NEXT_PUBLIC_API_URL`；所有網址必須經過正則清除尾部斜線（`replace(/\/+$/, '')`），杜絕反向代理下雙斜線（`//api/...`）解析失誤。
 - **規格文件領域驅動拓撲化原則 (Domain-Driven Specification Hierarchy over Flat Spec Dumping)**: 規格文件全量依領域驅動（DDD）劃分為 6 大目錄（`ai`, `business`, `core-architecture`, `infra`, `search`, `ui-motion`），並建立頂層導航矩陣 `docs/specs/README.md`，杜絕平鋪檔案過多造成的維護退化。
+- **多網域圖片邊緣代理全源放行與 CORS 注入標準 (Multi-Origin Media Proxy & CORS Injection)**: 邊緣反向代理 Worker（如 `cloudinary-proxy`）在實施防盜鏈檢查時，嚴禁單一寫死舊版 Vercel 網域。必須動態支援主網域 `tabijiapp.com`、`www.tabijiapp.com`、舊站與本地開發環境，並相容手機 Standalone PWA 無 Referer 模式；同時強制注入 `Access-Control-Allow-Origin: *`，防止 Canvas Tainted 污染破壞 PDF 行程匯出。
 
 ---
 
