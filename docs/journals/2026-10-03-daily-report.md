@@ -1,7 +1,9 @@
 # 📅 Daily Report - 2026-10-03
 
-> **系統狀態**：🟢 Production Stable, Custom Domain `tabijiapp.com` Live, Zero-Cost Same-Origin Edge Shield Deployed on Cloudflare Anycast, Google Front End (GFE) 404 Routed via Dynamic Host Rewrite, Dual-Active PWA Storage Preserved, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Backend 95/95, Frontend 257/257, Total 352/352 Tests Passing)  
+> **系統狀態**：🟢 Production Stable, Custom Domain `tabijiapp.com` Live, Zero-Cost Same-Origin Edge Shield Deployed on Cloudflare Anycast, Google Front End (GFE) 404 Routed via Dynamic Host Rewrite, Cloudflare Image Proxy Multi-Origin Whitelisted with CORS Injection, Dual-Active PWA Storage Preserved, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Backend 95/95, Frontend 257/257, Total 352/352 Tests Passing)  
 > **今日關鍵提交串列 (Full Day Commit Stream)**：
+> - [`2acf235`](https://github.com/tyrantpiper/travel-pwa/commit/2acf235) `fix(infra): allow custom domain in cloudinary proxy and inject cors headers`
+> - [`3f5abc5`](https://github.com/tyrantpiper/travel-pwa/commit/3f5abc50c8e3e4a29aefb20ccefcbbec6fbfca26) `docs(daily-report): record custom domain and same-origin edge shield memory`
 > - [`ea26adc`](https://github.com/tyrantpiper/travel-pwa/commit/ea26adc8843e4169b435151ca8ed844b6f65747a) `chore(infra): add tabijiapp-edge-shield worker configuration`
 > - [`7da4795`](https://github.com/tyrantpiper/travel-pwa/commit/7da4795c9803569dfcacf3cfdb11d32434da933b) `feat(infra): implement same-origin edge shield and register tabijiapp.com`
 > - [`f4b496d`](https://github.com/tyrantpiper/travel-pwa/commit/f4b496d96aedb081ce00a725c83c1269155022d0) `docs(hierarchy): standardize reports, research, and screenshots with asset isolation and master navigation`
@@ -25,6 +27,12 @@
    - 攻克 Google Cloud Run 多租戶路由器 GFE（Google Front End）拒絕非 `*.run.app` 主機名稱導致的 404 退件死穴；繞過 Cloudflare 需每月 2,000 美元企業版方可解鎖 Origin Rules Host Rewrite 的付費牆，利用免費 Cloudflare Worker（`tabijiapp-edge-shield`）在邊緣節點動態重寫 `Host` 標頭為真實 Cloud Run 服務網址，達成 0 成本完美轉發。
    - 精準實裝 Vercel 本地 API 旁路白名單（`/api/sign-cloudinary`, `/api/parse-receipt` 直通 Vercel Edge，其餘 `/api/*` 直達 Cloud Run）。
    - 深入洞察 W3C Storage Origin 沙箱邊界，果斷否決暴力 308 重定向，保留舊網域 `travel-pwa-five.vercel.app` 獨立存活，100% 捍衛已安裝在手機桌面使用者的 IndexedDB / localStorage 本機資料。
+
+3. **夜間加固（雙網域全功能對齊與 Cloudflare 圖片代理全源穿透）**：
+   - 深度排查新網域 `www.tabijiapp.com` 點擊「抓取街景」後卡片破圖消失之 Bug。
+   - 快速定位根因為 Cloudflare Worker `cloudinary-proxy` 之 Referer 防盜鏈白名單僅允許舊站 `travel-pwa-five.vercel.app` 與 localhost，發出 403 阻斷引發前端 `<Image onError>` 隱藏卡片相片。
+   - 升級 Worker 邏輯：動態支援主網域 `tabijiapp.com`、`www.tabijiapp.com`、舊站與本地開發，放行 PWA Standalone 模式（無 Referer/Origin），並注入 `Access-Control-Allow-Origin: *` 防禦 PDF / Canvas 匯出污染。
+   - 遵循 Bug Hunter 規範進行 Red-Green TDD 迴圈，並以 Chrome DevTools MCP 實機驗收，消除全部 403 報錯，新舊網域十維度功能完全對齊。
 
 全系統通過 352 項自動化測試（後端 Pytest 95/95 通過，前端 Vitest 257/257 通過），TypeScript 與 ESLint 保持 0 錯誤底線，線上端到端即時撥測全部綠燈。
 
@@ -139,6 +147,12 @@ flowchart TD
   - `docs/specs/infra/tabijiapp-cloudflare-setup-sop-spec.md`
 - 規格文件全面歸檔至以領域驅動（DDD）為核心的 6 大維度，建立完整矩陣導航。
 
+### 7. Cloudflare 圖片邊緣代理全源放行與 CORS 標頭注入 (`cloudinary-proxy`)
+- 升級 Cloudflare Worker `cloudinary-proxy`，白名單從寫死單一 Vercel 網域擴展為動態陣列：`tabijiapp.com`、`www.tabijiapp.com`、`travel-pwa-five.vercel.app`、`localhost`、`127.0.0.1` 與任意 `*.vercel.app`。
+- 支援手機 PWA Standalone 與防追蹤嚴格隱私模式（空 Referer / 空 Origin 自動安全放行）。
+- 全面注入 `Access-Control-Allow-Origin: *`、`Access-Control-Allow-Methods: GET, HEAD, OPTIONS` 以及 204 OPTIONS Preflight 預檢處理，杜絕 `html2canvas` 匯出 PDF 時 Canvas Tainted 跨域污染。
+- 專案根目錄納入版本控制：新增 `cloudflare/cloudinary-proxy/worker.js` 與 `wrangler.jsonc`。
+
 ---
 
 ## 🏛️ 2. Architecture Decisions (架構決策紀錄)
@@ -155,6 +169,8 @@ flowchart TD
    - *決策理由*：環境變數可能由不同維運人員配置帶有尾部斜線（例如 `https://api.com/`）或不帶斜線。直接拼接 `${apiHost}/api/xxx` 會產生非標準的雙斜線（`//api/xxx`），在部分反向代理下會被解析為通訊協定相對路徑而引發致命錯誤。架構規範：`getApiHost()` 一律經由正則清洗尾部斜線，確保路徑拼接絕對冪等。
 6. **規格文件領域驅動拓撲化原則 (Domain-Driven Specification Hierarchy over Flat Spec Dumping)**:
    - *決策理由*：隨著專案快速擴展，平鋪於單一目錄下的規格檔案已超過 20 份，難以維護與檢索。全面重構為 6 大領域目錄（AI, 商業, 核心架構, 基礎設施, 搜尋, UI動效），並建立帶狀態徽章與對應代碼連結的 README 總覽矩陣。
+7. **多網域圖片邊緣代理全源放行與 CORS 注入標準 (Multi-Origin Media Proxy & CORS Injection)**:
+   - *決策理由*：反向代理 Worker 在實施防盜鏈檢查時，嚴禁單一寫死舊版 Vercel 網域。在新主域名啟用後，必須動態支援多來源比對，並兼容手機 PWA 獨立視窗下不帶 Referer 的情境；同時必須為所有圖片響應注入 `Access-Control-Allow-Origin: *`，防止 Canvas Tainted 污染破壞 PDF 行程表匯出功能。
 
 ---
 
@@ -195,6 +211,22 @@ flowchart TD
    - *現象*：當 Cloudflare 開啟橘色雲朵（Proxied）後，Vercel 網域管理介面彈出黃色警告標籤 `"Proxy Detected: Some features may not work as expected"`。
    - *根因*：Vercel 的日常提醒提示其無法直接取得終端客戶端原始 IP，但 Vercel 底層已全面支援 `Verified Proxy Lite`，只要 Cloudflare 傳遞標準 `CF-Connecting-IP` 標頭，所有 CDN 快取與 SSR 功能完全正常運作。
    - *修復*：確認 Vercel Bot Protection 保持為預設或 Challenge 模式（不設為暴力 Deny），解除偽性焦慮並實測快取命中率與轉址速度。
+6. **Cloudflare Worker 圖片防盜鏈寫死單一網域引發新網域破圖陷阱 (`Hardcoded Proxy Referer Whitelist 403 Trap`)**：
+   - *現象*：使用者在新網域 `www.tabijiapp.com` 點擊「抓取街景」後，雖然跳出成功提示，但行程卡片相片破圖並瞬間隱藏；瀏覽器控制台爆發 13 次 `403 Forbidden`。
+   - *根因*：`cloudinary-proxy` 邊緣 Worker 的防盜鏈白名單僅檢查 `travel-pwa-five.vercel.app` 與 `localhost`，將帶有 `Referer: https://www.tabijiapp.com/` 的請求全部以 403 阻斷。前端 `<Image onError>` 捕捉到錯誤後將卡片隱藏。
+   - *修復*：擴充 Worker 白名單為多網域正則比對，相容 PWA Standalone 模式，實測雙網域加載成功率 100%。
+7. **跨網域圖片缺乏 CORS 標頭引發 Canvas Tainted 污染與 PDF 匯出阻斷陷阱 (`Missing Proxy CORS Canvas Tainted Trap`)**：
+   - *現象*：在進行行程 PDF 匯出時，`html2canvas` 在繪製 Cloudflare Worker 代理的圖片時偶發 `SecurityError: The operation is insecure`。
+   - *根因*：`cloudinary-proxy` 原先僅回傳圖片串流，未顯式注入 `Access-Control-Allow-Origin: *`，導致瀏覽器 Canvas 在匯出時被標記為 Tainted（受污染）而拒絕輸出二進位資料。
+   - *修復*：Worker 在回傳快取命中或遠端抓取的圖片時，一律透過 `cachedResponse.headers.set('Access-Control-Allow-Origin', '*')` 注入標頭，並支援 OPTIONS 204 Preflight。
+
+---
+
+## 🎯 Next Steps
+
+1. **生產流量監控**：持續觀察 Cloudflare Analytics 與 Google Cloud Run Metrics，確認 `tabijiapp.com` 流量分佈、邊緣快取命中率與轉發延遲。
+2. **PWA 安裝體驗驗證**：在 iOS Safari 與 Android Chrome 上透過新網域安裝 PWA，驗證 App 橫幅、離線冷啟動以及圖標完整性。
+3. **推進技術債修復**：排程為 `search-cache.ts` 補齊 LRU 容量上限驅逐邏輯，持續優化行動端效能。
 
 ---
 
