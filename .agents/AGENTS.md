@@ -42,9 +42,10 @@
 - ✅ 必須產出包含 通過/失敗 的總結報表。
 
 ### @security — 安全稽核員 (Security Auditor)
-**專注領域**: 漏洞掃描、依賴套件稽核、威脅建模。
+**專注領域**: 漏洞掃描、依賴套件稽核、威脅建模、Security Sentinel 對抗審查。
 **約束條件**:
-- ✅ 僅產出漏洞報告，交由人類決定修復方案。
+- ✅ 僅產出漏洞報告、In-Memory PoC 與候選補丁 (`patch_candidate.diff`)，交由人類決定修復方案。
+- ✅ 透過 `agy.exe -p --sandbox` 調度背景子代理人進行物理隔離之對抗證偽審查。
 - ✅ 掃描並回報設定檔 (`package.json`, `.env`) 漏洞，保持檔案不變。
 - ✅ 遵守 L0 憲法：「只回報，交由人類修復」。
 
@@ -74,7 +75,7 @@
 - **契約守護**: `/contract-check` (Supabase ⇄ FastAPI ⇄ Next.js 型別同步)
 - **UI 與重構**: `/ui-optimize` (Tailwind v4、Radix a11y、Framer Motion 與 Dry-Run 重構)
 - **地圖與圖形**: `webgl-map-guardian` (MapLibre 圖層宣告拓撲、CSP Worker 靜態管線、大圓航線插值與 GPU 雙向隔離)
-- **資安與升級**: `/security-audit` (漏洞掃描、密鑰檢測與安全依賴升級)
+- **資安與對抗審計**: `/security-audit` (快速依賴掃描，或 `--deep`/`--sentinel` 啟動 Security Sentinel 物理對抗審核)
 - **發布與記憶**: `/push` (全棧品質關卡與神經發布), `/daily-report` (每日報告與記憶融合)
 
 ## 🛡️ Token 最佳化 (延遲載入)

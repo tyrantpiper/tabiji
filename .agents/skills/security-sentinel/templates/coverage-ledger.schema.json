@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecurityCoverageLedger",
+  "type": "object",
+  "required": ["version", "last_audit_date", "statistics", "targets"],
+  "properties": {
+    "version": { "type": "string" },
+    "last_audit_date": { "type": "string" },
+    "audit_mode": { "type": "string" },
+    "statistics": {
+      "type": "object",
+      "required": ["total_targets", "audited_targets", "verified_vulnerabilities", "dismissed_hypotheses"],
+      "properties": {
+        "total_targets": { "type": "integer" },
+        "audited_targets": { "type": "integer" },
+        "verified_vulnerabilities": { "type": "integer" },
+        "dismissed_hypotheses": { "type": "integer" }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "target_type", "trust_boundary", "vectors_checked", "status", "last_checked_commit"],
+        "properties": {
+          "id": { "type": "string" },
+          "target_type": { "type": "string" },
+          "trust_boundary": { "type": "string" },
+          "vectors_checked": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "status": { "type": "string", "enum": ["SECURE", "VULNERABLE", "PENDING_REVIEW"] },
+          "last_checked_commit": { "type": "string" },
+          "validator_details": { "type": "string" }
+        }
+      }
+    }
+  }
+}
