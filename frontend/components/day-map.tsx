@@ -15,16 +15,15 @@ import { setWorkerUrl } from "maplibre-gl"
 if (typeof window !== "undefined") {
     setWorkerUrl("/maplibre/maplibre-gl-worker.mjs")
 }
-import { Bus, Car, Footprints, Satellite, Map as MapIcon, Search, X, Loader2, MapPin, Clock, Trash, Plane } from "lucide-react"
+import { Bus, Car, Footprints, Satellite, Map as MapIcon, Search, X, Loader2, MapPin, Clock, Trash, Plane, Eye } from "lucide-react"
 import { MAP_STYLES, MAP_LOCALIZATION, MAPILLARY } from "@/lib/constants"
 import MapillaryViewer from "@/components/MapillaryViewer"
 import { isMapillaryAvailable } from "@/lib/mapillary"
 import { useFlyoverController } from "@/hooks/useFlyoverController"
 import { TourHudCapsule } from "@/components/TourHudCapsule"
-import { Eye } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { MapControlCapsule } from "@/components/MapControlCapsule"
-import { geocodeApi } from "@/lib/api"
+import { geocodeApi, API } from "@/lib/api"
 import { motion, AnimatePresence } from "framer-motion"
 import { toast } from "sonner"
 import POIDetailDrawer, { POIBasicData } from "@/components/POIDetailDrawer"
@@ -70,9 +69,6 @@ const routeColors = {
     drive: "#3b82f6",   // 藍色 - 開車
     transit: "#f59e0b", // 橘色 - 大眾運輸
 }
-
-// API 基礎路徑
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008"
 
 // 搜尋歷史 Hook
 const HISTORY_KEY = "map_search_history"
@@ -163,7 +159,7 @@ function useRoute(markersKey: string, markers: MarkerData[], mode: string, optim
             }
 
             try {
-                const res = await fetch(`${API_BASE}/api/route`, {
+                const res = await fetch(API.ROUTE, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({

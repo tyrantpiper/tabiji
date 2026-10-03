@@ -22,6 +22,7 @@ import DeepResearchCard, { type DeepResearchData } from "@/components/chat/DeepR
 import { streamChat } from "@/lib/sse-parser"
 import { setSearchCache } from "@/lib/search-cache"
 import { toast } from "sonner"
+import { API_HOST } from "@/lib/api"
 import { useWeatherStore } from "@/lib/stores/weatherStore"
 import { debugLog } from "@/lib/debug"
 import { useLanguage, type TranslationKey } from "@/lib/LanguageContext"
@@ -83,8 +84,6 @@ interface Position {
     x: number
     y: number
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008"
 
 // 城市座標映射
 const CITY_COORDS: Record<string, { lat: number; lng: number }> = {
@@ -509,7 +508,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
 
             const toSummarize = messages.slice(0, messages.length - KEEP_RECENT)
             const targetUserId = contextUserId || localStorage.getItem("user_uuid") || ""
-            fetch(`${API_BASE}/api/chat/summarize`, {
+            fetch(`${API_HOST}/api/chat/summarize`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -580,7 +579,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
             setSearchStatus({ phase: "thinking" })
             const cleanPrompt = userMsg.replace(/^\/research\s*/, "").trim()
             try {
-                const res = await fetch(`${API_BASE}/api/agents/research`, {
+                const res = await fetch(`${API_HOST}/api/agents/research`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -612,7 +611,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                 // 背景輪詢狀態
                 const pollInterval = setInterval(async () => {
                     try {
-                        const pollRes = await fetch(`${API_BASE}/api/agents/interactions/${interactionId}`, {
+                        const pollRes = await fetch(`${API_HOST}/api/agents/interactions/${interactionId}`, {
                             headers: { "X-Gemini-API-Key": apiKey }
                         })
                         if (!pollRes.ok) return
@@ -666,7 +665,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
             setSearchStatus({ phase: "thinking" })
             try {
                 await streamChat(
-                    API_BASE,
+                    API_HOST,
                     userMsg,
                     history,
                     apiKey,
@@ -790,7 +789,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
         // 🔄 Fallback: 如果 streaming 失敗或有圖片，使用原有 API
         if (!streamingSuccess) {
             try {
-                const res = await fetch(`${API_BASE}/api/chat`, {
+                const res = await fetch(`${API_HOST}/api/chat`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -938,7 +937,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                             try {
                                                                 const k = await getSecureApiKey()
                                                                 if (k) {
-                                                                    await fetch(`${API_BASE}/api/agents/interactions/${id}/cancel`, {
+                                                                    await fetch(`${API_HOST}/api/agents/interactions/${id}/cancel`, {
                                                                         method: "POST",
                                                                         headers: { "X-Gemini-API-Key": k }
                                                                     })

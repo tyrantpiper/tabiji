@@ -221,7 +221,9 @@ print("[Routers] ✅ All systems registered")
 
 # 2. CORS 設定與主機白名單
 ALLOWED_ORIGINS = [
-    "https://travel-pwa-five.vercel.app",   # Production Frontend
+    "https://tabijiapp.com",                # Production Custom Domain
+    "https://www.tabijiapp.com",            # Production Custom Domain (WWW)
+    "https://travel-pwa-five.vercel.app",   # Production Frontend (Legacy/Fallback)
     "http://localhost:3000",                # Local Next.js dev
     "http://localhost:5173",                # Local Vite dev
     "http://127.0.0.1:3000",                # Local dev (IP)
@@ -235,8 +237,10 @@ if os.getenv("VERCEL_PREVIEW_DOMAINS"):
 # 3. 安全 Headers 中介軟體 (Security Headers)
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
-# 🛡️ 安全加固：只允許來自 Cloud Run、Vercel 或 Localhost 的 Host header
+# 🛡️ 安全加固：只允許來自 Cloud Run、Vercel、自訂網域或 Localhost 的 Host header
 ALLOWED_HOSTS = [
+    "tabijiapp.com",
+    "www.tabijiapp.com",
     "travel-pwa-five.vercel.app",
     "antigravity-backend-589255638719.us-central1.run.app",
     "localhost",

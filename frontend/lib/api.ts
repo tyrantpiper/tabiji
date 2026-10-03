@@ -3,8 +3,23 @@
  * Provides typed API functions for all backend endpoints
  */
 
-const API_HOST = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008"
-console.log("🚀 [API] Connected to:", API_HOST)
+/**
+ * 🛡️ 雙模態同態 API Host 解析器
+ * - 瀏覽器環境 (CSR): 回傳空字串 ""，強制所有端點走同源相對路徑 `/api/*` (零洩漏、免跨域 Preflight)
+ * - 伺服端環境 (SSR / Vitest / Node): 解析內部服務位址或本機位址，防止 Node.js fetch 拋出 URL 解析錯誤
+ */
+export const getApiHost = (): string => {
+    if (typeof window !== "undefined") {
+        return "";
+    }
+    const rawHost = process.env.INTERNAL_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008";
+    return rawHost.replace(/\/+$/, "");
+};
+
+const API_HOST = getApiHost();
+if (typeof window === "undefined" || process.env.NODE_ENV === "development") {
+    console.log("🚀 [API] Connected to:", API_HOST || "(same-origin /api)");
+}
 
 import { SyncQueue } from './sync-engine';
 import {
@@ -46,6 +61,7 @@ export const API = {
     TRAVEL_DATA: `${API_HOST}/api/travel-data`,
 }
 
+export const API_BASE_PATH = "/api";
 export { API_HOST }
 
 // === Type Definitions ===
