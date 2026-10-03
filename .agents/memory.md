@@ -104,6 +104,14 @@
 - **即時端側時間感知與行程生命週期狀態機 (Real-Time Temporal Awareness & Lifecycle State Machine)**: 前端請求標頭動態注入 `client_time`（ISO 8601 當前時間）與 `client_timezone`。後端建立 `TemporalService`，提供端側時間解析、相對時差天數與小時計算，以及行程生命週期狀態機（`PLANNING`, `PRE_TRIP`, `IN_TRIP_ACTIVE`, `POST_TRIP`），並落實神經時間夾擊（System Instruction + Prompt Header）即時注入。
 - **實證導向的安全稽核與零功能降級原則 (Pragmatic Empirical Security Audit over Blind Warning Suppression)**: 靜態程式碼分析工具（如 CodeQL）依據通用啟發式規則生成告警，常將安全的業務邏輯（如 URL 域名包含檢查以決定徽章 Emoji、固定 API 前綴的 query 傳參）誤判為安全漏洞。架構決策堅持「實證先於合規」：在沒有真實安全風險或可利用攻擊向量的前提下，嚴禁盲目重構核心模組，守護系統零功能降級與絕對穩定度。
 
+### 9. 頂級自訂網域、同源邊緣防護罩與 GFE 動態名牌路由架構 (Custom Domain, Edge Shield & GFE Host Routing)
+- **同源邊緣防護罩取代客戶端跨域暴露原則 (Same-Origin Edge Shield over Client-Exposed Cloud Run)**: 在前端客戶端暴露後端真實服務網址（`process.env.NEXT_PUBLIC_API_URL` 直通 Google Cloud Run）會引發後端被直接探測與複雜 Preflight 開銷。架構確立客戶端一律向同源 `/api/...` 發起相對請求，由 Cloudflare Anycast 邊緣節點上的 Worker 依路徑安全識別並轉發，阻斷外部直接探測後端真實 IP / 服務網址。
+- **GFE 虛擬主機名牌動態覆寫原則 (GFE Virtual Host Dynamic Rewrite over $2,000/mo Cloudflare Enterprise Origin Rules)**: Google Cloud Run 的 GFE 多租戶負載均衡器強制依賴 HTTP `Host` 標頭識別目標容器；非 `*.run.app` 之自訂網域 Host 會被 GFE 直接以 404 退件。Cloudflare 官方 Origin Rules 的 Host 覆寫被鎖定在每月 2,000 美元企業版付費牆；架構決策透過免費 Cloudflare Worker 在 `fetch()` 階段動態覆寫 `Host: antigravity-backend-*.run.app`，實現 0 成本 Anycast 邊緣轉發。
+- **Vercel 本地路由邊緣旁路白名單原則 (Vercel Native Route Edge Bypass Whitelist)**: 專案內原生運行於 Vercel 的輕量 Serverless API（如 `/api/sign-cloudinary` 與 `/api/parse-receipt`），若被全量無差別轉發至 Google Cloud Run 會引發後端 404 報錯。Worker 必須建立精確白名單，遇 Vercel 本地專屬路由直接直連 Vercel 源站，不驚動 Google Cloud Run。
+- **PWA 本地資料沙箱雙軌共存原則 (Dual-Active PWA Storage Preservation over Forced Redirect)**: 瀏覽器 Local-First 存儲（IndexedDB / Cache Storage）受限於同源策略（Same-Origin Policy）。在新網域上線時若對舊網域（`travel-pwa-five.vercel.app`）實施強制 308 重定向，已安裝於手機桌面的老使用者將因 Origin 變更而遺失本機歷史行程。確立舊網域保持運作並透過伺服端同源代理呼叫後端，維持雙軌共存與資料安全。
+- **多態 API Host 衍生與尾部斜線防禦架構 (Polymorphic API Host Derivation & Defensive Slash Sanitization)**: 前端 `getApiHost()` 在客戶端瀏覽器環境回傳空字串 `""`，伺服端優先回退 `INTERNAL_BACKEND_URL` / `NEXT_PUBLIC_API_URL`；所有網址必須經過正則清除尾部斜線（`replace(/\/+$/, '')`），杜絕反向代理下雙斜線（`//api/...`）解析失誤。
+- **規格文件領域驅動拓撲化原則 (Domain-Driven Specification Hierarchy over Flat Spec Dumping)**: 規格文件全量依領域驅動（DDD）劃分為 6 大目錄（`ai`, `business`, `core-architecture`, `infra`, `search`, `ui-motion`），並建立頂層導航矩陣 `docs/specs/README.md`，杜絕平鋪檔案過多造成的維護退化。
+
 ---
 
 ## [Failed Paths]
@@ -189,6 +197,13 @@
 - **短關鍵字時區推斷引發子字串碰撞劫持 (`Short-Keyword Substring Collision Trap`)**: 使用者詢問 "South New York" 的行程時，系統誤將目的地推斷為泰國（曼谷時區 UTC+7）；詢問 "Perth" 亦被誤判為泰國。根因在於 `DESTINATION_TIMEZONE_MAP` 包含 `"th": "Asia/Bangkok"`，使用 `if kw in text` 時，"South" 內部的 "th" 觸發子字串命中。教訓：實作雙態匹配：拉丁單詞強制要求正則單詞邊界 `\b{kw}\b`，CJK 維持字串包含，並將字典按關鍵字長度由長至短降序排序（`SORTED_TIMEZONE_MAP`）。
 - **盲目為迎合靜態掃描（CodeQL）而重構核心正則的功能破壞風險 (`Over-zealous Security Refactor Trap`)**: 在面對 CodeQL 提出的 26 項告警時，若貿然對 `sanitize_dangling_tool_calls` 或網域判定進行大刀闊斧的重構，極易引入正則回溯異常或破壞現有 352 項全綠測試。根因在於靜態分析器無法理解旅遊提問的短字數業務上下文，其警報多為理論極限情境。教訓：堅持臨床實證分析，透過真實字串長度與耗時測試（0.000005s）證明無危害性，堅守零功能降級原則。
 
+### 11. 自訂網域、Cloudflare 邊緣防護罩、GFE 路由與 PWA 沙箱踩坑
+- **直連 Cloud Run 觸發 Google Front End (GFE) 404 陷阱 (`GFE Host Header Mismatch 404 Trap`)**: 在 Cloudflare 設定 CNAME 直接指向 Cloud Run 網址，瀏覽器請求 `https://tabijiapp.com/api/health` 瞬間返回 Google 原生 404 錯誤頁面，FastAPI 後端無任何存取日誌。根因：Google Cloud Run 的 GFE 多租戶負載均衡器依賴 HTTP `Host` 標頭識別目標服務容器。當請求的 Host 為 `tabijiapp.com` 時，GFE 查無此租戶直接予以退件。教訓：在轉發請求至 Cloud Run 時必須動態覆寫 `Host` 標頭為真實 `*.run.app` 網址。
+- **Cloudflare 免費版嘗試使用 Origin Rules 覆寫 Host 遭 $2,000/月 付費牆攔截 (`Cloudflare Origin Rules Enterprise Paywall Trap`)**: 試圖在 Cloudflare 控制台 Rules > Origin Rules 中配置「Host Header Rewrite」規則將標頭改寫為 Cloud Run 網址，系統提示需要 Enterprise 方案才能啟用該欄位。教訓：Cloudflare 將進階標頭覆寫作為企業方案的收費功能，Free 方案應使用極簡 Cloudflare Worker 以邊緣無伺服器代碼解鎖 Host 覆寫。
+- **Cloudflare Worker 轉發 GET/HEAD 帶 body 觸發 TypeError 陷阱 (`Worker GET/HEAD Body TypeError Trap`)**: 在邊緣轉發器中若無條件執行 `fetch(backendUrl, { method: request.method, body: request.body })`，當客戶端發起 GET 或 HEAD 請求時，V8 執行緒拋出 `TypeError: Request with GET/HEAD method cannot have body`。教訓：Fetch API 強制規定 GET/HEAD 的 `body` 必須為 `undefined`，轉發時必須嚴格排查請求方法。
+- **暴力 308 重定向舊網域導致已安裝 PWA 本地資料歸零陷阱 (`Forced Domain Redirect PWA Storage Wipe Trap`)**: 討論是否在 Vercel 將舊網域 `travel-pwa-five.vercel.app` 設置 308 轉址至新主網域。根因：瀏覽器 Local-First 存儲機制以 Origin 作為唯一隔離邊界。轉址會迫使現有桌面快捷方式載入新域名，導致老使用者的 IndexedDB 與 LocalStorage 離線行程數據被隔離在舊 Origin 之下無法讀取。教訓：不可強制 308 重定向，應保留舊網域作為副存活節點，透過伺服端同源代理維持其全功能運作。
+- **Vercel "Proxy Detected" 黃色警報引發的偽性焦慮陷阱 (`Vercel Proxy Detected False Panic Trap`)**: 當 Cloudflare 開啟橘色雲朵（Proxied）後，Vercel 網域管理介面彈出黃色警告標籤 `"Proxy Detected: Some features may not work as expected"`。根因：Vercel 提示無法直接取得終端客戶端原始 IP，但 Vercel 底層已全面支援 `Verified Proxy Lite`，只要 Cloudflare 傳遞標準 `CF-Connecting-IP` 標頭，所有 CDN 快取與 SSR 功能完全正常運作。教訓：確認 Vercel Bot Protection 不設為暴力 Deny，解除偽性焦慮並實測快取命中率與轉址速度。
+
 ---
 
 ## [Technical Debt]
@@ -207,6 +222,7 @@
 - **前端搜尋 L1 RAM 快取容量上限與 LRU 驅逐 (Search L1 Cache Bound & Eviction)**: `frontend/lib/search-cache.ts` 目前未設 `MAX_L1_ITEMS` 上限，長期會話存在微量記憶體洩漏風險，後續可規劃導入 LRU 淘汰機制。
 - **Cloudflare Worker 代理 Secret 金鑰強制校驗 (Cloudflare Worker Key Enforcement)**: 目前 Worker 的 `x-tabidachi-key` 為非強制校驗。未來若流量增長或面臨濫用風險，可於 Worker 環境變數配置 Secret 並於後端 Cloud Run 同步注入。
 - **CodeQL 靜態告警漸進式收斂 (CodeQL Gradual Convergence)**: 後續可在不破壞既有架構前提下，為 `poi_service.py` 加上類型別名或獨立驗證器顯式告知靜態分析器 `api_url` 屬安全常數，並對 URL 判斷改採標準 `urllib.parse` 解析主機名，逐步消除靜態分析噪音。
+- **Supabase 身份驗證回調網址更新（待帳號體系啟動時排程）**: 目前 Tabidachi 全面採用訪客匿名認證（`user_uuid` 本地儲存於 IndexedDB），無需 OAuth 流程。後續若開發第三方社群帳號登入功能，需將 `https://www.tabijiapp.com/auth/callback` 加入 Supabase Redirect URLs 白名單。
 
 ---
 
@@ -298,3 +314,9 @@
 - **Real-Time Temporal Awareness & Lifecycle State Machine**: 即時端側時間感知與行程生命週期狀態機，解析客戶端時區與時間，動態將行程劃分為 PLANNING、PRE_TRIP、IN_TRIP_ACTIVE 與 POST_TRIP 並注入即時營業與氣候語境。
 - **Server-Side vs Client-Side Tool Decoupling**: 伺服端與客戶端工具分離防禦，伺服端工具（get_world_time）由後端攔截即時執行並回填模型，業務工具（add_expense）透過 SSE 傳遞給前端觸發 UI。
 - **Pragmatic Empirical Security Audit**: 實證導向安全稽核，以實際攻擊向量驗證與臨床度量取代盲目消除靜態分析噪音，捍衛系統零功能降級。
+
+### 11. 頂級網域、邊緣防護罩與路由架構領域
+- **Same-Origin Edge Shield**: 同源邊緣防護罩，客戶端以相對路徑發送同源 API 請求，由 Cloudflare Anycast 邊緣節點 Worker 辨識並動態代理至真實後端，阻斷後端服務網址洩漏。
+- **GFE Host Dynamic Rewrite**: GFE 虛擬主機名稱動態覆寫，在邊緣節點將 HTTP Host 標頭改寫為 Google Front End 識別之合法容器名牌，徹底解決第三方網域 404 退件問題。
+- **Verified Proxy Lite**: Vercel 驗證代理精簡模式，原生相容 Cloudflare 橘色雲朵代理，透傳 CF-Connecting-IP 並維持邊緣快取與 SSR 運作。
+- **Origin Storage Sandbox Partition**: 瀏覽器存儲同源沙箱隔離，IndexedDB 與 Cache Storage 嚴格以 Origin 為邊界，網域變更時維持雙軌共存以捍衛使用者離線資料。
