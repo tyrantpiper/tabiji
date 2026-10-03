@@ -262,7 +262,11 @@ async function runItineraryOfflineVerification() {
     console.log(`  ✓ 畫面文字摘要: "${itineraryInspection.textSnippet}"`);
 
     // 截圖存檔作為物理證據
-    const screenshotPath = path.join(projectRoot, "docs", "reports", "offline-itinerary-screen-proof.png");
+    const screenshotPath = path.join(projectRoot, "docs", "screenshots", "verification", "offline-itinerary-screen-proof.png");
+    const screenshotDir = path.dirname(screenshotPath);
+    if (!fs.existsSync(screenshotDir)) {
+      fs.mkdirSync(screenshotDir, { recursive: true });
+    }
     await page.screenshot({ path: screenshotPath });
     console.log(`  📸 離線行程畫面截圖已存檔至: ${screenshotPath}`);
 

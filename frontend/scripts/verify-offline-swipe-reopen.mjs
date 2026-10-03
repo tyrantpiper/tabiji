@@ -185,7 +185,11 @@ async function runVerification() {
     console.log(`  ✓ 渲染文字摘要: "${pageContent.snippet}"`);
 
     // 截圖存檔作為物理證據
-    const screenshotPath = path.join(projectRoot, "docs", "reports", "offline-swipe-reopen-proof.png");
+    const screenshotPath = path.join(projectRoot, "docs", "screenshots", "verification", "offline-swipe-reopen-proof.png");
+    const screenshotDir = path.dirname(screenshotPath);
+    if (!fs.existsSync(screenshotDir)) {
+      fs.mkdirSync(screenshotDir, { recursive: true });
+    }
     try {
       await page.screenshot({ path: screenshotPath });
       console.log(`  📸 離線畫面已存檔至: ${screenshotPath}`);
