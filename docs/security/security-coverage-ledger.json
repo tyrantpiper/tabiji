@@ -1,0 +1,67 @@
+{
+  "version": "2.0.0",
+  "last_audit_date": "2026-10-04T02:22:00Z",
+  "audit_mode": "sentinel-agy-adversarial",
+  "statistics": {
+    "total_targets": 6,
+    "audited_targets": 6,
+    "verified_vulnerabilities": 0,
+    "dismissed_hypotheses": 0
+  },
+  "targets": [
+    {
+      "id": "backend/main.py",
+      "target_type": "backend_gateway",
+      "trust_boundary": "public_to_internal",
+      "vectors_checked": ["cors_misconfiguration", "rate_limit_bypass", "unhandled_exceptions"],
+      "status": "SECURE",
+      "last_checked_commit": "916024d",
+      "validator_details": "CORS restricted to authorized origins; slowapi limiter mounted."
+    },
+    {
+      "id": "backend/services/intent_router.py",
+      "target_type": "backend_service",
+      "trust_boundary": "public_to_llm",
+      "vectors_checked": ["prompt_injection", "regex_dos", "deserialization"],
+      "status": "SECURE",
+      "last_checked_commit": "916024d",
+      "validator_details": "Prompt sanitization and strict regex length capping implemented."
+    },
+    {
+      "id": "backend/services/destinations.py",
+      "target_type": "backend_service",
+      "trust_boundary": "backend_to_external_api",
+      "vectors_checked": ["ssrf", "credential_leakage", "timeout_exhaustion"],
+      "status": "SECURE",
+      "last_checked_commit": "916024d",
+      "validator_details": "HTTP client uses strictly scoped timeouts and sanitized destination queries."
+    },
+    {
+      "id": "frontend/lib/api.ts",
+      "target_type": "client_gateway",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": ["bearer_token_leakage", "header_injection"],
+      "status": "SECURE",
+      "last_checked_commit": "916024d",
+      "validator_details": "Tokens retrieved securely via Supabase Auth session client."
+    },
+    {
+      "id": "frontend/app/api/cloudinary/route.ts",
+      "target_type": "edge_proxy",
+      "trust_boundary": "public_to_third_party",
+      "vectors_checked": ["ssrf", "open_proxy_abuse", "content_type_bypass"],
+      "status": "SECURE",
+      "last_checked_commit": "916024d",
+      "validator_details": "Target domains strictly whitelisted to res.cloudinary.com and authorized assets."
+    },
+    {
+      "id": "supabase/migrations",
+      "target_type": "database_rls",
+      "trust_boundary": "client_to_database",
+      "vectors_checked": ["rls_policy_bypass", "privilege_escalation", "anon_overexposure"],
+      "status": "SECURE",
+      "last_checked_commit": "916024d",
+      "validator_details": "RLS enabled across all tables; tenant isolation enforced by auth.uid()."
+    }
+  ]
+}

@@ -32,6 +32,8 @@ Thumbs.db
 
 backend/migrations/20260308_security_hardening.sql
 *.json
+!docs/security/*.json
+!.agents/skills/**/*.json
 gcp-sa-key.json
 
 # Scratch, Diff & Backup files
