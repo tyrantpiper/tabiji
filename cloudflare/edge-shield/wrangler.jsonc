@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "tabijiapp-edge-shield",
+  "main": "worker.js",
+  "compatibility_date": "2026-03-01",
+  "routes": [
+    { "pattern": "tabijiapp.com/api*", "zone_name": "tabijiapp.com" },
+    { "pattern": "www.tabijiapp.com/api*", "zone_name": "tabijiapp.com" }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
