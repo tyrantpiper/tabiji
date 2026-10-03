@@ -113,6 +113,12 @@
 - **規格文件領域驅動拓撲化原則 (Domain-Driven Specification Hierarchy over Flat Spec Dumping)**: 規格文件全量依領域驅動（DDD）劃分為 6 大目錄（`ai`, `business`, `core-architecture`, `infra`, `search`, `ui-motion`），並建立頂層導航矩陣 `docs/specs/README.md`，杜絕平鋪檔案過多造成的維護退化。
 - **多網域圖片邊緣代理全源放行與 CORS 注入標準 (Multi-Origin Media Proxy & CORS Injection)**: 邊緣反向代理 Worker（如 `cloudinary-proxy`）在實施防盜鏈檢查時，嚴禁單一寫死舊版 Vercel 網域。必須動態支援主網域 `tabijiapp.com`、`www.tabijiapp.com`、舊站與本地開發環境，並相容手機 Standalone PWA 無 Referer 模式；同時強制注入 `Access-Control-Allow-Origin: *`，防止 Canvas Tainted 污染破壞 PDF 行程匯出。
 
+### 10. 資安審查、Google Mantis ✕ Cloudflare Sentinel 與 CLI 子代理人調度架構 (Security Sentinel & Subagents)
+- **`agy` CLI 本地背景子代理人調度原則 (agy CLI Headless Subagent Dispatch Invariance)**: 在本機未配置 Docker 容器環境下，嚴禁依賴外部動態沙箱。全面利用 Antigravity 原生 CLI `agy.exe -p --sandbox` 作為背景子代理人調度引擎，在獨立 OS 行程中以乾淨上下文執行對抗證偽（Validator Critic），實現零歷史記憶污染（Zero Prompt Contamination）與嚴格的 Maker-Checker 物理隔離。
+- **審查判定三元狀態機與零假陰性防禦 (Tri-State Verdict & Zero False-Negative Guarantee)**: 資安審查判定嚴格採用三態——`CONFIRMED`（實證漏洞）、`DISMISSED`（明確安全）、`INCONCLUSIVE`（未決）。任何因 CLI 未輸出結構化 JSON、進程逾時或模型被 safety filter 攔截之情境，一律強制標記為 `INCONCLUSIVE` 供人工介入，絕對禁止因解析失敗而預設判定為安全，杜絕靜默漏報。
+- **L0 憲法 Human-Gated 補丁與雙軌修復規範 (RFC Diff & Exact Block Replacement Protocol)**: `@security`（Sentinel）角色嚴守「只回報，不私自改碼」憲法，產出漏洞報告時必須成對提供 RFC Unified Diff 與精確區塊替換指南（`target_content` / `replacement_content`）。既解決 Windows CRLF 破壞 `git apply` 的格式痛點，又確保修復動作必須經由人類明確授權後，由 `@dev` 實作並經由 `@qa` 驗證。
+- **離線記憶體中單元 PoC 規範 (In-Memory Mock PoC over Live HTTP Requests)**: 漏洞驗證 PoC 嚴格禁止依賴本機運行中的 HTTP 伺服器或外部網路（不產出裸 `curl` 指令）。後端強制使用 `pytest` 搭配 `FastAPI TestClient`，前端使用純函式單元斷言，保證在完全斷網與本機伺服器離線時 100% 離線可重現。
+
 ---
 
 ## [Failed Paths]
@@ -204,6 +210,11 @@
 - **Cloudflare Worker 轉發 GET/HEAD 帶 body 觸發 TypeError 陷阱 (`Worker GET/HEAD Body TypeError Trap`)**: 在邊緣轉發器中若無條件執行 `fetch(backendUrl, { method: request.method, body: request.body })`，當客戶端發起 GET 或 HEAD 請求時，V8 執行緒拋出 `TypeError: Request with GET/HEAD method cannot have body`。教訓：Fetch API 強制規定 GET/HEAD 的 `body` 必須為 `undefined`，轉發時必須嚴格排查請求方法。
 - **暴力 308 重定向舊網域導致已安裝 PWA 本地資料歸零陷阱 (`Forced Domain Redirect PWA Storage Wipe Trap`)**: 討論是否在 Vercel 將舊網域 `travel-pwa-five.vercel.app` 設置 308 轉址至新主網域。根因：瀏覽器 Local-First 存儲機制以 Origin 作為唯一隔離邊界。轉址會迫使現有桌面快捷方式載入新域名，導致老使用者的 IndexedDB 與 LocalStorage 離線行程數據被隔離在舊 Origin 之下無法讀取。教訓：不可強制 308 重定向，應保留舊網域作為副存活節點，透過伺服端同源代理維持其全功能運作。
 - **Vercel "Proxy Detected" 黃色警報引發的偽性焦慮陷阱 (`Vercel Proxy Detected False Panic Trap`)**: 當 Cloudflare 開啟橘色雲朵（Proxied）後，Vercel 網域管理介面彈出黃色警告標籤 `"Proxy Detected: Some features may not work as expected"`。根因：Vercel 提示無法直接取得終端客戶端原始 IP，但 Vercel 底層已全面支援 `Verified Proxy Lite`，只要 Cloudflare 傳遞標準 `CF-Connecting-IP` 標頭，所有 CDN 快取與 SSR 功能完全正常運作。教訓：確認 Vercel Bot Protection 不設為暴力 Deny，解除偽性焦慮並實測快取命中率與轉址速度。
+
+### 12. 資安審計、agy CLI 與 Windows 子行程編碼踩坑
+- **動態 Curl 離線連線拒絕陷阱 (`Offline Live Server Curl Failure Trap`)**: 在最初設計 PoC 時以 `curl -X GET https://.../api/user/123` 作為範例。實地審查時發現本地開發伺服器（Port 8000）處於離線狀態是常態，依賴真實 HTTP 請求會引發 `Connection Refused` 異常阻斷流程；且 Windows PowerShell 下 `curl` 為 `Invoke-WebRequest` 別名，轉義引號極易引發語法錯誤。教訓：PoC 必須全面規格化為基於 `pytest` + `TestClient` 的記憶體內單元測試。
+- **Headless 模式工具自動拒絕卡死陷阱 (`Headless Tool-Deny Hang Trap`)**: `agy.exe -p` 在無 `--dangerously-skip-permissions` 時調用工具會被 auto-denied 並輸出診斷訊息；但在 print 模式下若直接放權執行命令又易卡在子行程等待。教訓：由 Python Harness 直接讀取檔案文字並將代碼片段（前 10,000 字元）內嵌於 Prompt 中，要求子代理人純靜態評估，無需調用任何外部工具。
+- **Windows CP950 終端解碼崩潰陷阱 (`Windows CP950 Decode Error Trap`)**: 在 Windows 繁體中文環境下使用 `subprocess.run(capture_output=True, text=True)` 接收 `agy` 的輸出時，由於 `agy` 包含 UTF-8 特殊符號（如 Unicode 破折號 `0xe2`），Python 嘗試以預設 `cp950` 解碼導致拋出 `UnicodeDecodeError: 'cp950' codec can't decode byte`。教訓：子進程通訊一律接收原始 bytes，在 Python 端顯式以 `decode('utf-8', errors='replace')` 解碼，並注入 `PYTHONIOENCODING=utf-8` 環境變數。
 
 ---
 
@@ -321,3 +332,10 @@
 - **GFE Host Dynamic Rewrite**: GFE 虛擬主機名稱動態覆寫，在邊緣節點將 HTTP Host 標頭改寫為 Google Front End 識別之合法容器名牌，徹底解決第三方網域 404 退件問題。
 - **Verified Proxy Lite**: Vercel 驗證代理精簡模式，原生相容 Cloudflare 橘色雲朵代理，透傳 CF-Connecting-IP 並維持邊緣快取與 SSR 運作。
 - **Origin Storage Sandbox Partition**: 瀏覽器存儲同源沙箱隔離，IndexedDB 與 Cache Storage 嚴格以 Origin 為邊界，網域變更時維持雙軌共存以捍衛使用者離線資料。
+
+### 12. 資安審計與子代理人調度領域
+- **Physical Zero-Contamination Validation**: 物理級純淨上下文對抗證偽，利用獨立作業系統進程執行 Validator 子代理人，達成零 Prompt 歷史污染。
+- **Unbounded Parallelism Harness**: 無界並行 Harness，透過 Python asyncio 同步調度多個背景子代理人同時對多端點進行證偽。
+- **Tri-State Verdict & Zero False-Negative Guarantee**: 三態判定與零假陰性防線，強制將解析失敗或逾時標記為 INCONCLUSIVE 杜絕靜默漏報。
+- **In-Memory Mock PoC Standard**: 離線記憶體中單元 PoC 規範，全面採用 pytest + TestClient 模擬請求，零外部伺服器依賴。
+- **RFC Diff & Exact Block Replacement Protocol**: RFC 標準 Diff 與精確區塊替換雙重補丁規範，成對提供以免疫 Windows CRLF 行尾字元破損。
