@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/screenshots/weather-itinerary.png" width="180" alt="Trip Master Overview & 5-Day Weather" />
-  <img src="docs/screenshots/timeline-cards.png" width="180" alt="Timeline Spots & Continuous Calendar" />
-  <img src="docs/screenshots/route-map.png" width="180" alt="Fullscreen Map & Multi-mode Route" />
-  <img src="docs/screenshots/ai-chat.png" width="180" alt="AI Assistant & Batch POI Pickers" />
-  <img src="docs/screenshots/expense-tracker.png" width="180" alt="Expense Tracker & Deep Link Highlight" />
+  <img src="docs/screenshots/showcase/weather-itinerary.png" width="180" alt="Trip Master Overview & 5-Day Weather" />
+  <img src="docs/screenshots/showcase/timeline-cards.png" width="180" alt="Timeline Spots & Continuous Calendar" />
+  <img src="docs/screenshots/showcase/route-map.png" width="180" alt="Fullscreen Map & Multi-mode Route" />
+  <img src="docs/screenshots/showcase/ai-chat.png" width="180" alt="AI Assistant & Batch POI Pickers" />
+  <img src="docs/screenshots/showcase/expense-tracker.png" width="180" alt="Expense Tracker & Deep Link Highlight" />
 </p>
 
 <h1 align="center">Tabidachi 旅立ち</h1>

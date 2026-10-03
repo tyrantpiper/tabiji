@@ -121,7 +121,7 @@ describe("🛡️ PWA 離線秒開與 Precache 完整性硬核驗證 (Offline PW
     });
 
     it("TC-7: 實機離線滑掉重開 (Swipe-Away) 物理證據存在且有效", () => {
-        const proofPath = path.join(frontendDir, "..", "docs", "reports", "offline-swipe-reopen-proof.png");
+        const proofPath = path.join(frontendDir, "..", "docs", "screenshots", "verification", "offline-swipe-reopen-proof.png");
         expect(fs.existsSync(proofPath)).toBe(true);
         const stats = fs.statSync(proofPath);
         expect(stats.size).toBeGreaterThan(50 * 1024); // 截圖大於 50KB，證明非空白圖
