@@ -201,6 +201,8 @@ export interface SearchResult {
     wikipedia?: string
     cross_country?: boolean
     _distKm?: number | null
+    _dist_km?: number | null
+    _score?: number | null
     admin_level?: number | null
     osm_key?: string | null
     extent?: number[] | null

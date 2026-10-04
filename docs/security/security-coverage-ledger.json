@@ -3,10 +3,10 @@
   "last_audit_date": "2026-10-04T02:22:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 6,
-    "audited_targets": 6,
-    "verified_vulnerabilities": 0,
-    "dismissed_hypotheses": 0
+    "total_targets": 7,
+    "audited_targets": 7,
+    "verified_vulnerabilities": 1,
+    "dismissed_hypotheses": 1
   },
   "targets": [
     {
@@ -62,6 +62,15 @@
       "status": "SECURE",
       "last_checked_commit": "916024d",
       "validator_details": "RLS enabled across all tables; tenant isolation enforced by auth.uid()."
+    },
+    {
+      "id": "backend/services/geocode_service.py",
+      "target_type": "backend_service",
+      "trust_boundary": "backend_to_external_api",
+      "vectors_checked": ["cross_border_filter_zero_out", "malformed_bbox_injection", "cjk_tokenization_collapse", "straggler_timeout_blocking"],
+      "status": "PENDING_PATCH",
+      "last_checked_commit": "35d7d3d",
+      "validator_details": "Strict filter bug confirmed; Photon raw importance absence proven; In-memory PoC verified."
     }
   ]
 }

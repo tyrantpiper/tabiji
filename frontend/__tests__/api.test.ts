@@ -228,5 +228,29 @@ describe('geocodeApi', () => {
             )
             expect(result.results).toHaveLength(1)
         })
+
+        it('should pass bbox parameter when provided', async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    results: [{ name: 'Shinjuku', lat: 35.69, lng: 139.70, _score: 0.95, _dist_km: 1.2 }]
+                })
+            })
+
+            const result = await geocodeApi.search({
+                query: 'Shinjuku',
+                limit: 5,
+                bbox: '139.68,35.67,139.72,35.71'
+            })
+
+            expect(mockFetch).toHaveBeenCalledWith(
+                expect.stringContaining('/api/geocode/search'),
+                expect.objectContaining({
+                    method: 'POST',
+                    body: expect.stringContaining('"bbox":"139.68,35.67,139.72,35.71"')
+                })
+            )
+            expect(result.results[0]._score).toBe(0.95)
+        })
     })
 })

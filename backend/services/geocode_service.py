@@ -9,6 +9,16 @@ Extracted from main.py for modularization
 """
 
 import os
+import sys
+import io
+if sys.stdout and hasattr(sys.stdout, 'buffer') and 'pytest' not in sys.modules:
+    try:
+        if sys.stdout.encoding != 'utf-8':
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 import orjson
 import httpx
 import asyncio
@@ -18,6 +28,7 @@ from google.genai import types
 from pathlib import Path
 import time
 import random
+import math
 from typing import Optional, List, Dict, Any
 
 # 🆕 模糊搜尋 (Restore rapidfuzz for Cloud Run optimization)
@@ -655,7 +666,42 @@ async def resolve_address_pipeline(address: str, user_gemini_key: str = None):
     return None
 
 
-async def geocode_with_photon(place_name: str, limit: int = 5, lat: float = None, lng: float = None, zoom: float = None, location_bias_scale: float = None, osm_tag: str = None, country_code: str = None):
+def sanitize_bbox(bbox_str: Optional[str]) -> Optional[str]:
+    """清洗並校驗 MapLibre Viewport BBOX: minLon,minLat,maxLon,maxLat
+    
+    防禦注入與換日線跨越 (Antimeridian Crossing) 導致 Photon HTTP 400
+    """
+    if not bbox_str or not isinstance(bbox_str, str):
+        return None
+    try:
+        parts = [float(p.strip()) for p in bbox_str.split(",")]
+        if len(parts) != 4:
+            return None
+        min_lon, min_lat, max_lon, max_lat = parts
+        
+        if not (-90.0 <= min_lat <= 90.0 and -90.0 <= max_lat <= 90.0):
+            return None
+        if not (-180.0 <= min_lon <= 180.0 and -180.0 <= max_lon <= 180.0):
+            return None
+        if min_lat > max_lat or min_lon > max_lon:
+            return None
+            
+        return f"{min_lon:.5f},{min_lat:.5f},{max_lon:.5f},{max_lat:.5f}"
+    except Exception:
+        return None
+
+
+async def geocode_with_photon(
+    place_name: str, 
+    limit: int = 5, 
+    lat: float = None, 
+    lng: float = None, 
+    zoom: float = None, 
+    location_bias_scale: float = None, 
+    osm_tag: str = None, 
+    country_code: str = None,
+    bbox: str = None
+):
     """Photon 地理編碼 (基於 OpenStreetMap + Elasticsearch，模糊搜尋強)
     
     Args:
@@ -663,6 +709,7 @@ async def geocode_with_photon(place_name: str, limit: int = 5, lat: float = None
         zoom: 縮放層級，用於 P2 動態 bias scale
         location_bias_scale: 0.0 ~ 1.0，手動控制偏移強度 (🆕 2026 擴充)
         osm_tag: OSM 標籤過濾，例如 'place:country' (🆕 2026 擴充)
+        bbox: minLon,minLat,maxLon,maxLat 地圖視窗邊界過濾 (🆕 2026 視圖並行)
     """
     try:
         user_agent = os.getenv("APP_USER_AGENT", "RyanTravelApp/3.0 (contact@ryantravel.app)")
@@ -695,6 +742,12 @@ async def geocode_with_photon(place_name: str, limit: int = 5, lat: float = None
             # 🆕 P7: 添加 osm_tag 過濾
             if osm_tag:
                 params["osm_tag"] = osm_tag
+                
+            # 🆕 BBOX Viewport Bias
+            if bbox:
+                clean_bbox = sanitize_bbox(bbox)
+                if clean_bbox:
+                    params["bbox"] = clean_bbox
                 
             # 🆕 Location Bias
             if lat is not None and lng is not None:
@@ -744,7 +797,8 @@ async def geocode_with_photon(place_name: str, limit: int = 5, lat: float = None
                         "type": props.get("osm_value", "place"),
                         "osm_key": props.get("osm_key"),
                         "admin_level": int(admin_lvl) if str(admin_lvl).isdigit() else None,
-                        "extent": extent if isinstance(extent, list) and len(extent) == 4 else None
+                        "extent": extent if isinstance(extent, list) and len(extent) == 4 else None,
+                        "importance": props.get("importance")
                     })
                 
                 if results:
@@ -1040,7 +1094,7 @@ def detect_country_from_keywords(query: Optional[str]) -> Optional[str]:
     for country_code, keywords in LOCATION_KEYWORDS.items():
         for kw in keywords:
             if kw.lower() in query_lower:
-                print(f"🔑 Keyword Match: '{kw}' → {country_code}")
+                log_debug(f"🔑 Keyword Match: '{kw}' → {country_code}")
                 return country_code
     return None
 
@@ -1561,12 +1615,7 @@ async def translate_place_name(query: str, country_code: str, api_key: str = Non
 
 
 def filter_results_by_country(results: list, country_code: str, strict: bool = True) -> list:
-    """🗺️ 根據經緯度過濾結果，只保留目標國家內的地點
-    
-    Args:
-        strict: 若為 True，且過濾後有結果，則只返回過濾後的結果。
-               若過濾後無結果，則根據策略決定是否返回原結果。
-    """
+    """🗺️ 根據經緯度過濾結果，只保留目標國家內的地點（具備優雅降級防禦）"""
     if not country_code or country_code not in COUNTRY_BOUNDS:
         return results
     
@@ -1583,16 +1632,120 @@ def filter_results_by_country(results: list, country_code: str, strict: bool = T
             filtered.append(r)
     
     if filtered:
-        print(f"🗺️ Filtered: {len(results)} → {len(filtered)} (Strict: {country_code})")
+        log_debug(f"Filtered: {len(results)} -> {len(filtered)} (Target: {country_code})")
         return filtered
     
-    # 如果嚴格過濾後完全沒結果
-    if strict:
-        print(f"🗺️ Filtered: {len(results)} → 0 (Strict mode: discarding all)")
+    # 關鍵優雅降級：若目標國過濾後無結果（如規劃日本行程搜尋「桃園機場」等跨國樞紐），
+    # 絕不回傳空陣列，降級保留原候選結果，交由後續 Top-K 重排
+    log_debug(f"Filtered: {len(results)} -> 0 (Fallback: retaining original results)")
+    return results
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """計算兩點間的大圓距離 (km)"""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2.0)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2.0)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+
+def cjk_text_similarity(query: str, target: str) -> float:
+    """CJK 字符級雙向字義相似度
+    
+    解決 rapidfuzz 在無空格中文下 token_set_ratio 崩潰為 66% 的問題。
+    結合精確匹配、子字串包含加分與字元級集合匹配。
+    """
+    q = query.strip().lower()
+    t = target.strip().lower()
+    if not q or not t:
+        return 0.0
+    if q == t:
+        return 1.0
+    if q in t:
+        return 0.85 + 0.15 * (len(q) / max(len(q), len(t)))
+    q_chars = " ".join(list(q))
+    t_chars = " ".join(list(t))
+    return fuzz.token_set_ratio(q_chars, t_chars) / 100.0
+
+
+def proximity_decay(dist_km: float) -> float:
+    """平滑有理衰減函數
+    
+    取代高斯 50km 斷崖 (exp(-800)=0)，兼顧同城優先 (10km=0.94, 50km=0.75) 
+    與跨國交通樞紐保留 (2000km=0.07)。
+    """
+    return 1.0 / (1.0 + (dist_km / 150.0))
+
+
+def rerank_top_k(
+    candidates: list,
+    query: str,
+    bias_lat: Optional[float] = None,
+    bias_lng: Optional[float] = None,
+    target_country: Optional[str] = None,
+    limit: int = 5
+) -> list:
+    """多元加權 Top-K 重排演算法
+    
+    FinalScore = 0.50 * 文字相似度 + 0.30 * 空間距離衰減 + 0.10 * 權威重要度 + 0.10 * 目標國加分
+    相容 Photon 缺省 importance 的順位遞減啟發補償。
+    """
+    if not candidates:
         return []
         
-    print(f"🗺️ Filtered: {len(results)} → 0 (Relaxed: returning original)")
-    return results
+    scored = []
+    target_bounds = COUNTRY_BOUNDS.get(target_country.upper()) if target_country else None
+
+    for idx, item in enumerate(candidates):
+        name = item.get("name", "")
+        lat = item.get("lat")
+        lng = item.get("lng")
+        
+        # 1. 字義相似度 (權重 50%)
+        fuzz_score = cjk_text_similarity(query, name)
+        
+        # 2. 空間距離衰減 (權重 30%)
+        proximity_score = 0.5
+        dist_km = None
+        if bias_lat is not None and bias_lng is not None and lat is not None and lng is not None:
+            dist_km = haversine_km(bias_lat, bias_lng, lat, lng)
+            proximity_score = proximity_decay(dist_km)
+            
+        # 3. 權威度評分 (權重 10%)
+        raw_imp = item.get("importance")
+        if raw_imp is not None:
+            try:
+                imp_score = max(0.0, min(1.0, float(raw_imp)))
+            except (ValueError, TypeError):
+                imp_score = 0.1
+        else:
+            # 順位遞減啟發補償（Photon 內部已按分數排序，前序給予較高權重）
+            imp_score = max(0.1, 0.7 - idx * 0.1)
+                
+        # 4. 目標國軟性加分 (加分 10%)
+        country_bonus = 0.0
+        if target_bounds and lat is not None and lng is not None:
+            if (target_bounds["lat_min"] - 0.1 <= lat <= target_bounds["lat_max"] + 0.1 and
+                target_bounds["lng_min"] - 0.1 <= lng <= target_bounds["lng_max"] + 0.1):
+                country_bonus = 0.10
+
+        final_score = (
+            0.50 * fuzz_score +
+            0.30 * proximity_score +
+            0.10 * imp_score +
+            country_bonus
+        )
+        
+        item_copy = dict(item)
+        item_copy["_score"] = round(final_score, 4)
+        if dist_km is not None:
+            item_copy["_dist_km"] = round(dist_km, 2)
+        scored.append((final_score, item_copy))
+        
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in scored[:limit]]
 
 
 # 🌍 地理編碼 API 端點（供前端使用）
@@ -1698,10 +1851,10 @@ async def smart_geocode_logic(
     lng: float = None,
     country: str = None,    # 🆕 前端傳入的國家過濾
     region: str = None,     # 🆕 前端傳入的區域過濾
-    zoom: float = None      # 🆕 P1: 地圖縮放層級 (用於動態 bias)
+    zoom: float = None,     # 🆕 P1: 地圖縮放層級 (用於動態 bias)
+    bbox: str = None        # 🆕 P2: 地圖視窗邊界 (minLon,minLat,maxLon,maxLat)
 ) -> dict:
-    """共用的智能地理編碼邏輯"""
-    print(f"🌍 [SmartGeo] 啟動多層檢索: '{query}' (Trip: {trip_title or '無'}, 偏置: {lat},{lng})")
+    log_debug(f"🌍 [SmartGeo] 啟動多層檢索: '{query}' (Trip: {trip_title or '無'}, 偏置: {lat},{lng})")
     log_debug(f"🔍 [SmartGeo] Start search: '{query}' (Trip: {trip_title}, Country: {country}, Region: {region}, Zoom: {zoom}, Bias: {lat},{lng})")
     
     # 🧠 Step 0: 智能國家判斷和翻譯
@@ -1811,7 +1964,7 @@ async def smart_geocode_logic(
         speculative_query = f"{region_term} {query}".strip()
     else:
         speculative_query = query
-    speculative_task = asyncio.create_task(geocode_with_photon(speculative_query, limit, lat, lng, zoom, country_code=api_country_lock))
+    speculative_task = asyncio.create_task(geocode_with_photon(speculative_query, limit, lat, lng, zoom, country_code=api_country_lock, bbox=bbox))
     tasks.append(speculative_task)
     
     # 🆕 任務 C: 全域觀察者任務 (Global Observer)
@@ -1821,7 +1974,7 @@ async def smart_geocode_logic(
         # 使用低強度 Bias (0.1) 確保全球範圍的權威結果能排到最前面
         # 🆕 橋階關鍵字：利用純國碼 (如 AU) 進行強攻，直接定位主權實體，不帶地緣偏見
         global_q = country_code.upper() if country_code else query
-        global_task = asyncio.create_task(geocode_with_photon(global_q, limit, None, None, None, location_bias_scale=None, osm_tag="place:country", country_code=api_country_lock))
+        global_task = asyncio.create_task(geocode_with_photon(global_q, limit, None, None, None, location_bias_scale=None, osm_tag="place:country", country_code=api_country_lock, bbox=bbox))
         tasks.append(global_task)
 
     log_debug(f"   🚀 Starting Speculative Searches for '{query}'...")
@@ -1891,8 +2044,8 @@ async def smart_geocode_logic(
         # 🆕 P0 修復：Photon 只對「非原始查詢」執行（原始已 Speculative 搜過）
         # 但 Nominatim 對「所有查詢」執行，因為 Nominatim 的 CJK 能力遠優於 Photon
         if q != query:
-            # Photon (🆕 P1: 傳遞 zoom 用於動態 bias scale)
-            photon = await geocode_with_photon(q, limit, lat, lng, zoom, country_code=api_country_lock)
+            # Photon (🆕 P1: 傳遞 zoom 用於動態 bias scale, 傳遞 bbox)
+            photon = await geocode_with_photon(q, limit, lat, lng, zoom, country_code=api_country_lock, bbox=bbox)
             if photon:
                 for r in photon: r["source"] = "photon"
                 all_results.extend(photon)
@@ -1901,20 +2054,22 @@ async def smart_geocode_logic(
         # Nominatim（所有查詢都執行，包括原始中文查詢）
         if nominatim_calls < 2:
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                async with httpx.AsyncClient(timeout=3.0) as client:
                     params = {"q": q, "format": "json", "limit": limit, "addressdetails": 1}
                     if api_country_lock: params["countrycodes"] = api_country_lock.lower()
                     res = await client.get("https://nominatim.openstreetmap.org/search", params=params, headers={
-                        "User-Agent": "RyanTravelApp/2.0",
+                        "User-Agent": "RyanTravelApp/3.0 (contact@ryantravel.app)",
                         "Accept-Language": "zh-TW,zh,en"  # 🆕 P0: 確保中文結果優先回傳
                     })
                     data = res.json()
                     if data:
                         for item in data:
+                            imp = item.get("importance")
                             all_results.append({
                                 "lat": float(item["lat"]), "lng": float(item["lon"]),
                                 "name": item.get("name") or item.get("display_name", "").split(",")[0],
                                 "address": item.get("display_name", ""), "type": item.get("type", "place"),
+                                "importance": float(imp) if imp is not None else None,
                                 "source": "nominatim"
                             })
                         found_source = "nominatim"
@@ -1933,13 +2088,12 @@ async def smart_geocode_logic(
     # ArcGIS Fallback
     if not all_results and ARCGIS_API_KEY:
         try:
-            params = {"SingleLine": query, "f": "json", "outFields": "PlaceName,Place_addr,Type", "maxLocations": limit, "token": ARCGIS_API_KEY}
             params = {"SingleLine": query, "f": "json", "outFields": "PlaceName,Place_addr,Type", "maxLocations": effective_limit, "token": ARCGIS_API_KEY}
             if lat is not None and lng is not None:
                 params["location"] = f"{lng},{lat}" # ArcGIS uses x,y
                 params["distance"] = 50000 # 50km radius bias
             
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=3.0) as client:
                 res = await client.get(
                     "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates",
                     params=params
@@ -1958,12 +2112,9 @@ async def smart_geocode_logic(
         except Exception:
             pass
 
-    # 🗺️ 搜尋過濾策略 (2026 寬容化)
+    # 🗺️ 搜尋過濾策略 (寬容化優雅降級)
     if country_code and all_results:
-        # 如果有 api_country_lock，維持嚴格過濾 (用戶期望精確控制)
-        # 如果是「關鍵字推測」，改為鬆散過濾 (維持全球視野)
         is_strict = bool(api_country_lock)
-        
         all_results = filter_results_by_country(all_results, country_code, strict=is_strict)
 
     # 去重
@@ -1975,14 +2126,33 @@ async def smart_geocode_logic(
             seen.add(key)
             unique.append(r)
 
+    # 🧬 多元加權智能重排 (Top-K Reranking)
+    ranked = rerank_top_k(
+        unique, 
+        query, 
+        bias_lat=lat, 
+        bias_lng=lng, 
+        target_country=country_code, 
+        limit=limit
+    )
+
     # 🆕 注入中文顯示名稱
-    if chinese_display and unique:
-        unique[0]["name"] = chinese_display
-        unique[0]["original_name"] = unique[0].get("name", query)  # 保留原始名稱
+    if chinese_display and ranked:
+        ranked[0]["name"] = chinese_display
+        ranked[0]["original_name"] = ranked[0].get("name", query)  # 保留原始名稱
         log_debug(f"   ✨ Injected Chinese Name: {chinese_display}")
 
-    return {"results": unique[:limit], "source": found_source}
+    return {"results": ranked, "source": found_source}
+
 
 def log_debug(msg):
     # Use print instead of file write (HF Spaces has read-only filesystem)
-    print(f"[DEBUG] {msg}")
+    try:
+        print(f"[DEBUG] {msg}")
+    except (UnicodeEncodeError, Exception):
+        try:
+            encoding = getattr(sys.stdout, 'encoding', 'utf-8') or 'utf-8'
+            clean_msg = str(msg).encode(encoding, errors="replace").decode(encoding)
+            print(f"[DEBUG] {clean_msg}")
+        except Exception:
+            pass

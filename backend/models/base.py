@@ -205,6 +205,7 @@ class GeocodeSearchRequest(BaseModel):
     country: Optional[str] = None
     region: Optional[str] = None
     zoom: Optional[float] = None
+    bbox: Optional[str] = None
 
 
 class GeocodeReverseRequest(BaseModel):

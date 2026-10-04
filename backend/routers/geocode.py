@@ -59,7 +59,8 @@ async def geocode_search(
         body.lng,
         body.country,
         body.region,
-        body.zoom
+        body.zoom,
+        body.bbox
     ))
     
     # Task B: 智慧意圖挖掘 (僅在偵測到意圖且有 API Key 時)
