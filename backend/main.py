@@ -279,11 +279,27 @@ print(f"[CORS] Configured outermost strict origins: {ALLOWED_ORIGINS}")
 # 3. 初始化已遷移至 Lifespan Manager
 
 
-# [NEW] Health Check (for UptimeRobot - prevents Supabase 7-day pause with zero latency)
+# [NEW] Health Check (for Cloud Run Liveness & UptimeRobot Readiness)
+# 🛡️ 深度健康檢查 60 秒記憶體防抖快取與延遲初始化非同步鎖
+_deep_health_cache = {
+    "last_checked": 0.0,
+    "status_code": 200,
+    "payload": {}
+}
+_deep_health_lock: asyncio.Lock | None = None
+
+def _get_health_lock() -> asyncio.Lock:
+    global _deep_health_lock
+    if _deep_health_lock is None:
+        _deep_health_lock = asyncio.Lock()
+    return _deep_health_lock
+
 @app.api_route("/health", methods=["GET", "HEAD"])
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 async def health_check(request: Request):
     """[HEALTH] 0ms 極速純記憶體健康檢查 (Zero Side-Effects, 100% Non-Blocking)
-    即時返回記憶體與 Uptime 狀態，Supabase 防休眠由獨立背景定時任務守護
+    即時返回記憶體與 Uptime 狀態，專供 Cloud Run 容器存活檢查 (Liveness Probe)，
+    保證在 Supabase 瞬斷或故障時絕不誤殺容器實例。
     """
     uptime_seconds = 0
     if hasattr(request.app.state, "start_time"):
@@ -317,60 +333,87 @@ async def health_check(request: Request):
             "pool": pool_stats,
             "memory": "stable"
         },
-        "version": "1.2.8-resilience",
+        "version": "1.2.9-hardened",
         "service": "ryan-travel-api"
     }
 
-@app.api_route("/health/deep", methods=["GET"])
+@app.api_route("/health/deep", methods=["GET", "HEAD"])
+@app.api_route("/api/health/deep", methods=["GET", "HEAD"])
 async def health_check_deep(request: Request):
-    """[HEALTH/DEEP] 深度健康檢查 (原生非同步 + 2.5s 硬熔斷防護)"""
-    start_check = time.time()
-    try:
-        supabase_url = os.getenv("SUPABASE_URL", "").strip()
-        supabase_key = os.getenv("SUPABASE_KEY", "").strip()
-        if not supabase_url or not supabase_key:
-            raise HTTPException(status_code=503, detail="Supabase not configured")
-            
-        headers = {
-            "apikey": supabase_key,
-            "Authorization": f"Bearer {supabase_key}"
-        }
-        client = getattr(request.app.state, "client", None)
-        if client:
-            res = await client.get(f"{supabase_url}/rest/v1/itineraries?select=id&limit=1", headers=headers, timeout=2.5)
-        else:
-            async with httpx.AsyncClient(timeout=2.5) as temp_client:
-                res = await temp_client.get(f"{supabase_url}/rest/v1/itineraries?select=id&limit=1", headers=headers)
+    """[HEALTH/DEEP] 深度健康檢查 (原生非同步 + 2.5s 硬熔斷 + 60s 記憶體防抖快取)
+    專供外部 UptimeRobot 全球探針監控 (Readiness Probe) 與 Supabase 7 天防休眠保活。
+    1. 快取未過期 (< 60s)：直接由記憶體回傳 cached=True，0ms 瞬回，保護連線池防死鎖。
+    2. 快取過期 (>= 60s)：透過 Double-Check Lock 保證單一請求穿透至 Supabase 執行實體 SQL/REST 查詢。
+    """
+    now = time.time()
+    # 🚀 Fast-Path: 60 秒無鎖快速通道 (保護連線池防死鎖)
+    if (now - _deep_health_cache["last_checked"]) < 60.0 and _deep_health_cache["payload"]:
+        res = dict(_deep_health_cache["payload"])
+        res["cached"] = True
+        return ORJSONResponse(status_code=_deep_health_cache["status_code"], content=res)
+
+    async with _get_health_lock():
+        # 🛡️ Double-Check: 進入鎖後二次核實，防止並發排隊請求重複穿透至 Supabase
+        now = time.time()
+        if (now - _deep_health_cache["last_checked"]) < 60.0 and _deep_health_cache["payload"]:
+            res = dict(_deep_health_cache["payload"])
+            res["cached"] = True
+            return ORJSONResponse(status_code=_deep_health_cache["status_code"], content=res)
+
+        start_check = time.time()
+        try:
+            supabase_url = os.getenv("SUPABASE_URL", "").strip()
+            supabase_key = os.getenv("SUPABASE_KEY", "").strip()
+            if not supabase_url or not supabase_key:
+                raise HTTPException(status_code=503, detail="Supabase not configured")
                 
-        latency = (time.time() - start_check) * 1000
-        if res.status_code == 200:
-            data = res.json()
-            return {
-                "status": "healthy",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "database": {
-                    "status": "connected",
-                    "latency_ms": round(latency, 2),
-                    "items": len(data) if isinstance(data, list) else 0
-                },
-                "version": "1.2.7-hardened",
-                "service": "ryan-travel-api"
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}"
             }
-        else:
-            return ORJSONResponse(
-                status_code=502,
-                content={"status": "degraded", "http_status": res.status_code}
-            )
-    except httpx.TimeoutException:
-        return ORJSONResponse(
-            status_code=504,
-            content={"status": "degraded", "detail": "Supabase check timed out after 2.5s"}
-        )
-    except Exception as e:
-        return ORJSONResponse(
-            status_code=500,
-            content={"status": "error", "detail": str(e)[:100]}
-        )
+            client = getattr(request.app.state, "client", None)
+            if client:
+                res = await client.get(f"{supabase_url}/rest/v1/itineraries?select=id&limit=1", headers=headers, timeout=2.5)
+            else:
+                async with httpx.AsyncClient(timeout=2.5) as temp_client:
+                    res = await temp_client.get(f"{supabase_url}/rest/v1/itineraries?select=id&limit=1", headers=headers)
+                    
+            latency = (time.time() - start_check) * 1000
+            if res.status_code == 200:
+                data = res.json()
+                payload = {
+                    "status": "healthy",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "database": {
+                        "status": "connected",
+                        "latency_ms": round(latency, 2),
+                        "items": len(data) if isinstance(data, list) else 0
+                    },
+                    "version": "1.2.9-hardened",
+                    "service": "ryan-travel-api"
+                }
+                _deep_health_cache["last_checked"] = time.time()
+                _deep_health_cache["status_code"] = 200
+                _deep_health_cache["payload"] = payload
+                return ORJSONResponse(status_code=200, content={**payload, "cached": False})
+            else:
+                err_payload = {"status": "degraded", "http_status": res.status_code}
+                _deep_health_cache["last_checked"] = time.time() - 30.0  # 失敗快取 30 秒以提早重試
+                _deep_health_cache["status_code"] = 502
+                _deep_health_cache["payload"] = err_payload
+                return ORJSONResponse(status_code=502, content=err_payload)
+        except httpx.TimeoutException:
+            err_payload = {"status": "degraded", "detail": "Supabase check timed out after 2.5s"}
+            _deep_health_cache["last_checked"] = time.time() - 30.0
+            _deep_health_cache["status_code"] = 504
+            _deep_health_cache["payload"] = err_payload
+            return ORJSONResponse(status_code=504, content=err_payload)
+        except Exception as e:
+            err_payload = {"status": "error", "detail": str(e)[:100]}
+            _deep_health_cache["last_checked"] = time.time() - 30.0
+            _deep_health_cache["status_code"] = 500
+            _deep_health_cache["payload"] = err_payload
+            return ORJSONResponse(status_code=500, content=err_payload)
 
 # 4. 載入 ArcGIS API Key (地理編碼用，可選)
 ARCGIS_API_KEY = (os.getenv("ARCGIS_API_KEY") or "").strip()
