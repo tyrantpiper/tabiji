@@ -45,6 +45,7 @@ export const API = {
     LATEST_ITINERARY: `${API_HOST}/api/trips/itinerary/latest`,
     PARSE_MD: `${API_HOST}/api/ai/parse-md`,
     GENERATE_TRIP: `${API_HOST}/api/ai/generate-trip`,
+    GENERATE_TRIP_STREAM: `${API_HOST}/api/ai/generate-trip/stream`,
     EXPENSES: `${API_HOST}/api/expenses`,
     ITEMS: `${API_HOST}/api/trips/items`,
     GEOCODE: `${API_HOST}/api/geocode/search`,
@@ -152,6 +153,17 @@ export interface AiGenerateParams {
     user_id?: string
 }
 
+export interface StreamProgressEvent {
+    percent: number
+    stage: string
+    message: string
+}
+
+export interface AiGenerateStreamParams extends AiGenerateParams {
+    onProgress?: (progress: StreamProgressEvent) => void
+    signal?: AbortSignal
+}
+
 export interface SmartSearchParams {
     query: string
     lat: number
@@ -252,6 +264,96 @@ async function extractError(res: Response, fallback: string): Promise<string> {
     }
 }
 
+/**
+ * 🌊 SSE 串流解析器 (具備跨 TCP 碎片緩衝區累加機制)
+ * 保證在遇到 TCP 封包拆分時，能累積直到完整的 "\n\n" 邊界才進行 JSON 解析，防止 SyntaxError。
+ */
+export async function consumeTripStream(
+    response: Response,
+    onProgress?: (progress: StreamProgressEvent) => void
+): Promise<unknown> {
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error("ReadableStream not supported")
+
+    const decoder = new TextDecoder("utf-8")
+    let buffer = ""
+    let finalResult: unknown = null
+
+    while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+            buffer += decoder.decode() // 🛡️ 刷新清空解碼器內殘餘的 UTF-8 位元組
+            break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split("\n\n")
+        buffer = parts.pop() || "" // 保留未完成的尾端碎片
+
+        for (const block of parts) {
+            const trimmed = block.trim()
+            if (!trimmed || trimmed.startsWith(":")) continue // 略過連線探針與心跳註解
+
+            let eventType = "message"
+            let dataStr = ""
+
+            for (const line of trimmed.split("\n")) {
+                if (line.startsWith("event:")) {
+                    eventType = line.slice(6).trim()
+                } else if (line.startsWith("data:")) {
+                    dataStr = line.slice(5).trim()
+                }
+            }
+
+            if (dataStr) {
+                try {
+                    const payload = JSON.parse(dataStr)
+                    if (eventType === "progress" && onProgress) {
+                        onProgress(payload)
+                    } else if (eventType === "complete") {
+                        finalResult = payload
+                    } else if (eventType === "error") {
+                        throw new Error(payload.detail || "AI 行程生成失敗")
+                    }
+                } catch (parseErr) {
+                    if (eventType === "error" || eventType === "complete") {
+                        throw parseErr
+                    }
+                }
+            }
+        }
+    }
+
+    // 🛡️ 尾端保護：若串流結束且未帶尾端 \n\n，嘗試解析剩餘殘留區塊
+    if (!finalResult && buffer.trim() && !buffer.trim().startsWith(":")) {
+        let eventType = "message"
+        let dataStr = ""
+        for (const line of buffer.trim().split("\n")) {
+            if (line.startsWith("event:")) {
+                eventType = line.slice(6).trim()
+            } else if (line.startsWith("data:")) {
+                dataStr = line.slice(5).trim()
+            }
+        }
+        if (dataStr) {
+            try {
+                const payload = JSON.parse(dataStr)
+                if (eventType === "complete") {
+                    finalResult = payload
+                } else if (eventType === "error") {
+                    throw new Error(payload.detail || "AI 行程生成失敗")
+                }
+            } catch (err) {
+                if (eventType === "error" || eventType === "complete") throw err
+            }
+        }
+    }
+
+    if (!finalResult) {
+        throw new Error("連線已關閉，但未收到完整行程數據")
+    }
+    return finalResult
+}
 
 // === API Functions ===
 
@@ -626,7 +728,7 @@ export const aiApi = {
     },
 
 
-    /** 🚀 Generate itinerary from prompt */
+    /** 🚀 Generate itinerary from prompt (Synchronous legacy) */
     generateTrip: async (params: AiGenerateParams) => {
         const apiKey = getSecureApiKey()
 
@@ -649,6 +751,35 @@ export const aiApi = {
         const parsed = AiGenerateResponseSchema.safeParse(data)
         if (!parsed.success) {
             console.warn("⚠️ [API] AI generate validation warning:", parsed.error)
+            return data
+        }
+        return parsed.data
+    },
+
+    /** 🌊 Generate itinerary with SSE stream & 10s keep-alive heartbeat */
+    generateTripStream: async (params: AiGenerateStreamParams) => {
+        const apiKey = getSecureApiKey()
+
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "X-Gemini-API-Key": apiKey
+        }
+        if (params.user_id) headers["X-User-ID"] = encodeURI(params.user_id)
+
+        const res = await fetch(API.GENERATE_TRIP_STREAM, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ prompt: params.prompt }),
+            signal: params.signal
+        })
+        if (!res.ok) {
+            const errMsg = await extractError(res, "AI 串流連線失敗")
+            throw new Error(errMsg)
+        }
+        const data = await consumeTripStream(res, params.onProgress)
+        const parsed = AiGenerateResponseSchema.safeParse(data)
+        if (!parsed.success) {
+            console.warn("⚠️ [API] AI generate stream validation warning:", parsed.error)
             return data
         }
         return parsed.data

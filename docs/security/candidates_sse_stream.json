@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/routers/ai.py#stream_coroutine_leak",
+    "file_path": "backend/routers/ai.py",
+    "attack_vector": "resource_leak_denial_of_service",
+    "hypothesis": "When a client aborts or disconnects prematurely during SSE streaming, the backend producer task might continue running and consuming LLM tokens indefinitely without listening to request cancellation."
+  },
+  {
+    "id": "backend/routers/ai.py#infinite_zombie_heartbeat",
+    "file_path": "backend/routers/ai.py",
+    "attack_vector": "deadlock_and_stall",
+    "hypothesis": "If the background AI producer throws an unhandled exception (e.g. rate limit, JSON error, geocoding timeout), the queue may never receive a termination sentinel, causing the SSE generator to emit keep-alive pings forever."
+  },
+  {
+    "id": "backend/routers/ai.py#cloudflare_body_buffering",
+    "file_path": "backend/routers/ai.py",
+    "attack_vector": "edge_proxy_bypass_failure",
+    "hypothesis": "If StreamingResponse lacks 'Cache-Control: no-cache, no-transform' and 'X-Accel-Buffering: no', intermediate edge proxies or Cloudflare will buffer the tiny 20-byte heartbeat chunks, resulting in HTTP 524 timeout anyway."
+  },
+  {
+    "id": "frontend/lib/api.ts#tcp_chunk_fragmentation",
+    "file_path": "frontend/lib/api.ts",
+    "attack_vector": "parser_crash_dos",
+    "hypothesis": "A naive SSE reader that splits data purely per ReadableStream chunk will crash with JSON.parse errors when large itinerary payloads (10KB+) are fragmented across multiple TCP packets."
+  }
+]
