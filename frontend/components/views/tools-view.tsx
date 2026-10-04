@@ -643,10 +643,22 @@ export function ToolsView() {
         const activeUserId = localStorage.getItem("user_uuid") || userId || ""
 
         try {
-            const response = await aiApi.generateTrip({
-                prompt: p,
-                user_id: activeUserId
-            })
+            let response: unknown
+            try {
+                response = await aiApi.generateTripStream({
+                    prompt: p,
+                    user_id: activeUserId,
+                    onProgress: (prog) => {
+                        setGenerateProgress(`${prog.message} (${prog.percent}%)`)
+                    }
+                })
+            } catch (streamErr) {
+                console.warn("⚠️ [tools-view] Stream failed, falling back to sync:", streamErr)
+                response = await aiApi.generateTrip({
+                    prompt: p,
+                    user_id: activeUserId
+                })
+            }
             setGenerateProgress(t('tv_ai_geocoding'))
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const itineraryData = (response as any).data || response

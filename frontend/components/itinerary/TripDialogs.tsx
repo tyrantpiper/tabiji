@@ -147,10 +147,22 @@ export function CreateTripModal({
         const activeUserId = localStorage.getItem("user_uuid") || userId
 
         try {
-            const response = await aiApi.generateTrip({
-                prompt: promptToSend,
-                user_id: activeUserId
-            })
+            let response: unknown
+            try {
+                response = await aiApi.generateTripStream({
+                    prompt: promptToSend,
+                    user_id: activeUserId,
+                    onProgress: (p) => {
+                        setAiProgress(`${p.message} (${p.percent}%)`)
+                    }
+                })
+            } catch (streamErr) {
+                console.warn("⚠️ [TripDialogs] Stream failed, falling back to sync:", streamErr)
+                response = await aiApi.generateTrip({
+                    prompt: promptToSend,
+                    user_id: activeUserId
+                })
+            }
             setAiProgress(t('ai_geocoding_step'))
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
