@@ -135,6 +135,7 @@ sequenceDiagram
 
 ## 🔴 Technical Debt (待辦技術債)
 
+- **真實世界時空感知與公休核實能力 (Real-World Spatiotemporal & Opening Hours Verification)**: 目前 AI 行程生成為單向結構化 JSON 直出，存在公休日閉館與短時間跨區瞬移的潛在盲區，已納入未來規劃中的非同步輕量行程體檢管線（方案 A）。
 - **超大檔案分塊審查 (Large File AST Chunking)**: `runner.py` 當前採用代碼片段截斷（前 10,000 字元）進行靜態審查。針對超過 10,000 字元的超長服務模組，未來應引入基於 AST 的函式/路由分塊（Chunking）機制，分批傳入驗證。
 - **Ledger 多人協作與多分支合併策略 (Coverage Ledger Merge Conflict Policy)**: `docs/security/security-coverage-ledger.json` 當前為單一 JSON 檔案，未來多人協作或多分支切換時，若有多人更新 Ledger，可能產生 Git 衝突。後續可規劃 Ledger 自動排序與合併腳本。
 - **離線 IndexedDB 空間配額監控 (IndexedDB Storage Quota Telemetry)**: 離線圖片快取上限已擴充至 300 張（約 30MB），未來可在 Settings 面板加入快取佔用計量條與一鍵釋放按鈕。
@@ -146,4 +147,9 @@ sequenceDiagram
 1. **Dependabot #83 安全依賴修復**：利用升級後的 `/security-sentinel` 雙模態工作流針對 Dependabot #83 進行快速分析與無損升級。
 2. **全端 API 攻擊面週期性深度掃描**：安排定期排程執行全量 `/security-audit --deep`，確保新增端點持續受 Ledger 追蹤保護。
 3. **PWA 離線長途離線地圖離線包預載測試**：結合 BBOX 機制，評估使用者在出國前預載指定視窗瓦片（MapLibre Vector Tiles）的離線支援。
+4. **【拷問四未來規劃】非同步後置「行程體檢器（Real-World Itinerary Inspector Pipeline）」實作**：
+   - 拒絕 30~50 輪超重型 ReAct Tool Calling 延遲爆炸（避免 90~180 秒失控與 Cloudflare 逾時），改採「後置非同步真實世界校驗管線」。
+   - **時空不可能三角檢查（Spatiotemporal Distance Linter）**：利用 Haversine 計算相鄰景點位移時間，若間隔過短自動注入 `{ "_warning": "traffic_tight", "_message": "預估交通時間約 40 分鐘，時間安排偏緊湊" }`。
+   - **公休日與營業時間輕量比對（Opening Hours Probe）**：比對排定當天是星期幾與 OSM `opening_hours` 規則，自動標記 `{ "_warning": "closed_day", "_message": "該景點週一通常休館，建議調整至其他天" }`。
+   - 前端行程卡片角落浮現黃色警示膠囊（`Badge`），並提供「一鍵平移至第二天」或「由 Ryan AI 尋找附近同類型替代景點」。
 

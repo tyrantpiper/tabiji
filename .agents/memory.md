@@ -241,6 +241,7 @@
 - **Cloudflare Worker 代理 Secret 金鑰強制校驗 (Cloudflare Worker Key Enforcement)**: 目前 Worker 的 `x-tabidachi-key` 為非強制校驗。未來若流量增長或面臨濫用風險，可於 Worker 環境變數配置 Secret 並於後端 Cloud Run 同步注入。
 - **CodeQL 靜態告警漸進式收斂 (CodeQL Gradual Convergence)**: 後續可在不破壞既有架構前提下，為 `poi_service.py` 加上類型別名或獨立驗證器顯式告知靜態分析器 `api_url` 屬安全常數，並對 URL 判斷改採標準 `urllib.parse` 解析主機名，逐步消除靜態分析噪音。
 - **Supabase 身份驗證回調網址更新（待帳號體系啟動時排程）**: 目前 Tabidachi 全面採用訪客匿名認證（`user_uuid` 本地儲存於 IndexedDB），無需 OAuth 流程。後續若開發第三方社群帳號登入功能，需將 `https://www.tabijiapp.com/auth/callback` 加入 Supabase Redirect URLs 白名單。
+- **真實世界時空感知與公休核實能力 (Real-World Spatiotemporal & Opening Hours Verification)**: 目前 AI 行程生成為單向結構化 JSON 直出，缺乏公休日閉館與跨區瞬移的感知能力。未來已規劃導入「後置非同步行程體檢器 (Real-World Itinerary Inspector Pipeline)」，以純數學 Haversine 計算位移時間，並結合 OSM opening_hours 輕量探針，在 UI 呈現警示膠囊與替代方案，兼顧 0ms 體感延遲與 100% 真實世界感知。
 
 ---
 
