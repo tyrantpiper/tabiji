@@ -365,7 +365,11 @@ async def health_check_deep(request: Request):
             supabase_url = os.getenv("SUPABASE_URL", "").strip()
             supabase_key = os.getenv("SUPABASE_KEY", "").strip()
             if not supabase_url or not supabase_key:
-                raise HTTPException(status_code=503, detail="Supabase not configured")
+                err_payload = {"status": "degraded", "detail": "Supabase not configured"}
+                _deep_health_cache["last_checked"] = time.time() - 30.0
+                _deep_health_cache["status_code"] = 503
+                _deep_health_cache["payload"] = err_payload
+                return ORJSONResponse(status_code=503, content={**err_payload, "cached": False})
                 
             headers = {
                 "apikey": supabase_key,
@@ -401,19 +405,19 @@ async def health_check_deep(request: Request):
                 _deep_health_cache["last_checked"] = time.time() - 30.0  # 失敗快取 30 秒以提早重試
                 _deep_health_cache["status_code"] = 502
                 _deep_health_cache["payload"] = err_payload
-                return ORJSONResponse(status_code=502, content=err_payload)
+                return ORJSONResponse(status_code=502, content={**err_payload, "cached": False})
         except httpx.TimeoutException:
             err_payload = {"status": "degraded", "detail": "Supabase check timed out after 2.5s"}
             _deep_health_cache["last_checked"] = time.time() - 30.0
             _deep_health_cache["status_code"] = 504
             _deep_health_cache["payload"] = err_payload
-            return ORJSONResponse(status_code=504, content=err_payload)
+            return ORJSONResponse(status_code=504, content={**err_payload, "cached": False})
         except Exception as e:
             err_payload = {"status": "error", "detail": str(e)[:100]}
             _deep_health_cache["last_checked"] = time.time() - 30.0
             _deep_health_cache["status_code"] = 500
             _deep_health_cache["payload"] = err_payload
-            return ORJSONResponse(status_code=500, content=err_payload)
+            return ORJSONResponse(status_code=500, content={**err_payload, "cached": False})
 
 # 4. 載入 ArcGIS API Key (地理編碼用，可選)
 ARCGIS_API_KEY = (os.getenv("ARCGIS_API_KEY") or "").strip()
