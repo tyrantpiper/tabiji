@@ -345,3 +345,10 @@
 - **Tri-State Verdict & Zero False-Negative Guarantee**: 三態判定與零假陰性防線，強制將解析失敗或逾時標記為 INCONCLUSIVE 杜絕靜默漏報。
 - **In-Memory Mock PoC Standard**: 離線記憶體中單元 PoC 規範，全面採用 pytest + TestClient 模擬請求，零外部伺服器依賴。
 - **RFC Diff & Exact Block Replacement Protocol**: RFC 標準 Diff 與精確區塊替換雙重補丁規範，成對提供以免疫 Windows CRLF 行尾字元破損。
+
+### 13. 邊緣串流保活與次世代並行地理編碼領域
+- **10s SSE Heartbeat & Cross-Chunk Accumulator**: 邊緣 100 秒逾時 SSE 保活與跨 Chunk 累加器，每 10 秒發送 Ping 保活重置 Cloudflare 計時器，並在 EOF 刷新尾端封包。
+- **Multi-Factor Top-K Fusion & Rational Distance Decay**: 地理編碼多維融合 Top-K 重排與有理空間衰減架構，以 $1 / (1 + \text{dist} / 150)$ 取代高斯斷崖，50% 文本 + 30% 空間 + 10% 權威度補償 + 10% 目標國加成。
+- **Viewport Bounding Box & Antimeridian Boundary Guard**: 視窗邊界限制與換日線拓撲防禦，前端地圖動態提取 BBOX，後端嚴格校驗四坐標範圍與經緯度單調性，防範 Photon HTTP 400。
+- **CJK Character-Spaced Tokenization & Graceful Fallback**: CJK 字符空格化分詞與跨國過濾優雅降級標準，解決漢字緊密分詞塌縮，且過濾為空時退回原始清單保護出發地機場。
+- **Windows CP950 Unicode-Safe Logging**: Windows CP950 控制台安全日誌防衛，頂層包裝 stdout UTF-8 並以安全日誌函式防禦 Emoji 編碼崩潰。
