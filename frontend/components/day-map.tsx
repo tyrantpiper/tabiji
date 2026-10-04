@@ -381,6 +381,11 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
             setResults([])  // Anti-flicker: clear old results before new search
             try {
                 const center = mapRef.current?.getCenter()
+                const bounds = mapRef.current?.getBounds?.()
+                const bbox = bounds
+                    ? `${bounds.getWest().toFixed(5)},${bounds.getSouth().toFixed(5)},${bounds.getEast().toFixed(5)},${bounds.getNorth().toFixed(5)}`
+                    : undefined
+                const currentZoom = mapRef.current?.getZoom()
 
                 // 🏙️ 智能 Location Bias: 根據地圖中心找最近城市
                 const nearestCity = center ? findNearestCity(center.lat, center.lng) : null
@@ -390,7 +395,9 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                     limit: 5,
                     tripTitle,
                     lat: nearestCity?.lat ?? center?.lat,
-                    lng: nearestCity?.lng ?? center?.lng
+                    lng: nearestCity?.lng ?? center?.lng,
+                    zoom: currentZoom,
+                    bbox
                 })
                 // 🆕 只在 query 仍然匹配時更新
                 if (currentQuery === query) {
