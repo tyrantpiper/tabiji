@@ -3,8 +3,28 @@ name: CI
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '.agents/**'
+      - 'README.md'
+      - 'CONTEXT.md'
+      - '**/README.md'
+      - '.gitignore'
+      - 'LICENSE'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '.agents/**'
+      - 'README.md'
+      - 'CONTEXT.md'
+      - '**/README.md'
+      - '.gitignore'
+      - 'LICENSE'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   meltdown-defense:
