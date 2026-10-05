@@ -12,6 +12,8 @@
 - **Liquid Glass 物理材質純 CSS + GPU 合成層準則 (CSS Inset Specular over Heavy WebGL Shader)**: 堅決反對社群中盲目引入全屏 WebGL/WebGPU Shader（如 liquidGL）為按鈕製作液態玻璃效果的「反模式」。在已有 MapLibre 畫布的情況下，雙 WebGL Context 會引發 iOS Safari Context Loss 崩潰。規範一律使用純 CSS `backdrop-blur`、`saturate`、`shadow-[inset_...]` 搭配 `transform-gpu will-change-transform`，0ms JS 執行緒開銷，穩健交付 60~120fps。
 - **MapLibre 相機排程原子化原則 (Atomic Camera Transition Invariance)**: 連續呼叫 `easeTo` 與 `fitBounds` 會引發相機動畫排程競爭，後者會直接掐斷前者。若需在縮放視角的同時歸零角度，必須在 `fitBounds` 的 options 中顯式注入 `bearing: 0, pitch: 0`，使相機邊界縮放與方位重置在同一底層矩陣運算中原子化完成。
 - **多日總覽地圖 2D 平面 Mercator 預設守則 (Overview Map 2D Planar Default Invariance)**: 行程總覽（MultiDayMasterMap）涵蓋多天城際甚至跨國大尺度邊界，其預設投影必須維持 2D Mercator 平面（`isGlobe = false`）。在大尺度下若預設開啟 3D Globe，拖曳手勢會從線性平移退化為球面弧線旋轉（Spherical Rotation），導致視角傾斜、旋轉拉扯與手感降級。3D 地球儀必須作為選擇性增強功能，僅在使用者點擊 🌐 按鈕時按需動態開啟。
+- **MapLibre Globe 投影球面射線穿透奇異點與反向滑動陷阱 (Globe Projection Raycast Antipodal Singularity & Opposite Slip)**: 實證 MapLibre GL JS 官方已知底層缺陷（Issue #8349: *Map occasionally slips to opposite direction when dragging*）。在 3D Globe 投影下，觸控拖曳靠近地平線外圍（Horizon Limb）或中低縮放層級時，引擎射線反投影（Raycasting Unproject）會穿透至球體背面或切線法向量點積轉負（$\vec{N} \cdot \vec{V} < 0$），導致角速度位移被乘以 $-1$，產生「地圖朝手指反方向滑動」之反常現象；該反向速度會被 dragPan 慣性動量緩衝區記錄，手放開後持續反向滑行，直至使用者放大（Zoom In）攤平曲率、或四元數旋轉矩陣重新約束歸一化後才平息。架構方針：單日行程地圖（DayMap）亦應對齊遵循 2D Mercator 平面優先原則，避免預設強制 Globe 導致觸控跟手性破壞。
+- **MapLibre 3D 地形拖曳高程凍結與放手微幅吸附現象 (3D Terrain Elevation Freeze & Gesture Re-clamping Snap)**: 實證 MapLibre GL JS 官方核心 PR #8471 與 Issue #8539（*Camera Jumps / Bobbing over Terrain*）。在 3D DEM 地形啟用時，引擎為確保拖曳時維持 60 FPS，手勢移動中會將相機高程「暫時凍結（Elevation Freeze）」；而在手指放開（moveend / pan release）瞬間解除凍結，強制精算新中心點的地表高度並執行 centerClampedToGround（貼地高度吸附）。在大比例尺（高縮放）的山地或陡峭斜坡，相機中心高程差（$\Delta Z$）可能在數十米內劇烈變動，經透視矩陣投影為螢幕 XY 平面的微幅跳動（Bobbing / Snap）；加上 dragPan 慣性殘留，造成放手後地圖稍微抽動一下的視覺感。業界解法方針：在 3D 模式下可選擇性配置 dragPan.enable({ inertia: false }) 或平滑化 setCenterClampedToGround(false) 消除放手突變。
 - **地圖控制膠囊單一真理與呼吸降敏架構 (MapControlCapsule Single Source of Truth & Idle Dimming)**: `day-map.tsx` 與 `MultiDayMasterMap.tsx` 消除重複控制鈕與樣式代碼，抽取共用元件 `MapControlCapsule.tsx`。繼承 Tabidachi 核心設計 DNA——對齊 Ryan AI 聊天懸浮球的 `isIdle` 呼吸降敏機制：靜止 3 秒無操作自動以平滑動畫降低至 25% 晶透幽靈態（`opacity-25 scale-95`），避開東北方景點視野遮蔽；地圖拖曳、游標懸停或手指觸控瞬間點亮至 100% 飽和高亮態，完美兼顧視覺沉浸度與操作可發現性。
 - **離散手勢排程優於每幀高頻監聽原則 (Discrete Lifecycle over 60fps Frame Thrashing)**: 偵測地圖運動時嚴禁直接在 MapLibre `onMove`（每秒 60~120 次）中綁定 React 狀態，防止高頻 Re-render 與 WebGL 掉幀。架構上一律使用離散生命週期事件——`onMoveStart` 進入平移態、`onMoveEnd` 結束平移態。拖曳過程中 React 觸發次數降為 0，實現完全無負擔的流暢滑動。
 
@@ -309,6 +311,7 @@
 - **ID-Pinned Noreply Standard**: 官方 ID 錨定隱私信箱標準，以 `ID+username@users.noreply.github.com` 同時達成個資隱蔽與身分防偽。
 - **Hermetic Bundle Backup**: 封閉獨立打包備份，利用 Git Bundle 獨立封裝全量 DAG 規避歷史重構時的全域 Ref 污染。
 - **Fetch-Before-Lease**: 租約前置同步原則，在 force-with-lease 前強制獲取遠端追蹤指針避免租約斷裂。
+- **Turbopack 雙實例衝突與編譯 Worker 熔斷守則 (Turbopack Multi-Instance Port Collision & Worker Proliferation)**: 開發模式下若重複執行 `npm run dev`，新實例會調度多執行緒 Turbopack Rust/Node 編譯集群狂暴掃描全站 AST 與依賴，與既有進程在 Port 3000 發生競態搶佔，衍生高達 8~10 個 `node.exe` 子處理程序並發引發 CPU 瞬間暴衝 50%+。規範：嚴格維持單一 Dev Server 進程；重啟前必須執行進程樹清查（如 `taskkill /F /IM node.exe /T` 或檢測 `Get-NetTCPConnection`），杜絕幽靈 Worker 殘留。
 
 ### 7. 文件真實性與介面工程領域
 - **Documentation Reality Alignment**: 手冊與實作真實對齊原則，手冊所有操作流程與功能描述必須具備真實可運行的前端 DOM 或後端 API 支撐，禁止幽靈功能預先宣傳。
