@@ -191,6 +191,7 @@
 - **缺乏全域 Git 配置導致多專案身分漂移 (`Missing Global Gitconfig Trap`)**: 本機未曾建立 `~/.gitconfig`，導致不同專案各自為政且易殘留佔位信箱。教訓：開發機初次裝機或初始化環境時，第一優先級任務必須是全域宣告 `git config --global user.name` 與 `user.email`。
 - **未考慮 git-filter-repo 重寫全域 Ref 的本地備份污染 (`Ref-Rewriting Self-Pollution Trap`)**: 在重寫前於本地同儲存庫建立備份分支，但 `git-filter-repo` 預設行為會重寫倉庫內的所有 local refs，導致備份分支一同被改寫。教訓：不可逆備份必須封裝為完全獨立於倉庫目錄外的單一二進位檔案（`.bundle`）。
 - **未 Fetch 追蹤分支即調用 --force-with-lease 的租約斷裂 (`Un-anchored Lease Push Trap`)**: `git-filter-repo` 重構後會自動移除 `origin` remote，未執行 `fetch` 便直接 push 導致 lease 檢查崩潰。教訓：安全租約覆蓋前，必須強制以 `git fetch origin main` 同步遠端基準點。
+- **純文檔提交無路徑過濾引發 GitHub Actions Runner 枯竭逾時 (`Doc-Commit CI Runner Starvation Trap`)**: 在未配置 `paths-ignore` 與 `concurrency` 的情況下，僅推送每日報告或 memory.md（純 markdown）仍無差別觸發包含 CodeQL、Frontend 與 Backend 的 6 個雲端 Job。在美國下班/台灣清晨等全球提交尖峰時段，短時間內連續推送迅速打滿 GitHub-hosted Runner 免費併發配額，導致 Runner 分配超時被 GitHub 強制取消（`The job was not acquired by Runner of type hosted even after multiple attempts`），產生看似前端測試掛掉的假陽性報警。教訓：CI 工作流必須嚴格配置 `paths-ignore` 排除純文檔與設定檔，並在頂層配置 `concurrency: cancel-in-progress: true`，杜絕佇列堆疊與算力浪費。
 
 ### 7. 文件審核、UI 狀態與國際化踩坑
 - **依據手冊修詞卻未查證功能存在的盲目覆寫陷阱 (`Blind Rephrasing without Implementation Verification`)**: 在最佳化使用者使用手冊或介面文字時，直接根據既有文案進行文字美化或擴寫，卻未同步審查核心程式碼與元件功能清單（例如文案描述了「智能克隆前一天資料到新天數」、「手動發送測試推播」，實際上系統根本未實作該 API/按鈕），導致手冊給出空頭支票誤導使用者。教訓：任何文案修正必須以真實程式碼實作作為單一事實來源（Single Source of Truth），無對應實作者應果斷自手冊中剔除或先行實作。
@@ -367,3 +368,6 @@
 - **Itinerary Dashboard Hub & Modal Bottom Sheet Decoupling**: 每日長表單抽屜化收納原則。時間軸上方超過 1500px 的超長表單（AI 審核、花費、票券、行前清單）全面由平鋪收斂為「4 合 1 微型卡片（ItineraryDashboardHub）+ 物理彈簧底抽（IOSBottomSheet）」，顯著釋放行動端行程時間軸可視空間；底抽內建 Framer Motion 雙階檔位吸附（Half 60vh / Full 90vh）、甩動自動關閉與 Segmented Control 分頁列；並實作 Zero-Leak Body Scroll Lock，彈窗開啟時精確備份並鎖定 `document.body` 的 `overflow` 與 `touchAction`，關閉或組件卸載時百分之百還原，根除背景滾動穿透與死鎖。
 - **5-Dimension Rubric Scoring & Multi-Fence Tolerance Fallback**: AI 行程審核五維量規與多圍欄容錯解析。後端 Prompt 導入 Reason-First 先論後評機制，確立「時間節奏 (Pacing)、動線順暢 (Route)、停留合理 (Duration)、體力負荷 (Fatigue)、時段契合 (Timing)」五大維度（各 0~20 分，基準起評 80 分，總分 100 分），並輸出獨立機器可讀代碼塊；前端實作三階防禦解析（結構化圍欄 ➔ 嚴格非時間字眼正則 ➔ 五維加總保底），徹底根治「20 分鐘」誤抓為 20 分與「AI 即時分析後仍顯示無分析/無分數」之重大缺陷。
 - **Array Invariant Guard Before Spreading**: 集合展開前置陣列安全防衛。任何對外部傳入、LocalStorage 或快取物件進行展開運算（Spread `[...items]`）之前，必須以 `Array.isArray()` 前置確認型別（例如 `Array.isArray(raw0) ? raw0 : []`），若為非陣列物件或畸形結構強制降級為空陣列 `[]`，徹底杜絕因快取損毀或型別不符引發致命 `TypeError: d0 is not iterable` 導致整個前端頁面崩潰白屏。
+
+### 16. CI/CD 雲端排程、路徑過濾與併發取消領域 (CI Runner Starvation & Concurrency Cancellation)
+- **Doc-Commit Paths-Ignore & Concurrency Cancellation**: 文檔路徑過濾與並發取消架構。為 GitHub Actions CI 配置 `paths-ignore`（排除 `docs/**`、`.agents/**`、`README.md`、`CONTEXT.md`、`.gitignore`、`LICENSE`），阻斷純文本更新對繁重測試矩陣的無效調用；頂層啟用 `concurrency: { group: "${{ github.workflow }}-${{ github.ref }}", cancel-in-progress: true }`，新提交自動取消過時的舊任務排隊，徹底根治尖峰時段雲端 Runner 枯竭超時問題。
