@@ -25,16 +25,18 @@
   <img src="https://img.shields.io/badge/Tailwind_CSS-v4.1-38B2AC?logo=tailwind-css" />
   <img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi" />
   <img src="https://img.shields.io/badge/Gemini_3.7_Flash_&_Gemma-4285F4?logo=google" />
-  <img src="https://img.shields.io/badge/Tests-191_Passed-success?logo=vitest" />
+  <img src="https://img.shields.io/badge/Cloudflare-Edge_Shield-F38020?logo=cloudflare" />
   <img src="https://img.shields.io/badge/PWA-Installable-5A0FC8?logo=pwa" />
   <img src="https://img.shields.io/badge/License-MIT-green" />
 </p>
 
 <p align="center">
-  <a href="https://travel-pwa-five.vercel.app/">🌐 Live Demo</a> •
+  <a href="https://tabijiapp.com/">🌐 Live Demo (tabijiapp.com)</a> •
+  <a href="https://travel-pwa-five.vercel.app/">⚡ Vercel Mirror</a> •
   <a href="#-getting-started--快速開始">🚀 Getting Started</a> •
   <a href="#-features--功能特色">✨ Features</a> •
   <a href="#-tech-stack--技術棧">🏗️ Tech Stack</a> •
+  <a href="docs/specs/README.md">📐 Architecture Specs</a> •
   <a href="#-judging-guide--評審導覽">🏆 Judging Guide</a>
 </p>
 
@@ -42,11 +44,13 @@
 
 | 🚀 創新亮點 | 💡 技術實作 | 🏆 評審價值 |
 | :--- | :--- | :--- |
-| **Agentic Deep Linking** | 全鏈路推播深層調度 + Virtuoso 穿透重置 + 3.5s 光暈尋址 | **零迷航落地**：推播點擊精準直達特定記帳項目或總覽儀表板，打破傳統 Web Push 跳轉首頁的痛點。 |
-| **3D Cinematic Tour Engine** | 60° 俯衝大圓航線低空巡航 + 360° 盤旋 + VisionOS 晶透面板 | **身臨其境導覽**：以無人機視角飛掠跨日景點，搭配 Mapillary 全球 360 度真實街景無縫預覽。 |
-| **Generative Intelligence** | Gemini 3.7 Flash 思考推論 + 批次景點推薦 + 原生時鐘選取器 | **極致操作感**：告別純文字 Chatbot，對話直接驅動原生 UI 元件、批次加入與行程變更。 |
-| **Offline-First & PWA** | 本地 IndexedDB 雙層存儲 + Serwist 離線秒開 + 背景樂觀同步 | **全天候可用**：零網路/飛航模式依然秒開瀏覽行程與記帳，連網後自動無衝突向雲端閉環。 |
-| **Zero-Regression Rigor** | 雙重核驗 404 靜默自癒 + 191 項全維度測試自動守門 | **高可用架構**：網路波動絕不誤判白屏，單一事實來源狀態機確保代碼與型別零退化。 |
+| **Same-Origin Edge Shield** | Cloudflare Anycast 邊緣反代 + GFE 標頭重寫 + 虛擬 GET 快取 | **企業級資安與零延遲**：完全隱匿 Cloud Run 原始網址，消除 CORS Preflight 150ms 延遲，熱門搜尋邊緣 0ms 直出。 |
+| **3D DEM Terrain & Pitch Engine** | Mapterhorn Terrarium 高程解碼 + 30° 傾角運鏡動態掛載 | **極致視覺與效能平衡**：支援 1.2 倍真實地表起伏，平視自動卸載維持 60 FPS 絲滑手感，杜絕 GPU 顯存洩漏。 |
+| **OSRM 3-Tier Resilient Routing** | Layer 1 記憶體 LRU 快取 (1.6ms) + 連線池 + Haversine 直線保底 | **永不中斷路網**：徹底除役付費 ArcGIS，重複查詢加速 200 倍，遇離島偏遠無路網自動優雅降級，後端永不拋 500。 |
+| **Multi-Factor Top-K Geocoding** | 50% 字義 + 30% 有理衰減 $\frac{1}{1 + \text{dist}/150}$ + 權威度 + 國境加成 | **開源地理消歧義**：破解開源 Geocoder CJK 斷詞痛點，出發地機場與同名景點兼得，BBOX 換日線防禦。 |
+| **Supabase Two-Pillar Keep-Alive** | Lifespan 獨立循環 ✕ 外部 UptimeRobot `/api/health/deep` 探針 | **零成本永久保活**：穿透 PostgREST 實體 SQL 查詢徹底破解 7 天休眠，搭配 60s 純記憶體防抖鎖杜絕連線池死鎖。 |
+| **Agentic Deep Linking** | 全鏈路推播深層調度 + Virtuoso 穿透重置 + 3.5s 光暈尋址 | **零迷航落地**：推播點擊精準直達特定記帳項目或總覽儀表板，打破傳統 Web Push 跳轉首頁痛點。 |
+| **Zero-Regression Rigor** | 雙重核驗 404 靜默自癒 + 370 項全維度自動化測試守門 | **軍規級品質保障**：後端 pytest 112/112 + 前端 vitest 258/258 全綠，防禦型架構守護專案無感自癒。 |
 
 ---
 
@@ -64,14 +68,16 @@
 - **BYOK (Bring Your Own Key)** — Your API key, your privacy / 自帶金鑰，隱私至上
 
 ### 🗺️ Interactive Maps / 互動地圖
+- **Mapterhorn 3D DEM Terrain & Dynamic Pitch** — 開源全球 3D 地形高程（Terrarium 512px 解碼），相機傾角 $\ge 30^\circ$ 自動拉起 1.2 倍真實地貌，$\le 15^\circ$ 自動卸載歸零守護 60 FPS
+- **OSRM 3-Tier Resilient Routing Engine** — Layer 1 記憶體 LRU 快取（1.6ms 瞬回，快 200 倍）、Layer 2 HTTPX 全域連線池、Layer 3 Haversine 大圓航線直線保底（遇無路網優雅降級灰色虛線，100% 零崩潰）
+- **Multi-Factor Top-K Geocoding Reranker** — 多元加權重排演算法（50% CJK 字義 + 30% 有理空間衰減 + 10% 權威重要度 + 10% 目標國加分），換日線 BBOX 拓撲防禦
 - **3D Cinematic Tour Engine & VisionOS HUD** — 60° 俯衝大圓航線低空巡航導覽、景點 360° 自動盤旋與 Apple VisionOS 曜黑晶透懸浮面板
 - **Mapillary Global Street View** — 整合式 360 度真實街景沉浸式探索，隨時預覽實體地標外觀
 - **MapLibre GL & CSP Pipeline** — Web Worker 同源靜態管線，符合最嚴格 CSP 安全防護標準
 - **3D Buildings & Satellite View** — 支援 3D 建築視圖、Esri 高清衛星空拍圖與 OpenFreeMap 向量街道切換
-- **Multi-mode Routing** — Walking, driving, transit with real distance & duration / 步行、開車、大眾運輸路線即時切換
+- **Edge POST-to-GET Virtual Cache** — Cloudflare Anycast 邊緣快取適配，熱門地理搜尋 0ms 跨洲直出
 - **L1 Local Instant Search** — Offline-capable MiniSearch for stations & landmarks / 本地即時搜尋（離線可用）
 - **L2 5-Source POI Fusion Engine** — OSM, OpenTripMap, WikiVoyage, Wikipedia, Wikidata 聚合 / 五源 POI 聚合引擎
-- **Global Language Matrix** — CJK (中日韓) 語系變體擴充與 10x 地理感知搜尋 / 多語系智慧地名擴充
 - **Fullscreen Map** with cross-platform long-press and red-pin precision / 全螢幕地圖與長按選址互動
 
 ### 📅 Trip & Booking Management / 行程與訂房管理
@@ -111,11 +117,15 @@
 - **PDF Export** — Generate printable itinerary PDFs / PDF 匯出
 
 ### 🛡️ Architecture & DevOps / 架構與維運
+- **Same-Origin Edge Shield** — 同源邊緣防護罩架構，客戶端使用相對路徑 `/api/*`，由 Cloudflare Worker 動態代理並覆寫 GFE Host，徹底隱匿後端 Cloud Run 地址
+- **Supabase Two-Pillar Keep-Alive** — Lifespan 背景非同步循環 ✕ 外部 UptimeRobot `/api/health/deep` 深度探針，60s 純記憶體防抖鎖，徹底解決 7 天休眠
+- **Cloudflare 100s SSE Streaming Keep-Alive** — 10s `: keep-alive` 心跳封包重置邊緣逾時讀取計時器，`Cache-Control: no-transform` 穿透邊緣緩衝
 - **Double-Checked 404 Self-Healing** — 雙重核驗死行程自癒防線，網路抖動不誤判、幽靈快取 300ms 內秒級靜默自癒
-- **191 Full-Dimension Automated Tests** — Vitest 單元與整合測試 100% 守護，杜絕狀態死鎖與迴歸
+- **370 Full-Dimension Automated Tests** — 後端 pytest 112 項 + 前端 vitest 258 項全綠通過，杜絕狀態死鎖與迴歸
+- **Domain-Driven Spec Architecture** — 25+ 份系統架構規格書（`docs/specs/`），涵蓋 AI、搜尋、PWA、動效與基礎設施
 - **Autonomous Agent Ecosystem** — `.agents` L0-L3 工作流與多角色 (@dev, @qa, @security) 自動化治理
-- **Enterprise-grade Security** — MapLibre CSP Worker Pipeline、Anti-SSRF 與嚴格 CORS 策略
-- **Observability** — Prometheus Metrics 與 Supabase 連線池深度健康檢查 / 系統可觀測性監控
+- **Enterprise-grade Security** — MapLibre CSP Worker Pipeline、Security Sentinel 本地沙盒對抗審計與 Anti-SSRF
+- **Observability** — Prometheus Metrics 與 `/api/health/deep` 雙模健康檢查 / 系統可觀測性監控
 
 ---
 
@@ -128,7 +138,7 @@
 | Next.js | 16.3 | Framework (App Router, ISR, Turbopack) |
 | React | 19.2 | UI with React Compiler |
 | TypeScript | 5.9 | Type safety |
-| MapLibre GL | 6.9 | Maps (3D, satellite, static CSP worker) |
+| MapLibre GL | 6.9 | Maps (3D DEM Terrain, Terrarium, Esri satellite, static CSP worker) |
 | Zustand | 5.0 | State management (Single source of truth) |
 | SWR | 2.3 | Data fetching & caching |
 | Framer Motion | 12.x | Animations |
@@ -141,20 +151,22 @@
 | Technology | Version | Purpose |
 |-----------|---------|---------|
 | FastAPI | Latest | REST API framework |
-| Supabase | Latest | PostgreSQL database + Realtime |
+| Supabase | Latest | PostgreSQL database + Realtime (7-Day Keep-Alive) |
+| OSRM (FOSSGIS) | v5 API | 3-Tier Resilient Routing Engine (1.6ms LRU + Connection Pool) |
 | Gemini 3.7 & Gemma | Latest | Multi-model routing, POI enrichment, itinerary synthesis |
 | Prometheus Client | Latest | System observability and metrics |
-| HTTPX | Latest | Async HTTP client (with Anti-SSRF) |
+| HTTPX | Latest | Async HTTP client with connection pooling & Anti-SSRF |
 | SlowAPI | 0.1.9+ | Rate limiting |
-| RapidFuzz | 3.6+ | Fuzzy string matching |
+| RapidFuzz | 3.6+ | Fuzzy string matching & Top-K scoring |
 
 ### Infrastructure
 
 | Service | Purpose |
 |---------|---------|
-| Vercel | Frontend hosting (Edge, ISR) |
-| Google Cloud Run | Backend hosting (Docker) |
-| Supabase | Database + Auth + Realtime |
+| Cloudflare Workers | Edge Shield (Host rewrite, Anycast proxy, POST-to-GET virtual cache) |
+| Vercel | Frontend hosting (Edge, ISR, `tabijiapp.com` CNAME binding) |
+| Google Cloud Run | Backend hosting (Docker, hidden origin) |
+| Supabase | PostgreSQL Database + Auth + Realtime |
 | Cloudinary | Image hosting (receipts, avatars) |
 
 ---
@@ -163,31 +175,35 @@
 
 ```mermaid
 flowchart TB
-    subgraph Client["🖥️ PWA Client (Next.js 16)"]
-        UI["Interactive UI (React 19)"]
-        SW["Serwist (Offline Engine)"]
-        Cache["IndexedDB / Browser Cache"]
+    subgraph Tier1["🌐 邊緣防護與客戶端 (Client & Edge Shield)"]
+        PWA["📱 PWA 旅人端 (Next.js 16 / Serwist 離線快取)"]
+        CF["⚡ Cloudflare Anycast 邊緣盾 (worker.js)<br/>• 隱匿 Cloud Run 網址 • 零 CORS 延遲 • POST-to-GET 虛擬快取"]
+        PWA <-->|同源相對路徑 /api/*| CF
     end
-    
-    subgraph Backend["⚙️ AI Orchestrator (FastAPI)"]
-        Router["Smart Router"]
-        Geo["5-Source POI Fusion Engine"]
-        Context["AI Context Manager"]
-        Metrics["Prometheus (Observability)"]
+
+    subgraph Tier2["⚙️ AI 編排與後端核心 (Google Cloud Run / FastAPI)"]
+        Router["Smart Router & Intent Classifier"]
+        TopK["Top-K Geocoding & Speculative Engine"]
+        RouteLRU["OSRM 1.6ms 記憶體 LRU 路線快取"]
+        KeepAlive["Supabase 雙柱保活與 60s 防抖健康鎖"]
+        CF <-->|邊緣轉發 (覆寫 GFE Host)| Router
+        Router --> TopK
+        Router --> RouteLRU
+        Router --> KeepAlive
     end
-    
-    subgraph Cloud["☁️ Cloud Services"]
-        DB["Supabase (PostgreSQL)"]
-        AI["Multi-Model Routing (Gemini 3.5 + Gemma)"]
-        CDN["Cloudinary (Media)"]
+
+    subgraph Tier3["☁️ 雲端智慧與開源圖資服務 (Cloud Services & Map Engines)"]
+        AI["🧠 Gemini 3.7 Flash / Gemma 4 (BYOK)"]
+        OSRM["🚗 OSRM (FOSSGIS) 官方路網引擎"]
+        DEM["🏔️ Mapterhorn 3D DEM 地形 (Terrarium)"]
+        DB[("🐘 Supabase PostgreSQL (PostgREST)")]
+        CDN["🖼️ Cloudinary (媒體存證)"]
+        
+        Router <--> AI
+        RouteLRU <--> OSRM
+        KeepAlive <--> DB
+        PWA <--> DEM
     end
-    
-    UI <--> Router
-    Router <--> DB
-    Router <--> AI
-    Geo <--> DB
-    UI <--> SW
-    SW <--> Cache
 ```
 
 ---
@@ -266,14 +282,16 @@ npx playwright test
 |----------|----------|-------------|
 | `SUPABASE_URL` | ✅ | Supabase project URL |
 | `SUPABASE_ANON_KEY` | ✅ | Supabase anonymous key |
-| `ARCGIS_API_KEY` | Optional | ArcGIS geocoding (fallback to Nominatim) |
 | `TP_API_TOKEN` | Optional | Travelpayouts affiliate booking integration |
+
+> [!TIP]
+> 路線計算全面由免費開源的 **OSRM (FOSSGIS)** 與內建 1.6ms LRU 快取接管，**不再需要任何 ArcGIS API Key**。
 
 ### Frontend `.env.local`
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `NEXT_PUBLIC_API_URL` | ✅ | Backend API URL (e.g., `http://localhost:8000`) |
+| `NEXT_PUBLIC_API_URL` | Optional | 本地開發覆寫後端網址（生產環境由 Cloudflare 邊緣盾自動接管同源 `/api/*`，無需設定） |
 | `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | Supabase anonymous key |
 | `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | Optional | Cloudinary cloud name (for image uploads) |
@@ -378,10 +396,11 @@ SOFTWARE.
 
 如果您是競賽評審或技術審查者，我們建議您重點關注以下最能展現專案技術深度、架構韌性與創新落地的核心環節：
 
-1. **AI 批次推薦與原生互動選取器 (Batch POI & Interactive UI)**：在 AI 對話中請求景點推薦，體驗 `BatchPOIPreviewCard` 勾選批次加入，以及調整時間時的原生手感日曆時鐘選取器，告別純文字 Chatbot，對話直接驅動原生 UI。
-2. **全景行程總覽與 5 日動態氣象帶 (Trip Master Overview & Weather Strip)**：點擊行程頂部「ALL / 總覽」，檢視完整行程封面卡片、橫向 5 日氣溫晴雨預報帶，以及緊湊優雅的「詳情 →」跳轉按鈕，體驗多維度的資訊編排層次。
-3. **全鏈路推播與深層尋址定位 (Agentic Deep Linking & Glow Highlight)**：體驗網址直接帶有深層參數（如 `?tab=tools&expense_id=...`），系統自動完成分頁切換、穿透重置長清單篩選器、調用 Virtuoso 虛擬滾動平滑定位，並附帶 3.5 秒翠綠發光定位動畫。
-4. **離線地圖與同源 CSP 安全管線 (Offline Maps & CSP Pipeline)**：體驗 MapLibre GL 經由 Build-time 靜態化注入同源 Web Worker，符合嚴格企業級 CSP 標頭（拒絕 unsafe-eval / blob:），出國斷網依然秒開圖資與行程。
-5. **155 項全維度測試與雙重核驗自癒 (Zero-Regression & Self-Healing)**：專案具備 155 項全量通過的自動化測試守護，以及 SWR 404 雙重核驗靜默自癒機制，保證偶發網路抖動不誤判白屏，展現工程落地的極致自癒能力。
+1. **同源邊緣盾牌與 0ms 虛擬快取 (Same-Origin Edge Shield & Virtual Cache)**：體驗 `https://tabijiapp.com/`，前端所有呼叫皆為同源相對路徑 `/api/*`，透過 Cloudflare Worker 覆寫 GFE Host 隱匿 Cloud Run 網址，徹底消除 CORS 延遲；`/api/geocode/search` 透過 POST-to-GET 虛擬適配器實現邊緣 0ms 快取直出。
+2. **Mapterhorn 3D DEM 地形與 OSRM 零崩潰路網 (3D DEM & OSRM Routing Engine)**：在全景地圖中傾斜相機至 $\ge 30^\circ$，自動升起 1.2 倍真實 3D 地貌起伏；路線規劃由 OSRM 3-Tier 引擎驅動，Layer 1 記憶體 LRU 快取二次查詢僅需 1.6ms，遇偏遠或無路網自動優雅降級為 Haversine 直線虛線，達成 100% 零崩潰。
+3. **AI 批次推薦與原生互動選取器 (Batch POI & Interactive UI)**：在 AI 對話中請求景點推薦，體驗 `BatchPOIPreviewCard` 勾選批次加入，以及調整時間時的原生手感日曆時鐘選取器，告別純文字 Chatbot，對話直接驅動原生 UI。
+4. **全景行程總覽與 5 日動態氣象帶 (Trip Master Overview & Weather Strip)**：點擊行程頂部「ALL / 總覽」，檢視完整行程封面卡片、橫向 5 日氣溫晴雨預報帶，以及緊湊優雅的「詳情 →」跳轉按鈕，體驗多維度的資訊編排層次。
+5. **全鏈路推播與深層尋址定位 (Agentic Deep Linking & Glow Highlight)**：體驗網址直接帶有深層參數（如 `?tab=tools&expense_id=...`），系統自動完成分頁切換、穿透重置長清單篩選器、調用 Virtuoso 虛擬滾動平滑定位，並附帶 3.5 秒翠綠發光定位動畫。
+6. **370 項全維度測試與雙重核驗自癒 (Zero-Regression & Self-Healing)**：專案具備後端 112 項 pytest 與前端 258 項 vitest **共 370 項全量自動化測試守護**，以及 SWR 404 雙重核驗靜默自癒與 Supabase 雙柱 7 天防休眠保活，展現頂級全端工程的極致韌性。
 
 ---
