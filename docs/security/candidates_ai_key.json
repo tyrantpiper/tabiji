@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/components/ui/dialog.tsx",
+    "file_path": "frontend/components/ui/dialog.tsx",
+    "attack_vector": "ui_overflow_defense_and_a11y",
+    "hypothesis": "DialogContent lacks overflow-x-hidden, allowing unconstrained flex/grid children to cause horizontal overflow on mobile viewports; DialogHeader lacks right padding, risking title collision with the absolute close button."
+  },
+  {
+    "id": "frontend/components/ai/ai-key-dialog.tsx",
+    "file_path": "frontend/components/ai/ai-key-dialog.tsx",
+    "attack_vector": "mobile_responsive_overflow_and_key_handling",
+    "hypothesis": "DialogFooter enforces flex-row without wrapping, exceeding mobile screen width under large font scale (110%-130%) causing horizontal scroll; Accordion content flex items lack min-w-0; input lacks Enter key submission."
+  },
+  {
+    "id": "frontend/lib/security.ts",
+    "file_path": "frontend/lib/security.ts",
+    "attack_vector": "client_key_encryption_and_leakage",
+    "hypothesis": "Client-side storage of user_gemini_key in localStorage with XOR/Base64 obfuscation could be susceptible to XSS extraction or header injection if not properly sanitized."
+  }
+]
