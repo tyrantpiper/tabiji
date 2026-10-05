@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-04T02:22:00Z",
+  "last_audit_date": "2026-10-06T00:58:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 7,
-    "audited_targets": 7,
-    "verified_vulnerabilities": 1,
-    "dismissed_hypotheses": 1
+    "total_targets": 10,
+    "audited_targets": 10,
+    "verified_vulnerabilities": 2,
+    "dismissed_hypotheses": 3
   },
   "targets": [
     {
@@ -71,6 +71,33 @@
       "status": "PENDING_PATCH",
       "last_checked_commit": "35d7d3d",
       "validator_details": "Strict filter bug confirmed; Photon raw importance absence proven; In-memory PoC verified."
+    },
+    {
+      "id": "frontend/components/ui/dialog.tsx",
+      "target_type": "ui_primitive",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["ui_overflow_defense_and_a11y"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "DialogContent is fixed with max-w-[calc(100%-2rem)] and overflow-y-auto. Children are constrained within local scroll context. Adding overflow-x-hidden is an optional defensive enhancement."
+    },
+    {
+      "id": "frontend/components/ai/ai-key-dialog.tsx",
+      "target_type": "client_feature_dialog",
+      "trust_boundary": "client_ui_and_storage",
+      "vectors_checked": ["mobile_responsive_overflow_and_key_handling"],
+      "status": "PENDING_PATCH",
+      "last_checked_commit": "HEAD",
+      "validator_details": "DialogFooter unconstrained flex-row forces horizontal overflow under large font scales; Accordion text lacks min-w-0; Input lacks Enter key handler."
+    },
+    {
+      "id": "frontend/lib/security.ts",
+      "target_type": "client_security_helper",
+      "trust_boundary": "client_storage_and_headers",
+      "vectors_checked": ["client_key_encryption_and_leakage"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Sanitization strictly strips control characters and CRLF, preventing HTTP header injection."
     }
   ]
 }

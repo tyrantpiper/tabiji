@@ -1,0 +1,33 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 3,
+  "confirmed_count": 1,
+  "dismissed_count": 2,
+  "inconclusive_count": 0,
+  "findings": [
+    {
+      "target_id": "frontend/components/ui/dialog.tsx",
+      "verdict": "DISMISSED",
+      "reasoning": "1. Mobile Viewport Overflow: DialogContent is positioned as `fixed` with `max-w-[calc(100%-2rem)]` and specifies `overflow-y-auto`. Under the CSS Overflow Module specification, setting `overflow-y: auto` forces `overflow-x` (which defaults to `visible`) to compute to `auto`. Any wide or unconstrained flex/grid children are contained within the dialog's local scroll context and cannot expand the fixed container or cause horizontal overflow on the document/mobile viewport.\n2. DialogHeader Padding: DialogPrimitive.Content already applies `p-6` padding, and DialogHeader is an unopinionated composable primitive that accepts `className` overrides. Forcing default right padding on DialogHeader would break centered text alignment (`text-center` on mobile) and introduce unnecessary whitespace when `showCloseButton` is set to false.\nUnder the presumption of correctness, the component implements standard Radix UI composition patterns without introducing unhandled defects.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/ai/ai-key-dialog.tsx",
+      "verdict": "CONFIRMED",
+      "reasoning": "Static review confirms all three identified issues: 1) `DialogFooter` explicitly specifies `className=\"flex flex-row justify-between sm:justify-between gap-2\"` without `flex-wrap` or responsive flex direction (`flex-col sm:flex-row`). With three buttons containing icons and text, this layout exceeds narrow mobile viewport widths (<360px) and causes horizontal overflow/clipping under enlarged font scaling. 2) The Accordion step items use `flex gap-3` where the child content `div` lacks `min-w-0`, preventing flex children from shrinking below intrinsic content width when long strings or inline code are present. 3) The `<Input>` is neither enclosed within a `<form>` element nor provided with an `onKeyDown` handler to capture the 'Enter' key, preventing keyboard-driven save actions.",
+      "poc_type": "unit_test",
+      "poc_script": "import { render, screen, fireEvent } from '@testing-library/react';\nimport { AIKeyDialog } from './ai-key-dialog';\n\ndescribe('AIKeyDialog responsive & key handling', () => {\n  it('verifies input lacks Enter key submission handler', () => {\n    const onOpenChange = jest.fn();\n    render(<AIKeyDialog open={true} onOpenChange={onOpenChange} />);\n    const input = screen.getByPlaceholderText(/AIzaSy/i);\n    fireEvent.change(input, { target: { value: 'AIzaSyValidMockKey123' } });\n    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });\n    // Enter key has no effect because there is no form submission or onKeyDown handler\n    expect(onOpenChange).not.toHaveBeenCalled();\n  });\n\n  it('verifies DialogFooter forces flex-row without wrapping', () => {\n    const { container } = render(<AIKeyDialog open={true} onOpenChange={jest.fn()} />);\n    const footer = container.querySelector('[class*=\"flex-row\"]');\n    expect(footer?.className).toContain('flex-row');\n    expect(footer?.className).not.toContain('flex-wrap');\n    expect(footer?.className).not.toContain('flex-col');\n  });\n});",
+      "remediation_hint": "1. Update DialogFooter to support responsive stacking and wrapping: `className=\"flex flex-col-reverse sm:flex-row sm:justify-between gap-2 flex-wrap\"`.\n2. Add `min-w-0 flex-1` to the text container siblings of the badge in the Accordion steps: `<div className=\"min-w-0 flex-1\">`.\n3. Add Enter key handling to `<Input>` via `onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSaveApiKey(); } }}` or wrap the dialog content and submit button in a `<form onSubmit={(e) => { e.preventDefault(); handleSaveApiKey(); }}>`."
+    },
+    {
+      "target_id": "frontend/lib/security.ts",
+      "verdict": "DISMISSED",
+      "reasoning": "The proposed issue claims susceptibility to header injection and unhandled exposure if not properly sanitized. However, `getSecureApiKey()` explicitly defines and applies `sanitize = (key: string) => key.replace(/[^\\x20-\\x7E]/g, '').trim()` across all code paths (primary secure key, legacy plain text fallback, SSR fallback, and exception handlers). This strictly strips all control and CRLF characters (`\\r`, `\\n`), completely mitigating HTTP header injection. Furthermore, the JSDoc explicitly documents `encryptData` as client-side obfuscation to prevent shoulder-surfing rather than cryptographic defense against XSS, which aligns with client-side BYOK architecture. Under the presumption of correctness, the code properly handles sanitization and requirements.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}
