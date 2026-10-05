@@ -647,6 +647,17 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
             }
         })
 
+        // 🏔️ Mapterhorn 3D DEM Terrain Elevation
+        // ⚠️ 關鍵防禦：Mapterhorn 使用 Terrarium 編碼，必須明確宣告 encoding: 'terrarium'，否則 MapLibre 預設 mapbox 解碼會導致 Mt. Fuji 高程暴衝破 90 萬米！
+        if (!map.getSource(MAP_STYLES.TERRAIN_3D.SOURCE_ID)) {
+            map.addSource(MAP_STYLES.TERRAIN_3D.SOURCE_ID, {
+                type: 'raster-dem',
+                url: MAP_STYLES.TERRAIN_3D.URL,
+                tileSize: MAP_STYLES.TERRAIN_3D.TILE_SIZE,
+                encoding: 'terrarium'
+            })
+        }
+
         // 添加 Esri 衛星 Source
         if (!map.getSource('satellite')) {
             map.addSource('satellite', {
@@ -789,6 +800,22 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
             })
         }
         updateCursor()
+    }, [])
+
+    // 🏔️ 動態 3D 地形傾斜聯動 (當相機傾斜 pitch > 30° 時自動啟用 1.2 倍真實地貌，恢復小於 15° 時卸載歸零以維持 60 FPS)
+    const handlePitchCheck = useCallback(() => {
+        const map = mapRef.current?.getMap()
+        if (!map || !map.getSource(MAP_STYLES.TERRAIN_3D.SOURCE_ID)) return
+        const pitch = map.getPitch()
+        const hasTerrain = Boolean(map.getTerrain())
+        if (pitch >= MAP_STYLES.TERRAIN_3D.PITCH_TRIGGER_THRESHOLD && !hasTerrain) {
+            map.setTerrain({
+                source: MAP_STYLES.TERRAIN_3D.SOURCE_ID,
+                exaggeration: MAP_STYLES.TERRAIN_3D.EXAGGERATION
+            })
+        } else if (pitch <= MAP_STYLES.TERRAIN_3D.PITCH_RELEASE_THRESHOLD && hasTerrain) {
+            map.setTerrain(null)
+        }
     }, [])
 
     // 🆕 2026 Logic: 統一地圖點擊處理 (Base Map POIs)
@@ -1321,7 +1348,11 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                     mapStyle={MAP_STYLES.VECTOR}
                     onLoad={handleMapLoad}
                     onMoveStart={handleMapMoveStart}
-                    onMoveEnd={() => setIsMapMoving(false)}
+                    onMoveEnd={() => {
+                        setIsMapMoving(false)
+                        handlePitchCheck()
+                    }}
+                    onPitch={handlePitchCheck}
                     onMouseDown={handlePointerStart}
                     onMouseMove={handlePointerMove}
                     onMouseUp={handlePointerEnd}

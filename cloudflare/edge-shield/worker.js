@@ -16,6 +16,89 @@ export default {
     const TARGET_HOST = 'antigravity-backend-589255638719.us-central1.run.app';
     const backendUrl = new URL(url.pathname + url.search, `https://${TARGET_HOST}`);
 
+    // ⚡ 2.5 邊緣高速電纜快取：/api/geocode/search (POST-to-GET 虛擬快取適配器)
+    if (pathname === '/api/geocode/search' && request.method === 'POST') {
+      try {
+        const clonedReq = request.clone();
+        const bodyJson = await clonedReq.json().catch(() => ({}));
+        const query = (bodyJson.query || '').trim().toLowerCase();
+        const rawBbox = bodyJson.bbox || '';
+
+        let quantizedBbox = '';
+        if (rawBbox && typeof rawBbox === 'string') {
+          const parts = rawBbox.split(',').map(Number);
+          if (parts.length === 4 && parts.every(Number.isFinite)) {
+            quantizedBbox = parts.map(p => p.toFixed(2)).join(',');
+          }
+        }
+
+        const country = (bodyJson.country || '').trim().toUpperCase();
+
+        // 構造專屬虛擬 GET Cache Key (100% 符合 Cloudflare 官方 Cache API 限制)
+        const cacheKeyUrl = new URL(`https://cache.tabijiapp.com/api/geocode/search`);
+        cacheKeyUrl.searchParams.set('q', query);
+        if (quantizedBbox) cacheKeyUrl.searchParams.set('bbox', quantizedBbox);
+        if (country) cacheKeyUrl.searchParams.set('country', country);
+
+        const cache = caches.default;
+        const cacheKey = cacheKeyUrl.toString();
+
+        // 嘗試讀取邊緣快取 (0ms 跨洲直出)
+        const cachedResp = await cache.match(cacheKey);
+        if (cachedResp) {
+          const hitHeaders = new Headers(cachedResp.headers);
+          hitHeaders.set('X-Edge-Cache', 'HIT');
+          hitHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
+          return new Response(cachedResp.body, {
+            status: cachedResp.status,
+            headers: hitHeaders,
+          });
+        }
+
+        // 未命中：帶入邊緣地理標頭並安全轉發（使用 JSON.stringify 避免消耗原始 Stream）
+        const originHeaders = new Headers(request.headers);
+        originHeaders.set('Host', TARGET_HOST);
+        originHeaders.set('X-Forwarded-Host', url.hostname);
+        originHeaders.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
+        if (request.cf) {
+          if (request.cf.country) originHeaders.set('CF-IPCountry', request.cf.country);
+          if (request.cf.latitude) originHeaders.set('CF-IPLatitude', String(request.cf.latitude));
+          if (request.cf.longitude) originHeaders.set('CF-IPLongitude', String(request.cf.longitude));
+        }
+
+        const backendResp = await fetch(backendUrl.toString(), {
+          method: 'POST',
+          headers: originHeaders,
+          body: JSON.stringify(bodyJson),
+        });
+
+        // 僅對成功且具有內容的結果寫入 7 天邊緣快取
+        if (backendResp.ok) {
+          const cloneResp = backendResp.clone();
+          const data = await cloneResp.json().catch(() => null);
+          if (data && Array.isArray(data.results) && data.results.length > 0) {
+            const cacheHeaders = new Headers(backendResp.headers);
+            cacheHeaders.set('Cache-Control', 'public, max-age=604800, s-maxage=604800');
+            const respToCache = new Response(JSON.stringify(data), {
+              status: backendResp.status,
+              headers: cacheHeaders,
+            });
+            ctx.waitUntil(cache.put(cacheKey, respToCache));
+          }
+        }
+
+        const outHeaders = new Headers(backendResp.headers);
+        outHeaders.set('X-Edge-Cache', 'MISS');
+        outHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
+        return new Response(backendResp.body, {
+          status: backendResp.status,
+          headers: outHeaders,
+        });
+      } catch (e) {
+        // 若快取邏輯遭遇任何異常，平滑退回既有代理，絕不中斷連線
+      }
+    }
+
     // 3. 標頭重寫（規避 Google Cloud Run 404）
     const newHeaders = new Headers(request.headers);
     newHeaders.set('Host', TARGET_HOST);

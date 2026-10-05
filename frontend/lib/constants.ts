@@ -65,6 +65,16 @@ export const MAP_STYLES = {
 
     // 衛星模式道路透明度
     ROAD_OPACITY_ON_SATELLITE: 0.7,
+
+    // 🏔️ 3D 地形高程設定 (Mapterhorn Free Global DEM)
+    TERRAIN_3D: {
+        SOURCE_ID: "mapterhorn-terrain",
+        URL: "https://tiles.mapterhorn.com/tilejson.json",
+        TILE_SIZE: 512,
+        EXAGGERATION: 1.2,
+        PITCH_TRIGGER_THRESHOLD: 30, // 傾斜大於 30 度自動拉起高程
+        PITCH_RELEASE_THRESHOLD: 15, // 回正小於 15 度卸載地形以維護 FPS
+    },
 }
 
 /**
