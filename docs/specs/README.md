@@ -32,6 +32,7 @@ docs/specs/
 | [**`ryan-ai-companion-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ai/ryan-ai-companion-spec.md) | 🟢 Active | 打造專業醫學背景＋全端旅遊助理 Ryan 之專屬人物態、語氣規範與陪伴心智。 | `backend/services/model_manager.py`<br>`frontend/components/chat-widget.tsx` |
 | [**`realtime-temporal-awareness-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ai/realtime-temporal-awareness-spec.md) | 🟢 Active | 端側時間解析、相對時差天數計算、行程生命週期狀態機 (`PLANNING`~`POST_TRIP`)。 | `backend/services/temporal_service.py`<br>`backend/main.py` |
 | [**`parallel-tooling-and-temporal-constants-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ai/parallel-tooling-and-temporal-constants-spec.md) | 🟢 Active | 後端伺服端工具 (`get_world_time`) 與客戶端業務工具分離、時間常數統一。 | `backend/main.py`<br>`backend/services/model_manager.py` |
+| [**`sse-streaming-keepalive-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ai/sse-streaming-keepalive-spec.md) | 🟢 Active | Cloudflare 100s 超時防衛、SSE 串流 10s 心跳保活與跨 Chunk 累加器。 | `backend/routers/ai.py`<br>`cloudflare/edge-shield/worker.js` |
 
 ---
 
@@ -43,6 +44,7 @@ docs/specs/
 | [**`global-local-search-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/search/global-local-search-spec.md) | 🟢 Active | 4-Tier 容錯搜尋管線、AC-2 雜訊過濾黑名單、AC-4 嚴格 1對1 引文剪裁對齊演算法。 | `backend/services/web_search_engine.py`<br>`frontend/components/chat/SourceCitation.tsx` |
 | [**`global-search-taxonomy-and-region-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/search/global-search-taxonomy-and-region-spec.md) | 🟢 Active | 全球 9 大區域詞庫大瘦身（拔除破壞性 `OR` 運算符）、動態雙軌 Region 分流。 | `backend/services/destination_taxonomy.py` |
 | [**`cloudflare-edge-and-wrangler-master-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/search/cloudflare-edge-and-wrangler-master-spec.md) | 🟢 Active | Cloudflare 邊緣檢索執行器（雙通道競速、DDG Lite 快速熔斷、Wikipedia 全文）。 | `cloudflare/search-proxy/worker.js`<br>`cloudflare/search-proxy/wrangler.jsonc` |
+| [**`multi-factor-top-k-rerank-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/search/multi-factor-top-k-rerank-spec.md) | 🟢 Active | 多元加權 Top-K 重排演算法（50% 字義 + 30% 有理空間衰減 + 10% 權威度 + 10% 國境加成）。 | `backend/services/geocode_service.py` |
 
 ---
 
@@ -79,6 +81,9 @@ docs/specs/
 
 | 規格檔案 | 現行狀態 | 核心業務與架構摘要 | 主要對應代碼位置 |
 | :--- | :---: | :--- | :--- |
+| [**`same-origin-edge-shield-architecture-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/same-origin-edge-shield-architecture-spec.md) | 🟢 Active | 同源邊緣防護罩、隱匿 Cloud Run 網址、零 CORS Preflight 與 POST-to-GET 虛擬快取。 | `cloudflare/edge-shield/worker.js`<br>`frontend/lib/api.ts` |
+| [**`tabijiapp-cloudflare-setup-sop-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/tabijiapp-cloudflare-setup-sop-spec.md) | 🟢 Active | tabijiapp.com 零缺陷生產級部署 SOP、灰雲/橘雲平滑過渡與雙軌網域存活。 | Cloudflare DNS<br>Vercel 網域配置 |
+| [**`supabase-keepalive-architecture-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/supabase-keepalive-architecture-spec.md) | 🟢 Active | Supabase 7 天防休眠雙柱保活架構、PostgREST 實體穿透與 60s 防抖鎖。 | `backend/main.py` (Lifespan & `/health/deep`) |
 | [**`git-identity-and-history-reconciliation-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/git-identity-and-history-reconciliation-spec.md) | 🟢 Active | 去中心化 Git 身分防偽、官方 ID 錨定隱私信箱標準、全量 DAG Bundle 獨立備份。 | `~/.gitconfig`<br>Git Commit 規範 |
 | [**`architecture-evolution-backlog-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/architecture-evolution-backlog-spec.md) | 📋 Backlog | 全專案架構演進路線圖、技術債追蹤與未來大版本里程碑清單。 | 全專案架構規劃 |
 
