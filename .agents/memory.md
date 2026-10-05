@@ -353,3 +353,8 @@
 - **Viewport Bounding Box & Antimeridian Boundary Guard**: 視窗邊界限制與換日線拓撲防禦，前端地圖動態提取 BBOX，後端嚴格校驗四坐標範圍與經緯度單調性，防範 Photon HTTP 400。
 - **CJK Character-Spaced Tokenization & Graceful Fallback**: CJK 字符空格化分詞與跨國過濾優雅降級標準，解決漢字緊密分詞塌縮，且過濾為空時退回原始清單保護出發地機場。
 - **Windows CP950 Unicode-Safe Logging**: Windows CP950 控制台安全日誌防衛，頂層包裝 stdout UTF-8 並以安全日誌函式防禦 Emoji 編碼崩潰。
+
+### 14. 路線計算引擎、連線池與 3D 地形領域 (OSRM Routing Engine, Connection Pooling & 3D Terrain)
+- **OSRM 3-Tier Resilient Routing Architecture**: 徹底除役不穩定且依賴 Token 的 ArcGIS Routing，全面以 OSRM (FOSSGIS) 作為預設路網引擎。架構實作三層防禦體系：Layer 1 記憶體 LRU 快取（500 筆、TTL 10m，重複縮放/拖曳 1.6ms 直出，恪守 1 req/s 公共規範）➔ Layer 2 HTTPX 全域連線池單例（Keep-Alive、max 50 連線，steps=false 減輕 70% 體積）➔ Layer 3 Haversine 大圓直線保底（遇離島無路網或逾時回傳 source: straight-line，前端降級為灰色虛線，杜絕 500 報錯與地圖崩潰）。
+- **Edge POST-to-GET Virtual Cache Adapter**: 邊緣 POST-to-GET 虛擬快取適配架構。在 Cloudflare Worker 邊緣層攔截 `/api/geocode/search` POST 請求，將 BBOX 空間量化（小數點後兩位）並動態構造專屬虛擬 GET URL 作為 Cache Key，成功突破 Cloudflare Cache API 僅支援 GET 的限制，實現熱門搜尋 0ms Anycast 邊緣直出，有效保護後端算力。
+- **Mapterhorn Terrarium 3D DEM & Dynamic Pitch Throttling**: Mapterhorn 開源全域 3D 地形高程與動態傾角運鏡防衛。地圖載入 DEM 圖資時必須顯式宣告 `encoding: 'terrarium'`，杜絕 MapLibre 預設 Mapbox RGB 算法造成高程膨脹 100 倍的致命白屏與形變；同時實作動態傾角監聽（pitch $\ge 30^\circ$ 自動啟用 1.2 倍真實地形、$\le 15^\circ$ 自動卸載歸零），兼具壯闊地貌與 60 FPS 絲滑體驗。
