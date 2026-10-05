@@ -45,6 +45,8 @@ interface EditableDailyTipsProps {
     readOnly?: boolean
     userId?: string  // 🆕 For tracking who set privacy
     defaultCurrency?: string
+    displaySection?: "all" | "notes" | "costs" | "tickets" // 🆕 支援單獨渲染特定區塊
+    className?: string                                     // 🆕 自訂外層樣式
 }
 
 // Constants
@@ -156,7 +158,9 @@ export default function EditableDailyTips({
     onUpdate,
     readOnly = false,
     userId,
-    defaultCurrency
+    defaultCurrency,
+    displaySection = "all",
+    className,
 }: EditableDailyTipsProps) {
     const { lang } = useLanguage()
     const zh = lang === 'zh'
@@ -565,10 +569,15 @@ export default function EditableDailyTips({
         ))
     }
 
+    const showNotes = !displaySection || displaySection === "all" || displaySection === "notes"
+    const showCosts = !displaySection || displaySection === "all" || displaySection === "costs"
+    const showTickets = !displaySection || displaySection === "all" || displaySection === "tickets"
+
     return (
-        <div className="mx-5 mb-6 space-y-4">
+        <div className={cn(className || "mx-5 mb-6 space-y-4")}>
             {/* ⚠️ Notes Section */}
-            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
+            {showNotes && (
+                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
                         <AlertCircle className="w-4 h-4" />
@@ -674,10 +683,13 @@ export default function EditableDailyTips({
                     )}
                 </div>
             </div>
+            )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* 💰 Costs Section */}
-                <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex flex-col h-full">
+            {(showCosts || showTickets) && (
+                <div className={cn("grid gap-4", showCosts && showTickets ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1")}>
+                    {/* 💰 Costs Section */}
+                    {showCosts && (
+                        <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl p-4 flex flex-col h-full">
                     <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                             <Wallet className="w-4 h-4" />
@@ -840,9 +852,11 @@ export default function EditableDailyTips({
                         )}
                     </div>
                 </div>
+                )}
 
                 {/* 🎫 Tickets Section */}
-                <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-800 rounded-xl p-4 flex flex-col h-full">
+                {showTickets && (
+                    <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-800 rounded-xl p-4 flex flex-col h-full">
                     <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
                             <Ticket className="w-4 h-4" />
@@ -1005,7 +1019,9 @@ export default function EditableDailyTips({
                         )}
                     </div>
                 </div>
+                )}
             </div>
+            )}
         </div>
     )
 }

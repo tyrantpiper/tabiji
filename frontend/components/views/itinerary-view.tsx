@@ -14,6 +14,8 @@ import { CreateTripModal, JoinTripDialog } from "@/components/itinerary/TripDial
 import EditableDailyTips from "@/components/itinerary/EditableDailyTips"
 import EditableDailyChecklist from "@/components/itinerary/EditableDailyChecklist"
 import EditableDailyAIReview from "@/components/itinerary/EditableDailyAIReview"
+import ItineraryDashboardHub from "@/components/itinerary/ItineraryDashboardHub"
+import IOSBottomSheet, { DashboardSectionTab } from "@/components/itinerary/IOSBottomSheet"
 import { tripsApi, itemsApi, geocodeApi } from "@/lib/api"
 import { useDynamicPolling } from "@/lib/polling-manager"
 import { useTripContext } from "@/lib/trip-context"
@@ -90,6 +92,15 @@ export function ItineraryView() {
     const [isSavingActivity, setIsSavingActivity] = useState(false)
     const [mounted, setMounted] = useState(false)
     useEffect(() => setMounted(true), []) // 🔧 Client-side only rendering for Portal
+
+    // 📱 iOS Expandable Dashboard State
+    const [isDashboardSheetOpen, setIsDashboardSheetOpen] = useState(false)
+    const [activeDashboardTab, setActiveDashboardTab] = useState<DashboardSectionTab>("ai_review")
+
+    // 🛡️ 換天時自動關閉底抽，防止跨天閉包殘留污染
+    useEffect(() => {
+        setIsDashboardSheetOpen(false)
+    }, [day])
 
     // 🚀 Spotlight Tour: 當導引進入建立行程步驟時，自動切換至清單視圖
     useEffect(() => {
@@ -1423,8 +1434,9 @@ export function ItineraryView() {
                     />
                 ) : (
                     <>
-                        {/* 🕵️ Phase 3: Modular Weather Panel */}
+                        {/* 🕵️ Phase 3: Modular Weather Panel (iOS Bento Grid System) */}
                         <WeatherPanel
+                            key={`weather-panel-day-${day}`}
                             day={day}
                             weatherData={weatherData}
                             weatherMode={weatherMode}
@@ -1435,85 +1447,187 @@ export function ItineraryView() {
                             onEditLocation={() => setIsLocEditOpen(true)}
                         />
 
-                        {/* AI Reviews & Tips */}
-                        <EditableDailyAIReview
-                            key={`ai-review-${day}`}
-                            tripId={activeTripId || ""}
+                        {/* 📱 每日智慧總覽看板 (Apple Health Bento Grid 2x2 + 1 滿版橫卡) */}
+                        <ItineraryDashboardHub
                             day={day}
                             review={getDayData(currentTrip?.day_ai_reviews, day) || (day === 1 ? currentTrip?.ai_review : undefined)}
-                            userId={userId || ""}
-                            onUpdate={async () => {
-                                await reloadTripDetail()
-                            }}
-                        />
-
-                        <EditableDailyTips
-                            key={`tips-${day}`}
-                            tripId={activeTripId || ""}
-                            day={day}
                             notes={getDayData(currentTrip?.day_notes, day) || []}
                             costs={getDayData(currentTrip?.day_costs, day) || []}
                             tickets={getDayData(currentTrip?.day_tickets, day) || []}
-                            userId={userId || undefined}
-                            onUpdate={async (type, data) => {
-                                if (!activeTripId) return false
-                                try {
-                                    const updatePayload: Record<string, unknown> = {}
-                                    if (type === "notes") updatePayload.day_notes = { [day]: data }
-                                    if (type === "costs") updatePayload.day_costs = { [day]: data }
-                                    if (type === "tickets") updatePayload.day_tickets = { [day]: data }
-
-                                    await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
-                                    await reloadTripDetail()
-                                    return true
-                                } catch (e) {
-                                    console.error("Failed to update day data:", e)
-                                    toast.error(t('iv_update_failed_short'))
-                                    return false
-                                }
+                            dayChecklists={currentTrip?.day_checklists}
+                            defaultCurrency={currentTrip?.currency}
+                            onSelectTab={(tab) => {
+                                setActiveDashboardTab(tab)
+                                setIsDashboardSheetOpen(true)
                             }}
                         />
 
-                        <EditableDailyChecklist
-                            key={`checklist-${day}`}
-                            tripId={activeTripId || ""}
-                            day={day}
-                            items={day === 1 ? (() => {
-                                const d0 = getDayData(currentTrip?.day_checklists, 0) || [];
-                                const d1 = getDayData(currentTrip?.day_checklists, 1) || [];
-                                // 🛡️ L4 深度防禦：使用 Map 依據 ID 去重，防止 React Key 衝突導致崩潰
-                                const uniqueMap = new Map();
-                                [...d0, ...d1].forEach(item => { if (item.id) uniqueMap.set(item.id, item); });
-                                return Array.from(uniqueMap.values()) as ChecklistItem[];
-                            })() : (getDayData(currentTrip?.day_checklists, day) || [])}
-                            userId={userId || undefined}
-                            onUpdate={async (items) => {
-                                if (!activeTripId) return false
-                                try {
-                                    // 1. Update current day items
-                                    await tripsApi.updateDayData(activeTripId, day, {
-                                        day_checklists: { [day]: items }
-                                    }, userId || "")
+                        {/* 📱 iOS 彈簧底抽 (Detented Spring Bottom Sheet) */}
+                        <IOSBottomSheet
+                            isOpen={isDashboardSheetOpen}
+                            activeTab={activeDashboardTab}
+                            onClose={() => setIsDashboardSheetOpen(false)}
+                            onTabChange={(tab) => setActiveDashboardTab(tab)}
+                        >
+                            {activeDashboardTab === "ai_review" && (
+                                <EditableDailyAIReview
+                                    key={`sheet-ai-review-${day}`}
+                                    tripId={activeTripId || ""}
+                                    day={day}
+                                    review={getDayData(currentTrip?.day_ai_reviews, day) || (day === 1 ? currentTrip?.ai_review : undefined)}
+                                    userId={userId || ""}
+                                    onUpdate={async (newReview?: string) => {
+                                        if (currentTrip && typeof newReview === "string") {
+                                            const updatedReviews: Record<number | string, string> = { ...(currentTrip.day_ai_reviews || {}) }
+                                            if (newReview) {
+                                                updatedReviews[day] = newReview
+                                                updatedReviews[String(day)] = newReview
+                                            } else {
+                                                delete updatedReviews[day]
+                                                delete updatedReviews[String(day)]
+                                            }
+                                            await reloadTripDetail({
+                                                ...currentTrip,
+                                                day_ai_reviews: updatedReviews,
+                                            }, false)
+                                        }
+                                        await reloadTripDetail()
+                                    }}
+                                />
+                            )}
 
-                                    // 2. Clear Day 0 items if they were merged into Day 1 (bcfeb32 parity)
-                                    // If user is editing Day 1 and there are items in Day 0 (pre-trip), we assume they are now merged and should be cleared from Day 0
-                                    const hasDay0Items = (getDayData(currentTrip?.day_checklists, 0)?.length || 0) > 0
-                                    if (day === 1 && hasDay0Items) {
-                                        debugLog("🕵️ Detecting Day 0 items after merge, clearing Day 0...")
-                                        await tripsApi.updateDayData(activeTripId, 0, {
-                                            day_checklists: { "0": [] }
-                                        }, userId || "")
-                                    }
+                            {activeDashboardTab === "tips" && (
+                                <EditableDailyTips
+                                    key={`sheet-tips-${day}`}
+                                    tripId={activeTripId || ""}
+                                    day={day}
+                                    displaySection="notes"
+                                    className="space-y-4"
+                                    notes={getDayData(currentTrip?.day_notes, day) || []}
+                                    costs={getDayData(currentTrip?.day_costs, day) || []}
+                                    tickets={getDayData(currentTrip?.day_tickets, day) || []}
+                                    userId={userId || undefined}
+                                    onUpdate={async (type, data) => {
+                                        if (!activeTripId) return false
+                                        try {
+                                            const updatePayload: Record<string, unknown> = {}
+                                            if (type === "notes") updatePayload.day_notes = { [day]: data }
+                                            if (type === "costs") updatePayload.day_costs = { [day]: data }
+                                            if (type === "tickets") updatePayload.day_tickets = { [day]: data }
 
-                                    await reloadTripDetail()
-                                    return true
-                                } catch (e) {
-                                    console.error("Failed to update checklist:", e)
-                                    toast.error(t('iv_update_failed_short'))
-                                    return false
-                                }
-                            }}
-                        />
+                                            await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
+                                            await reloadTripDetail()
+                                            return true
+                                        } catch (e) {
+                                            console.error("Failed to update day data:", e)
+                                            toast.error(t('iv_update_failed_short'))
+                                            return false
+                                        }
+                                    }}
+                                />
+                            )}
+
+                            {activeDashboardTab === "costs" && (
+                                <EditableDailyTips
+                                    key={`sheet-costs-${day}`}
+                                    tripId={activeTripId || ""}
+                                    day={day}
+                                    displaySection="costs"
+                                    className="space-y-4"
+                                    notes={getDayData(currentTrip?.day_notes, day) || []}
+                                    costs={getDayData(currentTrip?.day_costs, day) || []}
+                                    tickets={getDayData(currentTrip?.day_tickets, day) || []}
+                                    userId={userId || undefined}
+                                    onUpdate={async (type, data) => {
+                                        if (!activeTripId) return false
+                                        try {
+                                            const updatePayload: Record<string, unknown> = {}
+                                            if (type === "notes") updatePayload.day_notes = { [day]: data }
+                                            if (type === "costs") updatePayload.day_costs = { [day]: data }
+                                            if (type === "tickets") updatePayload.day_tickets = { [day]: data }
+
+                                            await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
+                                            await reloadTripDetail()
+                                            return true
+                                        } catch (e) {
+                                            console.error("Failed to update day data:", e)
+                                            toast.error(t('iv_update_failed_short'))
+                                            return false
+                                        }
+                                    }}
+                                />
+                            )}
+
+                            {activeDashboardTab === "tickets" && (
+                                <EditableDailyTips
+                                    key={`sheet-tickets-${day}`}
+                                    tripId={activeTripId || ""}
+                                    day={day}
+                                    displaySection="tickets"
+                                    className="space-y-4"
+                                    notes={getDayData(currentTrip?.day_notes, day) || []}
+                                    costs={getDayData(currentTrip?.day_costs, day) || []}
+                                    tickets={getDayData(currentTrip?.day_tickets, day) || []}
+                                    userId={userId || undefined}
+                                    onUpdate={async (type, data) => {
+                                        if (!activeTripId) return false
+                                        try {
+                                            const updatePayload: Record<string, unknown> = {}
+                                            if (type === "notes") updatePayload.day_notes = { [day]: data }
+                                            if (type === "costs") updatePayload.day_costs = { [day]: data }
+                                            if (type === "tickets") updatePayload.day_tickets = { [day]: data }
+
+                                            await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
+                                            await reloadTripDetail()
+                                            return true
+                                        } catch (e) {
+                                            console.error("Failed to update day data:", e)
+                                            toast.error(t('iv_update_failed_short'))
+                                            return false
+                                        }
+                                    }}
+                                />
+                            )}
+
+                            {activeDashboardTab === "checklist" && (
+                                <EditableDailyChecklist
+                                    key={`sheet-checklist-${day}`}
+                                    tripId={activeTripId || ""}
+                                    day={day}
+                                    items={day === 1 ? (() => {
+                                        const d0 = getDayData(currentTrip?.day_checklists, 0) || [];
+                                        const d1 = getDayData(currentTrip?.day_checklists, 1) || [];
+                                        const uniqueMap = new Map();
+                                        [...d0, ...d1].forEach(item => { if (item.id) uniqueMap.set(item.id, item); });
+                                        return Array.from(uniqueMap.values()) as ChecklistItem[];
+                                    })() : (getDayData(currentTrip?.day_checklists, day) || [])}
+                                    userId={userId || undefined}
+                                    onUpdate={async (items) => {
+                                        if (!activeTripId) return false
+                                        try {
+                                            await tripsApi.updateDayData(activeTripId, day, {
+                                                day_checklists: { [day]: items }
+                                            }, userId || "")
+
+                                            const hasDay0Items = (getDayData(currentTrip?.day_checklists, 0)?.length || 0) > 0
+                                            if (day === 1 && hasDay0Items) {
+                                                debugLog("🕵️ Detecting Day 0 items after merge, clearing Day 0...")
+                                                await tripsApi.updateDayData(activeTripId, 0, {
+                                                    day_checklists: { "0": [] }
+                                                }, userId || "")
+                                            }
+
+                                            await reloadTripDetail()
+                                            return true
+                                        } catch (e) {
+                                            console.error("Failed to update checklist:", e)
+                                            toast.error(t('iv_update_failed_short'))
+                                            return false
+                                        }
+                                    }}
+                                />
+                            )}
+                        </IOSBottomSheet>
 
                         {/* 🕵️ Phase 3: Modular Timeline */}
                         <ItineraryTimeline

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/components/itinerary/WeatherPanel.tsx#division_by_zero",
+    "file_path": "frontend/components/itinerary/WeatherPanel.tsx",
+    "attack_vector": "division_by_zero_and_nan_injection",
+    "hypothesis": "In the temperature range bar and hourly scrub slider, calculating (temp - min) / (max - min) without a strictly bounded non-zero denominator will yield NaN% or Infinity% when all hourly temperatures are identical (max === min), injecting invalid CSS inline styles and corrupting the layout."
+  },
+  {
+    "id": "frontend/components/itinerary/WeatherPanel.tsx#xss_injection",
+    "file_path": "frontend/components/itinerary/WeatherPanel.tsx",
+    "attack_vector": "xss_and_html_injection",
+    "hypothesis": "Unsanitized resolvedLocation.name or advice strings injected into the DOM could execute arbitrary JavaScript if a malicious trip title or POI name containing <img onerror=alert(1)> is passed from external API or URL parameters."
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx#stale_day_race",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "stale_day_cross_contamination_and_race_condition",
+    "hypothesis": "Switching day without keyed unmounting or cache cancellation will cause WeatherPanel to render stale previous-day weather metrics under the new day's label, exposing inconsistent local time or wrong weather conditions during SWR revalidation."
+  }
+]

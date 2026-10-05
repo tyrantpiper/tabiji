@@ -1,19 +1,20 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { ChevronDown, Loader2, RefreshCw, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { tripsApi } from "@/lib/api"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useLanguage } from "@/lib/LanguageContext"
+import { extractAIReviewHighlights } from "@/lib/itinerary-metrics"
 
 interface EditableDailyAIReviewProps {
     tripId: string
     day: number
     review: string | undefined
     userId?: string              // 🆕 新增
-    onUpdate: () => Promise<void>  // 刷新行程資料
+    onUpdate: (newReview?: string) => Promise<void> | void  // 刷新行程資料
 }
 
 /**
@@ -36,7 +37,15 @@ export default function EditableDailyAIReview({
     const { lang } = useLanguage()
     const zh = lang === 'zh'
     const [loadingAction, setLoadingAction] = useState<"generate" | "clear" | null>(null)
-    const [isExpanded, setIsExpanded] = useState(false)  // 🆕 Collapsible state
+    const [isExpanded, setIsExpanded] = useState(true)  // 預設展開以利抽屜內直接閱讀
+
+    // 🚀 樂觀即時狀態 (Optimistic Instant State: 零延遲立即反映)
+    const [optimisticReview, setOptimisticReview] = useState<string | null>(null)
+
+    const effectiveReview = optimisticReview !== null ? optimisticReview : review
+
+    const highlights = useMemo(() => extractAIReviewHighlights(effectiveReview), [effectiveReview])
+    const cleanText = highlights.cleanReviewText || effectiveReview
 
     // 生成/重新生成 AI 審核
     const handleGenerate = async () => {
@@ -46,9 +55,12 @@ export default function EditableDailyAIReview({
         setLoadingAction("generate")
 
         try {
-            await tripsApi.generateAIReview(tripId, day, userId)
+            const res = await tripsApi.generateAIReview(tripId, day, userId)
+            if (res && res.review) {
+                setOptimisticReview(res.review)
+            }
             toast.success(zh ? `Day ${day} AI 審核完成!` : `Day ${day} AI review complete!`)
-            await onUpdate()
+            await onUpdate(res?.review)
         } catch (error) {
             console.error("AI Review failed:", error)
             toast.error(error instanceof Error ? error.message : (zh ? "AI 審核失敗" : "AI review failed"))
@@ -67,8 +79,9 @@ export default function EditableDailyAIReview({
 
         try {
             await tripsApi.clearAIReview(tripId, day, userId)
+            setOptimisticReview("")
             toast.success(zh ? "已清除審核報告" : "Review cleared")
-            await onUpdate()
+            await onUpdate("")
         } catch (error) {
             console.error("Clear failed:", error)
             toast.error(zh ? "清除失敗" : "Clear failed")
@@ -121,14 +134,14 @@ export default function EditableDailyAIReview({
     }
 
     // 無審核報告 - 顯示生成按鈕
-    if (!review) {
+    if (!effectiveReview) {
         return (
             <div className="mx-6 mt-4">
                 <Button
                     variant="outline"
                     className={cn(
                         "w-full py-6 border-dashed border-2 border-indigo-300",
-                        "bg-gradient-to-br from-indigo-50/50 to-purple-50/50",
+                        "bg-linear-to-br from-indigo-50/50 to-purple-50/50",
                         "hover:border-indigo-400 hover:bg-indigo-50",
                         "text-indigo-600 font-medium",
                         "touch-manipulation"
@@ -154,7 +167,7 @@ export default function EditableDailyAIReview({
 
     // 有審核報告 - 顯示報告 + 操作按鈕 (可收合)
     return (
-        <div className="mx-6 mt-4 p-5 bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-2xl shadow-sm">
+        <div className="mx-6 mt-4 p-5 bg-linear-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-2xl shadow-sm">
             {/* Header - 點擊展開/收合 */}
             <div
                 className="flex items-center justify-between cursor-pointer select-none"
@@ -207,11 +220,50 @@ export default function EditableDailyAIReview({
             <div
                 className={cn(
                     "overflow-hidden transition-all duration-300 ease-in-out",
-                    isExpanded ? "max-h-[2000px] opacity-100 mt-3" : "max-h-0 opacity-0 mt-0"
+                    isExpanded ? "max-h-750 opacity-100 mt-3" : "max-h-0 opacity-0 mt-0"
                 )}
             >
+                {/* 📊 五維量規微型健康指標卡片 */}
+                {highlights.dimensions && (
+                    <div className="mb-3.5 p-3 bg-white/80 dark:bg-card/80 backdrop-blur rounded-xl border border-indigo-100 dark:border-indigo-950/40 space-y-2.5">
+                        <div className="flex items-center justify-between text-xs font-semibold text-indigo-950 dark:text-indigo-200">
+                            <span>{zh ? "五維審核量規指標" : "Health Rubric Metrics"}</span>
+                            {highlights.score !== null && (
+                                <span className="tabular-nums font-bold text-indigo-600 dark:text-indigo-400">
+                                    {zh ? `總評分: ${highlights.score} / 100` : `Score: ${highlights.score} / 100`}
+                                </span>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                            {[
+                                { label: zh ? "時間節奏" : "Pacing", val: highlights.dimensions.pacing },
+                                { label: zh ? "動線順暢" : "Route", val: highlights.dimensions.route },
+                                { label: zh ? "停留合理" : "Duration", val: highlights.dimensions.duration },
+                                { label: zh ? "體力負荷" : "Fatigue", val: highlights.dimensions.fatigue },
+                                { label: zh ? "時段契合" : "Timing", val: highlights.dimensions.timing },
+                            ].map((dim) => (
+                                <div key={dim.label} className="space-y-0.5">
+                                    <div className="flex justify-between text-[10px] text-muted-foreground">
+                                        <span>{dim.label}</span>
+                                        <span className="tabular-nums font-medium text-foreground">{dim.val} / 20</span>
+                                    </div>
+                                    <div className="w-full h-1.5 bg-indigo-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                                        <div
+                                            className={cn(
+                                                "h-full rounded-full transition-all duration-300",
+                                                dim.val >= 17 ? "bg-emerald-500" : dim.val >= 14 ? "bg-amber-500" : "bg-rose-500"
+                                            )}
+                                            style={{ width: `${Math.max(0, Math.min(100, (dim.val / 20) * 100))}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 <div className="text-sm text-indigo-800 leading-relaxed space-y-1">
-                    {formatReview(review)}
+                    {formatReview(cleanText)}
                 </div>
             </div>
         </div>

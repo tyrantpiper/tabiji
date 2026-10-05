@@ -1,0 +1,44 @@
+[
+  {
+    "id": "backend/routers/ai.py#prompt_injection",
+    "file_path": "backend/routers/ai.py",
+    "attack_vector": "prompt_injection",
+    "hypothesis": "User-supplied activity notes or place names in itineraries can break the prompt fence <user_query> and force arbitrary SCORE or STATUS output, altering day evaluation results."
+  },
+  {
+    "id": "frontend/lib/itinerary-metrics.ts#redos",
+    "file_path": "frontend/lib/itinerary-metrics.ts",
+    "attack_vector": "regex_dos",
+    "hypothesis": "parseEvaluationBlock regex uses lazy matches inside evaluation code fence without linear bounds, which could suffer from polynomial or exponential backtracking on malicious repetitive payload."
+  },
+  {
+    "id": "frontend/lib/itinerary-metrics.ts#nan_pollution",
+    "file_path": "frontend/lib/itinerary-metrics.ts",
+    "attack_vector": "prototype_or_nan_pollution",
+    "hypothesis": "calculateDayCostsSummary or calculateChecklistProgress can produce NaN or throw uncaught TypeError when passed malformed or nested JSON data."
+  },
+  {
+    "id": "frontend/components/itinerary/WeatherPanel.tsx#boundary",
+    "file_path": "frontend/components/itinerary/WeatherPanel.tsx",
+    "attack_vector": "division_by_zero_and_xss",
+    "hypothesis": "WeatherPanel fails to guard against maxTemp === minTemp division by zero in hourly scrubber progress bar or allows XSS through resolvedLocation.name."
+  },
+  {
+    "id": "frontend/components/itinerary/IOSBottomSheet.tsx#scroll_lock",
+    "file_path": "frontend/components/itinerary/IOSBottomSheet.tsx",
+    "attack_vector": "dom_state_leak",
+    "hypothesis": "IOSBottomSheet useEffect locks document.body.style.overflow to hidden, but if the component unmounts unexpectedly or rapidly toggles, it permanently freezes page scrolling."
+  },
+  {
+    "id": "frontend/components/itinerary/EditableDailyAIReview.tsx#xss",
+    "file_path": "frontend/components/itinerary/EditableDailyAIReview.tsx",
+    "attack_vector": "stored_xss",
+    "hypothesis": "formatReview formats AI markdown review lines into React elements without sanitizing dangerous HTML tags or script injection inside review text."
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx#race_condition",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "race_condition_state_pollution",
+    "hypothesis": "Rapid switching of day or multiple concurrent updates in IOSBottomSheet causes out-of-order API responses to overwrite current day state with previous day data."
+  }
+]

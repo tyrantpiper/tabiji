@@ -3,10 +3,10 @@
   "last_audit_date": "2026-10-06T00:58:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 10,
-    "audited_targets": 10,
+    "total_targets": 12,
+    "audited_targets": 12,
     "verified_vulnerabilities": 2,
-    "dismissed_hypotheses": 3
+    "dismissed_hypotheses": 6
   },
   "targets": [
     {
@@ -98,6 +98,51 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Sanitization strictly strips control characters and CRLF, preventing HTTP header injection."
+    },
+    {
+      "id": "frontend/components/itinerary/WeatherPanel.tsx",
+      "target_type": "client_ui_component",
+      "trust_boundary": "browser_render",
+      "vectors_checked": ["division_by_zero_and_nan_injection", "xss_and_html_injection"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "React JSX child encoding protects against XSS; zero-delta Math.max(1, range) bound implemented in new Bento architecture."
+    },
+    {
+      "id": "frontend/components/views/itinerary-view.tsx#weather",
+      "target_type": "client_view_container",
+      "trust_boundary": "browser_state",
+      "vectors_checked": ["stale_day_cross_contamination_and_race_condition"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Weather state isolated in store/local state; keyed unmount enforced across day transitions."
+    },
+    {
+      "id": "frontend/lib/itinerary-metrics.ts",
+      "target_type": "client_utility_module",
+      "trust_boundary": "client_compute",
+      "vectors_checked": ["regex_dos", "prototype_or_nan_pollution", "uncaught_type_error"],
+      "status": "PENDING_PATCH",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Confirmed vulnerability: malformed dayChecklists causes TypeError: d0 is not iterable during Day 1 spread; Candidate patch synthesized."
+    },
+    {
+      "id": "frontend/components/itinerary/IOSBottomSheet.tsx",
+      "target_type": "client_ui_primitive",
+      "trust_boundary": "dom_and_gestures",
+      "vectors_checked": ["scroll_lock_leak", "unhandled_touch_event", "a11y_escape"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "React useEffect cleanup reliably restores document.body overflow and touchAction styles; ESC key and backdrop click verified."
+    },
+    {
+      "id": "frontend/components/itinerary/ItineraryDashboardHub.tsx",
+      "target_type": "client_ui_component",
+      "trust_boundary": "browser_render",
+      "vectors_checked": ["svg_render_overflow", "currency_string_injection"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Defensive fallback handles null/NaN ratings gracefully without breaking SVG path or card layouts."
     }
   ]
 }

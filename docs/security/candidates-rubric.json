@@ -1,0 +1,20 @@
+[
+  {
+    "id": "ai_router_prompt_injection",
+    "file_path": "backend/routers/ai.py",
+    "attack_vector": "prompt_injection",
+    "hypothesis": "Untrusted user itinerary notes inside <user_query> could break out of XML delimiter and inject arbitrary instructions to force LLM to output a fake evaluation block or bypass scoring rubric."
+  },
+  {
+    "id": "itinerary_metrics_redos",
+    "file_path": "frontend/lib/itinerary-metrics.ts",
+    "attack_vector": "redos",
+    "hypothesis": "Multi-line regex parsing on untrusted AI review text may suffer from ReDoS or polynomial catastrophic backtracking if malicious repetitive characters or unclosed evaluation blocks are fed into regex engines."
+  },
+  {
+    "id": "editable_ai_review_stored_xss",
+    "file_path": "frontend/components/itinerary/EditableDailyAIReview.tsx",
+    "attack_vector": "stored_xss",
+    "hypothesis": "Custom line-by-line formatReview splits markdown by newline and renders text directly. If untrusted AI review contains unescaped HTML, JSX could be vulnerable to script execution or DOM injection."
+  }
+]

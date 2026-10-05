@@ -1,0 +1,65 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 7,
+  "confirmed_count": 1,
+  "dismissed_count": 4,
+  "inconclusive_count": 2,
+  "findings": [
+    {
+      "target_id": "backend/routers/ai.py#prompt_injection",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection of the provided code snippet reveals no day evaluation endpoint, no '<user_query>' prompt fence, and no logic calculating or parsing 'SCORE' or 'STATUS' outputs. The code contains image processing utilities, metadata reconstruction helpers, note normalization logic, and the start of a markdown itinerary parsing endpoint ('/parse-md') using system instructions for structured JSON extraction. Under the presumption of correctness, the alleged vulnerability does not exist in the reviewed code.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/lib/itinerary-metrics.ts#redos",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"a43970a4-84c2-46f6-a094-0ba0eb025219\",\"status\":\"SUCCESS\",\"response\":\"This request was blocked by Gemini's filters. They can occasionally trigger by mistake on safe coding, security, or biology-related queries. Please try rephrasin",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/lib/itinerary-metrics.ts#nan_pollution",
+      "verdict": "CONFIRMED",
+      "reasoning": "In calculateChecklistProgress, when day === 1, d0 and d1 are extracted via `store[0] || store[\"0\"] || []`. If rawDayChecklists contains nested or non-array values (e.g. `{ \"0\": { items: [] } }` or `{ \"1\": 42 }`), d0 or d1 is assigned a non-iterable object/primitive. The subsequent array spread `[...d0, ...d1]` immediately throws an uncaught `TypeError: d0 is not iterable` because Array.isArray validation is only performed in the `else` branch after assignment. Additionally, in calculateDayCostsSummary, if c.currency is malformed (e.g. a number or non-string object), calling `(c.currency || defaultCurrency).toUpperCase()` throws an uncaught `TypeError: ...toUpperCase is not a function`.",
+      "poc_type": "pytest_in_memory",
+      "poc_script": "import subprocess\n\ndef test_calculate_checklist_progress_throws_type_error_on_nested_json():\n    js_code = '''\n    const rawData = { \"0\": { \"items\": [] } };\n    const day = 1;\n    function calculateChecklistProgress(rawDayChecklists, day) {\n      if (!rawDayChecklists || typeof rawDayChecklists !== \"object\") {\n        return { completed: 0, total: 0 };\n      }\n      const store = rawDayChecklists;\n      let items = [];\n      if (day === 1) {\n        const d0 = store[0] || store[\"0\"] || [];\n        const d1 = store[1] || store[\"1\"] || [];\n        const map = new Map();\n        [...d0, ...d1].forEach((item) => {\n          if (item && item.id) map.set(item.id, item);\n        });\n        items = Array.from(map.values());\n      } else {\n        items = store[day] || store[String(day)] || [];\n      }\n      return { completed: 0, total: items.length };\n    }\n    try {\n      calculateChecklistProgress(rawData, day);\n      console.log(\"SUCCESS\");\n    } catch (err) {\n      console.log(err.name + \": \" + err.message);\n    }\n    '''\n    res = subprocess.run([\"node\", \"-e\", js_code], capture_output=True, text=True, check=True)\n    assert \"TypeError\" in res.stdout\n",
+      "remediation_hint": "Validate that d0 and d1 are arrays before spreading in calculateChecklistProgress (e.g. `const d0 = Array.isArray(store[0]) ? store[0] : (Array.isArray(store[\"0\"]) ? store[\"0\"] : [])`), and safely coerce currency to string before calling .toUpperCase() in calculateDayCostsSummary (e.g. `const curr = String(typeof c.currency === 'string' && c.currency ? c.currency : defaultCurrency).toUpperCase()`)."
+    },
+    {
+      "target_id": "frontend/components/itinerary/WeatherPanel.tsx#boundary",
+      "verdict": "DISMISSED",
+      "reasoning": "Both claims are refuted by static analysis: 1) Division by zero is explicitly guarded against on line 128 via `const tempDelta = Math.max(1, maxTemp - minTemp)`, guaranteeing that any scrubber normalization denominator is at least 1 even when maxTemp === minTemp. 2) resolvedLocation.name is only accessed for string inspections (toLowerCase/includes) and rendered within standard React JSX text nodes, which automatically escape HTML entities and prevent XSS (no dangerouslySetInnerHTML or unescaped HTML injection is present).",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/itinerary/IOSBottomSheet.tsx#scroll_lock",
+      "verdict": "DISMISSED",
+      "reasoning": "React guarantees that the cleanup function returned by useEffect is executed whenever the dependency (isOpen) changes or when the component unmounts. When isOpen is true, originalOverflow and originalTouchAction are captured in closure and document.body styles are updated; upon unmount or when isOpen becomes false, the cleanup function reliably restores document.body.style.overflow and document.body.style.touchAction to their original values. Rapid toggling is also safe because React always invokes the prior cleanup before executing the subsequent effect setup.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/itinerary/EditableDailyAIReview.tsx#xss",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"67dc3b79-7eb5-4037-8114-bc5370bf9bf1\",\"status\":\"SUCCESS\",\"response\":\"This request was blocked by Gemini's filters. They can occasionally trigger by mistake on safe coding, security, or biology-related queries. Please try rephrasin",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/itinerary-view.tsx#race_condition",
+      "verdict": "DISMISSED",
+      "reasoning": "Day-level activities (currentDayData) are derived synchronously via useMemo from currentTrip.days and the Zustand store's focusedDay, rather than stored in a separate asynchronous local state. When day switches, an explicit useEffect immediately resets isDashboardSheetOpen to false, preventing cross-day interaction or stale closure pollution. SWR manages whole-trip detail consistency, and request cancellation/tracking refs (activeReqRef, prewarmerReqRef) guard against race conditions.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}
