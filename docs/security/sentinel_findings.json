@@ -1,0 +1,49 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 5,
+  "confirmed_count": 0,
+  "dismissed_count": 2,
+  "inconclusive_count": 3,
+  "findings": [
+    {
+      "target_id": "frontend/components/itinerary/SortableTimelineCard.tsx",
+      "verdict": "DISMISSED",
+      "reasoning": "The proposed issue describes a refactoring condition that is not present in the code snippet. First, swipe-to-delete has not been removed; Framer Motion's `drag={isHeader ? false : 'x'}`, `handleDragEnd`, `swipeOffset`, and the swipe-revealed delete action remain fully implemented and functional with standard Framer Motion event lifecycle management. Second, `dragHandleProps` is not passed to `MemoizedTimelineCard`; drag handle listeners and attributes from `@dnd-kit/sortable` are rendered directly in `SortableTimelineCard`. Third, `SortableTimelineCard` uses default shallow comparison, so any change to `isDragDisabled` triggers a re-render of `SortableTimelineCard` to update `useSortable` and toggle the handle. `TimelineCard` has no dependency on `isDragDisabled`, making its omission from `MemoizedTimelineCard`'s custom memo comparator correct and optimal. No unhandled flaws or dangling listeners exist.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/timeline-card.tsx#event_bubbling",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Subagent execution failed: [WinError 206] 檔名或副檔名太長。",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/timeline-card.tsx#layout_overflow",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Subagent execution failed: [WinError 206] 檔名或副檔名太長。",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/itinerary/ItineraryTimeline.tsx",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection confirms that outer container horizontal padding does not cause layout measurement shifts or functional regressions. React Virtuoso uses dynamic ResizeObserver measurement on rendered item wrappers, automatically accommodating container width adjustments without desynchronizing height caches. Additionally, DndContext autoScroll is restricted to the vertical axis (threshold x: 0, y: 0.15) relative to the scroll container, remaining unaffected by horizontal padding. TransitSegmentConnector is contained within the standard document flow of the item container and maintains its relative centering without depending on hardcoded outer pixel offsets.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/itinerary/TimelineCardOverlay.tsx",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "TimelineCardOverlay implements a self-contained card with a two-column flex structure (left column for time and icon badge, right column for content details). While this structure matches the 'left-column layout' referenced in the check, evaluating whether a visual desynchronization, layout snapping, or dimension distortion occurs during drag-and-drop requires comparing it against the active draggable card component and its container dimensions. Because the active card component is not included in the provided code snippet, the alleged cross-component layout mismatch cannot be definitively confirmed or dismissed based solely on static inspection.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": "If the active card component was updated to a full-width top-pill layout, update TimelineCardOverlay to mirror that layout by moving the time and category badge into a top pill/header above the title, and ensure matching padding and width classes so DragOverlay dimensions match the dragging element."
+    }
+  ]
+}

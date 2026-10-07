@@ -1,0 +1,25 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 2,
+  "confirmed_count": 0,
+  "dismissed_count": 2,
+  "inconclusive_count": 0,
+  "findings": [
+    {
+      "target_id": "frontend/components/timeline-card.tsx#event_bubbling",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection reveals no dnd-kit drag handle, attributes, or listeners mounted in the provided code snippet. Furthermore, handleCardClick defensively filters clicks originating from interactive elements via target.closest('button, [role=\"menuitem\"], input, a, table'). Accessible drag handles are standardly implemented as button elements, which are already intercepted and ignored by this check. Raising an issue regarding an unmounted, hypothetical non-button drag handle violates the presumption of correctness.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/timeline-card.tsx#layout_overflow",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection reveals that the alleged layout overflow does not exist. First, the dropdown menu is placed outside normal flex flow via absolute positioning (`absolute top-3.5 right-3.5 z-20`). Second, the category pill, private badge, and tags are placed in a dedicated row below the title with `flex-wrap` enabled and tags capped via `.slice(0, 3)`. Third, the action buttons reside in their own separate row at the bottom of the card content, rather than sharing a single congested header row. Thus, there is no horizontal layout overflow pushing action buttons off-screen on 375px viewports.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

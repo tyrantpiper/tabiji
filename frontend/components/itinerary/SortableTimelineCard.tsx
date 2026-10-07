@@ -8,15 +8,12 @@
  * - 🖱️ 滑鼠拖曳
  * - ✨ 流暢動畫 (無抖動)
  */
-
-import { memo, useEffect, useState } from "react"
+import { memo, useEffect } from "react"
 import { useSortable } from "@dnd-kit/sortable"
-import { GripVertical, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TimelineCard } from "@/components/timeline-card"
 import { Activity } from "@/lib/itinerary-types"
-import { motion, useSpring, PanInfo } from "framer-motion"
-import { useHaptic } from "@/lib/hooks"
+import { motion, useSpring } from "framer-motion"
 
 interface SortableTimelineCardProps {
     activity: Activity
@@ -29,8 +26,12 @@ interface SortableTimelineCardProps {
     onOpenDetail?: (item: Activity) => void
 }
 
+interface MemoizedCardProps extends SortableTimelineCardProps {
+    dragHandleProps?: React.HTMLAttributes<HTMLElement>
+}
+
 // ⚡ 1. Memoized Inner Component: 防止拖曳時內容重繪
-const MemoizedTimelineCard = memo(({ activity, index, isLast, onEdit, onDelete, onUpdateActivity, onOpenDetail }: SortableTimelineCardProps) => {
+const MemoizedTimelineCard = memo(({ activity, index, isLast, onEdit, onDelete, onUpdateActivity, onOpenDetail, dragHandleProps }: MemoizedCardProps) => {
     return (
         <TimelineCard
             activity={activity}
@@ -40,11 +41,13 @@ const MemoizedTimelineCard = memo(({ activity, index, isLast, onEdit, onDelete, 
             onDelete={onDelete}
             onUpdateActivity={onUpdateActivity}
             onOpenDetail={onOpenDetail}
+            dragHandleProps={dragHandleProps}
         />
     )
 }, (prev, next) => {
     // 自定義比較邏輯：只有關鍵資料變動時才重繪，以優化效能
     return prev.activity.id === next.activity.id &&
+        prev.isDragDisabled === next.isDragDisabled &&
         prev.activity.time === next.activity.time &&
         (prev.activity.place_name || prev.activity.place) === (next.activity.place_name || next.activity.place) &&
         (prev.activity.notes || prev.activity.desc) === (next.activity.notes || next.activity.desc) &&
@@ -71,9 +74,7 @@ const MemoizedTimelineCard = memo(({ activity, index, isLast, onEdit, onDelete, 
 MemoizedTimelineCard.displayName = "MemoizedTimelineCard"
 
 export const SortableTimelineCard = memo(function SortableTimelineCard(props: SortableTimelineCardProps) {
-    const { activity, isDragDisabled = false, onDelete } = props
-    const [swipeOffset, setSwipeOffset] = useState(0)
-    const haptic = useHaptic()
+    const { activity, isDragDisabled = false } = props
 
     const {
         attributes,
@@ -105,18 +106,9 @@ export const SortableTimelineCard = memo(function SortableTimelineCard(props: So
 
     if (!activity) return null;
 
-    // Header 卡片 (00:00) 不可拖曳與滑動
+    // Header 卡片 (00:00) 不可拖曳
     const isHeader = activity.category === 'header' ||
         (activity.time || activity.time_slot || "00:00") === '00:00'
-
-    const handleDragEnd = (_: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-        if (info.offset.x < -35 || info.velocity.x < -250) {
-            setSwipeOffset(-72)
-            haptic.tap()
-        } else {
-            setSwipeOffset(0)
-        }
-    }
 
     return (
         <motion.div
@@ -134,59 +126,11 @@ export const SortableTimelineCard = memo(function SortableTimelineCard(props: So
                 "will-change-transform" // GPU Acceleration
             )}
         >
-            {/* 拖曳把手 */}
-            {!isHeader && !isDragDisabled && (
-                <div
-                    {...attributes}
-                    {...listeners}
-                    className={cn(
-                        "absolute -left-1 top-1/2 -translate-y-1/2 z-10",
-                        "p-2 rounded-lg",
-                        "text-slate-400 hover:text-slate-600 hover:bg-slate-100",
-                        "cursor-grab active:cursor-grabbing",
-                        "touch-none select-none",
-                        "opacity-50 hover:opacity-100 active:opacity-100"
-                    )}
-                >
-                    <GripVertical className="w-5 h-5" />
-                </div>
-            )}
-
-            {/* 原有的 TimelineCard (支援向左滑動刪除露出紅色垃圾桶) */}
-            <div className="relative overflow-hidden rounded-2xl group">
-                {!isHeader && (
-                    <div className="absolute inset-y-0 right-0 w-20 flex items-center justify-center bg-rose-600 rounded-r-2xl z-0">
-                        <button
-                            type="button"
-                            onClick={(e) => {
-                                e.stopPropagation()
-                                haptic.error()
-                                setSwipeOffset(0)
-                                onDelete(activity.id || '')
-                            }}
-                            className="w-full h-full flex flex-col items-center justify-center text-white gap-1 active:scale-90 transition-transform cursor-pointer"
-                        >
-                            <Trash2 className="w-5 h-5" />
-                            <span className="text-[10px] font-bold">刪除</span>
-                        </button>
-                    </div>
-                )}
-
-                <motion.div
-                    drag={isHeader ? false : "x"}
-                    dragConstraints={{ left: -72, right: 0 }}
-                    dragElastic={0.08}
-                    onDragEnd={handleDragEnd}
-                    animate={{ x: swipeOffset }}
-                    transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                    onClick={() => {
-                        if (swipeOffset !== 0) setSwipeOffset(0)
-                    }}
-                    className="relative z-1 bg-white dark:bg-slate-900 rounded-2xl px-0.5 pt-0.5"
-                >
-                    <MemoizedTimelineCard {...props} />
-                </motion.div>
-            </div>
+            <MemoizedTimelineCard
+                {...props}
+                dragHandleProps={!isHeader && !isDragDisabled ? { ...attributes, ...listeners } : undefined}
+            />
         </motion.div>
     )
 })
+
