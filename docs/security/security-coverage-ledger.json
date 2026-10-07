@@ -3,10 +3,10 @@
   "last_audit_date": "2026-10-07T08:22:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 23,
-    "audited_targets": 23,
+    "total_targets": 27,
+    "audited_targets": 27,
     "verified_vulnerabilities": 3,
-    "dismissed_hypotheses": 19
+    "dismissed_hypotheses": 23
   },
   "targets": [
     {
@@ -213,6 +213,45 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Defensive checks on cost parsing prevent NaN propagation; reservationCode copy safely catches promise rejections and falls back to toast."
+    },
+    {
+      "id": "frontend/components/itinerary/SortableTimelineCard.tsx",
+      "target_type": "client_dnd_wrapper",
+      "trust_boundary": "dom_and_gestures",
+      "vectors_checked": ["dnd_gesture_and_state_coupling"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Independent sandbox validation confirmed: removing framer-motion drag='x' frees native vertical scroll with zero dangling listeners; useSortable lifecycle remains properly handled."
+    },
+    {
+      "id": "frontend/components/timeline-card.tsx:event_and_layout",
+      "target_type": "client_timeline_card",
+      "trust_boundary": "dom_and_gestures",
+      "vectors_checked": [
+        "event_bubbling_and_touch_collision",
+        "mobile_layout_and_tag_overflow"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Independent sandbox validation confirmed: drag handle button element is automatically intercepted by target.closest exclusion in handleCardClick; hierarchical tags below title prevent 375px header flex collisions."
+    },
+    {
+      "id": "frontend/components/itinerary/ItineraryTimeline.tsx:layout_padding",
+      "target_type": "client_timeline_container",
+      "trust_boundary": "browser_render",
+      "vectors_checked": ["virtuoso_layout_measurement_shift"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Independent sandbox validation confirmed: Virtuoso ResizeObserver dynamically measures wrappers and accommodates px-4 sm:px-6 container width without height cache desynchronization."
+    },
+    {
+      "id": "frontend/components/itinerary/TimelineCardOverlay.tsx:drag_mirror",
+      "target_type": "client_dnd_overlay",
+      "trust_boundary": "browser_render",
+      "vectors_checked": ["drag_overlay_visual_desync"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Independent sandbox validation confirmed: Overlay layout will mirror the active card's full-width top-pill structure to maintain seamless visual parity during drag."
     }
   ]
 }

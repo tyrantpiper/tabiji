@@ -3,7 +3,8 @@
 import { useState, useEffect, memo } from "react"
 import {
     MapPin, Utensils, Train, ShoppingBag, Bed, Camera, Copy,
-    StickyNote, MoreHorizontal, Edit, Trash2, ExternalLink, Lightbulb, X, Info, Plus
+    StickyNote, MoreHorizontal, Edit, Trash2, ExternalLink, Lightbulb, X, Info, Plus,
+    GripVertical
 } from "lucide-react"
 import { cn, formatCurrency, openExternalLink, getOptimizedImageUrl } from "@/lib/utils"
 import {
@@ -39,16 +40,17 @@ interface TimelineCardProps {
     onDelete: (id: string) => void
     onUpdateActivity: (id: string, updates: Partial<Activity>) => Promise<boolean> // 整合更新
     onOpenDetail?: (item: Activity) => void
+    dragHandleProps?: React.HTMLAttributes<HTMLElement>
 }
 
 export const TimelineCard = memo(function TimelineCard({
     activity,
-    isLast,
     index,
     onEdit,
     onDelete,
     onUpdateActivity,
-    onOpenDetail
+    onOpenDetail,
+    dragHandleProps
 }: TimelineCardProps) {
     const { t } = useLanguage()
     const [showDetail, setShowDetail] = useState(false)
@@ -118,164 +120,218 @@ export const TimelineCard = memo(function TimelineCard({
         const hasImage = images.length > 0 && !imageError
 
         return (
-            <div className="flex items-start justify-between gap-3">
-                {/* 編輯選單 - Mobile Friendly & iOS Frosted Glass Disc */}
-                <div className="absolute top-3.5 right-3.5 z-20" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+            <div className="w-full">
+                {/* 1. 頂部列：左側 [ ⠿ ① 09:00 ] 膠囊 + 分類標籤，右側三點選單 */}
+                <div className="flex items-center justify-between gap-2 mb-2.5">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                        {/* 時序膠囊 */}
+                        {isHeader ? (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-xs font-bold shadow-2xs shrink-0 select-none">
+                                <Lightbulb className="w-3.5 h-3.5 shrink-0" />
+                                <span>INFO</span>
+                            </div>
+                        ) : (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100/90 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs select-none shrink-0">
+                                {/* 拖曳把手 */}
+                                {dragHandleProps && (
+                                    <button
+                                        type="button"
+                                        {...dragHandleProps}
+                                        data-drag-handle="true"
+                                        aria-label={t('tc_drag_sort') || "Drag to sort"}
+                                        onPointerDown={(e) => {
+                                            e.stopPropagation()
+                                            dragHandleProps.onPointerDown?.(e)
+                                        }}
+                                        onClick={(e) => {
+                                            e.stopPropagation()
+                                            dragHandleProps.onClick?.(e)
+                                        }}
+                                        className="p-0.5 -ml-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-grab active:cursor-grabbing touch-none transition-colors border-0 bg-transparent flex items-center justify-center"
+                                    >
+                                        <GripVertical className="w-3.5 h-3.5" />
+                                    </button>
+                                )}
+                                {/* 序號徽章 */}
+                                <span className="w-4.5 h-4.5 rounded-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-[10px] font-bold flex items-center justify-center shrink-0">
+                                    {index}
+                                </span>
+                                {/* 時間 */}
+                                <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-200 tracking-tight">
+                                    {activity.time || activity.time_slot || "00:00"}
+                                </span>
+                            </div>
+                        )}
+
+                        {/* 分類標籤 */}
+                        {!isHeader && (
+                            <span className={cn(
+                                "text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border flex items-center gap-1 font-medium truncate shrink-0",
+                                activity.category === 'transport'
+                                    ? "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600"
+                                    : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700"
+                            )}>
+                                {getIcon()} <span className="truncate max-w-24 sm:max-w-none">{activity.category || "sightseeing"}</span>
+                            </span>
+                        )}
+
+                        {/* 私密標籤 */}
+                        {activity.is_private && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-700/60 flex items-center gap-1 font-medium shrink-0">
+                                🔒 <span className="hidden sm:inline">{t('private') || "Private"}</span>
+                            </span>
+                        )}
+                    </div>
+
+                    {/* 右側：iOS 玻璃圓盤三點選單 */}
+                    <div className="shrink-0" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 rounded-full transition-all touch-manipulation flex items-center justify-center p-0 shadow-xs active:scale-90 bg-slate-100/90 hover:bg-slate-200/90 dark:bg-slate-800/90 dark:hover:bg-slate-700/90 text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white backdrop-blur-md border border-slate-200/80 dark:border-slate-700/80"
+                                >
+                                    <MoreHorizontal className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="min-w-35">
+                                <DropdownMenuItem onClick={() => onEdit(activity)} className="py-2.5 text-xs">
+                                    <Edit className="w-3.5 h-3.5 mr-2" /> {t('tc_edit_all')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem className="text-red-600 py-2.5 text-xs" onClick={() => onDelete(activity.id || '')}>
+                                    <Trash2 className="w-3.5 h-3.5 mr-2" /> {t('delete')}
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    </div>
+                </div>
+
+                {/* 2. 主內容區：左側資訊，右側縮圖 (無 mr-8!) */}
+                <div className="flex items-start justify-between gap-3">
+                    {/* 左側資訊區 */}
+                    <div className="flex-1 min-w-0 pr-1">
+                        <div className="flex items-center gap-2 mb-1">
+                            <h3 className={cn("font-bold text-slate-900 dark:text-white leading-tight truncate", isHeader ? "text-xl" : "text-base")}>
+                                <span>{activity.place || (isHeader ? "Notice" : "Unknown Place")}</span>
+                            </h3>
+                            {syncMeta && <SyncStatusBadge status={syncMeta.status} errorMessage={syncMeta.errorMessage} />}
+                        </div>
+
+                        {/* 活動 Tags (置於標題下方，防止小螢幕頂部擠壓) */}
+                        {activity.tags && activity.tags.length > 0 && (
+                            <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                                {activity.tags.slice(0, 3).map((tag: string) => (
+                                    <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-100 dark:border-rose-900/60 font-medium">
+                                        #{tag}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+
+                        <p className={cn(
+                            "text-slate-600 dark:text-slate-300 leading-relaxed font-light whitespace-pre-wrap",
+                            isHeader ? "text-sm mb-3" : "text-xs mb-2.5 line-clamp-2"
+                        )}>
+                            {activity.desc || t('tc_add_memo_hint')}
+                        </p>
+
+                        {/* 附屬表格 (若有 - 依原邏輯展示，Header 與一般行程均完整渲染) */}
+                        {activity.sub_items && activity.sub_items.length > 0 && (
+                            <div
+                                className="mb-2.5 overflow-x-auto rounded-lg border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/70 dark:bg-slate-800/40 touch-pan-x"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <Table className="w-full table-fixed min-w-56">
+                                    <TableBody>
+                                        {activity.sub_items.map((item: SubItem, i: number) => (
+                                            <TableRow key={i} className="border-b border-slate-100 dark:border-slate-700 last:border-0">
+                                                <TableCell className="py-1.5 px-2.5 align-top w-[calc(100%-36px)]">
+                                                    <div className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">{item.name}</div>
+                                                    {item.desc && <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate">{item.desc}</div>}
+                                                </TableCell>
+                                                {item.link ? (
+                                                    <TableCell className="py-1 px-1.5 text-right align-middle w-9 shrink-0">
+                                                        <button
+                                                            type="button"
+                                                            className="p-1 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                                                            onPointerDown={(e) => e.stopPropagation()}
+                                                            onClick={(e) => { e.stopPropagation(); openExternalLink(item.link); }}
+                                                        >
+                                                            <ExternalLink className="w-2.5 h-2.5" />
+                                                        </button>
+                                                    </TableCell>
+                                                ) : <TableCell className="w-0 p-0" />}
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        )}
+
+                        {/* 按鈕區 */}
+                        <div className="flex items-center gap-2" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                            {!hideMapBtn && (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2 text-[11px] bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-lg"
+                                    onClick={openGoogleMap}
+                                >
+                                    <MapPin className="w-3 h-3 mr-1 text-emerald-600" /> {t('tc_navigate')}
+                                </Button>
+                            )}
+
                             <Button
                                 variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 rounded-full transition-all touch-manipulation flex items-center justify-center p-0 shadow-xs active:scale-90 bg-slate-100/90 hover:bg-slate-200/90 dark:bg-slate-800/90 dark:hover:bg-slate-700/90 text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white backdrop-blur-md border border-slate-200/80 dark:border-slate-700/80"
-                            >
-                                <MoreHorizontal className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-35">
-                            <DropdownMenuItem onClick={() => onEdit(activity)} className="py-2.5 text-xs">
-                                <Edit className="w-3.5 h-3.5 mr-2" /> {t('tc_edit_all')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem className="text-red-600 py-2.5 text-xs" onClick={() => onDelete(activity.id || '')}>
-                                <Trash2 className="w-3.5 h-3.5 mr-2" /> {t('delete')}
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                </div>
-
-                {/* 左側資訊區 */}
-                <div className="flex-1 min-w-0 pr-2">
-                    <div className="flex items-center gap-2 mb-1">
-                        <h3 className={cn("font-bold text-slate-900 dark:text-white leading-tight truncate", isHeader ? "text-xl" : "text-base")}>
-                            <span>{activity.place || (isHeader ? "Notice" : "Unknown Place")}</span>
-                        </h3>
-                        {syncMeta && <SyncStatusBadge status={syncMeta.status} errorMessage={syncMeta.errorMessage} />}
-                    </div>
-
-                    <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-                        <span className={cn(
-                            "text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border flex items-center gap-1 font-medium",
-                            isHeader
-                                ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-700 font-bold"
-                                : (activity.category === 'transport'
-                                    ? "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600"
-                                    : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700")
-                        )}>
-                            {getIcon()} {isHeader ? "INFO" : (activity.category || "sightseeing")}
-                        </span>
-                        {activity.is_private && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-200/60 flex items-center gap-1 font-medium">
-                                🔒 {t('private') || "Private"}
-                            </span>
-                        )}
-                        {activity.tags?.slice(0, 3).map((tag: string) => (
-                            <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 border border-rose-100">
-                                #{tag}
-                            </span>
-                        ))}
-                    </div>
-
-                    <p className={cn(
-                        "text-slate-600 dark:text-slate-300 leading-relaxed font-light whitespace-pre-wrap",
-                        isHeader ? "text-sm mb-3" : "text-xs mb-2.5 line-clamp-2"
-                    )}>
-                        {activity.desc || t('tc_add_memo_hint')}
-                    </p>
-
-                    {/* 附屬表格 (若有 - 依原邏輯展示，Header 與一般行程均完整渲染) */}
-                    {activity.sub_items && activity.sub_items.length > 0 && (
-                        <div
-                            className="mb-2.5 overflow-x-auto rounded-lg border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/70 dark:bg-slate-800/40 touch-pan-x"
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <Table className="w-full table-fixed min-w-56">
-                                <TableBody>
-                                    {activity.sub_items.map((item: SubItem, i: number) => (
-                                        <TableRow key={i} className="border-b border-slate-100 dark:border-slate-700 last:border-0">
-                                            <TableCell className="py-1.5 px-2.5 align-top w-[calc(100%-36px)]">
-                                                <div className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">{item.name}</div>
-                                                {item.desc && <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate">{item.desc}</div>}
-                                            </TableCell>
-                                            {item.link ? (
-                                                <TableCell className="py-1 px-1.5 text-right align-middle w-9 shrink-0">
-                                                    <button
-                                                        type="button"
-                                                        className="p-1 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-                                                        onPointerDown={(e) => e.stopPropagation()}
-                                                        onClick={(e) => { e.stopPropagation(); openExternalLink(item.link); }}
-                                                    >
-                                                        <ExternalLink className="w-2.5 h-2.5" />
-                                                    </button>
-                                                </TableCell>
-                                            ) : <TableCell className="w-0 p-0" />}
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    )}
-
-                    {/* 按鈕區 */}
-                    <div className="flex items-center gap-2" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                        {!hideMapBtn && (
-                            <Button
-                                variant="outline"
                                 size="sm"
-                                className="h-7 px-2 text-[11px] bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-lg"
-                                onClick={openGoogleMap}
+                                className="h-7 px-2 text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (onOpenDetail) {
+                                        onOpenDetail(activity)
+                                    } else {
+                                        setShowDetail(true)
+                                    }
+                                }}
                             >
-                                <MapPin className="w-3 h-3 mr-1 text-emerald-600" /> {t('tc_navigate')}
+                                <StickyNote className="w-3 h-3 mr-1 text-amber-500" /> {t('tc_local_memo')}
                             </Button>
-                        )}
+                        </div>
+                    </div>
 
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
+                    {/* 右側 80px 圓角縮圖 (無 mr-8!) */}
+                    {!isHeader && hasImage && (
+                        <div
+                            className="w-20 h-20 rounded-xl overflow-hidden relative border border-slate-200/80 dark:border-slate-700/80 shrink-0 self-start shadow-2xs group-hover:scale-102 transition-transform bg-slate-100 dark:bg-slate-800 cursor-pointer"
+                            onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
                                 e.stopPropagation()
-                                if (onOpenDetail) {
-                                    onOpenDetail(activity)
-                                } else {
-                                    setShowDetail(true)
-                                }
+                                setShowPhotoPreview(true)
                             }}
                         >
-                            <StickyNote className="w-3 h-3 mr-1 text-amber-500" /> {t('tc_local_memo')}
-                        </Button>
-                    </div>
+                            <Image
+                                src={getOptimizedImageUrl(images[0], 320)}
+                                alt={activity.place || "Thumbnail"}
+                                fill
+                                className="object-cover"
+                                unoptimized
+                                onError={() => setImageError(true)}
+                            />
+                            {images.length > 1 && (
+                                <div className="absolute bottom-1 right-1 bg-black/65 backdrop-blur-xs text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full ring-1 ring-white/20">
+                                    +{images.length - 1}
+                                </div>
+                            )}
+                            {images[0] === activity.preview_metadata?.mapillary_thumb && (
+                                <div className="absolute top-1 left-1 bg-emerald-600/90 text-white text-[8px] font-bold px-1 py-0.2 rounded">
+                                    360°
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
-
-                {/* 右側 72px 圓角縮圖 (僅非 Header 且有圖片時展示，加 mr-8 與右上角按鈕完全錯開) */}
-                {!isHeader && hasImage && (
-                    <div
-                        className="w-18 h-18 rounded-xl overflow-hidden relative border border-slate-200/80 dark:border-slate-700/80 shrink-0 self-start shadow-2xs group-hover:scale-102 transition-transform bg-slate-100 dark:bg-slate-800 cursor-pointer mr-8"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                            e.stopPropagation()
-                            setShowPhotoPreview(true)
-                        }}
-                    >
-                        <Image
-                            src={getOptimizedImageUrl(images[0], 320)}
-                            alt={activity.place || "Thumbnail"}
-                            fill
-                            className="object-cover"
-                            unoptimized
-                            onError={() => setImageError(true)}
-                        />
-                        {images.length > 1 && (
-                            <div className="absolute bottom-1 right-1 bg-black/65 backdrop-blur-xs text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full ring-1 ring-white/20">
-                                +{images.length - 1}
-                            </div>
-                        )}
-                        {images[0] === activity.preview_metadata?.mapillary_thumb && (
-                            <div className="absolute top-1 left-1 bg-emerald-600/90 text-white text-[8px] font-bold px-1 py-0.2 rounded">
-                                360°
-                            </div>
-                        )}
-                    </div>
-                )}
             </div>
         )
     }
@@ -287,10 +343,10 @@ export const TimelineCard = memo(function TimelineCard({
         !isNaN(typeof activity.lng === 'string' ? parseFloat(activity.lng) : activity.lng)
     )
 
-    // 🗺️ 卡片本體點擊聚焦地圖處理 (防禦性排除按鈕、選單、輸入、表格等互動區)
+    // 🗺️ 卡片本體點擊聚焦地圖處理 (防禦性排除按鈕、選單、輸入、表格、拖曳手把等互動區)
     const handleCardClick = (e: React.MouseEvent) => {
         const target = e.target as HTMLElement
-        if (target.closest('button, [role="menuitem"], input, a, table')) return
+        if (target.closest('button, [role="menuitem"], input, a, table, [data-drag-handle]')) return
 
         const rawLat = activity.lat
         const rawLng = activity.lng
@@ -310,40 +366,19 @@ export const TimelineCard = memo(function TimelineCard({
     }
 
     return (
-        <div className="flex gap-4 relative group">
-            {/* 左側：時間 + 序號 (寬度加寬至 w-14，時間與序號間距放寬至 mt-2，序號升級為 24px) */}
-            <div className="flex flex-col items-center w-14 shrink-0 pt-0.5">
-                {!isHeader && (
-                    <span className="text-xs font-mono font-bold text-slate-500 dark:text-slate-400 tracking-tight select-none">
-                        {activity.time || activity.time_slot || "00:00"}
-                    </span>
-                )}
-                {isHeader ? (
-                    <div className="w-6 h-6 rounded-full mt-2 bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400 flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-sm z-10">
-                        <Lightbulb className="w-3.5 h-3.5" strokeWidth={3} />
-                    </div>
-                ) : (
-                    <div className="w-6 h-6 rounded-full mt-2 bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-800 flex items-center justify-center text-[10px] font-bold z-10 border-2 border-white dark:border-slate-900 shadow-sm">
-                        {index}
-                    </div>
-                )}
-                {!isLast && <div className="w-px flex-1 bg-slate-200 dark:bg-slate-700 my-1.5" />}
-            </div>
-            {/* 右側：卡片內容 (點擊本體平滑滾動並 FlyTo 聚焦下方地圖) */}
-            <div
-                onClick={handleCardClick}
-                className={cn(
-                    "timeline-card flex-1 min-w-0 mb-4 mt-0.5 relative pt-5.5 pb-4.5 px-4.5 sm:px-5 rounded-2xl transition-all duration-200 shadow-xs active:scale-[0.995]",
-                    hasValidCoords ? "cursor-pointer" : "cursor-default",
-                    isHeader ? "bg-amber-50/30 dark:bg-amber-900/20 border-2 border-amber-200/70 dark:border-amber-700/70" :
-                        (activity.is_highlight
-                            ? "bg-amber-50/15 dark:bg-amber-950/20 border-2 border-amber-400 dark:border-amber-500 shadow-[0_0_16px_rgba(251,191,36,0.22)] dark:shadow-[0_0_20px_rgba(245,158,11,0.18)]"
-                            : "bg-white dark:bg-slate-800/90 border-2 border-slate-200/90 dark:border-slate-700/85 hover:border-slate-300 dark:hover:border-slate-600"
-                        )
-                )}
-            >
-                {renderContent()}
-            </div>
+        <div
+            onClick={handleCardClick}
+            className={cn(
+                "timeline-card w-full relative p-4 sm:p-5 rounded-2xl transition-all duration-200 shadow-xs active:scale-[0.995] group mb-3.5",
+                hasValidCoords ? "cursor-pointer" : "cursor-default",
+                isHeader ? "bg-amber-50/30 dark:bg-amber-900/20 border-2 border-amber-200/70 dark:border-amber-700/70" :
+                    (activity.is_highlight
+                        ? "bg-amber-50/15 dark:bg-amber-950/20 border-2 border-amber-400 dark:border-amber-500 shadow-[0_0_16px_rgba(251,191,36,0.22)] dark:shadow-[0_0_20px_rgba(245,158,11,0.18)]"
+                        : "bg-white dark:bg-slate-800/90 border-2 border-slate-200/90 dark:border-slate-700/85 hover:border-slate-300 dark:hover:border-slate-600"
+                    )
+            )}
+        >
+            {renderContent()}
 
             {/* 傳遞 hideMapBtn 給彈窗 */}
             <DetailDialog

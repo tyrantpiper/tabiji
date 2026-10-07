@@ -1,0 +1,18 @@
+[
+  {
+    "id": "frontend/components/timeline-card.tsx#event_bubbling",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 280,
+    "end_line": 350,
+    "attack_vector": "event_bubbling_and_touch_collision",
+    "hypothesis": "Card root handles handleCardClick which triggers custom map focus event; mounting a drag handle with dnd-kit listeners without stopPropagation and data-drag-handle filtering in target.closest will leak click events during drag initiation and release, causing erratic map flyTo."
+  },
+  {
+    "id": "frontend/components/timeline-card.tsx#layout_overflow",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 120,
+    "end_line": 280,
+    "attack_vector": "mobile_layout_and_tag_overflow",
+    "hypothesis": "Placing index time pill, category pill, private status badge, tags, and dropdown menu into the top header row without hierarchical separation causes horizontal layout overflow and wraps action buttons off-screen on 375px mobile viewports."
+  }
+]

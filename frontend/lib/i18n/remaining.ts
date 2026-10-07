@@ -444,6 +444,7 @@ export const remainingTranslations = {
         tc_add_link: "+ Add Link",
         tc_save_changes: "Save Changes",
         tc_add_memo: "Add memo...",
+        tc_drag_sort: "Drag to sort",
 
         // Sprint 5: itinerary-view (remaining)
         iv_added_to_trip: "Added to trip",
@@ -1121,6 +1122,7 @@ export const remainingTranslations = {
         tc_add_link: "+ 新增連結",
         tc_save_changes: "儲存變更",
         tc_add_memo: "新增備忘...",
+        tc_drag_sort: "拖曳排序",
 
         // Sprint 5: itinerary-view (remaining)
         iv_added_to_trip: "已加入行程",
