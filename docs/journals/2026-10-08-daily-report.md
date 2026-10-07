@@ -1,14 +1,16 @@
 # 📅 Daily Report - 2026-10-08
 
-> **系統狀態**：🟢 Production Hardened, iOS Modal Sheet Physics Deployed, 8px Touch-Slop Gesture Disambiguation Active, Memo Link Adaptive Flex List Operational, Click Penetration Isolated, Chat Widget Passive Error Eliminated, Security Sentinel Physical Sandbox Hardened (30/30 SECURE), 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Backend 112/112, Frontend 329/329, Total 441/441 Tests Passing), GitHub main branch synced.  
+> **系統狀態**：🟢 Production Hardened, iOS Modal Sheet Physics Deployed, 8px Touch-Slop Gesture Disambiguation Active, Memo Link Adaptive Flex List Operational, Click Penetration Isolated, Subprocess IPC Large-Payload Stdin Streaming Deployed (WinError 206 Immune), Security Sentinel Physical Sandbox Hardened (31/31 SECURE), 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Backend 118/118, Frontend 329/329, Total 447/447 Tests Passing), GitHub main branch synced.  
 > **今日關鍵提交串列 (Full Day Commit Stream)**：
+> - [`a4f876d`](https://github.com/tyrantpiper/travel-pwa/commit/a4f876d) `feat(ipc): implement safe subprocess streaming to immunize WinError 206`
+> - [`0fd6cba`](https://github.com/tyrantpiper/travel-pwa/commit/0fd6cba) `docs(journal): record 2026-10-08 daily report and neural memory consolidation`
 > - [`709e8a8`](https://github.com/tyrantpiper/travel-pwa/commit/709e8a8) `feat(timeline): implement iOS sheet physics, touch-slop disambiguation and adaptive memo links`
 
 ---
 
-## 🏆 深度專案復盤：四大核心工程里程碑
+## 🏆 深度專案復盤：五大核心工程里程碑
 
-本日 Tabidachi 聚焦於 iOS 原生觸控物理學（Touch Physics）、移動端手勢消歧義（Gesture Disambiguation）、長文本自適應排版（Responsive Typography）以及彈窗事件隔離防穿透，完成了全鏈路架構升級：
+本日 Tabidachi 全面聚焦於 iOS 原生觸控物理學（Touch Physics）、移動端手勢消歧義（Gesture Disambiguation）、長文本自適應排版（Responsive Typography）、彈窗事件隔離防穿透，以及跨進程通訊大數據安全（Subprocess IPC Large-Payload Safety & Windows WinError 206 Immunity），完成了全鏈路架構升級：
 
 ### 里程碑一：DetailDialog iOS 原生 Bottom Sheet 物理架構升級
 1. **問題背景與痛點根因**：
@@ -62,15 +64,24 @@
 
 ---
 
-### 里程碑五：AI 懸浮按鈕 Passive Touch 報錯根除
-1. **根因**：現代移動瀏覽器將 `touchstart` 預設標記為 `{ passive: true }`，在監聽器內呼叫 `e.preventDefault()` 會引發控制台紅色報錯，且可能連帶扯動背景頁面。
-2. **修復**：自 `handleTouchStart` 移除失效的 `preventDefault`，改由現代 CSS `touch-none` (`touch-action: none`) 讓瀏覽器合成器直接接管手勢，完全杜絕報錯並保證拖曳 60fps 平滑。
-
----
-
-### 里程碑六：Security Sentinel 沙盒驗證與台帳擴展
-1. 透過 `runner.py` 與 In-Memory Vitest 完成對抗性證偽與紅綠測試循環（TC-Adaptive-1, TC-Adaptive-2, TC-Adaptive-3）。
-2. 更新 `docs/security/security-coverage-ledger.json`，審核目標擴充至 30 個 targets 全部 `SECURE`，產出獨立審計報告 `security_sentinel_report_2026-10-08_memo_link_adaptive.md`。
+### 里程碑五：跨進程大數據安全傳輸模組 (`scripts/lib/safe_subprocess.py`) ✕ WinError 206 根除
+1. **痛點背景與根因剖析**：
+   - Windows 核心 API `CreateProcessW` 對單一行命令列字串（`lpCommandLine`）施加了 **32,767 字元（約 32KB）** 的硬性極限（`cmd.exe` 更是僅有 8,191 字元）。
+   - 當安全審計子代理人 `runner.py` 嘗試將含有 60,000 字元的程式碼片段作為命令列引數傳給 `agy.exe -p` 時，Windows 底層解析失敗並拋出誤導性的 `FileNotFoundError: [WinError 206] 檔案名稱或副檔名太長`。
+   - 若直接改用手動 `stdin.write()` 搭配 `wait()`，會踩入 Windows 匿名管道 **4KB~64KB 雙向緩衝區死鎖 (Pipe Buffer Deadlock)**；若改用暫存檔中繼，容易在 Windows 引發 **WinError 32: Sharing Violation (檔案鎖死)**。
+2. **架構升級與完整閉環**：
+   - **獨立封裝安全 IPC 模組 ([`scripts/lib/safe_subprocess.py`](file:///d:/Project/Tabidachi/travel-pwa/scripts/lib/safe_subprocess.py))**：
+     - 實作 `run_streaming_process`：透過 `stdin=PIPE` 串流傳輸，底層以 `communicate(input=...)` 啟動事件迴圈並行讀寫抽空雙向管道，100% 免疫 WinError 206 與管道死鎖。
+     - 強制注入 `PYTHONIOENCODING=utf-8` 與 `PYTHONUTF8=1`，實測繁中、日文、特殊引號、反斜線與 Emoji（📱 🗺️ 🚀）二進位保真傳輸。
+     - 設置強硬逾時防線，逾時自動執行 Windows 樹狀進程清理（`taskkill /F /T /PID`），杜絕殭屍孤兒進程。
+     - 實作 `run_file_fallback`：針對不支援 stdin 的第三方工具，寫入 `NamedTemporaryFile` 後立即關閉 Handle，子進程結束後於 `finally` 區塊安全 Unlink，徹底免疫 WinError 32。
+   - **全面重構使用端**：
+     - 重構 [`.agents/skills/security-sentinel/scripts/runner.py`](file:///d:/Project/Tabidachi/travel-pwa/.agents/skills/security-sentinel/scripts/runner.py)：CLI 參數改為 `["agy.exe", "-p", "-"]`，長提示詞走管道串流，支援跨目錄自適應 `sys.path` 探測。
+     - 重構 [`scripts/auto_dream.py`](file:///d:/Project/Tabidachi/travel-pwa/scripts/auto_dream.py)：統一呼叫 `safe_subprocess` 並補齊 `from pathlib import Path` 匯入。
+   - **建立永久守護測試套件 ([`backend/tests/test_safe_subprocess.py`](file:///d:/Project/Tabidachi/travel-pwa/backend/tests/test_safe_subprocess.py))**：
+     - 6 大對抗性單元測試（70KB 串流、雙向 130KB 防死鎖、BrokenPipe 容錯、UTF-8 Emoji 保真、逾時樹狀終止、暫存檔安全清理）全部通過。
+   - **資安台帳擴展**：
+     - `docs/security/security-coverage-ledger.json` 擴展至 31/31 targets 全部 `SECURE`。
 
 ---
 
@@ -84,6 +95,14 @@
   - 詳細資訊與備忘清單嚴禁採用預設 `whitespace-nowrap` 的傳統 Table 單元格排版。架構上必須使用語意化 Flex 清單，以 `flex-1 min-w-0` 搭配 `wrap-break-word` 達成多行自適應換行，並以 `shrink-0` 鎖定操作按鈕，防止內容撐爆容器。
 - **[AD-062] 移動端合成線程手勢接管準則 (Compositor Touch-Action over Main-Thread PreventDefault)**:
   - 移動端懸浮拖曳節點嚴禁在 passive 觸控監聽器中依賴 JS `e.preventDefault()` 阻止背景滾動。必須採用現代 CSS `touch-action: none` 由瀏覽器渲染合成線程（Compositor Thread）在硬體層直接阻斷預設手勢，杜絕控制台報錯與主線程掉幀。
+- **[AD-063] IPC Large-Payload Stdin Streaming Principle (標準輸入串流原則)**:
+  - 任何涉及傳遞動態文字、Prompt、程式碼、JSON 數據超過 4,000 字元（約 4KB）的子進程調用，嚴禁作為命令列引數傳遞。必須統一使用 `stdin=PIPE` 搭配 `communicate(input=...)`。
+- **[AD-064] Stdin Stream Hyphen Flag Invariance (減號管道旗標規範)**:
+  - 調用 `agy.exe` 執行大數據提示詞時，傳遞 `-p -`（或 `--print -`），指示 CLI 自標準輸入讀取提示詞，保證 100% 二進位純淨度與繞過 Quote Hell。
+- **[AD-065] Zero-Deadlock Async Communicate Protocol (零死鎖通訊協定)**:
+  - 子進程通訊必須以 `asyncio.wait_for(proc.communicate(input=...), timeout=...)` 統一包裹，禁止使用手動 `stdin.write()` 搭配 `wait()`，由事件迴圈並行排程讀寫抽空雙向管道緩衝區（4KB~64KB），根除 Pipe Buffer Deadlock。
+- **[AD-066] File-based Fallback for Non-Streaming Tools (非串流工具檔案降級防線)**:
+  - 若外部工具不支援 stdin，採用 `tempfile.NamedTemporaryFile` 寫入後立即關閉 handle（防止 Windows `WinError 32: Sharing Violation`），並於 `try...finally` 區塊中安全 unlink 清理。
 
 ---
 
@@ -98,36 +117,51 @@
 4. **Memo Link 長文本自適應與按鈕防擠壓 (`timeline-card.tsx`, `timeline-memo-link-adaptive.test.tsx`)**：
    - 長標題與長註解支援多行自動折行 (`wrap-break-word`)，右側外部連結按鈕固定可見，底部配置 48px 安全留白。
 5. **AI 懸浮球 Passive Touch 報錯修復 (`chat-widget.tsx`)**：
-   - 升級 `touch-none`，消除 Console 報錯並提升拖曳流暢度。
-6. **資安台帳與品質門檻**：
-   - Security Sentinel 審計擴充至 30 個 targets 全部 SECURE。
-   - 441 個端到端與單元測試（後端 112、前端 329）全數綠燈通關，代碼已安全同步至遠端 main 分支。
+   - 移除無效的 `e.preventDefault()`，以 CSS `touch-action: none` 消除控制台紅字。
+6. **Subprocess IPC 大數據跨進程安全通訊模組 (`scripts/lib/safe_subprocess.py`)**：
+   - 建立獨立模組，徹底解決 Windows `CreateProcessW` 32,767 字元長度限制與 WinError 206。
+7. **安全審計 Harness 與記憶重組器全面重構 (`runner.py`, `auto_dream.py`)**：
+   - 60KB+ 程式碼改由 stdin 串流傳遞，補齊 `Path` 匯入，IDE 0 錯誤。
+8. **Subprocess IPC 永久自動化測試套件 (`test_safe_subprocess.py`)**：
+   - 6 大極限對抗性單元測試，後端測試總數達 118 項，全數綠燈。
 
 ---
 
-## 🔴 Technical Debt (技術債與待辦事項)
+## 🔴 Technical Debt (技術債與追蹤)
 
-- **[TD-027] 移動端 Sheet 手勢向下拖拽關閉 (Pan-to-Dismiss Gesture)**:
-  - 目前 DetailDialog 依賴點擊右上角 X 或外部遮罩關閉。後續可考慮引進平滑的向下拖曳手勢（Drag down to dismiss），使 Bottom Sheet 物理體驗更臻完美。
-- **[TD-028] 編輯模式下 SubItems 長備忘的輸入框自適應高度**:
-  - 目前唯讀模式已完美支援多行自動折行，但編輯模式下 `link.desc` 仍為單行 `Input`；後續可升級為自適應高度微型文字框，提升長備註編輯舒適度。
-
----
-
-## 🛡️ Failed Paths (踩坑與失敗路徑)
-
-- **[FP-031] 依賴 `e.preventDefault()` 取消 Passive 監聽器手勢無效**:
-  - 在現代移動瀏覽器（Chrome 56+, Safari WebKit）中，預設 `touchstart` 為 passive。在該回調中調用 `e.preventDefault()` 會被瀏覽器直接駁回並拋出 Console Error。**正確做法**：一律採用 CSS `touch-action: none` (`touch-none`) 由瀏覽器底層合成器直接處理手勢。
-- **[FP-032] 在 Flex 容器內使用原生 Table 渲染動態長字串**:
-  - 原生 `<table>` 單元格算法在面對超長無空格字串時會忽略父級寬度百分比並強制向右撐開，導致同級按鈕被推出視窗外。**正確做法**：改用 Flex 語意化清單搭配 `flex-1 min-w-0` 與 `wrap-break-word`，按鈕顯式宣告 `shrink-0`。
-- **[FP-033] Windows CLI 命令列 32KB 長度溢出 (WinError 206)**：
-  - 在調度 `runner.py` 進行子代理人評估時，若將整個檔案字串（>60KB）作為 command line argument 傳入 `agy.exe -p <prompt>`，會觸發 Windows `CreateProcess` 32767 字元上限（WinError 206）。**正確做法**：在 candidate 中嚴格定義 `start_line` 與 `end_line` 進行範圍切割，或透過 stdin 傳遞。
+- **[TD-018] 動態虛擬化行程列表手勢聯動**：
+  - 當單日行程景點數量超過 30 個並引入虛擬化滾動（Virtual Scroll）時，需進一步確保 8px Touch-Slop 狀態機與虛擬列表的 DOM 重用生命週期完全解耦。
+- **[TD-019] 外部第三方 CLI 工具 `@response_file` 抽象轉接器**：
+  - 未來若整合更多僅支援 `@args.rsp` 響應檔語法的傳統編譯器/分析器，可於 `safe_subprocess` 封裝更高階的 Response File Builder。
 
 ---
 
-## 🔮 Next Steps (明日關鍵航標)
+## 🛡️ Failed Paths (踩坑與避坑指南)
 
-1. **移動端 Sheet 拖曳物理微動效 (Pan-to-Dismiss / Gesture Decay)**：
-   - 評估為 DetailDialog 引入頂部抓手向下拖拽回彈與慣性關閉動效。
-2. **多景點標記交互與動態聚焦 (Interactive Map Clusters & Focus)**：
-   - 探索大地圖在大規模景點密度下的聚類與動態呼吸聚焦體驗。
+- **[FP-031] Passive Touch 監聽器中呼叫 `preventDefault()` 失敗**：
+  - Chrome / Safari 將觸控事件預設標為 passive，在 `onTouchStart` 中呼叫 `preventDefault()` 會直接被忽略並噴出警告。正確解法是使用 CSS `touch-action: none`。
+- **[FP-032] 原生 Table 單元格面對長字串寬度塌縮**：
+  - 在 Flex 彈窗內使用 HTML `table` 搭配 `TableCell`，長英數或連續 CJK 字元會因內建的 `whitespace-nowrap` 強制撐爆容器寬度，導致右側元素被擠出螢幕。改用 Flex 清單加 `wrap-break-word` 才能真正自適應折行。
+- **[FP-033] Windows CLI 單行傳參長度限制 (WinError 206)**：
+  - 透過 Windows 命令列直接傳遞超過 32KB 的字串會觸發系統錯誤。涉及大量文字與審計日誌生成時，一律改由檔案系統寫入或 Python 指令碼讀取。
+- **[FP-034] Windows TextIOWrapper CRLF 自動轉換引發斷言失敗**：
+  - 在 Windows 上，Python 子進程文字模式 stdout (`sys.stdout.write`) 預設會將 `\n` 自動翻譯為 `\r\n`，導致父進程讀取解碼後的字串比對不一致。解法：比對前使用 Universal Newline 正規化（`.replace('\r\n', '\n')`），或使用二進位 buffer (`sys.stdout.buffer`)。
+- **[FP-035] 跨目錄腳本執行缺少專案根目錄至 `sys.path` 導致 ModuleNotFoundError**：
+  - 當從 `backend/` 或 `.agents/.../scripts/` 等子目錄呼叫時，Python 預設 `sys.path` 僅包含該子目錄。解法：在獨立腳本頂部加入動態探測根目錄邏輯（`_REPO_ROOT = Path(__file__).resolve().parents[...]` 並插入 `sys.path`）。
+
+---
+
+## 📝 持久化日誌與文檔索引 (Immutable Journaling)
+
+- **每日工程日誌**：[`docs/journals/2026-10-08-daily-report.md`](file:///d:/Project/Tabidachi/travel-pwa/docs/journals/2026-10-08-daily-report.md)
+- **IPC 架構深度調研**：[`docs/research/windows-cli-winerror-206-ipc-architecture-2026.md`](file:///d:/Project/Tabidachi/travel-pwa/docs/research/windows-cli-winerror-206-ipc-architecture-2026.md)
+- **資安審計報告 (Sentinel)**：[`docs/security/reports/security_sentinel_report_2026-10-08_subprocess_ipc_sandbox.md`](file:///d:/Project/Tabidachi/travel-pwa/docs/security/reports/security_sentinel_report_2026-10-08_subprocess_ipc_sandbox.md)
+- **資安覆蓋台帳**：[`docs/security/security-coverage-ledger.json`](file:///d:/Project/Tabidachi/travel-pwa/docs/security/security-coverage-ledger.json) (31/31 targets SECURE)
+- **核心大腦記憶**：[`.agents/memory.md`](file:///d:/Project/Tabidachi/travel-pwa/.agents/memory.md) (Section 18 & Section 19)
+
+---
+
+## 🚀 Next Steps
+
+1. 保持 `backend/tests/test_safe_subprocess.py` 作為 Pre-flight 測試守門員，確保未來任何 Agent 執行大數據跨進程任務時均免疫 WinError 206。
+2. 後續若需實作多天行程批次分析或地圖視角雙向聯動，可直接沿用 Section 18 與 Section 19 確立的手勢狀態機與安全管道串流標準。
