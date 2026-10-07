@@ -1931,8 +1931,13 @@ async def smart_geocode_logic(
     landmark_result = translate_famous_landmark(query, country_code)
     search_terms, display_name, landmark_data = landmark_result
     
-    # 🚀 INSTANT RETURN: 如果景點有座標，直接回傳，完全跳過 API 調用
-    if landmark_data and landmark_data.get("lat") and landmark_data.get("lng"):
+    # 🚀 INSTANT RETURN: 如果景點有座標且國家相符，直接回傳，完全跳過 API 調用
+    landmark_country = (landmark_data.get("country") or "").upper() if landmark_data else ""
+    country_matches = True
+    if api_country_lock and landmark_country:
+        country_matches = (landmark_country == api_country_lock.upper())
+
+    if landmark_data and landmark_data.get("lat") and landmark_data.get("lng") and country_matches:
         instant_result = {
             "lat": landmark_data["lat"],
             "lng": landmark_data["lng"],

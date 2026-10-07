@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/components/itinerary/ActivityEditModal.tsx",
+    "file_path": "frontend/components/itinerary/ActivityEditModal.tsx",
+    "attack_vector": "ui_concurrency_race_condition",
+    "hypothesis": "When handleResolveAddress or handleResolveLink is inflight and user triggers onSave or switches items, state updates on unmounted or changed editItem can corrupt data or trigger race conditions."
+  },
+  {
+    "id": "frontend/components/itinerary/ActivityEditModal.tsx:rerender",
+    "file_path": "frontend/components/itinerary/ActivityEditModal.tsx",
+    "attack_vector": "infinite_rerender_state_mutation",
+    "hypothesis": "The useEffect hook tracking editItem and isOpen performs setEditItem if editItem.isManualCoords is undefined, potentially causing cascading renders if parent passes a new object reference."
+  },
+  {
+    "id": "frontend/components/itinerary/ActivityEditModal.tsx:protocol_injection",
+    "file_path": "frontend/components/itinerary/ActivityEditModal.tsx",
+    "attack_vector": "input_xss_and_client_injection",
+    "hypothesis": "User-supplied link_url is accepted without protocol sanitization (e.g. javascript:), potentially allowing script execution if rendered as an href."
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/lib/transit-connector.ts",
+    "file_path": "frontend/lib/transit-connector.ts",
+    "attack_vector": "protocol_manipulation_and_nan_injection",
+    "hypothesis": "Coordinate validation missing or improper percent-encoding in Google Maps URL generation could allow NaN propagation or URL injection."
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "race_condition_and_timer_leak",
+    "hypothesis": "Pending delete queue in component lifecycle might leak timers or miss unmount flush, resulting in ghost data or unauthorized deletion desync."
+  },
+  {
+    "id": "frontend/components/itinerary/TransitSegmentConnector.tsx",
+    "file_path": "frontend/components/itinerary/TransitSegmentConnector.tsx",
+    "attack_vector": "stored_xss_in_custom_note",
+    "hypothesis": "Custom transit override note might render unescaped text or trigger unsanitized links when rendered on timeline."
+  },
+  {
+    "id": "frontend/components/itinerary/ActivityEditModal.tsx",
+    "file_path": "frontend/components/itinerary/ActivityEditModal.tsx",
+    "attack_vector": "portal_leak_and_event_bubbling",
+    "hypothesis": "BottomSheet upgrade might cause focus trap escape or input event bubbling that prematurely triggers dismiss or unhandled state updates."
+  }
+]

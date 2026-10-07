@@ -1,0 +1,34 @@
+[
+  {
+    "id": "frontend/components/timeline-card.tsx:state_serialization_integrity",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 340,
+    "end_line": 610,
+    "attack_vector": "state_serialization_integrity",
+    "hypothesis": "Verify whether reservation_code formatting or cost parsing introduces NaN values or unhandled exceptions into onUpdateActivity."
+  },
+  {
+    "id": "frontend/components/timeline-card.tsx:clipboard_and_navigation_safety",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 450,
+    "end_line": 700,
+    "attack_vector": "clipboard_and_navigation_safety",
+    "hypothesis": "Verify whether reservation_code clipboard copying and link navigation handle empty strings and special characters without unhandled runtime errors."
+  },
+  {
+    "id": "frontend/components/itinerary/ActivityEditModal.tsx:tag_state_hygiene_and_vip_toggle",
+    "file_path": "frontend/components/itinerary/ActivityEditModal.tsx",
+    "start_line": 270,
+    "end_line": 330,
+    "attack_vector": "tag_state_hygiene",
+    "hypothesis": "Verify whether handleAddTag deduplication, tag deletion, or VIP highlight toggle causes state corruption or unhandled schema types."
+  },
+  {
+    "id": "frontend/components/itinerary/ActivityEditModal.tsx:memo_rendering_stability",
+    "file_path": "frontend/components/itinerary/ActivityEditModal.tsx",
+    "start_line": 890,
+    "end_line": 950,
+    "attack_vector": "memo_rendering_stability",
+    "hypothesis": "Verify whether dynamic textarea resizing on input changes introduces infinite re-render loops, unbounded height, or layout thrashing."
+  }
+]

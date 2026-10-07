@@ -9,13 +9,14 @@
  * - ✨ 流暢動畫 (無抖動)
  */
 
-import { memo, useEffect } from "react"
+import { memo, useEffect, useState } from "react"
 import { useSortable } from "@dnd-kit/sortable"
-import { GripVertical } from "lucide-react"
+import { GripVertical, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TimelineCard } from "@/components/timeline-card"
 import { Activity } from "@/lib/itinerary-types"
-import { motion, useSpring } from "framer-motion"
+import { motion, useSpring, PanInfo } from "framer-motion"
+import { useHaptic } from "@/lib/hooks"
 
 interface SortableTimelineCardProps {
     activity: Activity
@@ -25,10 +26,11 @@ interface SortableTimelineCardProps {
     onEdit: (item: Activity) => void
     onDelete: (id: string) => void
     onUpdateActivity: (id: string, updates: Partial<Activity>) => Promise<boolean>
+    onOpenDetail?: (item: Activity) => void
 }
 
 // ⚡ 1. Memoized Inner Component: 防止拖曳時內容重繪
-const MemoizedTimelineCard = memo(({ activity, index, isLast, onEdit, onDelete, onUpdateActivity }: SortableTimelineCardProps) => {
+const MemoizedTimelineCard = memo(({ activity, index, isLast, onEdit, onDelete, onUpdateActivity, onOpenDetail }: SortableTimelineCardProps) => {
     return (
         <TimelineCard
             activity={activity}
@@ -37,11 +39,11 @@ const MemoizedTimelineCard = memo(({ activity, index, isLast, onEdit, onDelete, 
             onEdit={onEdit}
             onDelete={onDelete}
             onUpdateActivity={onUpdateActivity}
+            onOpenDetail={onOpenDetail}
         />
     )
 }, (prev, next) => {
-    // 自定義比較邏輯：只有 ID, Time, Memo, SubItems, Index, Last 狀態改變才重繪
-    // 自定義比較邏輯：只有在關鍵資料變動時才重繪，以優化拖拽性能
+    // 自定義比較邏輯：只有關鍵資料變動時才重繪，以優化效能
     return prev.activity.id === next.activity.id &&
         prev.activity.time === next.activity.time &&
         (prev.activity.place_name || prev.activity.place) === (next.activity.place_name || next.activity.place) &&
@@ -52,7 +54,7 @@ const MemoizedTimelineCard = memo(({ activity, index, isLast, onEdit, onDelete, 
         prev.activity.lng === next.activity.lng &&
         prev.activity.image_url === next.activity.image_url &&
         JSON.stringify(prev.activity.image_urls) === JSON.stringify(next.activity.image_urls) &&
-        JSON.stringify(prev.activity.preview_metadata) === JSON.stringify(next.activity.preview_metadata) &&  // 🆕 Image Hunter
+        JSON.stringify(prev.activity.preview_metadata) === JSON.stringify(next.activity.preview_metadata) &&
         prev.activity.cost === next.activity.cost &&
         prev.activity.link_url === next.activity.link_url &&
         prev.activity.website_link === next.activity.website_link &&
@@ -69,7 +71,9 @@ const MemoizedTimelineCard = memo(({ activity, index, isLast, onEdit, onDelete, 
 MemoizedTimelineCard.displayName = "MemoizedTimelineCard"
 
 export const SortableTimelineCard = memo(function SortableTimelineCard(props: SortableTimelineCardProps) {
-    const { activity, isDragDisabled = false } = props
+    const { activity, isDragDisabled = false, onDelete } = props
+    const [swipeOffset, setSwipeOffset] = useState(0)
+    const haptic = useHaptic()
 
     const {
         attributes,
@@ -101,9 +105,18 @@ export const SortableTimelineCard = memo(function SortableTimelineCard(props: So
 
     if (!activity) return null;
 
-    // Header 卡片 (00:00) 不可拖曳
+    // Header 卡片 (00:00) 不可拖曳與滑動
     const isHeader = activity.category === 'header' ||
         (activity.time || activity.time_slot || "00:00") === '00:00'
+
+    const handleDragEnd = (_: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+        if (info.offset.x < -35 || info.velocity.x < -250) {
+            setSwipeOffset(-72)
+            haptic.tap()
+        } else {
+            setSwipeOffset(0)
+        }
+    }
 
     return (
         <motion.div
@@ -118,8 +131,6 @@ export const SortableTimelineCard = memo(function SortableTimelineCard(props: So
             }}
             className={cn(
                 "relative select-none",
-                // 🔧 FIX: Removed touch-none - it was blocking native scroll
-                // touch-none is now ONLY on drag handle (line 116)
                 "will-change-transform" // GPU Acceleration
             )}
         >
@@ -141,9 +152,40 @@ export const SortableTimelineCard = memo(function SortableTimelineCard(props: So
                 </div>
             )}
 
-            {/* 原有的 TimelineCard (Memoized) */}
-            <div className="group">
-                <MemoizedTimelineCard {...props} />
+            {/* 原有的 TimelineCard (支援向左滑動刪除露出紅色垃圾桶) */}
+            <div className="relative overflow-hidden rounded-2xl group">
+                {!isHeader && (
+                    <div className="absolute inset-y-0 right-0 w-20 flex items-center justify-center bg-rose-600 rounded-r-2xl z-0">
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation()
+                                haptic.error()
+                                setSwipeOffset(0)
+                                onDelete(activity.id || '')
+                            }}
+                            className="w-full h-full flex flex-col items-center justify-center text-white gap-1 active:scale-90 transition-transform cursor-pointer"
+                        >
+                            <Trash2 className="w-5 h-5" />
+                            <span className="text-[10px] font-bold">刪除</span>
+                        </button>
+                    </div>
+                )}
+
+                <motion.div
+                    drag={isHeader ? false : "x"}
+                    dragConstraints={{ left: -72, right: 0 }}
+                    dragElastic={0.08}
+                    onDragEnd={handleDragEnd}
+                    animate={{ x: swipeOffset }}
+                    transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                    onClick={() => {
+                        if (swipeOffset !== 0) setSwipeOffset(0)
+                    }}
+                    className="relative z-1 bg-white dark:bg-slate-900 rounded-2xl px-0.5 pt-0.5"
+                >
+                    <MemoizedTimelineCard {...props} />
+                </motion.div>
             </div>
         </motion.div>
     )

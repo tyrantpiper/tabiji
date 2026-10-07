@@ -25,6 +25,13 @@ export { formatNumberSafe } from "./format"
  */
 export function openExternalLink(url?: string | null) {
     if (!url) return;
+
+    const trimmed = url.trim();
+    // 🛡️ Sentinel Defense: 僅允許安全的外部協議，阻斷 javascript: / data: / vbscript:
+    if (!/^(https?|maps|geo|tel|mailto):/i.test(trimmed)) {
+        console.warn(`[Security] Blocked unsafe external link protocol: ${trimmed}`);
+        return;
+    }
     
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -34,7 +41,7 @@ export function openExternalLink(url?: string | null) {
     if (isIOS && nav.standalone) {
         // iOS PWA 專用降級解法：動態建立 <a> 標籤，模擬實體點擊
         const a = document.createElement('a');
-        a.href = url;
+        a.href = trimmed;
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
         document.body.appendChild(a);
@@ -42,7 +49,7 @@ export function openExternalLink(url?: string | null) {
         document.body.removeChild(a);
     } else {
         // Android, Web, 與非 PWA 環境：維持原生呼叫
-        window.open(url, '_blank', 'noopener,noreferrer');
+        window.open(trimmed, '_blank', 'noopener,noreferrer');
     }
 }
 

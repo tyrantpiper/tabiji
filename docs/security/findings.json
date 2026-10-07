@@ -1,30 +1,30 @@
 {
   "audit_version": "2.0.0",
   "total_validated": 3,
-  "confirmed_count": 0,
-  "dismissed_count": 2,
+  "confirmed_count": 1,
+  "dismissed_count": 1,
   "inconclusive_count": 1,
   "findings": [
     {
-      "target_id": "frontend/components/itinerary/EditableDailyTips.tsx",
+      "target_id": "frontend/components/itinerary/ActivityEditModal.tsx",
+      "verdict": "CONFIRMED",
+      "reasoning": "In both handleResolveLink and handleResolveAddress, the asynchronous geocoding requests await external network calls while holding a stale closure over editItem. If a user modifies item fields, switches to a different item (changing editItem), or triggers save/close while an address or link resolution is inflight, the resolved promise completes and calls setEditItem({ ...editItem, ... }) with the outdated snapshot. This clobbers concurrent user inputs or erroneously applies previous item coordinates and metadata to the newly selected item without any AbortController or active item ID check.",
+      "poc_type": "pytest_in_memory",
+      "poc_script": "import asyncio\nimport pytest\n\nclass MockActivityEditModal:\n    def __init__(self, edit_item=None):\n        self.edit_item = edit_item\n        self.is_resolving_address = False\n\n    async def handle_resolve_address(self, geocode_api_resolve):\n        if not self.edit_item or not self.edit_item.get(\"address\"):\n            return\n        # Stale closure over current edit_item snapshot\n        captured_item = dict(self.edit_item)\n        self.is_resolving_address = True\n        try:\n            data = await geocode_api_resolve(captured_item[\"address\"])\n            if data.get(\"success\") and data.get(\"lat\") and data.get(\"lng\"):\n                current_place = captured_item.get(\"place\", \"\").strip()\n                new_place = current_place if current_place else (data.get(\"name\") or data.get(\"address\") or \"\")\n                # Overwrites active item with stale captured_item\n                self.edit_item = {\n                    **captured_item,\n                    \"lat\": data[\"lat\"],\n                    \"lng\": data[\"lng\"],\n                    \"place\": new_place,\n                    \"isManualCoords\": True\n                }\n        finally:\n            self.is_resolving_address = False\n\n@pytest.mark.asyncio\nasync def test_stale_closure_race_condition_overwrites_item():\n    modal = MockActivityEditModal(edit_item={\"id\": \"item-1\", \"address\": \"Tokyo Tower\", \"place\": \"Tokyo Tower\", \"notes\": \"Original\"})\n\n    async def mock_delayed_resolve(address):\n        await asyncio.sleep(0.05)\n        return {\"success\": True, \"lat\": 35.6586, \"lng\": 139.7454, \"name\": \"Tokyo Tower\"}\n\n    # Trigger async resolution on item-1\n    task = asyncio.create_task(modal.handle_resolve_address(mock_delayed_resolve))\n\n    # User switches to item-2 while resolution is inflight\n    await asyncio.sleep(0.01)\n    modal.edit_item = {\"id\": \"item-2\", \"address\": \"Shibuya Sky\", \"place\": \"Shibuya Sky\", \"notes\": \"Switched item\"}\n\n    await task\n\n    # Demonstrates defect: item-2 is overwritten by stale item-1 state\n    assert modal.edit_item[\"id\"] == \"item-1\", \"Defect confirmed: stale closure clobbered switched item\"\n",
+      "remediation_hint": "Track the active item ID or current request token using a useRef (or AbortController). Before updating state in handleResolveAddress and handleResolveLink, verify that currentItemIdRef.current === editItem.id and that the modal remains open. Furthermore, use functional state updates or refetch the latest editItem reference to avoid overwriting concurrent edits."
+    },
+    {
+      "target_id": "frontend/components/itinerary/ActivityEditModal.tsx:rerender",
+      "verdict": "DISMISSED",
+      "reasoning": "The useEffect hook contains an explicit guard condition `if (editItem.isManualCoords === undefined)`. When `setEditItem` is called, it assigns `isManualCoords: false`. On the resulting re-render, `editItem.isManualCoords` is false rather than undefined, causing the guard condition to evaluate to false and preventing any further calls to `setEditItem`. Even if the parent provides a new object reference or an unstable function reference, the state mutation is latched and cannot trigger an infinite re-render loop.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/itinerary/ActivityEditModal.tsx:protocol_injection",
       "verdict": "INCONCLUSIVE",
-      "reasoning": "The provided code snippet is truncated mid-function at calculateTotal and does not contain the logic for toggling is_private, checking private_owner_id against userId, filtering or masking sensitive amounts, or rendering CostItem and TicketItem. Without the actual implementation of these routines, it is impossible to determine statically whether a privacy leak or authorization check failure exists.",
-      "poc_type": "none",
-      "poc_script": null,
-      "remediation_hint": null
-    },
-    {
-      "target_id": "frontend/components/views/itinerary-view.tsx",
-      "verdict": "DISMISSED",
-      "reasoning": "The hypothesized 'updateDayData' function and fields 'day_checklists'/'day_costs' do not exist in the provided code snippet. The only relevant helper present is 'getDayData', which is a read-only accessor querying data[day] ?? data[String(day)]. In JavaScript, indexing plain objects with numbers automatically coerces the key to a string, and numeric indices do not collide with or pollute Object prototype properties (e.g., '__proto__', 'constructor'). There is no mutation logic or prototype pollution vulnerability present.",
-      "poc_type": "none",
-      "poc_script": null,
-      "remediation_hint": null
-    },
-    {
-      "target_id": "frontend/components/itinerary/EditableDailyAIReview.tsx",
-      "verdict": "DISMISSED",
-      "reasoning": "React inherently escapes string content when rendered inside JSX tags (e.g. `<p>{trimmed}</p>`), creating text nodes rather than interpreting strings as raw HTML. Because `formatReview` does not use `dangerouslySetInnerHTML` or any unescaped HTML sink, any HTML tags, malicious scripts, or markdown sequences in `review` will be safely rendered as literal plain text, completely preventing XSS injection.",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"32dce5ff-0155-42a2-b128-3d937f828976\",\"status\":\"SUCCESS\",\"response\":\"This request was blocked by Gemini's filters. They can occasionally trigger by mistake on safe coding, security, or biology-related queries. Please try rephrasin",
       "poc_type": "none",
       "poc_script": null,
       "remediation_hint": null

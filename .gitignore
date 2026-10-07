@@ -37,6 +37,8 @@ backend/migrations/20260308_security_hardening.sql
 gcp-sa-key.json
 
 # Scratch, Diff & Backup files
+scratch/
+scratch_*.txt
 *.diff
 *.bak
 tmp/

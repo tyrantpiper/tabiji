@@ -17,6 +17,7 @@ import EditableDailyAIReview from "@/components/itinerary/EditableDailyAIReview"
 import ItineraryDashboardHub from "@/components/itinerary/ItineraryDashboardHub"
 import IOSBottomSheet, { DashboardSectionTab } from "@/components/itinerary/IOSBottomSheet"
 import { tripsApi, itemsApi, geocodeApi } from "@/lib/api"
+import { UndoDeleteManager } from "@/lib/undo-delete-manager"
 import { useDynamicPolling } from "@/lib/polling-manager"
 import { useTripContext } from "@/lib/trip-context"
 import { useTripStore } from "@/lib/stores/tripStore"
@@ -44,6 +45,7 @@ import { ItineraryHeader } from "@/components/itinerary/ItineraryHeader"
 import { ItineraryTimeline } from "@/components/itinerary/ItineraryTimeline"
 import { TripMasterOverview } from "@/components/itinerary/TripMasterOverview"
 import { CalendarRangeSheet } from "@/components/itinerary/CalendarRangeSheet"
+import { FloatingMapCapsule } from "@/components/itinerary/FloatingMapCapsule"
 
 /**
  * 🔧 Helper to access day data with number/string key fallback
@@ -56,7 +58,8 @@ function getDayData<T>(data: Record<number | string, T> | undefined, day: number
 }
 
 export function ItineraryView() {
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
+    const zh = lang === 'zh'
     const { activeTripId, mutate: reloadTrips, userId, trips, setActiveTripId, isLoading: isTripsLoading, handleTripNotFound } = useTripContext()
     const day = useTripStore((s) => s.focusedDay)
     const setDay = useTripStore((s) => s.setFocusedDay)
@@ -134,6 +137,23 @@ export function ItineraryView() {
     const [pendingShortenDates, setPendingShortenDates] = useState<{ start_date: string; end_date: string } | null>(null)
     const [isUpdatingDates, setIsUpdatingDates] = useState(false)
 
+    // 🛡️ Phase 2: 生命週期安全之 5 秒 Undo 刪除狀態機
+    const undoManagerRef = useRef<UndoDeleteManager<Activity> | null>(null)
+    if (!undoManagerRef.current) {
+        undoManagerRef.current = new UndoDeleteManager<Activity>(
+            async (id: string) => {
+                await itemsApi.delete(id, userId || "")
+            },
+            5000
+        )
+    }
+
+    // 守衛：切換天數或離開頁面時強制 Flush，防止幽靈資料
+    useEffect(() => {
+        return () => {
+            undoManagerRef.current?.flushAll()
+        }
+    }, [day])
 
     // 🆕 DND Sensors (同多圖拖曳)
     const dndSensors = useSensors(
@@ -192,6 +212,26 @@ export function ItineraryView() {
         window.addEventListener('tabidachi-open-trip-detail', handleOpenDetail)
         return () => window.removeEventListener('tabidachi-open-trip-detail', handleOpenDetail)
     }, [])
+
+    // 🧭 監聽卡片點擊聚焦地圖事件，平滑滾動至 DayMap 錨點
+    useEffect(() => {
+        const handleFocusMapActivity = (e: Event) => {
+            const customEvent = e as CustomEvent<{ id: string; lat: number; lng: number; place?: string }>
+            const { lat, lng } = customEvent.detail || {}
+            if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return
+
+            const mapEl = document.getElementById("day-route-map-container")
+            if (mapEl && scrollerEl) {
+                const scrollerRect = scrollerEl.getBoundingClientRect()
+                const mapRect = mapEl.getBoundingClientRect()
+                const targetTop = scrollerEl.scrollTop + (mapRect.top - scrollerRect.top) - 60
+                scrollerEl.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" })
+            }
+        }
+
+        window.addEventListener("tabidachi-focus-map-activity", handleFocusMapActivity)
+        return () => window.removeEventListener("tabidachi-focus-map-activity", handleFocusMapActivity)
+    }, [scrollerEl])
     const [weatherData, setWeatherData] = useState<DayWeather[]>([])
     const [weatherMode, setWeatherMode] = useState<'live' | 'forecast' | 'seasonal' | 'trend'>('live')
     const [resolvedLocation, setResolvedLocation] = useState<{ name: string, lat: number, lng: number } | null>(null) // 🆕 統一位置狀態
@@ -1081,31 +1121,66 @@ export function ItineraryView() {
 
 
     const handleDeleteItem = useCallback(async (id: string) => {
-        if (!confirm(t('confirm_delete'))) return
         haptic.tap()
 
-        // Optimistic update: immediately remove from UI
-        if (currentTrip?.days) {
-            const optimisticData = {
-                ...currentTrip,
-                days: currentTrip.days.map((d) => ({
+        // 尋找待刪除活動原始資料
+        const targetActivity = currentTrip?.days?.flatMap((d) => d.activities || []).find((a) => a.id === id)
+        if (!targetActivity) return
+
+        // 1. 前端立即樂觀折疊移除 (使用最新快取)
+        reloadTripDetail((prev: unknown) => {
+            const prevTrip = prev as Trip | undefined
+            if (!prevTrip?.days) return prev
+            return {
+                ...prevTrip,
+                days: prevTrip.days.map((d) => ({
                     ...d,
                     activities: d.activities?.filter((a) => a.id !== id) || []
                 }))
             }
-            reloadTripDetail(optimisticData, false)
-        }
+        }, false)
 
-        try {
-            // 🔒 Standardized: Use itemsApi.delete with userId
-            await itemsApi.delete(id, userId || "")
-            haptic.success()
-        } catch (e) {
-            console.error("🔥 Delete item error:", e)
-            toast.error(e instanceof Error ? e.message : t('iv_delete_item_failed'))
-            await reloadTripDetail() // Revert UI
-        }
-    }, [t, currentTrip, reloadTripDetail, haptic, userId])
+        // 2. 排入 5 秒延遲刪除隊列
+        undoManagerRef.current?.scheduleDelete(id, targetActivity)
+
+        // 3. 彈出 Sonner Toast 附帶「復原 (Undo)」按鈕
+        const itemName = targetActivity.place || targetActivity.place_name || (zh ? "行程" : "Activity")
+        toast(`${zh ? "已刪除" : "Deleted"} ${itemName}`, {
+            duration: 5000,
+            action: {
+                label: zh ? "復原" : "Undo",
+                onClick: () => {
+                    const restored = undoManagerRef.current?.undoDelete(id)
+                    if (restored) {
+                        haptic.success()
+                        const targetDayNum = restored.day_number || day
+                        
+                        // 🛡️ 關鍵修復：先過濾掉任何同 ID 的項目，杜絕重複 2 個行程的 Bug！
+                        reloadTripDetail((prev: unknown) => {
+                            const prevTrip = prev as Trip | undefined
+                            if (!prevTrip?.days) return prev
+                            return {
+                                ...prevTrip,
+                                days: prevTrip.days.map((d) => {
+                                    if (d.day === targetDayNum) {
+                                        const cleanActivities = (d.activities || []).filter((a) => a.id !== id)
+                                        return {
+                                            ...d,
+                                            activities: [...cleanActivities, restored].sort((a, b) =>
+                                                (a.time || a.time_slot || "00:00").localeCompare(b.time || b.time_slot || "00:00")
+                                            )
+                                        }
+                                    }
+                                    return d
+                                })
+                            }
+                        }, false)
+                        toast.success(zh ? "已復原行程" : "Activity restored")
+                    }
+                }
+            }
+        })
+    }, [zh, currentTrip, reloadTripDetail, haptic, day])
 
     // ⚡ Memoized Handlers for SortableTimelineCard (Fixed: Stable References)
     const handleEditActivity = useCallback((item: Activity) => {
@@ -1410,6 +1485,7 @@ export function ItineraryView() {
                     userId={userId}
                     onRefresh={reloadTripDetail}
                     shouldShowDateSkeleton={shouldShowDateSkeleton}
+                    scrollerEl={scrollerEl}
                 />
 
                 {day === 0 ? (
@@ -1655,6 +1731,14 @@ export function ItineraryView() {
                     </>
                 )}
             </div>
+
+            {/* 🗺️ 浮動式地圖預覽膠囊 (Floating Map Capsule) - 僅在非總覽且有行程時啟用 */}
+            {day !== 0 && (
+                <FloatingMapCapsule
+                    scrollerEl={scrollerEl}
+                    activityCount={currentDayData.length}
+                />
+            )}
 
             <ActivityEditModal
                 isOpen={isEditOpen}

@@ -56,6 +56,11 @@ export interface ItineraryItemState {
     is_private?: boolean
     is_highlight?: boolean
     isManualCoords?: boolean
+    transit_override?: {
+        mode?: 'walking' | 'transit' | 'driving' | 'bicycling'
+        duration_minutes?: number
+        custom_note?: string
+    }
 }
 
 export interface DailyLocation {
@@ -115,6 +120,11 @@ export interface Activity {
     is_private?: boolean
     is_highlight?: boolean
     sort_order?: number  // 🆕 拖曳排序
+    transit_override?: {
+        mode?: 'walking' | 'transit' | 'driving' | 'bicycling'
+        duration_minutes?: number
+        custom_note?: string
+    }
 }
 
 export interface TripDay {
