@@ -162,6 +162,9 @@
 - **CSS 動畫進場位移導致的聚光燈 42px 偏位殘影 (`Animation Transience Snapshot Trap`)**: 點擊進入步驟 3 時，行程列表伴隨 Framer Motion 的滑入過渡。聚光燈因過早讀取 `getBoundingClientRect()`，鎖定在移動中的暫態座標，導致高亮框相對於卡片永久向左偏移 42px。教訓：放棄單次採樣與固定延遲 `setTimeout`，實作 180ms 最小時間窗 + 連續 4 幀位移 `< 0.5px` 的速度收斂引擎，只有當座標連續 4 幀完全不變時才解鎖高亮框。
 - **提升容器 ID 誘發的刪除按鈕誤觸陷阱 (`Destructive Button Accidental Click Trap`)**: 為使步驟 4 完整框選卡片，將 ID 綁至 `<Card>`。使用者點擊高亮孔洞時，原生穿透轉發預設點擊第一個 `button`，直接觸發了卡片右上角的紅色垃圾桶刪除按鈕。教訓：在橫幅按鈕新增 `data-tour-action="primary"`，並在穿透邏輯中硬性過濾排除包含 `.bg-red-500` / `variant='destructive'` 的元素。
 - **子視圖返回時單次 scrollTo 被截斷歸零陷阱 (`Premature Single-RAF Scroll Truncation Trap`)**: 從使用說明返回 Profile 主頁面時，若直接在 `useEffect` 或單次 RAF 中執行 `container.scrollTo({ top: pos })`，由於 DOM 容器的內部高度尚未完成重排，瀏覽器自動將捲動值截斷為 0，造成每次返回都跳回頁首。教訓：升級為雙重 RAF 排程，確保在瀏覽器 Reflow 完全結束後的下一幀才執行捲動定位。
+- **長時間軸卡片橫滑刪除手勢衝突陷阱 (`Vertical-Scroll Swipe-Delete Conflict Trap`)**: 在行動裝置快速垂直滾動時，人體拇指自然運動軌跡具備微幅弧形水平位移（-35px），導致 `framer-motion drag="x"` 的 `dragElastic` 頻繁被激發並彈出紅色刪除垃圾桶，嚴重破壞流暢瀏覽體驗。教訓：高頻垂直滾動視圖中，避免在整張卡片上疊加無阻尼門檻的橫向拖曳手勢；破壞性操作回歸選單與撤銷防線。
+- **頂部標頭多標籤過度擠壓陷阱 (`Top Header Tag Overcrowding Trap`)**: 初版嘗試將時間、序號、分類徽章、私有標記與自訂 Tags 全部置於頂部單一行，在 iPhone SE（375px）寬度下會造成右上角三點選單被擠出螢幕或強制折行。教訓：自訂 Tags 必須分流至標題下方，頂部僅保留時序膠囊與動作按鈕，維持版面堅固性。
+- **拖曳手把與地圖點擊聚焦事件競態 (`Drag Handle Map-Focus Bubbling Trap`)**: 卡片根容器綁定 `onClick` 聚焦地圖時，若拖曳手把未在事件攔截器中被顯式排除，長按手把或放開時會冒泡觸發 `flyTo`，干擾排序體驗。教訓：手把需加上 `data-drag-handle` 屬性，並於父層 `handleCardClick` 前置攔截過濾。
 
 ### 4. 離線架構與 PWA 踩坑
 - **Service Worker 嚴格路徑比對導致帶參冷啟動白屏 (`Strict Navigation URL Mismatch Trap`)**: PWA 從桌面圖示啟動時常攜帶 `?source=pwa`，若 Service Worker 宣告 `navigateFallback` 未開啟 `ignoreSearch: true`，比對失敗直接由瀏覽器發起真實網路請求，在斷網情境下拋出小恐龍死白屏。教訓：離線 App Shell 導航快取必須宣告 `matchOptions: { ignoreSearch: true }`。
@@ -371,3 +374,10 @@
 
 ### 16. CI/CD 雲端排程、路徑過濾與併發取消領域 (CI Runner Starvation & Concurrency Cancellation)
 - **Doc-Commit Paths-Ignore & Concurrency Cancellation**: 文檔路徑過濾與並發取消架構。為 GitHub Actions CI 配置 `paths-ignore`（排除 `docs/**`、`.agents/**`、`README.md`、`CONTEXT.md`、`.gitignore`、`LICENSE`），阻斷純文本更新對繁重測試矩陣的無效調用；頂層啟用 `concurrency: { group: "${{ github.workflow }}-${{ github.ref }}", cancel-in-progress: true }`，新提交自動取消過時的舊任務排隊，徹底根治尖峰時段雲端 Runner 枯竭超時問題。
+
+### 17. 行程時間軸滿版頂部膠囊、轉乘動態銜接與安全撤銷領域 (Full-Width Top-Pill, Transit & Undo Deletion)
+- **Vertical Gestures First over Secondary Swipe Gestures**: 垂直手勢優先於次級橫滑原則。在主要操作為高頻垂直滾動的長時間軸頁面，嚴禁為單一卡片配置無閾值門檻的橫向滑動手勢（如 `drag="x"`）；次級破壞性動作（刪除）必須收攏於標準選單並由樂觀延遲撤銷（Undo Toast）提供安全兜底，徹底根除垂直滾動手指微偏誤觸紅色垃圾桶抽屜的痛點。
+- **Top-Pill Consolidation & Full-Width Grid Invariance**: 頂部時序膠囊收攏與單列滿版架構。卡片時間與序號由獨立左欄（佔用 72px）移入卡片內部頂部膠囊列，外層容器與上方看板統一錨定為 `px-4 sm:px-6`，解鎖 +60px 文字水平空間並達成像素級對齊；縮圖移除 `mr-8`，三點按鈕置於頂部標頭右側，Tags 分流至標題下方，杜絕 iPhone SE 375px 小螢幕擠壓折行。
+- **Optimistic Undo Lifecycle Flush Invariance**: 樂觀撤銷生命週期強制結算防線。延遲撤銷刪除（5 秒 Pending 佇列）在組件卸載、分頁切換、行程切換或儲存時，必須無條件同步調用 `flushAll()` 立即執行持久化突變，杜絕延遲計時器在非同步切換中被垃圾回收造成刪除狀態丟失或資料幽靈復原。
+- **Drag Handle DOM Event Isolation Guard**: 拖曳手把 DOM 事件冒泡防禦標準。卡片容器具備地圖跳轉點擊事件時，拖曳抓取手把必須宣告顯式 `button[type="button"]` 與 `data-drag-handle="true"`，並在卡片根層點擊攔截器中防禦性排除，徹底阻斷拖曳引發的地圖飛航誤觸。
+- **TransitSegmentConnector Dynamic Estimation & Manual Override**: 轉乘動態耗時銜接線與手動覆寫機制。景點卡片間垂直貫穿連線，依據座標自動計算 Haversine 距離並推估徒步/大眾運輸/開車時間，支援手動覆寫交通模式與耗時，營造原生 iOS 旅遊動態時序感。
