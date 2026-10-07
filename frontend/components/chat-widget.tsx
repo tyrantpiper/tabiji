@@ -423,9 +423,10 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
 
     // Touch events
     const handleTouchStart = (e: React.TouchEvent) => {
-        e.preventDefault() // Prevent page scroll
         const touch = e.touches[0]
-        handleDragStart(touch.clientX, touch.clientY)
+        if (touch) {
+            handleDragStart(touch.clientX, touch.clientY)
+        }
     }
 
     // Global event listeners
@@ -1229,7 +1230,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                     id="tour-ai-bot"
                     size="icon"
                     className={cn(
-                        "h-14 w-14 rounded-full transition-all duration-300 hover:scale-105 touch-manipulation relative overflow-hidden",
+                        "h-14 w-14 rounded-full transition-all duration-300 hover:scale-105 touch-none relative overflow-hidden",
                         "backdrop-blur-2xl border border-white/60 dark:border-white/15",
                         isOpen
                             ? "bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 shadow-lg"

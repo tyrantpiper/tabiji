@@ -1,0 +1,10 @@
+[
+  {
+    "id": "frontend/components/timeline-card.tsx:dropdown_trigger",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 185,
+    "end_line": 215,
+    "attack_vector": "gesture_hijacking_and_scroll_dos",
+    "hypothesis": "DropdownMenuTrigger in timeline card lacks touch-slop gesture disambiguation on mobile devices. When user scrolls vertically over the 3-dot button, Radix UI's default onPointerDown trigger immediately captures the pointer and opens the menu, hijacking the scroll gesture and creating an accidental destructive action risk."
+  }
+]

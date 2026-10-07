@@ -1,0 +1,17 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 1,
+  "confirmed_count": 0,
+  "dismissed_count": 0,
+  "inconclusive_count": 1,
+  "findings": [
+    {
+      "target_id": "frontend/components/timeline-card.tsx",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Subagent execution failed: [WinError 206] 檔名或副檔名太長。",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 4,
+  "confirmed_count": 1,
+  "dismissed_count": 2,
+  "inconclusive_count": 1,
+  "findings": [
+    {
+      "target_id": "frontend/components/timeline-card.tsx:swr_in_flight_edit_wipeout",
+      "verdict": "CONFIRMED",
+      "reasoning": "The useEffect hook synchronizes incoming activity props to local state and includes mutable/reference fields (`activity.memo`, `activity.sub_items`, `activity.cost`, etc.) in its dependency array. Because it lacks a guard condition checking `isEditing`, any background revalidation (such as SWR re-fetching or receiving a new array reference for `sub_items`) will fire the effect while the dialog is open. This unconditionally overwrites local draft states (`note`, `mediaLink`, `links`, `cost`, `reservationCode`) with incoming props and forces `isEditing` back to `false`, discarding uncommitted user input mid-edit.",
+      "poc_type": "pytest_in_memory",
+      "poc_script": "import pytest\n\nclass DetailDialogState:\n    def __init__(self, activity, open=True):\n        self.open = open\n        self.activity = dict(activity)\n        self.is_editing = False\n        self.note = activity.get(\"memo\", \"\")\n        self.cost = str(activity[\"cost\"]) if activity.get(\"cost\") is not None else \"\"\n        self.links = list(activity.get(\"sub_items\", []))\n\n    def _effect_on_prop_change(self):\n        # Simulates useEffect trigger when dependencies update\n        if self.open:\n            self.note = self.activity.get(\"memo\", \"\")\n            self.links = list(self.activity.get(\"sub_items\", []))\n            self.cost = str(self.activity[\"cost\"]) if self.activity.get(\"cost\") is not None else \"\"\n            self.is_editing = False\n\n    def trigger_swr_revalidation(self, fresh_activity):\n        self.activity = dict(fresh_activity)\n        self._effect_on_prop_change()\n\ndef test_swr_revalidation_wipes_out_uncommitted_edits():\n    initial_activity = {\"id\": \"act-1\", \"memo\": \"Original Memo\", \"cost\": 100, \"sub_items\": []}\n    dialog = DetailDialogState(initial_activity, open=True)\n\n    # User initiates editing and writes draft inputs\n    dialog.is_editing = True\n    dialog.note = \"Unsaved user draft edits...\"\n    dialog.cost = \"250\"\n\n    # Background SWR revalidation returns with refreshed data\n    fresh_activity = {\"id\": \"act-1\", \"memo\": \"Original Memo\", \"cost\": 100, \"sub_items\": []}\n    dialog.trigger_swr_revalidation(fresh_activity)\n\n    # Assert uncommitted edits were overwritten and editing mode was forcibly closed\n    assert dialog.note == \"Original Memo\"\n    assert dialog.cost == \"100\"\n    assert dialog.is_editing is False\n",
+      "remediation_hint": "Only reset local draft state when the dialog is newly opened or when `activity.id` changes (e.g., using `useRef` to track `open` transitions and previous `id`). Add a guard check `if (!isEditing)` to ensure background revalidations do not overwrite draft state or reset `isEditing`."
+    },
+    {
+      "target_id": "frontend/components/timeline-card.tsx:radix_css_coordinate_collision",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection reveals that DialogContent applies className=\"sm:max-w-lg md:max-w-xl p-0 overflow-hidden bg-stone-50 dark:bg-slate-900 gap-0\". There are no bottom sheet positioning classes (such as 'bottom-0') present on the element, so no CSS coordinate conflict or layout detachment with Radix dialog centering styles exists.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/timeline-card.tsx:title_close_button_collision",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validation timed out after 60s.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/timeline-card.tsx:caller_props_interface_leak",
+      "verdict": "DISMISSED",
+      "reasoning": "Static analysis reveals no props interface mismatch or unhandled flaw in the provided snippet. DetailDialogProps explicitly declares both 'onMap: (e: React.MouseEvent) => void' and 'hideMapBtn: boolean'. The parent caller passes both props (<DetailDialog onMap={openGoogleMap} hideMapBtn={hideMapBtn} ... />), and DetailDialog correctly destructures them according to DetailDialogProps. The interface contract is synchronized and fully satisfied.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

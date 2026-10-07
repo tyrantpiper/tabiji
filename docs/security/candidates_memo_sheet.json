@@ -1,0 +1,34 @@
+[
+  {
+    "id": "frontend/components/timeline-card.tsx:swr_in_flight_edit_wipeout",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 420,
+    "end_line": 460,
+    "attack_vector": "state_race_condition",
+    "hypothesis": "Verify whether useEffect re-syncing activity props to local state during isEditing === true wipes out user uncommitted draft edits on SWR background revalidation."
+  },
+  {
+    "id": "frontend/components/timeline-card.tsx:radix_css_coordinate_collision",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 515,
+    "end_line": 540,
+    "attack_vector": "layout_coordinate_collision",
+    "hypothesis": "Verify whether applying bottom sheet classes (bottom-0) to DialogContent without explicitly resetting top-[50%] and translate-y-[-50%] causes CSS coordinate conflict and layout detachment."
+  },
+  {
+    "id": "frontend/components/timeline-card.tsx:title_close_button_collision",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 518,
+    "end_line": 535,
+    "attack_vector": "ui_click_target_occlusion",
+    "hypothesis": "Verify whether long activity place names in DialogTitle without right padding or truncation collide with and occlude the absolute-positioned top-4 right-4 close button."
+  },
+  {
+    "id": "frontend/components/timeline-card.tsx:caller_props_interface_leak",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 380,
+    "end_line": 425,
+    "attack_vector": "interface_type_integrity",
+    "hypothesis": "Verify whether removing onMap and hideMapBtn from DetailDialogProps causes unresolved props type mismatch at the parent caller."
+  }
+]
