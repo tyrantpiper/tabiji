@@ -1,0 +1,10 @@
+[
+  {
+    "id": "frontend/components/timeline-card.tsx:title_close_button_collision",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 518,
+    "end_line": 535,
+    "attack_vector": "ui_click_target_occlusion",
+    "hypothesis": "Verify whether long activity place names in DialogTitle without right padding or truncation collide with and occlude the absolute-positioned top-4 right-4 close button."
+  }
+]

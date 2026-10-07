@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-07T08:22:00Z",
+  "last_audit_date": "2026-10-08T00:24:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 27,
-    "audited_targets": 27,
-    "verified_vulnerabilities": 3,
-    "dismissed_hypotheses": 23
+    "total_targets": 30,
+    "audited_targets": 30,
+    "verified_vulnerabilities": 4,
+    "dismissed_hypotheses": 26
   },
   "targets": [
     {
@@ -252,6 +252,48 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Independent sandbox validation confirmed: Overlay layout will mirror the active card's full-width top-pill structure to maintain seamless visual parity during drag."
+    },
+    {
+      "id": "frontend/components/timeline-card.tsx:detail_dialog_sheet",
+      "target_type": "client_modal_sheet",
+      "trust_boundary": "browser_state_and_dom",
+      "vectors_checked": [
+        "swr_in_flight_edit_wipeout",
+        "radix_css_coordinate_collision",
+        "title_close_button_collision",
+        "caller_props_interface_leak"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Independent sandbox validation confirmed: isEditing guard strictly protects user draft state against SWR background wipeouts; explicit top-auto translate-none overrides prevent WebKit coordinate collisions; redundant bottom buttons removed safely."
+    },
+    {
+      "id": "frontend/components/timeline-card.tsx:dropdown_trigger",
+      "target_type": "client_menu_trigger",
+      "trust_boundary": "browser_touch_and_gestures",
+      "vectors_checked": [
+        "gesture_hijacking_and_scroll_dos",
+        "pointer_event_race_condition",
+        "desktop_toggle_thrashing",
+        "card_click_event_leakage"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Independent sandbox validation confirmed: Touch-Slop gesture disambiguation with 8px threshold strictly prevents menu opening during vertical scroll while preserving desktop mouse/keyboard Radix accessibility. Unconditional stopPropagation prevents background card map focus leakage."
+    },
+    {
+      "id": "frontend/components/timeline-card.tsx:memo_link_adaptive",
+      "target_type": "client_memo_sheet_list",
+      "trust_boundary": "browser_rendering_and_layout",
+      "vectors_checked": [
+        "layout_overflow_and_button_clipping",
+        "xss_link_protocol_injection",
+        "click_event_bubbling_penetration",
+        "bottom_sheet_scroll_padding_clipping"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Replaced Table layout with semantic adaptive flex list: eliminated TableCell whitespace-nowrap lock, injected break-words and [word-break:break-word] for CJK/URLs, anchored external link action button with shrink-0, added pb-12 bottom scroll buffer. Verified 100% green via Vitest unit tests."
     }
   ]
 }

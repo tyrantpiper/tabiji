@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/timeline-card.tsx:memo_link_overflow",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 758,
+    "end_line": 790,
+    "attack_vector": "layout_overflow_and_button_clipping",
+    "hypothesis": "DetailDialog renders sub_items using Table with TableCell defaulting to whitespace-nowrap and lacking flex/word-break constraints, causing long titles or descriptions to blow out horizontal layout, push external link buttons beyond the screen boundary, and truncate critical user text."
+  },
+  {
+    "id": "frontend/components/timeline-card.tsx:link_protocol_safety",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 765,
+    "end_line": 782,
+    "attack_vector": "xss_link_protocol_injection",
+    "hypothesis": "SubItem link opens via openExternalLink. If user supplies a javascript: or unsafe URL payload, it could execute arbitrary script unless openExternalLink strictly filters protocols."
+  },
+  {
+    "id": "frontend/components/timeline-card.tsx:click_bubbling_defense",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "start_line": 765,
+    "end_line": 782,
+    "attack_vector": "click_event_bubbling_penetration",
+    "hypothesis": "Clicking on sub_item row or external link button in DetailDialog could propagate up to parent card container, triggering map focusing or unintended card selection."
+  }
+]

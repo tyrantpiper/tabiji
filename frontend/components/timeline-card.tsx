@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, memo } from "react"
+import { useState, useEffect, useRef, memo } from "react"
 import {
     MapPin, Utensils, Train, ShoppingBag, Bed, Camera, Copy,
     StickyNote, MoreHorizontal, Edit, Trash2, ExternalLink, Lightbulb, X, Info, Plus,
@@ -56,6 +56,54 @@ export const TimelineCard = memo(function TimelineCard({
     const [showDetail, setShowDetail] = useState(false)
     const [showPhotoPreview, setShowPhotoPreview] = useState(false)  // 🆕 圖片預覽狀態
     const [imageError, setImageError] = useState(false) // 🆕 圖片載入失敗狀態
+    const [menuOpen, setMenuOpen] = useState(false) // 📱 三點選單手勢消歧義受控狀態
+    const isTouchInteraction = useRef(false)
+    const startCoords = useRef<{ x: number; y: number } | null>(null)
+    const isScrolling = useRef(false)
+
+    // 📱 iOS 原生級 Touch-Slop 手勢消歧義防衛 (防止手機端滑動列表時誤開三點選單)
+    const handleMenuPointerDown = (e: React.PointerEvent) => {
+        e.stopPropagation()
+        if (e.pointerType === 'touch') {
+            isTouchInteraction.current = true
+            isScrolling.current = false
+            startCoords.current = { x: e.clientX, y: e.clientY }
+            e.preventDefault() // 阻止 Radix 在 touch pointerdown 的第 0 毫秒立即開啟選單
+        } else {
+            isTouchInteraction.current = false
+        }
+    }
+
+    const handleMenuPointerMove = (e: React.PointerEvent) => {
+        if (!isTouchInteraction.current || !startCoords.current) return
+        const deltaX = Math.abs(e.clientX - startCoords.current.x)
+        const deltaY = Math.abs(e.clientY - startCoords.current.y)
+        if (deltaX > 8 || deltaY > 8) {
+            isScrolling.current = true // 超過 8px 判定為 iOS 原生滾動手勢
+        }
+    }
+
+    const handleMenuPointerUp = () => {
+        if (!isTouchInteraction.current) return
+        startCoords.current = null
+    }
+
+    const handleMenuClick = (e: React.MouseEvent) => {
+        e.stopPropagation() // 🛡️ 無條件切斷冒泡：絕不穿透至背後卡片的地圖跳轉
+        if (isTouchInteraction.current) {
+            if (isScrolling.current) {
+                e.preventDefault()
+                isScrolling.current = false
+                isTouchInteraction.current = false
+                return // 滑動中：100% 阻斷選單開啟
+            }
+            // 精準輕點 (Tap)：安全切換開關
+            setMenuOpen((prev) => !prev)
+            isTouchInteraction.current = false
+            return
+        }
+        // 桌面端滑鼠/鍵盤點擊：交由 Radix 原生閉環處理
+    }
 
     const firstImageUrl = activity?.image_urls?.[0] || activity?.image_url || activity?.preview_metadata?.mapillary_thumb || activity?.preview_metadata?.map_image || activity?.preview_metadata?.og_image;
     const [lastImageUrl, setLastImageUrl] = useState(firstImageUrl)
@@ -185,17 +233,21 @@ export const TimelineCard = memo(function TimelineCard({
 
                     {/* 右側：iOS 玻璃圓盤三點選單 */}
                     <div className="shrink-0" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                        <DropdownMenu>
+                        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
                             <DropdownMenuTrigger asChild>
                                 <Button
                                     variant="ghost"
                                     size="icon"
+                                    onPointerDown={handleMenuPointerDown}
+                                    onPointerMove={handleMenuPointerMove}
+                                    onPointerUp={handleMenuPointerUp}
+                                    onClick={handleMenuClick}
                                     className="h-7 w-7 rounded-full transition-all touch-manipulation flex items-center justify-center p-0 shadow-xs active:scale-90 bg-slate-100/90 hover:bg-slate-200/90 dark:bg-slate-800/90 dark:hover:bg-slate-700/90 text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white backdrop-blur-md border border-slate-200/80 dark:border-slate-700/80"
                                 >
                                     <MoreHorizontal className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
                                 </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="min-w-35">
+                            <DropdownMenuContent align="end" className="min-w-35" onClick={(e) => e.stopPropagation()}>
                                 <DropdownMenuItem onClick={() => onEdit(activity)} className="py-2.5 text-xs">
                                     <Edit className="w-3.5 h-3.5 mr-2" /> {t('tc_edit_all')}
                                 </DropdownMenuItem>
@@ -343,10 +395,10 @@ export const TimelineCard = memo(function TimelineCard({
         !isNaN(typeof activity.lng === 'string' ? parseFloat(activity.lng) : activity.lng)
     )
 
-    // 🗺️ 卡片本體點擊聚焦地圖處理 (防禦性排除按鈕、選單、輸入、表格、拖曳手把等互動區)
+    // 🗺️ 卡片本體點擊聚焦地圖處理 (防禦性排除按鈕、選單、輸入、表格、拖曳手把、彈窗等互動區)
     const handleCardClick = (e: React.MouseEvent) => {
         const target = e.target as HTMLElement
-        if (target.closest('button, [role="menuitem"], input, a, table, [data-drag-handle]')) return
+        if (target.closest('button, [role="menuitem"], input, a, table, [data-drag-handle], [role="dialog"], [data-slot="dialog-content"]')) return
 
         const rawLat = activity.lat
         const rawLng = activity.lng
@@ -366,33 +418,36 @@ export const TimelineCard = memo(function TimelineCard({
     }
 
     return (
-        <div
-            onClick={handleCardClick}
-            className={cn(
-                "timeline-card w-full relative p-4 sm:p-5 rounded-2xl transition-all duration-200 shadow-xs active:scale-[0.995] group mb-3.5",
-                hasValidCoords ? "cursor-pointer" : "cursor-default",
-                isHeader ? "bg-amber-50/30 dark:bg-amber-900/20 border-2 border-amber-200/70 dark:border-amber-700/70" :
-                    (activity.is_highlight
-                        ? "bg-amber-50/15 dark:bg-amber-950/20 border-2 border-amber-400 dark:border-amber-500 shadow-[0_0_16px_rgba(251,191,36,0.22)] dark:shadow-[0_0_20px_rgba(245,158,11,0.18)]"
-                        : "bg-white dark:bg-slate-800/90 border-2 border-slate-200/90 dark:border-slate-700/85 hover:border-slate-300 dark:hover:border-slate-600"
-                    )
-            )}
-        >
-            {renderContent()}
+        <>
+            <div
+                onClick={handleCardClick}
+                className={cn(
+                    "timeline-card w-full relative p-4 sm:p-5 rounded-2xl transition-all duration-200 shadow-xs active:scale-[0.995] group mb-3.5",
+                    hasValidCoords ? "cursor-pointer" : "cursor-default",
+                    isHeader ? "bg-amber-50/30 dark:bg-amber-900/20 border-2 border-amber-200/70 dark:border-amber-700/70" :
+                        (activity.is_highlight
+                            ? "bg-amber-50/15 dark:bg-amber-950/20 border-2 border-amber-400 dark:border-amber-500 shadow-[0_0_16px_rgba(251,191,36,0.22)] dark:shadow-[0_0_20px_rgba(245,158,11,0.18)]"
+                            : "bg-white dark:bg-slate-800/90 border-2 border-slate-200/90 dark:border-slate-700/85 hover:border-slate-300 dark:hover:border-slate-600"
+                        )
+                )}
+            >
+                {renderContent()}
+            </div>
 
-            {/* 傳遞 hideMapBtn 給彈窗 */}
             <DetailDialog
                 open={showDetail}
                 onOpenChange={setShowDetail}
                 activity={activity}
-                onMap={openGoogleMap}
-                hideMapBtn={hideMapBtn}
                 onUpdateActivity={onUpdateActivity}
             />
 
             {/* 🆕 全螢幕圖片預覽 (支援多圖片) */}
             <Dialog open={showPhotoPreview} onOpenChange={setShowPhotoPreview}>
-                <DialogContent className="max-w-[95vw] max-h-[90vh] p-0 bg-black/95 border-0 flex items-center justify-center">
+                <DialogContent
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="max-w-[95vw] max-h-[90vh] p-0 bg-black/95 border-0 flex items-center justify-center"
+                >
                     <DialogHeader className="sr-only">
                         <DialogTitle>{t('tc_photo_preview')}</DialogTitle>
                         <DialogDescription>
@@ -405,7 +460,7 @@ export const TimelineCard = memo(function TimelineCard({
                     />
                 </DialogContent>
             </Dialog>
-        </div>
+        </>
     )
 })
 
@@ -414,12 +469,10 @@ interface DetailDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
     activity: Activity
-    onMap: (e: React.MouseEvent) => void
-    hideMapBtn: boolean
     onUpdateActivity: (id: string, updates: Partial<Activity>) => Promise<boolean>
 }
 
-function DetailDialog({ open, onOpenChange, activity, onMap, hideMapBtn, onUpdateActivity }: DetailDialogProps) {
+function DetailDialog({ open, onOpenChange, activity, onUpdateActivity }: DetailDialogProps) {
     const { t, lang } = useLanguage()
     const zh = lang === 'zh'
     // Use activity.id + open as key to reset state when activity changes
@@ -434,16 +487,15 @@ function DetailDialog({ open, onOpenChange, activity, onMap, hideMapBtn, onUpdat
     const [fetchingMapillary, setFetchingMapillary] = useState(false) // 🆕 抓取街景中
     // 🔧 FIX: Use proper useEffect for state sync (was causing render-during-render)
     useEffect(() => {
-        // Reset state when dialog opens or activity changes
-        if (open) {
+        // 🛡️ Mantis 防線：僅在彈窗剛開啟或未處於編輯態時同步 Props，防止 SWR 背景輪詢抹殺輸入中草稿
+        if (open && !isEditing) {
             setNote(activity.memo || "")
             setMediaLink(activity.website_link || "")
             setLinks(activity.sub_items || [])
             setReservationCode(activity.reservation_code || "")
             setCost(activity.cost !== undefined && activity.cost !== null ? String(activity.cost) : "")
-            setIsEditing(false)
         }
-    }, [open, activity.id, activity.memo, activity.sub_items, activity.website_link, activity.reservation_code, activity.cost])
+    }, [open, activity.id, activity.memo, activity.sub_items, activity.website_link, activity.reservation_code, activity.cost, isEditing])
 
     const handleSave = async () => {
         if (saving) return // 防止重複點擊
@@ -515,17 +567,31 @@ function DetailDialog({ open, onOpenChange, activity, onMap, hideMapBtn, onUpdat
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-lg md:max-w-xl p-0 overflow-hidden bg-stone-50 dark:bg-slate-900 gap-0">
-                <div className="p-6 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700">
+            <DialogContent
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className={cn(
+                    "p-0 gap-0 overflow-hidden bg-stone-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 flex flex-col shadow-2xl duration-300",
+                    "inset-x-0 bottom-0 top-auto translate-x-0 translate-y-0 w-full max-w-full rounded-t-[24px] rounded-b-none max-h-[85dvh] pb-[calc(0.75rem+env(safe-area-inset-bottom))]",
+                    "sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:max-w-lg md:sm:max-w-xl sm:rounded-2xl sm:max-h-[80vh] sm:pb-0"
+                )}
+            >
+                {/* 📱 iOS 原生 Grabber 膠囊抓手 (僅手機端顯示) */}
+                <div className="w-full flex justify-center pt-3 pb-1 sm:hidden shrink-0 select-none">
+                    <div className="w-10 h-1 bg-slate-300 dark:bg-slate-600 rounded-full" />
+                </div>
+                <div className="px-6 py-4 sm:p-6 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 shrink-0 pr-12">
                     <DialogHeader>
-                        <DialogTitle className="text-2xl font-serif font-bold text-slate-900 dark:text-white">{activity.place || "Details"}</DialogTitle>
+                        <DialogTitle className="text-xl sm:text-2xl font-serif font-bold text-slate-900 dark:text-white truncate">
+                            {activity.place || "Details"}
+                        </DialogTitle>
                         <DialogDescription className="sr-only">
                             {t('tc_detail_desc')}
                         </DialogDescription>
                     </DialogHeader>
                 </div>
-                <ScrollArea className="max-h-[72vh]">
-                    <div className="p-6 space-y-6">
+                <ScrollArea className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                    <div className="p-6 pb-12 sm:pb-6 space-y-6">
 
                         {/* 1. 攻略/簡介 (唯讀) */}
                         <div className="space-y-2">
@@ -690,32 +756,33 @@ function DetailDialog({ open, onOpenChange, activity, onMap, hideMapBtn, onUpdat
                                         {note ? <RichDisplay text={note} /> : <span className="text-slate-400 italic flex items-center gap-2"><Plus className="w-3 h-3" /> {t('tc_add_memo')}</span>}
                                     </div>
 
-                                    {/* Links 顯示 (如果有) */}
+                                    {/* Links 顯示 (如果有) - 🛡️ 自適應語意化清單：徹底擺脫 Table 佈局約束，文字多行自適應折行，按鈕永不被擠出 */}
                                     {links.length > 0 && (
-                                        <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700 shadow-2xs bg-white dark:bg-slate-800">
-                                            <Table>
-                                                <TableBody>
-                                                    {links.map((item: SubItem, i: number) => (
-                                                        <TableRow key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700">
-                                                            <TableCell className="py-2 px-3 align-top">
-                                                                <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{item.name}</div>
-                                                                {item.desc && <div className="text-[10px] text-slate-500 dark:text-slate-400">{item.desc}</div>}
-                                                            </TableCell>
-                                                            <TableCell className="py-2 px-2 text-right align-middle w-10">
-                                                                {item.link && (
-                                                                    <button
-                                                                        type="button"
-                                                                        className="p-1.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100"
-                                                                        onClick={(e) => { e.stopPropagation(); openExternalLink(item.link); }}
-                                                                    >
-                                                                        <ExternalLink className="w-3 h-3" />
-                                                                    </button>
-                                                                )}
-                                                            </TableCell>
-                                                        </TableRow>
-                                                    ))}
-                                                </TableBody>
-                                            </Table>
+                                        <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700/80 shadow-2xs bg-white dark:bg-slate-800 divide-y divide-slate-100 dark:divide-slate-700/60">
+                                            {links.map((item: SubItem, i: number) => (
+                                                <div key={i} className="p-3 flex items-start justify-between gap-3 hover:bg-slate-50/80 dark:hover:bg-slate-700/40 transition-colors">
+                                                    <div className="flex-1 min-w-0 space-y-1">
+                                                        <div className="text-xs font-bold text-slate-800 dark:text-slate-100 wrap-break-word [word-break:break-word] leading-snug">
+                                                            {item.name}
+                                                        </div>
+                                                        {item.desc && (
+                                                            <div className="text-[11px] text-slate-500 dark:text-slate-400 wrap-break-word [word-break:break-word] leading-relaxed whitespace-pre-wrap">
+                                                                {item.desc}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {item.link && (
+                                                        <button
+                                                            type="button"
+                                                            className="shrink-0 p-1.5 mt-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
+                                                            onClick={(e) => { e.stopPropagation(); openExternalLink(item.link); }}
+                                                            title={zh ? "開啟外部連結" : "Open link"}
+                                                        >
+                                                            <ExternalLink className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
                                         </div>
                                     )}
                                 </div>
@@ -771,17 +838,6 @@ function DetailDialog({ open, onOpenChange, activity, onMap, hideMapBtn, onUpdat
                     </div>
                 </ScrollArea>
 
-                {/* 底部按鈕 */}
-                <div className="p-4 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 flex gap-3">
-                    {!hideMapBtn && (
-                        <Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300" onClick={onMap}>
-                            <MapPin className="w-4 h-4 mr-2" /> Google Maps
-                        </Button>
-                    )}
-                    <Button className={cn("flex-1 bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-100", hideMapBtn ? "w-full" : "")} onClick={() => onOpenChange(false)}>
-                        Close
-                    </Button>
-                </div>
             </DialogContent>
         </Dialog>
     )
