@@ -1,0 +1,41 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 4,
+  "confirmed_count": 0,
+  "dismissed_count": 4,
+  "inconclusive_count": 0,
+  "findings": [
+    {
+      "target_id": "frontend/lib/transit-connector.ts",
+      "verdict": "DISMISSED",
+      "reasoning": "Coordinate validation and URL encoding are thoroughly implemented. `isValidCoordinate` validates against null/undefined, checks `Number.isFinite` (blocking NaN and Infinity), enforces valid geographic bounds (lat: -90..90, lng: -180..180), and filters null-island coordinates. Both `calculateHaversineDistance` and `generateGoogleMapsDirUrl` defensively check coordinates before proceeding. Furthermore, `generateGoogleMapsDirUrl` formats coordinates with `.toFixed(6)` and constructs queries using standard WHATWG `URL` and `URLSearchParams.set`, which automatically percent-encodes values and eliminates the possibility of query parameter or protocol injection.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/itinerary-view.tsx",
+      "verdict": "DISMISSED",
+      "reasoning": "Static analysis of the provided snippet reveals no pending delete queue, debounce mechanisms, or scheduled deletion timers (such as setTimeout/setInterval). Deletion state is tracked via standard boolean/ID flags (deletingTripId, isDeleting) for dialog visibility. Furthermore, all registered lifecycle effects properly register and unregister window event listeners during cleanup, leaving no unhandled timers or unmount desynchronization vulnerabilities.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/itinerary/TransitSegmentConnector.tsx",
+      "verdict": "DISMISSED",
+      "reasoning": "In React/JSX, string variables rendered in the DOM are automatically HTML-escaped by default, preventing stored XSS. Within TransitSegmentConnector.tsx, 'custom_note' is never rendered via dangerouslySetInnerHTML, nor is it interpolated into any href attribute or unescaped HTML context (it is only evaluated truthy/falsy to display a small status dot indicator and bound to standard form state). Therefore, no XSS vulnerability or unsanitized link trigger exists.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/itinerary/ActivityEditModal.tsx",
+      "verdict": "DISMISSED",
+      "reasoning": "The component uses standard Radix UI Dialog primitives (@/components/ui/dialog) rather than a custom BottomSheet. Radix UI Dialog natively encapsulates focus trapping, portal rendering, and outside click/escape dismiss logic. The proposed issue describes a speculative or non-existent BottomSheet upgrade, and static inspection reveals no unhandled event bubbling or portal escape defect in the provided snippet.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

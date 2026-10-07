@@ -61,7 +61,7 @@ CATEGORY_OVERPASS_MAP = {
     "convenience": 'nwr["shop"="convenience"]',
     "supermarket": 'nwr["shop"="supermarket"]',
     "pharmacy": 'nwr["amenity"="pharmacy"]',
-    "popular": None  # 熱門景點使用 OpenTripMap
+    "popular": 'nwr["tourism"~"attraction|museum|viewpoint|gallery|theme_park"]'  # 景點直接由 Overpass 高速支援
 }
 
 # POI 類別映射: 前端類別 -> OpenTripMap kinds
@@ -181,11 +181,17 @@ async def search_overpass(
         logger.warning(f"Blocked unsafe Overpass request: {OVERPASS_API}")
         return []
 
+    headers = {
+        "User-Agent": "TabidachiTravelApp/1.0 (contact@tabidachi.app)",
+        "Accept": "application/json"
+    }
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 OVERPASS_API,
-                data={"data": query}
+                data={"data": query},
+                headers=headers
             )
             response.raise_for_status()
             data = response.json()
@@ -354,9 +360,12 @@ async def search_poi_combined(
     combined = overpass_results.copy()
     
     # 加入 OpenTripMap 獨有的（無 Overpass 對應）
+    overpass_names = {p.get("name", "").lower() for p in overpass_results}
     overpass_wikidata_ids = {p.get("wikidata_id") for p in overpass_results if p.get("wikidata_id")}
     for poi in opentripmap_results:
-        if poi.get("wikidata_id") and poi["wikidata_id"] not in overpass_wikidata_ids:
+        w_id = poi.get("wikidata_id")
+        p_name = poi.get("name", "").lower()
+        if (w_id and w_id not in overpass_wikidata_ids) or (not w_id and p_name not in overpass_names):
             combined.append(poi)
     
     # 重新排序

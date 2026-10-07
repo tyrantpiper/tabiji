@@ -535,6 +535,47 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
     const markersKey = markers.map(m => `${m.lat},${m.lng}`).join('|')
     const { route, routeInfo, loading } = useRoute(markersKey, markers, mode)
 
+    // 🧭 監聽外部時間軸卡片點擊聚焦廣播 (Click-to-Focus)
+    useEffect(() => {
+        const handleFocusActivity = (e: Event) => {
+            const customEvent = e as CustomEvent<{ id: string; lat: number; lng: number; place?: string }>
+            const { lat, lng, id, place } = customEvent.detail || {}
+            if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return
+
+            // 🛡️ 地圖生命週期防護：未就緒時跳過
+            if (!mapRef.current) return
+
+            try {
+                // 平滑飛向目標景點
+                mapRef.current.flyTo({
+                    center: [lng, lat],
+                    zoom: 16.5,
+                    essential: true,
+                    duration: 1200
+                })
+
+                // 標記高亮與 Popup
+                const targetMarker = markers.find(m => m.id === id || (Math.abs(m.lat - lat) < 0.0001 && Math.abs(m.lng - lng) < 0.0001))
+                if (targetMarker) {
+                    setPopupInfo(targetMarker)
+                } else if (place) {
+                    setPopupInfo({
+                        id,
+                        lat,
+                        lng,
+                        place,
+                        number: 0
+                    })
+                }
+            } catch (err) {
+                debugWarn("Failed to flyTo targeted activity:", err)
+            }
+        }
+
+        window.addEventListener('tabidachi-focus-map-activity', handleFocusActivity)
+        return () => window.removeEventListener('tabidachi-focus-map-activity', handleFocusActivity)
+    }, [markers])
+
     // 🆕 Terra-Cognita: 切換圖層可見性
     const updateLayerVisibility = useCallback((isSatellite: boolean) => {
         const map = mapRef.current?.getMap()

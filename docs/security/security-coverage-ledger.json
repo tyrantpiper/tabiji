@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-06T00:58:00Z",
+  "last_audit_date": "2026-10-07T08:22:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 12,
-    "audited_targets": 12,
-    "verified_vulnerabilities": 2,
-    "dismissed_hypotheses": 6
+    "total_targets": 23,
+    "audited_targets": 23,
+    "verified_vulnerabilities": 3,
+    "dismissed_hypotheses": 19
   },
   "targets": [
     {
@@ -143,6 +143,76 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Defensive fallback handles null/NaN ratings gracefully without breaking SVG path or card layouts."
+    },
+    {
+      "id": "frontend/lib/utils.ts#openExternalLink",
+      "target_type": "client_security_helper",
+      "trust_boundary": "browser_to_external_url",
+      "vectors_checked": ["client_xss_open_redirect", "pseudo_protocol_injection"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Strict protocol scheme validation implemented; javascript: and data: pseudo-protocols blocked."
+    },
+    {
+      "id": "frontend/components/timeline-card.tsx",
+      "target_type": "client_ui_component",
+      "trust_boundary": "dom_and_gestures",
+      "vectors_checked": ["dnd_gesture_hijacking", "ui_gesture_deadlock"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Defensive hardening implemented: onPointerDown stopPropagation mounted on thumbnail, sub_items table, and action buttons."
+    },
+    {
+      "id": "frontend/lib/transit-connector.ts",
+      "target_type": "client_math_engine",
+      "trust_boundary": "browser_to_external_url",
+      "vectors_checked": ["protocol_manipulation_and_nan_injection", "open_redirect"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Strict coordinate validation, finite checks, and RFC 3986 URL construction eliminate NaN and injection vectors."
+    },
+    {
+      "id": "frontend/lib/undo-delete-manager.ts",
+      "target_type": "client_state_engine",
+      "trust_boundary": "lifecycle_and_async_queue",
+      "vectors_checked": ["race_condition_and_timer_leak", "unmount_desync"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Queue-based timer management with synchronous flushAll() prevents unmount leaks and ghost data."
+    },
+    {
+      "id": "frontend/components/itinerary/TransitSegmentConnector.tsx",
+      "target_type": "client_ui_component",
+      "trust_boundary": "dom_and_gestures",
+      "vectors_checked": ["stored_xss_in_custom_note", "gesture_hijacking"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "JSX automatic escaping prevents stored XSS; gesture stopPropagation prevents DND collision."
+    },
+    {
+      "id": "frontend/components/itinerary/ActivityEditModal.tsx",
+      "target_type": "client_modal_form",
+      "trust_boundary": "browser_state_and_dom",
+      "vectors_checked": [
+        "tag_state_hygiene",
+        "memo_rendering_stability",
+        "vip_highlight_state_mutation"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Tag input deduplication and immutable update verified; textarea auto-resize zero layout thrashing; VIP highlight switch safely typed."
+    },
+    {
+      "id": "frontend/components/timeline-card.tsx:detail_dialog",
+      "target_type": "client_modal_form",
+      "trust_boundary": "browser_state_and_dom",
+      "vectors_checked": [
+        "state_serialization_integrity",
+        "clipboard_and_navigation_safety"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Defensive checks on cost parsing prevent NaN propagation; reservationCode copy safely catches promise rejections and falls back to toast."
     }
   ]
 }

@@ -1,0 +1,33 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 3,
+  "confirmed_count": 0,
+  "dismissed_count": 1,
+  "inconclusive_count": 2,
+  "findings": [
+    {
+      "target_id": "frontend/lib/utils.ts#openExternalLink",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"9d56c4ed-eed4-487c-9b06-8285be364a05\",\"status\":\"SUCCESS\",\"response\":\"This request was blocked by Gemini's filters. They can occasionally trigger by mistake on safe coding, security, or biology-related queries. Please try rephrasin",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/timeline-card.tsx#pointer_event_bubbling",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"d9e4273c-df4c-4a38-8818-3ed94a38693a\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools[20].function_declarations[0].parameters.properties[migrations].items: field predicate failed",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/timeline-card.tsx#sub_items_overflow_collision",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection of the provided code snippet reveals no horizontal swipe gesture handlers or touch event listeners (e.g., onTouchStart, onTouchMove, or gesture recognizer hooks) attached to the TimelineCard component. Furthermore, no horizontally scrollable table container (overflow-x-auto) is present or rendered in the inspected code. Under the presumption of correctness, without an identifiable unhandled condition or conflicting gesture interaction in the code, no gesture deadlock exists.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

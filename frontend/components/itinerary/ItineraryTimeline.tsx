@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button"
 import { Activity, Trip } from "@/lib/itinerary-types"
 import { POIBasicData } from "@/components/POIDetailDrawer"
 import { useLanguage } from "@/lib/LanguageContext"
+import { TransitSegmentConnector } from "@/components/itinerary/TransitSegmentConnector"
+import { cn } from "@/lib/utils"
 import dynamic from "next/dynamic"
 import { useMapillaryAutoFill } from "@/hooks/useMapillaryAutoFill"
 
@@ -102,8 +104,12 @@ export function ItineraryTimeline({
                                 if (!item) return <div className="h-1" />
 
                                 const isHeader = item.category === 'header' || (item.time || "00:00") === '00:00' || item.time_slot === '00:00'
+                                const nextItem = currentDayData[idx + 1]
+                                const hasValidCoords = !!(item.lat && item.lng && nextItem?.lat && nextItem?.lng)
+                                const canShowTransit = !isHeader && hasValidCoords && idx < currentDayData.length - 1
+
                                 return (
-                                    <div className="pb-4 min-h-10">
+                                    <div className="pb-3 min-h-10">
                                         <SortableTimelineCard
                                             activity={item}
                                             index={realIndices[idx] || 0}
@@ -113,6 +119,15 @@ export function ItineraryTimeline({
                                             onDelete={onDeleteActivity}
                                             onUpdateActivity={onUpdateActivity}
                                         />
+                                        {canShowTransit && (
+                                            <div className={cn("transition-opacity duration-150", activeId ? "opacity-0 pointer-events-none" : "opacity-100")}>
+                                                <TransitSegmentConnector
+                                                    fromActivity={item}
+                                                    toActivity={nextItem}
+                                                    onUpdateFromActivity={onUpdateActivity}
+                                                />
+                                            </div>
+                                        )}
                                     </div>
                                 )
                             }}
@@ -159,7 +174,7 @@ export function ItineraryTimeline({
                     <div className="w-1.5 h-6 bg-indigo-500 rounded-full" />
                     <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 uppercase tracking-widest">Daily Route Map</h3>
                 </div>
-                <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div id="day-route-map-container" className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-sm">
                     <DayMap
                         activities={currentDayData}
                         onAddPOI={onAddPOI}

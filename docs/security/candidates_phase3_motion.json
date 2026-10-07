@@ -1,0 +1,34 @@
+[
+  {
+    "id": "itinerary_header_sticky_boundary",
+    "file_path": "frontend/components/itinerary/ItineraryHeader.tsx",
+    "attack_vector": "css_sticky_dom_trapping",
+    "hypothesis": "When sticky positioning is applied inside ItineraryHeader container, scrolling past the parent boundary terminates the sticky behavior prematurely, preventing continuous header retention.",
+    "start_line": 55,
+    "end_line": 135
+  },
+  {
+    "id": "itinerary_view_custom_event_injection",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "event_injection_and_null_coordinates",
+    "hypothesis": "A global custom event listener for map focus fails to validate incoming lat/lng types, ranges, or origin, leading to possible NaN propagation or unhandled exceptions in the scroll and map controller.",
+    "start_line": 1445,
+    "end_line": 1500
+  },
+  {
+    "id": "day_map_flyto_race_and_crash",
+    "file_path": "frontend/components/day-map.tsx",
+    "attack_vector": "webgl_context_unready_race",
+    "hypothesis": "Invoking flyTo or easeTo on mapRef before MapLibre has completed initialization and style loading causes null reference error or WebGL context desynchronization.",
+    "start_line": 210,
+    "end_line": 260
+  },
+  {
+    "id": "timeline_card_pointer_collision",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "attack_vector": "gesture_propagation_collision",
+    "hypothesis": "Clicking timeline card to trigger map focus propagates into parent DnD sensors, external map buttons, or dropdown triggers if stopPropagation and click guards are omitted.",
+    "start_line": 120,
+    "end_line": 160
+  }
+]

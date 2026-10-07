@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/lib/utils.ts#openExternalLink",
+    "file_path": "frontend/lib/utils.ts",
+    "attack_vector": "client_xss_open_redirect",
+    "hypothesis": "openExternalLink fails to sanitize javascript: pseudo-protocol or non-http schemes, allowing arbitrary script execution when user clicks an external link in sub_items."
+  },
+  {
+    "id": "frontend/components/timeline-card.tsx#pointer_event_bubbling",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "attack_vector": "dnd_gesture_hijacking",
+    "hypothesis": "Clicking thumbnail image or external link buttons inside timeline card triggers dnd-kit pointer sensors or swipe-to-delete drag gesture due to missing onPointerDown stopPropagation."
+  },
+  {
+    "id": "frontend/components/timeline-card.tsx#sub_items_overflow_collision",
+    "file_path": "frontend/components/timeline-card.tsx",
+    "attack_vector": "ui_gesture_deadlock",
+    "hypothesis": "Horizontally scrollable table container (overflow-x-auto) lacks touch-action containment, causing conflict between table scrolling and card horizontal swipe gestures."
+  }
+]
