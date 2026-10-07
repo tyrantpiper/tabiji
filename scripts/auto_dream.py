@@ -7,6 +7,7 @@ import argparse
 import subprocess
 import shutil
 from datetime import datetime, timedelta
+from pathlib import Path
 
 def safe_print(*args, **kwargs):
     """Safely print messages, ignoring errors if sys.stdout is detached."""
@@ -25,6 +26,13 @@ if sys.stdout and hasattr(sys.stdout, 'encoding') and sys.stdout.encoding and sy
 
 # AGY IDE 官方規範對齊：使用 .agents (複數) 作為自訂化根目錄
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+try:
+    from scripts.lib.safe_subprocess import run_streaming_process
+except ImportError:
+    run_streaming_process = None
 AGENTS_DIR = os.path.join(PROJECT_ROOT, ".agents")
 HISTORY_LOG_PATH = os.path.join(AGENTS_DIR, "session_history.log")
 DREAM_MEMORY_PATH = os.path.join(AGENTS_DIR, "memory.md")
@@ -90,23 +98,33 @@ async def trigger_llm_compaction(history_content):
     """
     
     try:
-        # 使用 Antigravity CLI 進行壓縮 (非同步執行，透過 stdin 傳遞避開 Windows 命令列 32KB 長度限制，設置 90 秒停損)
-        process = await asyncio.create_subprocess_exec(
-            AGY_CMD,
-            "--print",
-            "-",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            process.communicate(input=prompt.encode("utf-8")), timeout=90
-        )
+        # 使用 safe_subprocess 進行非同步管道串流 (透過 stdin 傳遞避開 Windows 命令列 32KB 長度限制，90 秒超時)
+        cmd = [AGY_CMD, "--print", "-"]
+        if run_streaming_process:
+            res = await run_streaming_process(
+                cmd=cmd,
+                payload=prompt,
+                timeout_seconds=90.0,
+                cwd=Path(PROJECT_ROOT),
+            )
+            stdout = res.stdout
+            stderr = res.stderr
+            returncode = res.returncode
+        else:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(input=prompt.encode("utf-8")), timeout=90
+            )
+            stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
+            stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
+            returncode = process.returncode
         
-        stdout = stdout_bytes.decode('utf-8') if stdout_bytes else ""
-        stderr = stderr_bytes.decode('utf-8') if stderr_bytes else ""
-        
-        if process.returncode == 0 and stdout.strip() and ("[Decisions]" in stdout or "##" in stdout):
+        if returncode == 0 and stdout.strip() and ("[Decisions]" in stdout or "##" in stdout):
             final_result = stdout.strip()
             # 寫入融合後的新記憶 (完全覆寫，因為是 AI Recombination)
             with open(DREAM_MEMORY_PATH, "w", encoding="utf-8") as f:

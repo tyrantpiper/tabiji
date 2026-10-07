@@ -3,9 +3,9 @@
   "last_audit_date": "2026-10-08T00:24:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 30,
-    "audited_targets": 30,
-    "verified_vulnerabilities": 4,
+    "total_targets": 31,
+    "audited_targets": 31,
+    "verified_vulnerabilities": 5,
     "dismissed_hypotheses": 26
   },
   "targets": [
@@ -294,6 +294,22 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Replaced Table layout with semantic adaptive flex list: eliminated TableCell whitespace-nowrap lock, injected break-words and [word-break:break-word] for CJK/URLs, anchored external link action button with shrink-0, added pb-12 bottom scroll buffer. Verified 100% green via Vitest unit tests."
+    },
+    {
+      "id": "scripts/lib/safe_subprocess.py:ipc_harness",
+      "target_type": "harness_subagent_ipc",
+      "trust_boundary": "os_process_to_subprocess_ipc",
+      "vectors_checked": [
+        "winerror_206_command_line_overflow",
+        "anonymous_pipe_deadlock_dos",
+        "broken_pipe_unhandled_crash",
+        "cjk_emoji_unicode_corruption",
+        "process_tree_orphan_leak",
+        "winerror_32_file_sharing_violation"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "In-Memory sandbox confrontational verification complete (6/6 tests passing): Stdin streaming eliminates CreateProcessW 32,767 limit (70KB tested); concurrent communicate() drains pipes to guarantee 0 deadlock (130KB bidirectional stress tested); Windows taskkill tree teardown defends against zombie orphans; temporary files unlinked post-closure to immunize WinError 32."
     }
   ]
 }

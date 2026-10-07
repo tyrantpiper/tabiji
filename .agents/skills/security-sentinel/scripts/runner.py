@@ -14,6 +14,17 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Self-resolving sys.path to locate scripts.lib.safe_subprocess across arbitrary CWDs
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR.parents[3]  # .agents/skills/security-sentinel/scripts -> repo root
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+try:
+    from scripts.lib.safe_subprocess import run_streaming_process
+except ImportError:
+    run_streaming_process = None
+
 VALIDATOR_SYSTEM_PROMPT = """
 You are an objective Software Quality and Defensive Architecture Reviewer.
 Your mission is to evaluate whether a proposed code robustness or security issue actually exists in the provided code snippet.
@@ -126,36 +137,52 @@ async def run_single_validator(
         f"Analyze the code above and return ONLY the JSON result object."
     )
 
+    # Bypass Windows CreateProcessW 32,767 limit (WinError 206) via stdin streaming flag '-'
     cmd = [
         "agy.exe",
         "-p",
-        prompt,
+        "-",
         "--print-timeout",
         f"{timeout_seconds}s",
         "--output-format",
         "json",
     ]
 
-    cwd = str(workspace_root) if workspace_root else os.getcwd()
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
-
-    proc = None
+    target_cwd = workspace_root if workspace_root else Path.cwd()
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-            env=env,
-        )
+        if run_streaming_process:
+            res = await run_streaming_process(
+                cmd=cmd,
+                payload=prompt,
+                timeout_seconds=float(timeout_seconds + 5),
+                cwd=target_cwd,
+            )
+            raw_stdout = res.stdout
+            if res.timed_out:
+                return {
+                    "target_id": target_id,
+                    "verdict": "INCONCLUSIVE",
+                    "reasoning": f"Validation timed out after {timeout_seconds}s.",
+                    "poc_type": "none",
+                    "poc_script": None,
+                    "remediation_hint": None,
+                }
+        else:
+            # Inline fallback if safe_subprocess module cannot be imported
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(target_cwd),
+            )
+            stdout_bytes, _ = await asyncio.wait_for(
+                proc.communicate(input=prompt.encode("utf-8")),
+                timeout=float(timeout_seconds + 5),
+            )
+            raw_stdout = stdout_bytes.decode("utf-8", errors="replace")
 
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=float(timeout_seconds + 5)
-        )
-        raw_stdout = stdout_bytes.decode("utf-8", errors="replace")
         parsed = extract_json_payload(raw_stdout)
-
         if parsed and isinstance(parsed, dict) and "verdict" in parsed:
             parsed["target_id"] = target_id
             return parsed
@@ -168,16 +195,7 @@ async def run_single_validator(
             "poc_script": None,
             "remediation_hint": None,
         }
-
     except asyncio.TimeoutError:
-        if proc:
-            try:
-                proc.terminate()
-                await asyncio.sleep(0.5)
-                proc.kill()
-                await proc.wait()
-            except Exception:
-                pass
         return {
             "target_id": target_id,
             "verdict": "INCONCLUSIVE",
