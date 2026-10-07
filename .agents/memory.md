@@ -387,3 +387,9 @@
 - **Modal Sheet DOM Decoupling & Click Penetration Defense**: 跨層彈窗與卡片根層點擊實體隔離。承載互動事件的彈窗（DetailDialog、圖片預覽）嚴禁嵌套於具備全局點擊事件的卡片節點內部。必須以同級 Fragment 或 Radix Portal 掛載，並在卡片根層過濾攔截器中顯式排除 `[role="dialog"]` 與 `[data-slot="dialog-content"]`，杜絕點擊備忘錄攻略文字或空白處冒泡導致背景地圖誤跳轉。
 - **Adaptive Semantic List over TableCell NoWrap Constraint**: 長文本自適應多行換行勝於表格拘束原則。詳細資訊與備忘清單嚴禁採用預設 `whitespace-nowrap` 的傳統 Table 單元格排版。架構上必須使用語意化 Flex 清單，以 `flex-1 min-w-0` 搭配 `wrap-break-word` 達成多行自適應換行，並以 `shrink-0` 鎖定操作按鈕，防止長文字撐爆容器導致外部連結跳轉按鈕被推出視窗外失蹤；底部配置 `pb-12 sm:pb-6` 保留 48px 安全緩衝，確保最下方街景預覽按鈕不被切斷。
 - **Compositor Touch-Action over Main-Thread PreventDefault**: 移動端合成線程手勢接管準則。移動端懸浮拖曳節點嚴禁在 passive 觸控監聽器中依賴 JS `e.preventDefault()` 阻止背景滾動。必須採用現代 CSS `touch-action: none` 由瀏覽器渲染合成線程（Compositor Thread）在硬體層直接阻斷預設手勢，杜絕控制台 `Unable to preventDefault inside passive event listener` 報錯與主線程掉幀。
+
+### 19. 跨進程通訊大數據安全與 Windows CLI 長度防禦領域 (Subprocess IPC & WinError 206 Defense)
+- **IPC Large-Payload Stdin Streaming Principle (AD-063)**: 標準輸入串流原則。傳遞動態 Prompt、程式碼片段或審計 JSON 超過 4,000 字元時，嚴禁作為 CLI 命令列引數傳遞（避免觸發 Windows `CreateProcessW` 32,767 字元硬限制及 `WinError 206`）。必須統一使用 `stdin=PIPE` 搭配 `communicate(input=...)`。
+- **Stdin Stream Hyphen Flag Invariance (AD-064)**: 減號管道旗標規範。調用 `agy.exe` 執行大數據提示詞時，傳遞 `-p -`（或 `--print -`），指示 CLI 自標準輸入讀取資料，保證 100% 二進位純淨度與繞過 Quote Hell。
+- **Zero-Deadlock Async Communicate Protocol (AD-065)**: 零死鎖通訊協定。子進程通訊必須以 `asyncio.wait_for(proc.communicate(input=...), timeout=...)` 統一包裹，禁止使用手動 `stdin.write()` 搭配 `wait()`，由事件迴圈並行排程讀寫抽空雙向管道緩衝區（4KB~64KB），根除 Pipe Buffer Deadlock。
+- **File-based Fallback for Non-Streaming Tools (AD-066)**: 非串流工具檔案降級防線。若外部工具不支援 stdin，採用 `tempfile.NamedTemporaryFile` 寫入後立即關閉 handle（防止 Windows `WinError 32: Sharing Violation`），並於 `try...finally` 區塊中安全 unlink 清理。
