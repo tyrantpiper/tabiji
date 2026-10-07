@@ -381,3 +381,9 @@
 - **Optimistic Undo Lifecycle Flush Invariance**: 樂觀撤銷生命週期強制結算防線。延遲撤銷刪除（5 秒 Pending 佇列）在組件卸載、分頁切換、行程切換或儲存時，必須無條件同步調用 `flushAll()` 立即執行持久化突變，杜絕延遲計時器在非同步切換中被垃圾回收造成刪除狀態丟失或資料幽靈復原。
 - **Drag Handle DOM Event Isolation Guard**: 拖曳手把 DOM 事件冒泡防禦標準。卡片容器具備地圖跳轉點擊事件時，拖曳抓取手把必須宣告顯式 `button[type="button"]` 與 `data-drag-handle="true"`，並在卡片根層點擊攔截器中防禦性排除，徹底阻斷拖曳引發的地圖飛航誤觸。
 - **TransitSegmentConnector Dynamic Estimation & Manual Override**: 轉乘動態耗時銜接線與手動覆寫機制。景點卡片間垂直貫穿連線，依據座標自動計算 Haversine 距離並推估徒步/大眾運輸/開車時間，支援手動覆寫交通模式與耗時，營造原生 iOS 旅遊動態時序感。
+
+### 18. iOS 彈窗物理學、手勢消歧義與自適應文字排版領域 (iOS Sheet Physics, Touch-Slop & Adaptive Typography)
+- **Touch-Slop Gesture Disambiguation Invariance**: 8px 手勢消歧義原則。行動端列表按鈕在 `pointerdown` 階段嚴禁立即打開選單。必須透過 `Touch-Slop` 狀態機追蹤觸控位移，超過 8px 判定為原生頁面滾動並 100% 阻斷選單，短按（Tap）時方可展開，同時以 `pointerType === 'touch'` 嚴格隔離桌面端滑鼠與鍵盤，徹底根除手機滑動行程卡片時誤觸三點編輯選單的困擾。
+- **Modal Sheet DOM Decoupling & Click Penetration Defense**: 跨層彈窗與卡片根層點擊實體隔離。承載互動事件的彈窗（DetailDialog、圖片預覽）嚴禁嵌套於具備全局點擊事件的卡片節點內部。必須以同級 Fragment 或 Radix Portal 掛載，並在卡片根層過濾攔截器中顯式排除 `[role="dialog"]` 與 `[data-slot="dialog-content"]`，杜絕點擊備忘錄攻略文字或空白處冒泡導致背景地圖誤跳轉。
+- **Adaptive Semantic List over TableCell NoWrap Constraint**: 長文本自適應多行換行勝於表格拘束原則。詳細資訊與備忘清單嚴禁採用預設 `whitespace-nowrap` 的傳統 Table 單元格排版。架構上必須使用語意化 Flex 清單，以 `flex-1 min-w-0` 搭配 `wrap-break-word` 達成多行自適應換行，並以 `shrink-0` 鎖定操作按鈕，防止長文字撐爆容器導致外部連結跳轉按鈕被推出視窗外失蹤；底部配置 `pb-12 sm:pb-6` 保留 48px 安全緩衝，確保最下方街景預覽按鈕不被切斷。
+- **Compositor Touch-Action over Main-Thread PreventDefault**: 移動端合成線程手勢接管準則。移動端懸浮拖曳節點嚴禁在 passive 觸控監聽器中依賴 JS `e.preventDefault()` 阻止背景滾動。必須採用現代 CSS `touch-action: none` 由瀏覽器渲染合成線程（Compositor Thread）在硬體層直接阻斷預設手勢，杜絕控制台 `Unable to preventDefault inside passive event listener` 報錯與主線程掉幀。
