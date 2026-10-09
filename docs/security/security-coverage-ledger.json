@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-09T10:57:00Z",
+  "last_audit_date": "2026-10-09T14:32:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 44,
-    "audited_targets": 44,
-    "verified_vulnerabilities": 5,
-    "dismissed_hypotheses": 39
+    "total_targets": 47,
+    "audited_targets": 47,
+    "verified_vulnerabilities": 8,
+    "dismissed_hypotheses": 43
   },
   "targets": [
     {
@@ -431,6 +431,33 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verification: all interactive elements maintain minimum 44x44px hitbox (w-11 h-11) and padded MenuItem rows (p-4) across wide viewports."
+    },
+    {
+      "id": "frontend/components/views/landing-page.tsx",
+      "target_type": "client_auth_view",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": ["xss_stored_dom", "improper_input_validation", "ui_spoofing_resource_leak"],
+      "status": "PATCH_PROPOSED",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel adversarial verification confirmed downstream UUID schema corruption risk on recovery input; candidate patch formulated and verified with in-memory test suite."
+    },
+    {
+      "id": "frontend/components/core/pwa-hard-skeleton.tsx:lifecycle_race_condition",
+      "target_type": "client_pwa_lifecycle",
+      "trust_boundary": "browser_to_react_hydration",
+      "vectors_checked": ["premature_unmount_race", "fouc_ssr_leakage"],
+      "status": "PATCH_PROPOSED",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verified premature DOMContentLoaded unmounting race condition exposing SSR DOM before React splash animation mounts; Mantis patch synthesized."
+    },
+    {
+      "id": "frontend/components/ui/splash-screen.tsx:client_hydration_gap",
+      "target_type": "client_splash_overlay",
+      "trust_boundary": "browser_to_react_hydration",
+      "vectors_checked": ["hydration_null_rendering_gap", "flash_of_unsplashed_ui"],
+      "status": "PATCH_PROPOSED",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verified isStandalone initial false state causing null render on SSR and hydration flicker; Mantis patch synthesized."
     }
   ]
 }

@@ -73,6 +73,7 @@
 - **客戶端自訂 Fetch Wrapper 授權傳遞標準 (Dynamic Auth Header Injection over Supabase Client Tampering)**: 在匿名或自訂 ID（`user_uuid`）場景下寫入啟用 RLS 的 Supabase 資料表（如 `push_subscriptions`），不破壞 Client 純潔性亦不放寬 RLS 安全標準；改在 `createClient` 建立時透過 `global.fetch` 動態注入 `x-user-id` 標頭，達成安全透明且無副作用的認證傳遞。
 - **明確退出意圖優先於實體訂閱存在 (Explicit Opt-Out State over Blind Rehydration)**: 解決瀏覽器底層實體訂閱與應用層偏好不同步問題。引入 `localStorage.setItem("push_opt_out", "true")`，在狀態還原時若偵測到 opt-out 標記，即便瀏覽器底層仍回傳訂閱，前端強制視為已退訂，杜絕重新整理時的流氓重開。
 - **權限封鎖情境下的同理心引導原則 (Actionable Guidance over Dead-end Disabled UI)**: 系統權限被拒（`Notification.permission === 'denied'`）絕不可直接將開關設為 `disabled` 讓使用者陷入死胡同。應保持按鈕可點擊並彈出圖文引導對話框，教學網址列解鎖步驟，賦予使用者自我修復能力。
+- **冷啟動零閃爍夜幕與生命週期協調防線 (Zero-FOUC Splash & Lifecycle Coordinated Guard)**: PWA 獨立視窗（`display-mode: standalone`）冷啟動時，嚴禁在 `DOMContentLoaded`（HTML 解析完成）就提前卸除硬骨架屏（`body.classList.add('hydrated')`），否則在 React 水合前會露出未水合 SSR 骨架條；必須將 `manifest.json` 與 `viewport.themeColor` 統一鎖定為 `#162832`，硬骨架透過 `@media (display-mode: standalone)` 呈現 `#162832` 漸層並隱藏脈衝方塊，並由 React `SplashScreen` 在水合掛載時主動調用 `window.__dismissHardSkeleton` 無縫交棒，徹底消滅白屏與骨架閃爍。
 
 ### 5. 後端高併發、資料庫與健康架構 (Backend Concurrency, Supabase & Health Probes)
 - **純記憶體存活探針與獨立保活解耦架構 (Zero-Blocking Health & Keep-Alive Decoupling)**: `/health` 端點堅持 0ms 純記憶體計算（單一職責原則），完全不觸發任何外部網路 I/O 或資料庫查詢；Supabase 7 天防休眠保活由 Lifespan 獨立非同步背景定時循環（每 6 小時一次）靜默守護，達成極限並發安全與 100% 外部監控免疫。
@@ -131,6 +132,13 @@
 - **開源地理編碼雙引擎分流拓撲 (Photon OpenSearch Typo-Tolerance vs Nominatim 5.0 Precision Hierarchy)**: 針對開源地理資訊難以媲美 Google Maps 商業模糊搜尋的痛點，確立「前台即時輸入 vs 後端精確定位」雙軌分流：前台採用 95GB 輕量 Photon (OpenSearch) 提供極速 Autocomplete 與 Typo-Tolerance（容錯拼字模糊比對）；後端深層批次計算則掛載 Nominatim 5.0 (Python 重寫)，提取建築物微觀 Entrance 座標；複雜自然語言查詢（如「東京車站附近的壽司」）由 Gemini Query Parser 提煉結構化關鍵字後再行檢索。
 - **母體區域繼承與國碼獨立解析防線 (Mother Region Proximity Bias & Explicit Country Code Resolution)**: 行程批次地理編碼中，單一景點常有簡稱或重名（如「朝市」、「水族館」）。確立必須提取母體目的地（如「北海道」）並藉由 `detect_country_from_keywords` 獨立確定 ISO 國碼（`dest_country`），解決開源 Geocoder 結果字典不含 `country` 欄位引發的國碼穿透失效；母體中心點座標僅作為 Proximity Bias 排序加權，嚴禁作為 Hard Lock 過濾器，兼顧周邊優先與跨國彈性。
 - **神經三明治與動態隨機鹽漬標籤防禦 (Dynamic Salted Tags & Neural Sandwich Defense)**: 針對 LLM Agent 工具呼叫遭受提示詞注入（Prompt Injection）與標籤欺騙（Tag Spoofing）的防護標準化。每次 API 請求動態生成 8 碼隨機字串（`user_input_{salt}`）封裝使用者輸入；系統指令透過原生 `system_instruction` 通道傳遞直達神經中樞；並於提示詞序列的最末端強制附加 `[SYSTEM_SHIELD]` 神經三明治提醒（Reminder Defense），利用注意力機制在上下文最後一刻壓制越獄指令。
+
+### 12. 品牌識別、和紙自然美學、動態開屏與雙前綴離線遷移架構 (Tabiji Brand, Wabi-Sabi, Splash & Dual-Prefix Migration)
+- **Tabiji 和紙自然美學色彩與設計代幣收斂 (Wabi-Sabi Paper Canvas Invariance)**: 專案色彩基調摒棄冷硬科技感灰階，採用日式和紙天然質地米白色（`#F6F5EE`）作為淺色畫布，搭配森林深綠（`#0B3026`）與暮光琥珀橘（`#E56E25`）作為品牌識別雙軸心；深色模式採用青苔石板色（`#121A18`），保障高對比可讀性同時散發紙本溫度。
+- **離線快取雙前綴平滑遷移協議 (Dual-Prefix Backward Compatibility Protocol)**: 本地儲存鍵變更時，嚴禁採取硬切斷式更名。底層儲存引擎必須實作「讀取優先新鍵 ➔ 回退讀取舊鍵 ➔ 背景寫入新鍵並釋放舊鍵」之自癒式原子升級迴路，保障現有離線資料 100% 零丟失。
+- **流式響應最大寬度自適應約束 (Fluid Adaptive Bento Invariance)**: 視圖容器嚴禁硬編碼行動端固定寬度（如 `max-w-md`）。外層統一採用 `max-w-4xl lg:max-w-5xl mx-auto` 流式邊界，內部組件透過 Tailwind CSS Grid (`grid-cols-1 md:grid-cols-2 lg:grid-cols-3`) 在不同視窗尺寸下彈性展開，兼顧行動端單手操作與桌面端資訊密度。
+- **開屏動畫 Track Matte 水墨漸次顯現原則 (Track Matte Bloom Reveal Invariance)**: 在高解析手繪開屏動效中，嚴禁在前景疊加生硬之人造貝茲向量軌跡線；主體顯現必須以原畫遮罩（Track Matte）結合多階水墨光斑（Trailing Bloom）展開，GPU 背景極光與前景手繪線條採 Stacking Context 物理隔離，穩鎖 60~120 FPS。
+- **PWA 桌面圖示與主標題純淨命名法則 (Streamlined PWA Brand Identity)**: PWA 應用程式名稱在 Manifest 與系統元數據中保持簡潔單一詞彙「Tabiji」，省略「App / 應用 / 行程」等修飾後綴，符合 iOS/Android 主畫面 App 名稱極簡化人體工學。
 
 ---
 
@@ -232,6 +240,10 @@
 - **動態 Curl 離線連線拒絕陷阱 (`Offline Live Server Curl Failure Trap`)**: 在最初設計 PoC 時以 `curl -X GET https://.../api/user/123` 作為範例。實地審查時發現本地開發伺服器（Port 8000）處於離線狀態是常態，依賴真實 HTTP 請求會引發 `Connection Refused` 異常阻斷流程；且 Windows PowerShell 下 `curl` 為 `Invoke-WebRequest` 別名，轉義引號極易引發語法錯誤。教訓：PoC 必須全面規格化為基於 `pytest` + `TestClient` 的記憶體內單元測試。
 - **Headless 模式工具自動拒絕卡死陷阱 (`Headless Tool-Deny Hang Trap`)**: `agy.exe -p` 在無 `--dangerously-skip-permissions` 時調用工具會被 auto-denied 並輸出診斷訊息；但在 print 模式下若直接放權執行命令又易卡在子行程等待。教訓：由 Python Harness 直接讀取檔案文字並將代碼片段（前 10,000 字元）內嵌於 Prompt 中，要求子代理人純靜態評估，無需調用任何外部工具。
 - **Windows CP950 終端解碼崩潰陷阱 (`Windows CP950 Decode Error Trap`)**: 在 Windows 繁體中文環境下使用 `subprocess.run(capture_output=True, text=True)` 接收 `agy` 的輸出時，由於 `agy` 包含 UTF-8 特殊符號（如 Unicode 破折號 `0xe2`），Python 嘗試以預設 `cp950` 解碼導致拋出 `UnicodeDecodeError: 'cp950' codec can't decode byte`。教訓：子進程通訊一律接收原始 bytes，在 Python 端顯式以 `decode('utf-8', errors='replace')` 解碼，並注入 `PYTHONIOENCODING=utf-8` 環境變數。
+
+### 13. 品牌重塑、視覺資產與色彩對比踩坑
+- **原畫漸層直接縮放疊加人物導致「重影」陷阱 (`Artwork Downscale Ghosting Trap`)**: 最初嘗試將帶有人物線條的原圖直接縮放作為背景並再次貼上白線人物，導致原圖縮小後的半透明線條在底層形成微小殘影。教訓：使用多級 Box 模糊降採樣（32×32）與 Bicubic 重建，完美消除所有細白線條，生成乾淨無雜質的純連續極光光場底圖（`tabiji-aurora-bg.png`），再精確合成高解析度居中人物。
+- **淺色模式下白線手寫字失真對比度陷阱 (`Light Mode White Line Contrast Trap`)**: 原畫手寫「tabiji」字體為白色線條，若直接以 PNG 貼於淺色米白畫布上，對比度將降至不可讀。教訓：提取高解析透明遮罩圖（`tabiji-cursive-logo.png`），以 CSS `mask-image` 配合 `bg-slate-900 dark:bg-white` 達成原生主題自適應，淺色墨黑、深色夜光白，零邊緣鋸齒。
 
 ---
 

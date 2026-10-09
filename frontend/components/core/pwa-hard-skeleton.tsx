@@ -15,7 +15,7 @@ export function PwaHardSkeleton() {
                     #pwa-hard-skeleton {
                         position: fixed;
                         inset: 0;
-                        background: #fafaf9;
+                        background: #162832;
                         z-index: 9995;
                         display: flex;
                         flex-direction: column;
@@ -26,11 +26,19 @@ export function PwaHardSkeleton() {
                         pointer-events: none;
                         transition: opacity 0.3s ease;
                     }
+                    @media (display-mode: standalone) {
+                        #pwa-hard-skeleton {
+                            background: linear-gradient(135deg, #162832 0%, #1B3B48 50%, #254A5A 100%) !important;
+                        }
+                        #pwa-hard-skeleton .pwa-pulse-box {
+                            display: none !important;
+                        }
+                    }
                     .dark #pwa-hard-skeleton {
-                        background: #0f172a;
+                        background: #162832;
                     }
                     .pwa-pulse-box {
-                        background: rgba(0,0,0,0.06);
+                        background: rgba(255,255,255,0.06);
                         border-radius: 16px;
                         animation: pwaPulse 1.8s ease-in-out infinite;
                     }
@@ -70,7 +78,7 @@ export function PwaHardSkeleton() {
                     <div className="pwa-pulse-box" style={{ width: "32px", height: "32px", borderRadius: "50%" }} />
                 </div>
             </div>
-            {/* 🚀 水合完成訊號腳本 (支援已完成加載的邊界狀態) */}
+            {/* 🚀 水合完成訊號腳本 (支援生命週期協調防線) */}
             <script
                 dangerouslySetInnerHTML={{
                     __html: `
@@ -80,10 +88,17 @@ export function PwaHardSkeleton() {
                                 document.body.classList.add('hydrated');
                             }
                         }
-                        if (document.readyState === 'loading') {
-                            window.addEventListener('DOMContentLoaded', hideSkeleton);
+                        window.__dismissHardSkeleton = hideSkeleton;
+                        var isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator && window.navigator.standalone === true);
+                        var hasShown = sessionStorage.getItem('tabiji_splash_shown') || sessionStorage.getItem('splash_shown');
+                        if (isStandalone && !hasShown) {
+                            // PWA 啟動且尚未看過開屏：保持夜幕骨架直到 React 開屏動畫接管釋放
                         } else {
-                            hideSkeleton();
+                            if (document.readyState === 'loading') {
+                                window.addEventListener('DOMContentLoaded', hideSkeleton);
+                            } else {
+                                hideSkeleton();
+                            }
                         }
                     })();
                     `

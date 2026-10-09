@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react"
 import { AnimatePresence } from "framer-motion"
-import { Compass, Sparkles, ArrowRight, ShieldCheck, History } from "lucide-react"
+import Image from "next/image"
+import { ArrowRight, ShieldCheck, History } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { WelcomeWizard } from "@/components/onboarding/WelcomeWizard"
@@ -14,7 +15,7 @@ import dynamic from "next/dynamic"
 // 這將使首頁體積減少 90% (移除地圖、DND、PDF 等重型庫)
 function AppShellSkeleton() {
     return (
-        <div className="min-h-screen bg-stone-50 dark:bg-slate-900 flex flex-col animate-pulse">
+        <div className="min-h-screen bg-stone-50 dark:bg-slate-900 [@media(display-mode:standalone)]:bg-[#162832] flex flex-col animate-pulse">
             <header className="h-14 border-b border-stone-200/60 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 px-4 flex items-center justify-between">
                 <div className="h-6 w-28 bg-stone-200 dark:bg-slate-700 rounded-lg" />
                 <div className="h-8 w-20 bg-stone-200 dark:bg-slate-700 rounded-xl" />
@@ -83,7 +84,7 @@ import { toast } from "sonner"
 import { usersApi } from "@/lib/api"
 import { debugLog, debugWarn } from "@/lib/debug"
 
-import { generateSecureUUID } from "@/lib/security"
+import { generateSecureUUID, isValidUUID } from "@/lib/security"
 
 function generateUUID() {
     return generateSecureUUID();
@@ -158,11 +159,10 @@ export function LandingPage() {
 
     const handleRecover = async () => {
         const cleanCode = recoverCode.trim()
-        if (!cleanCode || cleanCode === "null" || cleanCode === "undefined") {
-            toast.warning(t('landing_invalid_code'))
+        if (!isValidUUID(cleanCode)) {
+            toast.error(t('landing_invalid_code'))
             return
         }
-        if (cleanCode.length < 10) { toast.error(t('landing_invalid_code')); return }
 
         // 🆕 Async fetch profile
         const toastId = toast.loading("Verifying identity...")
@@ -174,14 +174,14 @@ export function LandingPage() {
 
             // Call API via usersApi (Unified)
             try {
-                const data = await usersApi.getProfile(recoverCode)
+                const data = await usersApi.getProfile(cleanCode)
                 if (data.name) fetchedName = data.name
                 if (data.avatar_url) fetchedAvatar = data.avatar_url
             } catch (err) {
                 debugWarn("Profile fetch failed, using fallback", err)
             }
 
-            localStorage.setItem("user_uuid", recoverCode)
+            localStorage.setItem("user_uuid", cleanCode)
             localStorage.setItem("user_nickname", fetchedName)
             if (fetchedAvatar) {
                 localStorage.setItem("user_avatar", fetchedAvatar)
@@ -209,7 +209,7 @@ export function LandingPage() {
             toast.dismiss(toastId)
 
             // Fallback anyway to allow recovery even if API fails
-            localStorage.setItem("user_uuid", recoverCode)
+            localStorage.setItem("user_uuid", cleanCode)
             localStorage.setItem("user_nickname", nickname || "Traveler")
             toast.success("Account recovered (Offline Mode)")
             setTimeout(() => {
@@ -256,18 +256,44 @@ export function LandingPage() {
 
 
 
-            <main className="flex-1 flex flex-col items-center justify-center px-8 py-12 z-10">
-                <div className="mb-10 relative animate-bounce-slow">
-                    <div className="w-24 h-24 rounded-[2rem] bg-slate-900 shadow-2xl flex items-center justify-center -rotate-6 ring-4 ring-white">
-                        <Compass className="w-12 h-12 text-amber-400" strokeWidth={1.5} />
-                    </div>
-                    <div className="absolute -bottom-3 -right-3 w-10 h-10 rounded-full bg-white flex items-center justify-center shadow-lg animate-pulse">
-                        <Sparkles className="w-5 h-5 text-slate-900" />
+            <main className="flex-1 flex flex-col items-center justify-center px-6 py-8 sm:py-12 z-10 w-full text-center">
+                {/* 品牌人物圓角圖示 (原畫夕陽漸層 + 浮雕微光) */}
+                <div className="relative mb-5 group">
+                    <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-[2rem] overflow-hidden shadow-2xl shadow-orange-950/20 ring-4 ring-white/90 dark:ring-white/20 transition-transform duration-300 group-hover:scale-105 bg-slate-900 mx-auto">
+                        <Image
+                            src="/images/tabiji-person-icon.png"
+                            alt="Tabiji"
+                            width={112}
+                            height={112}
+                            className="w-full h-full object-cover"
+                            priority
+                        />
                     </div>
                 </div>
 
-                <h1 className="text-4xl font-serif font-bold text-slate-900 dark:text-white mb-2 tracking-tight">{t('landing_title')}</h1>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mb-10 tracking-[0.3em] uppercase font-medium">{t('landing_subtitle')}</p>
+                {/* 語意化 H1 標題：內部封裝原畫手寫草寫體 tabiji 與紙飛機 */}
+                <h1 className="relative flex items-center justify-center mb-1">
+                    <span className="sr-only">Tabiji</span>
+                    <div
+                        className="h-12 w-44 sm:h-14 sm:w-48 bg-slate-900 dark:bg-white transition-colors duration-300"
+                        style={{
+                            maskImage: 'url(/images/tabiji-cursive-logo.png)',
+                            WebkitMaskImage: 'url(/images/tabiji-cursive-logo.png)',
+                            maskSize: 'contain',
+                            WebkitMaskSize: 'contain',
+                            maskRepeat: 'no-repeat',
+                            WebkitMaskRepeat: 'no-repeat',
+                            maskPosition: 'center',
+                            WebkitMaskPosition: 'center',
+                        }}
+                        aria-hidden="true"
+                    />
+                </h1>
+
+                {/* 旅行規劃師副標題 */}
+                <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mb-8 tracking-[0.28em] uppercase font-medium">
+                    {t('landing_subtitle')}
+                </p>
 
                 <div className="w-full max-w-xs space-y-6">
 
