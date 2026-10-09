@@ -127,7 +127,7 @@ export function PWAInstallPrompt() {
                     animate={{ y: 0, opacity: 1 }}
                     exit={{ y: 100, opacity: 0 }}
                     transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                    className="fixed bottom-24 left-4 right-4 z-[100] md:left-auto md:right-4 md:w-96"
+                    className="fixed bottom-24 left-4 right-4 z-100 md:left-auto md:right-4 md:w-96"
                 >
                     <div className="relative overflow-hidden rounded-2xl border border-white/20 bg-white/70 p-4 shadow-2xl backdrop-blur-xl dark:border-slate-700/50 dark:bg-slate-900/80">
                         {/* 🌈 精緻漸變裝飾 */}
@@ -135,13 +135,13 @@ export function PWAInstallPrompt() {
                         <div className="absolute -left-4 -bottom-4 h-24 w-24 rounded-full bg-purple-500/10 blur-2xl" />
 
                         <div className="flex items-start gap-4">
-                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-500/20">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-500/20">
                                 <Download className="h-6 w-6 text-white" />
                             </div>
 
                             <div className="flex-1 pr-6">
                                 <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
-                                    {zh ? "安裝 Tabidachi App" : "Install Tabidachi App"}
+                                    {zh ? "安裝 Tabiji App" : "Install Tabiji App"}
                                 </h3>
                                 <div className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                                     {platform === 'ios' ? (

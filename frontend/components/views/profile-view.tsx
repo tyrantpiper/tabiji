@@ -12,7 +12,6 @@ import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Separator } from "@/components/ui/separator"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TranslationKey } from "@/lib/i18n"
@@ -399,7 +398,7 @@ export function ProfileView() {
     }
 
     return (
-        <div ref={scrollContainerRef} className="h-full bg-stone-50 dark:bg-slate-900 overflow-y-auto overflow-x-hidden overscroll-y-contain overscroll-x-none relative">
+        <div ref={scrollContainerRef} className="h-full bg-[#F6F5EE] dark:bg-[#121A18] overflow-y-auto overflow-x-hidden overscroll-y-contain overscroll-x-none relative">
             <AnimatePresence mode="wait" initial={false}>
                 {subView === 'main' ? (
                     <motion.div
@@ -408,1033 +407,1012 @@ export function ProfileView() {
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: -16 }}
                         transition={{ duration: 0.2 }}
-                        className="min-h-screen pb-32 bg-stone-50 dark:bg-slate-900"
+                        className="min-h-screen pb-32 bg-[#F6F5EE] dark:bg-[#121A18]"
                     >
                         <div className={cn("h-48 relative overflow-hidden bg-linear-to-br", currentTheme.gradient)}>
                             <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1480796927426-f609979314bd?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center opacity-30"></div>
-                            <div className="absolute inset-0 bg-linear-to-b from-transparent to-stone-50/90 dark:to-slate-900/90"></div>
+                            <div className="absolute inset-0 bg-linear-to-b from-transparent to-[#F6F5EE]/90 dark:to-[#121A18]/90"></div>
                         </div>
 
-                        <div className="px-6 relative -mt-20">
-                    <div className="flex flex-col items-center gap-5">
-                        {/* Avatar Wrapper */}
-                        <div className="relative group">
-                            {/* Avatar Display - 點擊可預覽 */}
-                            <div
-                                className="relative w-28 h-28 border-4 border-background shadow-xl bg-card rounded-full overflow-hidden cursor-pointer hover:ring-4 hover:ring-blue-50/10 transition-all duration-300"
-                                onClick={() => profile.avatarUrl && setAvatarPreviewOpen(true)}
-                            >
-                                <Avatar className="w-full h-full">
-                                    <AvatarImage src={profile.avatarUrl || undefined} className="object-cover" />
-                                    <AvatarFallback className="bg-muted text-muted-foreground text-3xl font-bold flex items-center justify-center w-full h-full">
-                                        {profile.nickname.slice(0, 1).toUpperCase()}
-                                    </AvatarFallback>
-                                </Avatar>
-                            </div>
-                        </div>
-
-                        {/* 🆕 Action Row: 按鈕移至下方，日系極簡風格 (Icon Only) */}
-                        <div className="flex items-center gap-4">
-                            {/* Upload Button - Icon Only */}
-                            <ImageUpload
-                                value=""
-                                onChange={handleAvatarChange}
-                                folder="ryan_travel/avatars"
-                                icon={
-                                    <div
-                                        className="w-11 h-11 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent active:scale-95 transition-all group"
-                                        title={t('profile_switch_avatar')}
-                                    >
-                                        <Camera className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
-                                    </div>
-                                }
-                                showPreview={false} // Custom trigger
-                            />
-
-                            {/* Remove Button - Icon Only */}
-                            {profile.avatarUrl && (
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); handleRemoveAvatar(); }}
-                                    className="w-11 h-11 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30 hover:border-red-100 dark:hover:border-red-900/50 active:scale-95 transition-all group"
-                                    title={t('profile_preview')}
-                                >
-                                    <Trash2 className="w-5 h-5 text-muted-foreground group-hover:text-red-500 transition-colors" />
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* 頭像全螢幕預覽 (使用 ZoomableImage) */}
-                    <Dialog open={avatarPreviewOpen} onOpenChange={setAvatarPreviewOpen}>
-                        <DialogContent className="max-w-[90vw] max-h-[90vh] p-0 bg-black/90 border-0 flex items-center justify-center">
-                            <VisuallyHidden>
-                                <DialogTitle>{t('profile_preview')}</DialogTitle>
-                                <DialogDescription>{t('profile_preview_desc')}</DialogDescription>
-                            </VisuallyHidden>
-                            {profile.avatarUrl && (
-                                <div className="relative w-full h-[80vh]">
-                                    <ZoomableImage
-                                        src={profile.avatarUrl}
-                                        alt="Avatar Preview"
-                                        onClose={() => setAvatarPreviewOpen(false)}
-                                    />
-                                </div>
-                            )}
-                        </DialogContent>
-                    </Dialog>
-
-                    <div className="mt-4 text-center space-y-1 w-full flex flex-col items-center">
-                        {isEditing ? (
-                            <div className="flex flex-col items-center gap-3 w-full max-w-70">
-                                <Input
-                                    value={profile.nickname}
-                                    onChange={e => setProfile({ ...profile, nickname: e.target.value })}
-                                    className="text-center font-bold text-xl h-12 bg-white dark:bg-slate-800 border-stone-200 dark:border-slate-700 rounded-2xl shadow-sm focus-visible:ring-slate-900"
-                                    placeholder="Enter nickname"
-                                />
-                                <div className="flex gap-2 w-full">
-                                    <Button variant="outline" size="sm" className="flex-1 h-11 rounded-xl border-border" onClick={() => setIsEditing(false)}>
-                                        Cancel
-                                    </Button>
-                                    <Button size="sm" className="flex-1 h-11 bg-slate-900 text-white dark:bg-white dark:text-slate-900 rounded-xl shadow-lg" onClick={handleSaveProfile}>
-                                        <Save className="w-4 h-4 mr-2" /> Save
-                                    </Button>
-                                </div>
-                            </div>
-                        ) : (
-                            <>
-                                <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center justify-center gap-2 group">
-                                    {profile.nickname}
-                                    <button
-                                        onClick={() => setIsEditing(true)}
-                                        className="p-1.5 bg-stone-100 hover:bg-white dark:bg-slate-800 dark:hover:bg-slate-700 rounded-full transition-all shadow-sm border border-stone-200 dark:border-slate-600 -mr-8"
-                                        title={t('profile_edit_tooltip')}
-                                    >
-                                        <Edit3 className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                                    </button>
-                                </h2>
-                                <p className="text-sm text-slate-400 font-medium tracking-wide uppercase">{t('rank_explorer')}</p>
-                            </>
-                        )}
-                    </div>
-                </div>
-
-                {/* 🆕 捐贈區塊 - 藥學系治療窗口版 */}
-                {showDonation && (() => {
-                    if (isDonationLoading) {
-                        return (
-                            <div className="mt-6 rounded-xl p-5 shadow-lg relative overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700/50">
-                                {/* Skeleton 標題區 */}
-                                <div className="flex items-center justify-between mb-4">
-                                    <Skeleton className="h-5 w-24 bg-slate-200/80 dark:bg-slate-700" />
-                                    <Skeleton className="h-5 w-16 rounded-full bg-slate-200/80 dark:bg-slate-700" />
-                                </div>
-                                <Skeleton className="h-3 w-40 mb-6 bg-slate-200/80 dark:bg-slate-700" />
-                                
-                                {/* Skeleton 進度條與節點 */}
-                                <div className="mb-4">
-                                    <Skeleton className="h-6 w-full rounded-full bg-slate-200/80 dark:bg-slate-700" />
-                                    <div className="flex justify-between mt-2 px-1">
-                                        <Skeleton className="h-2 w-4 bg-slate-200/80 dark:bg-slate-700" />
-                                        <Skeleton className="h-2 w-4 bg-slate-200/80 dark:bg-slate-700" />
-                                        <Skeleton className="h-2 w-4 bg-slate-200/80 dark:bg-slate-700" />
-                                        <Skeleton className="h-2 w-4 bg-slate-200/80 dark:bg-slate-700" />
-                                        <Skeleton className="h-2 w-4 bg-slate-200/80 dark:bg-slate-700" />
-                                    </div>
-                                </div>
-                                
-                                {/* Skeleton 數字區域 */}
-                                <div className="flex justify-between items-end mb-4">
-                                    <Skeleton className="h-3 w-12 bg-slate-200/80 dark:bg-slate-700" />
-                                    <Skeleton className="h-6 w-32 bg-slate-200/80 dark:bg-slate-700" />
-                                </div>
-                                
-                                <div className="space-y-2 mb-4">
-                                    <Skeleton className="h-2 w-1/2 bg-slate-200/80 dark:bg-slate-700" />
-                                    <Skeleton className="h-2 w-2/3 bg-slate-200/80 dark:bg-slate-700" />
-                                </div>
-                                
-                                <Skeleton className="h-10 w-full rounded-lg bg-slate-200/80 dark:bg-slate-700" />
-                            </div>
-                        )
-                    }
-
-                    const percentage = Math.min((donationProgress.current / donationProgress.goal) * 100, 120)
-
-                    // 治療窗口狀態判斷
-                    const getTherapeuticStatus = () => {
-                        if (percentage < 30) return {
-                            zone: 'ineffective',
-                            label: t('profile_donation_status_low'),
-                            labelBg: 'bg-amber-900/80',
-                            color: 'from-[#FF9966] to-[#FF5E62]',
-                            message: t('profile_donation_msg_low'),
-                            emoji: '😵'
-                        }
-                        if (percentage < 80) return {
-                            zone: 'therapeutic',
-                            label: t('profile_donation_status_ok'),
-                            labelBg: 'bg-emerald-900/80',
-                            color: 'from-emerald-500 to-teal-500',
-                            message: t('profile_donation_msg_ok'),
-                            emoji: '😊'
-                        }
-                        return {
-                            zone: 'toxic',
-                            label: t('profile_donation_status_high'),
-                            labelBg: 'bg-purple-900/80',
-                            color: 'from-purple-500 to-pink-500',
-                            message: t('profile_donation_msg_high'),
-                            emoji: '🤩'
-                        }
-                    }
-
-                    const status = getTherapeuticStatus()
-
-                    // 里程碑節點
-                    const milestones = [
-                        { percent: 0, label: t('profile_donation_milestone_1'), desc: t('profile_donation_milestone_1_desc') },
-                        { percent: 25, label: t('profile_donation_milestone_2'), desc: t('profile_donation_milestone_2_desc') },
-                        { percent: 50, label: t('profile_donation_milestone_3'), desc: t('profile_donation_milestone_3_desc') },
-                        { percent: 75, label: t('profile_donation_milestone_4'), desc: t('profile_donation_milestone_4_desc') },
-                        { percent: 100, label: t('profile_donation_milestone_5'), desc: t('profile_donation_milestone_5_desc') }
-                    ]
-
-                    return (
-                        <div
-                            className={cn(
-                                "mt-6 rounded-xl p-5 shadow-lg relative overflow-hidden transition-all duration-500",
-                                `bg-linear-to-br ${status.color}`
-                            )}
-                        >
-                            {/* 裝飾圖示 */}
-                            <div className="absolute top-0 right-0 p-3 opacity-20">
-                                <span className="text-6xl">{status.emoji}</span>
-                            </div>
-
-                            {/* 標題 + 狀態標籤 */}
-                            <div className="flex items-center justify-between mb-2">
-                                <h3
-                                    className="text-sm font-bold text-white flex items-center gap-2"
-                                    style={{ textShadow: '0 2px 4px rgba(0,0,0,0.2)' }}
-                                >
-                                    {t('profile_donation_monitor')}
-                                </h3>
-                                <span className={cn(
-                                    "text-[10px] px-2.5 py-1 rounded-full font-bold text-white",
-                                    status.labelBg
-                                )}>
-                                    {status.label}
-                                </span>
-                            </div>
-
-                            {/* 動態狀態文字（純白+陰影） */}
-                            <p
-                                className="text-xs text-white mb-4 leading-relaxed"
-                                style={{ textShadow: '0 1px 2px rgba(0,0,0,0.15)' }}
-                            >
-                                {status.message}
-                            </p>
-
-                            {/* 治療窗口進度條 */}
-                            <div className="mb-4">
-                                <div className="relative h-6">
-                                    {/* 進度條背景 + 分區 (overflow-hidden) */}
-                                    <div className="absolute inset-0 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.25)' }}>
-                                        {/* 分區標示 */}
-                                        <div className="absolute inset-0 flex">
-                                            <div className="w-[25%] border-r border-white/20" />
-                                            <div className="w-[25%] border-r border-white/20" />
-                                            <div className="w-[25%] border-r border-white/20" />
-                                            <div className="flex-1" />
-                                        </div>
-
-                                        {/* 進度條填充 */}
+                        <div className="w-full max-w-4xl lg:max-w-5xl mx-auto px-5 sm:px-8">
+                            {/* Avatar & Profile Hero */}
+                            <div className="relative -mt-20">
+                                <div className="flex flex-col items-center gap-5">
+                                    {/* Avatar Wrapper */}
+                                    <div className="relative group">
+                                        {/* Avatar Display - 點擊可預覽 */}
                                         <div
-                                            className="absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ease-out"
-                                            style={{
-                                                width: `${Math.min(percentage, 100)}%`,
-                                                background: 'linear-gradient(90deg, #FFEB3B 0%, #FFC107 100%)',
-                                                boxShadow: '0 0 12px rgba(255, 235, 59, 0.7), 0 0 4px rgba(255, 193, 7, 0.5)'
-                                            }}
-                                        />
+                                            className="relative w-28 h-28 border-4 border-white dark:border-[#1E2927] shadow-xl bg-white dark:bg-[#1E2927] rounded-full overflow-hidden cursor-pointer hover:ring-4 hover:ring-[#0B3026]/10 dark:hover:ring-white/10 transition-all duration-300"
+                                            onClick={() => profile.avatarUrl && setAvatarPreviewOpen(true)}
+                                        >
+                                            <Avatar className="w-full h-full">
+                                                <AvatarImage src={profile.avatarUrl || undefined} className="object-cover" />
+                                                <AvatarFallback className="bg-[#0B3026]/5 dark:bg-white/5 text-[#0B3026] dark:text-white text-3xl font-bold flex items-center justify-center w-full h-full">
+                                                    {profile.nickname.slice(0, 1).toUpperCase()}
+                                                </AvatarFallback>
+                                            </Avatar>
+                                        </div>
                                     </div>
 
-                                    {/* 里程碑節點 (移出 overflow-hidden) */}
-                                    {milestones.map((m) => {
-                                        const isAchieved = percentage >= m.percent
-                                        let bgStyle = {}
-
-                                        if (isAchieved) {
-                                            if (m.percent === 0) bgStyle = { background: 'transparent' }
-                                            else if (m.percent === 25) bgStyle = { background: 'conic-gradient(white 90deg, transparent 0)' }
-                                            else if (m.percent === 50) bgStyle = { background: 'conic-gradient(white 180deg, transparent 0)' }
-                                            else if (m.percent === 75) bgStyle = { background: 'conic-gradient(white 270deg, transparent 0)' }
-                                            else bgStyle = { background: 'white' }
-                                        } else {
-                                            bgStyle = { background: 'transparent' }
-                                        }
-
-                                        let leftPos = `${m.percent}%`
-                                        if (m.percent === 0) leftPos = '6px'
-                                        else if (m.percent === 100) leftPos = 'calc(100% - 6px)'
-
-                                        return (
-                                            <Popover key={m.percent}>
-                                                <PopoverTrigger asChild>
-                                                    <div
-                                                        className={cn(
-                                                            "absolute top-[60%] -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white transition-all cursor-pointer z-10",
-                                                            isAchieved && m.percent !== 0 ? "shadow-lg" : ""
-                                                        )}
-                                                        style={{
-                                                            left: leftPos,
-                                                            transform: 'translate(-50%, -50%)',
-                                                            ...bgStyle
-                                                        }}
-                                                    />
-                                                </PopoverTrigger>
-                                                <PopoverContent side="top" className="w-auto p-2 text-xs">
-                                                    <div className="font-medium">{m.label}</div>
-                                                    <div className="text-muted-foreground text-[10px]">{m.desc}</div>
-                                                </PopoverContent>
-                                            </Popover>
-                                        )
-                                    })}
-                                </div>
-
-                                {/* 里程碑標籤 */}
-                                <div className="relative mt-1 text-[9px] text-white/60 h-4">
-                                    <span className="absolute left-0">0%</span>
-                                    <span className={cn("absolute", percentage >= 25 ? "text-white" : "")} style={{ left: '25%', transform: 'translateX(-50%)' }}>25%</span>
-                                    <span className={cn("absolute", percentage >= 50 ? "text-white" : "")} style={{ left: '50%', transform: 'translateX(-50%)' }}>50%</span>
-                                    <span className={cn("absolute", percentage >= 75 ? "text-white" : "")} style={{ left: '75%', transform: 'translateX(-50%)' }}>75%</span>
-                                    <span className={cn("absolute right-0", percentage >= 100 ? "text-white" : "")}>100%</span>
-                                </div>
-                            </div>
-
-                            {/* 數據顯示 */}
-                            <div className="flex justify-between items-end text-xs text-white/90 mb-3">
-                                <span className="mb-1">{t('profile_accumulator')}</span>
-                                <div className="text-right">
-                                    <span className="text-lg font-bold text-white mr-1 drop-shadow-md">
-                                        NT${donationProgress.current.toLocaleString()}
-                                    </span>
-                                    <span className="text-white/70">
-                                        / ${donationProgress.goal.toLocaleString()}
-                                    </span>
-                                </div>
-                            </div>
-
-                            {/* 里程碑達成提示 */}
-                            <div className="text-[10px] text-white/70 mb-3 space-y-1">
-                                {percentage >= 0 && (
-                                    <div>
-                                        ✅ {percentage < 25 ? (percentage < 1 && percentage > 0 ? percentage.toFixed(1) : Math.floor(percentage)) : 0}% - {t('profile_donation_milestone_1')}
-                                    </div>
-                                )}
-                                {percentage >= 25 && (
-                                    <div>
-                                        ✅ {percentage < 50 ? Math.floor(percentage) : 25}% - {t('profile_donation_milestone_2')}
-                                    </div>
-                                )}
-                                {percentage >= 50 && (
-                                    <div>
-                                        ✅ {percentage < 75 ? Math.floor(percentage) : 50}% - {t('profile_donation_milestone_3')}
-                                    </div>
-                                )}
-                                {percentage >= 75 && (
-                                    <div>
-                                        ✅ {percentage < 100 ? Math.floor(percentage) : 75}% - {t('profile_donation_milestone_4')}
-                                    </div>
-                                )}
-                                {percentage >= 100 && <div>🔓 100% - {t('profile_donation_milestone_5')}</div>}
-                            </div>
-
-                            {/* 展開/收合 QR Code */}
-                            <button
-                                onClick={() => setDonationExpanded(!donationExpanded)}
-                                className="w-full bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-lg p-2.5 flex items-center justify-center gap-2 text-sm font-medium text-white shadow-sm transition-all border border-white/10"
-                            >
-                                {donationExpanded ? (
-                                    <>{t('profile_donation_qr_collapse')} <ChevronUp className="w-4 h-4" /></>
-                                ) : (
-                                    <>{t('profile_donation_qr_expand')} <ChevronDown className="w-4 h-4" /></>
-                                )}
-                            </button>
-
-                            {/* QR Code 區塊（可展開） */}
-                            {
-                                donationExpanded && (
-                                    <div className="bg-white rounded-lg p-4 text-center mt-3">
-                                        <Image
-                                            src="/donation-qr.png"
-                                            alt="Donation QR Code"
-                                            width={180}
-                                            height={180}
-                                            className="mx-auto rounded-lg"
-                                        />
-                                        <p className="text-xs text-slate-500 mt-2 mb-3">
-                                            {t('profile_donation_scan_hint')}
-                                        </p>
-
-                                        {/* 手機收款資訊 */}
-                                        <div className="text-left bg-slate-50 p-3 rounded-lg border border-slate-200 mb-3">
-                                            <h4 className="text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                                                <Smartphone className="w-3.5 h-3.5 text-slate-500" />
-                                                {t('profile_donation_phone_pay')} <span className="text-slate-400 font-normal">(代碼 812)</span>
-                                            </h4>
-                                            <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
-                                                {t('profile_donation_phone_desc')}
-                                            </p>
-                                            <div className="flex items-center gap-2">
-                                                <code className="bg-white border border-slate-200 px-2 py-1.5 rounded text-xs font-mono text-slate-700 flex-1 text-center tracking-wider font-bold">
-                                                    0908879076
-                                                </code>
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    className="h-7 w-7 p-0 shrink-0 bg-white hover:bg-slate-50"
-                                                    onClick={() => {
-                                                        navigator.clipboard.writeText("0908879076")
-                                                        toast.success(t('profile_key_copied'))
-                                                    }}
-                                                    title={t('profile_copy_key')}
+                                    {/* 🆕 Action Row: 按鈕移至下方，日系極簡風格 (Icon Only) */}
+                                    <div className="flex items-center gap-4">
+                                        {/* Upload Button - Icon Only */}
+                                        <ImageUpload
+                                            value=""
+                                            onChange={handleAvatarChange}
+                                            folder="ryan_travel/avatars"
+                                            icon={
+                                                <div
+                                                    className="w-11 h-11 rounded-full bg-white dark:bg-[#1E2927] border border-[#0B3026]/10 dark:border-white/10 shadow-xs flex items-center justify-center hover:bg-[#0B3026]/5 dark:hover:bg-white/5 active:scale-95 transition-all group cursor-pointer"
+                                                    title={t('profile_switch_avatar')}
                                                 >
-                                                    <Copy className="w-3 h-3 text-slate-500" />
+                                                    <Camera className="w-5 h-5 text-[#0B3026]/60 dark:text-[#88A29A] group-hover:text-[#1E2927] dark:group-hover:text-[#E5EBEA] transition-colors" />
+                                                </div>
+                                            }
+                                            showPreview={false} // Custom trigger
+                                        />
+
+                                        {/* Remove Button - Icon Only */}
+                                        {profile.avatarUrl && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleRemoveAvatar(); }}
+                                                className="w-11 h-11 rounded-full bg-white dark:bg-[#1E2927] border border-[#0B3026]/10 dark:border-white/10 shadow-xs flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30 hover:border-red-200 dark:hover:border-red-900/50 active:scale-95 transition-all group cursor-pointer"
+                                                title={t('profile_preview')}
+                                            >
+                                                <Trash2 className="w-5 h-5 text-[#0B3026]/60 dark:text-[#88A29A] group-hover:text-red-500 transition-colors" />
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* 頭像全螢幕預覽 (使用 ZoomableImage) */}
+                                <Dialog open={avatarPreviewOpen} onOpenChange={setAvatarPreviewOpen}>
+                                    <DialogContent className="max-w-[90vw] max-h-[90vh] p-0 bg-black/90 border-0 flex items-center justify-center">
+                                        <VisuallyHidden>
+                                            <DialogTitle>{t('profile_preview')}</DialogTitle>
+                                            <DialogDescription>{t('profile_preview_desc')}</DialogDescription>
+                                        </VisuallyHidden>
+                                        {profile.avatarUrl && (
+                                            <div className="relative w-full h-[80vh]">
+                                                <ZoomableImage
+                                                    src={profile.avatarUrl}
+                                                    alt="Avatar Preview"
+                                                    onClose={() => setAvatarPreviewOpen(false)}
+                                                />
+                                            </div>
+                                        )}
+                                    </DialogContent>
+                                </Dialog>
+
+                                <div className="mt-4 text-center space-y-1 w-full flex flex-col items-center">
+                                    {isEditing ? (
+                                        <div className="flex flex-col items-center gap-3 w-full max-w-70">
+                                            <Input
+                                                value={profile.nickname}
+                                                onChange={e => setProfile({ ...profile, nickname: e.target.value })}
+                                                className="text-center font-bold text-xl h-12 bg-white dark:bg-[#1E2927] border-[#0B3026]/10 dark:border-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-2xl shadow-xs focus-visible:ring-[#0B3026]"
+                                                placeholder="Enter nickname"
+                                            />
+                                            <div className="flex gap-2 w-full">
+                                                <Button variant="outline" size="sm" className="flex-1 h-11 rounded-xl border-[#0B3026]/10 dark:border-white/10" onClick={() => setIsEditing(false)}>
+                                                    Cancel
+                                                </Button>
+                                                <Button size="sm" className="flex-1 h-11 bg-[#0B3026] text-white dark:bg-white dark:text-[#121A18] rounded-xl shadow-md hover:bg-[#164E40]" onClick={handleSaveProfile}>
+                                                    <Save className="w-4 h-4 mr-2" /> Save
                                                 </Button>
                                             </div>
                                         </div>
-
-                                        <p className="text-[10px] text-slate-400 mt-1">
-                                            {t('profile_donation_pharmacist')}
-                                        </p>
-                                    </div>
-                                )
-                            }
-                        </div>
-                    )
-                })()}
-
-                <div className="mt-8 bg-slate-900 rounded-xl p-5 text-white shadow-lg relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-3 opacity-20">
-                        <Shield className="w-16 h-16" />
-                    </div>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">{t('account_recovery_key')}</h3>
-                    <p className="text-[10px] text-slate-400 mb-3">
-                        {t('recovery_key_desc')}
-                    </p>
-                    <div className="bg-black/30 rounded-lg p-3 flex items-center justify-between border border-white/10">
-                        <code className="text-xs font-mono text-amber-400 truncate max-w-50">
-                            {typeof window !== 'undefined' ? localStorage.getItem("user_uuid") || "Loading..." : "Loading..."}
-                        </code>
-                        <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-6 text-xs hover:bg-white/10 text-white"
-                            onClick={() => {
-                                const uuid = localStorage.getItem("user_uuid") || "";
-                                if (navigator.clipboard && navigator.clipboard.writeText) {
-                                    navigator.clipboard.writeText(uuid);
-                                    toast.success(t('code_copied'));
-                                } else {
-                                    // Fallback for non-HTTPS environments
-                                    const textArea = document.createElement("textarea");
-                                    textArea.value = uuid;
-                                    document.body.appendChild(textArea);
-                                    textArea.select();
-                                    document.execCommand('copy');
-                                    document.body.removeChild(textArea);
-                                    toast.success(t('code_copied'));
-                                }
-                            }}
-                        >
-                            <Copy className="w-3 h-3 mr-1" /> {t('copy')}
-                        </Button>
-                    </div>
-                </div>
-
-                <div className="mt-10 space-y-4">
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1">Settings</h3>
-
-                    <div className="bg-white dark:bg-slate-800 rounded-xl border border-stone-200 dark:border-slate-700 overflow-hidden shadow-sm">
-                        <MenuItem icon={Globe} label={t('language')} value={lang === 'zh' ? '繁體中文' : 'English'} onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')} />
-                        <Separator />
-
-                        {/* 🌙 Dark Mode Toggle */}
-                        <div className="flex items-center justify-between p-4 text-slate-700 dark:text-slate-200">
-                            <div className="flex items-center gap-3">
-                                {isDark ? <Moon className="w-5 h-5 text-indigo-400" /> : <Sun className="w-5 h-5 text-amber-500" />}
-                                <span className="text-sm font-medium">{t('profile_theme')}</span>
-                            </div>
-                            <Switch checked={isDark} onCheckedChange={toggleDark} />
-                        </div>
-                        <Separator />
-
-                        {/* 🎨 Accent Color Selector */}
-                        <div className="p-4 text-slate-700 dark:text-slate-200">
-                            <div className="flex items-center gap-3 mb-3">
-                                <Palette className="w-5 h-5 text-slate-400" />
-                                <span className="text-sm font-medium">{t('profile_accent_color')}</span>
-                            </div>
-                            <div className="flex gap-2 ml-8">
-                                {(Object.keys(ACCENT_COLORS) as AccentColor[]).map(color => (
-                                    <button
-                                        key={color}
-                                        onClick={() => setAccentColor(color)}
-                                        className={cn(
-                                            "w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all",
-                                            `bg-linear-to-br ${ACCENT_COLORS[color].gradient}`,
-                                            accentColor === color
-                                                ? "ring-2 ring-offset-2 ring-slate-900 dark:ring-white scale-110"
-                                                : "opacity-70 hover:opacity-100"
-                                        )}
-                                        title={ACCENT_COLORS[color].name}
-                                    >
-                                        {accentColor === color && "✓"}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                        <Separator />
-
-                        {/* 🔤 Font Size / Text Scale Adjustment */}
-                        <div className="p-4 text-slate-700 dark:text-slate-200">
-                            <div className="flex items-center justify-between mb-3">
-                                <div className="flex items-center gap-3">
-                                    <Type className="w-5 h-5 text-slate-400" />
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-medium">{t('profile_font_size')}</span>
-                                        <span className="text-[10px] text-slate-400 font-normal">{t('profile_font_size_desc')}</span>
-                                    </div>
-                                </div>
-                                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
-                                    {fontScale}% · {zh ? FONT_SCALE_TIERS[fontScale].labelZh : FONT_SCALE_TIERS[fontScale].labelEn}
-                                </span>
-                            </div>
-
-                            {/* 📱 即時預覽卡 (Live Preview Mini Card) */}
-                            <div className="p-3 mb-4 rounded-xl bg-slate-50/80 dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800/80 shadow-xs transition-all">
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="font-bold text-slate-900 dark:text-slate-100 text-sm">
-                                        {t('profile_font_preview_title')}
-                                    </span>
-                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300">
-                                        {t('profile_font_preview_tag')}
-                                    </span>
-                                </div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                                    {t('profile_font_preview_subtitle')}
-                                </p>
-                            </div>
-
-                            {/* 🎚️ 4 段式分段步進器 (Stepped Segmented Control) */}
-                            <div 
-                                className="flex items-center justify-between gap-3 px-2"
-                                role="radiogroup"
-                                aria-label={t('profile_font_size')}
-                            >
-                                <span className="text-xs font-bold text-slate-400 select-none" aria-hidden="true">A</span>
-                                <div className="relative flex-1 flex items-center justify-between py-2">
-                                    {/* 軌道背景 */}
-                                    <div className="absolute left-2 right-2 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full" />
-                                    {/* 進度填充 */}
-                                    {(() => {
-                                        const minScale = VALID_FONT_SCALES[0]
-                                        const maxScale = VALID_FONT_SCALES[VALID_FONT_SCALES.length - 1]
-                                        const progressRatio = maxScale > minScale ? (fontScale - minScale) / (maxScale - minScale) : 0
-                                        return (
-                                            <div
-                                                className="absolute left-2 h-1.5 rounded-full transition-all duration-200 bg-indigo-500"
-                                                style={{
-                                                    width: `${progressRatio * 100}%`
-                                                }}
-                                            />
-                                        )
-                                    })()}
-                                    {VALID_FONT_SCALES.map((scale) => {
-                                        const isSelected = fontScale === scale
-                                        return (
-                                            <button
-                                                key={scale}
-                                                type="button"
-                                                role="radio"
-                                                aria-checked={isSelected}
-                                                onClick={() => {
-                                                    haptic.selection()
-                                                    setFontScale(scale)
-                                                }}
-                                                className={cn(
-                                                    "relative z-10 w-6 h-6 rounded-full flex items-center justify-center transition-all cursor-pointer focus:outline-hidden",
-                                                    isSelected
-                                                        ? "bg-white dark:bg-slate-900 border-2 border-indigo-500 shadow-md scale-115"
-                                                        : "bg-slate-300 dark:bg-slate-600 hover:bg-slate-400 dark:hover:bg-slate-500 scale-90"
-                                                )}
-                                                aria-label={`${scale}% - ${zh ? FONT_SCALE_TIERS[scale].labelZh : FONT_SCALE_TIERS[scale].labelEn}`}
-                                                title={`${scale}%`}
-                                            >
-                                                {isSelected && <span className="w-2 h-2 rounded-full bg-indigo-500" />}
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-                                <span className="text-base font-bold text-slate-700 dark:text-slate-200 select-none" aria-hidden="true">A</span>
-                            </div>
-
-                            {/* 刻度標籤 */}
-                            <div className="flex justify-between text-[11px] text-slate-400 dark:text-slate-500 px-1 mt-1 font-medium select-none">
-                                {VALID_FONT_SCALES.map((scale) => (
-                                    <span
-                                        key={scale}
-                                        className={cn(
-                                            "transition-colors",
-                                            fontScale === scale && "text-indigo-600 dark:text-indigo-400 font-bold"
-                                        )}
-                                    >
-                                        {zh ? FONT_SCALE_TIERS[scale].labelZh : FONT_SCALE_TIERS[scale].labelEn}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                        <Separator />
-
-                        {/* 🧠 AI Adaptive Memory Section */}
-                        <div className="p-4 bg-white dark:bg-slate-800">
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center">
-                                        <Brain className="w-5 h-5 text-blue-500 dark:text-blue-400" />
-                                    </div>
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-bold text-slate-800 dark:text-white">{t('profile_ai_memory')}</span>
-                                        <span className="text-[10px] text-slate-400 font-medium">{t('profile_ai_memory_desc')}</span>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    {isLoadPrefs && <Loader2 className="w-4 h-4 animate-spin text-slate-300" />}
-                                    {preferences.length > 0 && (
-                                        <button
-                                            onClick={() => setMemoryExpanded(!memoryExpanded)}
-                                            className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-all text-slate-400"
-                                            title={memoryExpanded ? "收合" : "展開全部"}
-                                        >
-                                            {memoryExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-
-                            {preferences.length === 0 ? (
-                                <div className="ml-11 py-2 text-[11px] text-slate-400 italic">
-                                    {isLoadPrefs ? t('loading') : t('profile_ai_memory_empty')}
-                                </div>
-                            ) : (
-                                <div className="relative group/memory">
-                                    <div className={cn(
-                                        "ml-11 flex flex-wrap gap-2 transition-all duration-500 ease-in-out relative",
-                                        !memoryExpanded && preferences.length > 3 ? "max-h-24 overflow-hidden" : "max-h-250"
-                                    )}>
-                                        {preferences.map((pref) => (
-                                            <div
-                                                key={pref.id}
-                                                className="group relative flex items-center gap-2 px-3 py-1.5 bg-stone-50 dark:bg-slate-900/50 border border-stone-200 dark:border-slate-700 rounded-xl hover:border-blue-200 dark:hover:border-blue-900/50 transition-all"
-                                            >
-                                                <div className="flex flex-col">
-                                                    <div className="flex items-center gap-1.5">
-                                                        <span className="text-[9px] font-bold uppercase tracking-wider text-blue-500/70">
-                                                            {t(`profile_pref_${pref.category}` as TranslationKey) || pref.category}
-                                                        </span>
-                                                        <span className="text-xs font-medium text-slate-700 dark:text-slate-200">{pref.preference}</span>
-                                                    </div>
-                                                    {pref.reasoning && (
-                                                        <span className="text-[8px] text-slate-400 leading-tight max-w-37.5 truncate">{pref.reasoning}</span>
-                                                    )}
-                                                </div>
+                                    ) : (
+                                        <>
+                                            <h2 className="text-2xl font-bold text-[#1E2927] dark:text-[#E5EBEA] flex items-center justify-center gap-2 group">
+                                                {profile.nickname}
                                                 <button
-                                                    onClick={() => setMemoryToDelete(pref)}
-                                                    className="opacity-40 lg:opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-all"
-                                                    title={t('profile_pref_delete')}
+                                                    onClick={() => setIsEditing(true)}
+                                                    className="p-1.5 bg-white/80 hover:bg-white dark:bg-[#1E2927]/80 dark:hover:bg-[#1E2927] rounded-full transition-all shadow-2xs border border-[#0B3026]/10 dark:border-white/10 -mr-8 cursor-pointer"
+                                                    title={t('profile_edit_tooltip')}
                                                 >
-                                                    <Trash2 className="w-4 h-4 text-red-400" />
+                                                    <Edit3 className="w-4 h-4 text-[#0B3026]/60 dark:text-[#88A29A]" />
                                                 </button>
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    {/* 🆕 漸層遮罩 (僅在收合且有更多資料時顯示) */}
-                                    {!memoryExpanded && preferences.length > 3 && (
-                                        <div className="absolute bottom-0 left-0 right-0 h-12 bg-linear-to-t from-white dark:from-slate-800 to-transparent pointer-events-none z-10" />
-                                    )}
-
-                                    {/* 🆕 展開/收合輔助按鈕 (僅在條目較多時顯示) */}
-                                    {preferences.length > 3 && (
-                                        <div className={cn(
-                                            "ml-11 mt-2 flex justify-start transition-opacity duration-300",
-                                            memoryExpanded ? "opacity-100" : "opacity-70 group-hover/memory:opacity-100"
-                                        )}>
-                                            <button
-                                                onClick={() => setMemoryExpanded(!memoryExpanded)}
-                                                className="text-[10px] font-bold text-blue-500 hover:text-blue-600 flex items-center gap-1 py-1"
-                                            >
-                                                {memoryExpanded ? (
-                                                    <><ChevronUp className="w-3 h-3" /> {zh ? "收起" : "Collapse"}</>
-                                                ) : (
-                                                    <><ChevronDown className="w-3 h-3" /> {zh ? `瀏覽全部 (${preferences.length})` : `View All (${preferences.length})`}</>
-                                                )}
-                                            </button>
-                                        </div>
+                                            </h2>
+                                            <p className="text-xs text-[#0B3026]/60 dark:text-[#88A29A] font-semibold tracking-wider uppercase">{t('rank_explorer')}</p>
+                                        </>
                                     )}
                                 </div>
-                            )}
-                        </div>
-
-                        <Separator />
-                        <div 
-                            onClick={() => setApiKeyDialogOpen(true)}
-                            className="flex items-center justify-between p-4 cursor-pointer hover:bg-stone-50 dark:hover:bg-slate-800/60 transition-colors text-slate-700 dark:text-slate-200"
-                        >
-                            <div className="flex items-center gap-3">
-                                <Sparkles className="w-5 h-5 text-amber-500" />
-                                <span className="text-sm font-medium">{t('profile_gemini_api_key')}</span>
                             </div>
-                            <span className={cn("text-xs px-2 py-1 rounded font-medium", hasApiKey ? "bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-300" : "bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300")}>
-                                {hasApiKey ? t('profile_key_active') : t('profile_key_inactive')}
-                            </span>
-                        </div>
 
-                        <AIKeyDialog
-                            open={apiKeyDialogOpen}
-                            onOpenChange={setApiKeyDialogOpen}
-                        />
+                            {/* Cards Stack */}
+                            <div className="space-y-6 mt-6">
+                                {/* 🆕 捐贈區塊 - 藥學系治療窗口版 (Tabiji Paper Card) */}
+                                {showDonation && (() => {
+                                    if (isDonationLoading) {
+                                        return (
+                                            <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl p-5 shadow-xs border border-[#0B3026]/10 dark:border-white/10 relative overflow-hidden">
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <Skeleton className="h-5 w-24 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                    <Skeleton className="h-5 w-16 rounded-full bg-[#0B3026]/10 dark:bg-white/10" />
+                                                </div>
+                                                <Skeleton className="h-3 w-40 mb-6 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                <div className="mb-4">
+                                                    <Skeleton className="h-6 w-full rounded-full bg-[#0B3026]/10 dark:bg-white/10" />
+                                                    <div className="flex justify-between mt-2 px-1">
+                                                        <Skeleton className="h-2 w-4 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                        <Skeleton className="h-2 w-4 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                        <Skeleton className="h-2 w-4 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                        <Skeleton className="h-2 w-4 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                        <Skeleton className="h-2 w-4 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                    </div>
+                                                </div>
+                                                <div className="flex justify-between items-end mb-4">
+                                                    <Skeleton className="h-3 w-12 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                    <Skeleton className="h-6 w-32 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                </div>
+                                                <div className="space-y-2 mb-4">
+                                                    <Skeleton className="h-2 w-1/2 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                    <Skeleton className="h-2 w-2/3 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                </div>
+                                                <Skeleton className="h-10 w-full rounded-xl bg-[#0B3026]/10 dark:bg-white/10" />
+                                            </div>
+                                        )
+                                    }
 
-                        {/* 🧠 AI 記憶移除確認視窗 */}
-                        <Dialog 
-                            open={!!memoryToDelete} 
-                            onOpenChange={() => {
-                                if (!isDeletingMemory) setMemoryToDelete(null)
-                            }}
-                        >
-                            <DialogContent className="sm:max-w-100">
-                                <DialogHeader>
-                                    <DialogTitle className="flex items-center gap-2 text-red-600">
-                                        <Brain className="w-5 h-5 text-blue-500" />
-                                        {t('profile_memory_delete_confirm_title')}
-                                    </DialogTitle>
-                                    <DialogDescription asChild>
-                                        <div className="text-left text-sm text-muted-foreground pt-2">
-                                            {t('profile_memory_delete_confirm_desc')}
-                                            {memoryToDelete && (
-                                                <div className="mt-4 p-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                                                    <span className="text-[10px] font-bold text-blue-500/70 uppercase tracking-wider block mb-1">
-                                                        {t(`profile_pref_${memoryToDelete.category}` as TranslationKey) || memoryToDelete.category}
+                                    const safeGoal = donationProgress.goal > 0 ? donationProgress.goal : 2000
+                                    const percentage = Math.min(Math.max((donationProgress.current / safeGoal) * 100, 0), 120)
+
+                                    const getTherapeuticStatus = () => {
+                                        if (percentage < 30) return {
+                                            zone: 'ineffective',
+                                            label: t('profile_donation_status_low'),
+                                            labelBg: 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20',
+                                            message: t('profile_donation_msg_low'),
+                                            emoji: '😵'
+                                        }
+                                        if (percentage < 80) return {
+                                            zone: 'therapeutic',
+                                            label: t('profile_donation_status_ok'),
+                                            labelBg: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20',
+                                            message: t('profile_donation_msg_ok'),
+                                            emoji: '😊'
+                                        }
+                                        return {
+                                            zone: 'toxic',
+                                            label: t('profile_donation_status_high'),
+                                            labelBg: 'bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20',
+                                            message: t('profile_donation_msg_high'),
+                                            emoji: '🤩'
+                                        }
+                                    }
+
+                                    const status = getTherapeuticStatus()
+
+                                    const milestones = [
+                                        { percent: 0, label: t('profile_donation_milestone_1'), desc: t('profile_donation_milestone_1_desc') },
+                                        { percent: 25, label: t('profile_donation_milestone_2'), desc: t('profile_donation_milestone_2_desc') },
+                                        { percent: 50, label: t('profile_donation_milestone_3'), desc: t('profile_donation_milestone_3_desc') },
+                                        { percent: 75, label: t('profile_donation_milestone_4'), desc: t('profile_donation_milestone_4_desc') },
+                                        { percent: 100, label: t('profile_donation_milestone_5'), desc: t('profile_donation_milestone_5_desc') }
+                                    ]
+
+                                    return (
+                                        <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl p-5 shadow-xs border border-[#0B3026]/10 dark:border-white/10 relative overflow-hidden transition-all">
+                                            <div className="absolute top-0 right-0 p-3 opacity-15 pointer-events-none select-none">
+                                                <span className="text-5xl">{status.emoji}</span>
+                                            </div>
+
+                                            <div className="flex items-center justify-between mb-2">
+                                                <h3 className="text-sm font-bold text-[#1E2927] dark:text-[#E5EBEA] flex items-center gap-2">
+                                                    {t('profile_donation_monitor')}
+                                                </h3>
+                                                <span className={cn(
+                                                    "text-[10px] px-2.5 py-1 rounded-full font-bold",
+                                                    status.labelBg
+                                                )}>
+                                                    {status.label}
+                                                </span>
+                                            </div>
+
+                                            <p className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mb-4 leading-relaxed">
+                                                {status.message}
+                                            </p>
+
+                                            <div className="mb-4">
+                                                <div className="relative h-6">
+                                                    <div className="absolute inset-0 rounded-full overflow-hidden bg-[#0B3026]/8 dark:bg-white/8 border border-[#0B3026]/10 dark:border-white/10">
+                                                        <div className="absolute inset-0 flex">
+                                                            <div className="w-[25%] border-r border-[#0B3026]/10 dark:border-white/10" />
+                                                            <div className="w-[25%] border-r border-[#0B3026]/10 dark:border-white/10" />
+                                                            <div className="w-[25%] border-r border-[#0B3026]/10 dark:border-white/10" />
+                                                            <div className="flex-1" />
+                                                        </div>
+
+                                                        <div
+                                                            className="absolute inset-y-0 left-0 rounded-full transition-all duration-1000 ease-out"
+                                                            style={{
+                                                                width: `${Math.min(percentage, 100)}%`,
+                                                                background: 'linear-gradient(90deg, #E56E25 0%, #F59E0B 100%)',
+                                                                boxShadow: '0 0 10px rgba(229, 110, 37, 0.4)'
+                                                            }}
+                                                        />
+                                                    </div>
+
+                                                    {milestones.map((m) => {
+                                                        const isAchieved = percentage >= m.percent
+                                                        let bgStyle = {}
+
+                                                        if (isAchieved) {
+                                                            if (m.percent === 0) bgStyle = { background: 'transparent' }
+                                                            else if (m.percent === 25) bgStyle = { background: 'conic-gradient(#E56E25 90deg, transparent 0)' }
+                                                            else if (m.percent === 50) bgStyle = { background: 'conic-gradient(#E56E25 180deg, transparent 0)' }
+                                                            else if (m.percent === 75) bgStyle = { background: 'conic-gradient(#E56E25 270deg, transparent 0)' }
+                                                            else bgStyle = { background: '#E56E25' }
+                                                        } else {
+                                                            bgStyle = { background: 'transparent' }
+                                                        }
+
+                                                        let leftPos = `${m.percent}%`
+                                                        if (m.percent === 0) leftPos = '6px'
+                                                        else if (m.percent === 100) leftPos = 'calc(100% - 6px)'
+
+                                                        return (
+                                                            <Popover key={m.percent}>
+                                                                <PopoverTrigger asChild>
+                                                                    <div
+                                                                        className={cn(
+                                                                            "absolute top-[60%] -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white dark:border-[#1E2927] transition-all cursor-pointer z-10",
+                                                                            isAchieved && m.percent !== 0 ? "shadow-md" : ""
+                                                                        )}
+                                                                        style={{
+                                                                            left: leftPos,
+                                                                            transform: 'translate(-50%, -50%)',
+                                                                            ...bgStyle
+                                                                        }}
+                                                                    />
+                                                                </PopoverTrigger>
+                                                                <PopoverContent side="top" className="w-auto p-2 text-xs bg-white/95 dark:bg-[#1E2927]/95 backdrop-blur-md border border-[#0B3026]/10 dark:border-white/10 shadow-lg">
+                                                                    <div className="font-semibold text-[#1E2927] dark:text-[#E5EBEA]">{m.label}</div>
+                                                                    <div className="text-[#0B3026]/70 dark:text-[#88A29A] text-[10px]">{m.desc}</div>
+                                                                </PopoverContent>
+                                                            </Popover>
+                                                        )
+                                                    })}
+                                                </div>
+
+                                                <div className="relative mt-1 text-[9px] text-[#0B3026]/50 dark:text-white/50 h-4">
+                                                    <span className="absolute left-0">0%</span>
+                                                    <span className={cn("absolute", percentage >= 25 ? "text-[#E56E25] font-bold" : "")} style={{ left: '25%', transform: 'translateX(-50%)' }}>25%</span>
+                                                    <span className={cn("absolute", percentage >= 50 ? "text-[#E56E25] font-bold" : "")} style={{ left: '50%', transform: 'translateX(-50%)' }}>50%</span>
+                                                    <span className={cn("absolute", percentage >= 75 ? "text-[#E56E25] font-bold" : "")} style={{ left: '75%', transform: 'translateX(-50%)' }}>75%</span>
+                                                    <span className={cn("absolute right-0", percentage >= 100 ? "text-[#E56E25] font-bold" : "")}>100%</span>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex justify-between items-end text-xs text-[#0B3026]/70 dark:text-[#88A29A] mb-3">
+                                                <span className="mb-1">{t('profile_accumulator')}</span>
+                                                <div className="text-right">
+                                                    <span className="text-lg font-bold text-[#1E2927] dark:text-[#E5EBEA] mr-1">
+                                                        NT${donationProgress.current.toLocaleString()}
                                                     </span>
-                                                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                                                        &quot;{memoryToDelete.preference}&quot;
+                                                    <span className="text-xs text-[#0B3026]/50 dark:text-white/50">
+                                                        / ${donationProgress.goal.toLocaleString()}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <div className="text-[10px] text-[#0B3026]/70 dark:text-[#88A29A] mb-3 space-y-1">
+                                                {percentage >= 0 && (
+                                                    <div>
+                                                        ✅ {percentage < 25 ? (percentage < 1 && percentage > 0 ? percentage.toFixed(1) : Math.floor(percentage)) : 0}% - {t('profile_donation_milestone_1')}
+                                                    </div>
+                                                )}
+                                                {percentage >= 25 && (
+                                                    <div>
+                                                        ✅ {percentage < 50 ? Math.floor(percentage) : 25}% - {t('profile_donation_milestone_2')}
+                                                    </div>
+                                                )}
+                                                {percentage >= 50 && (
+                                                    <div>
+                                                        ✅ {percentage < 75 ? Math.floor(percentage) : 50}% - {t('profile_donation_milestone_3')}
+                                                    </div>
+                                                )}
+                                                {percentage >= 75 && (
+                                                    <div>
+                                                        ✅ {percentage < 100 ? Math.floor(percentage) : 75}% - {t('profile_donation_milestone_4')}
+                                                    </div>
+                                                )}
+                                                {percentage >= 100 && <div>🔓 100% - {t('profile_donation_milestone_5')}</div>}
+                                            </div>
+
+                                            <button
+                                                onClick={() => setDonationExpanded(!donationExpanded)}
+                                                className="w-full bg-[#0B3026]/5 hover:bg-[#0B3026]/10 dark:bg-white/5 dark:hover:bg-white/10 rounded-xl p-2.5 flex items-center justify-center gap-2 text-xs font-semibold text-[#1E2927] dark:text-[#E5EBEA] transition-all border border-[#0B3026]/10 dark:border-white/10 cursor-pointer"
+                                            >
+                                                {donationExpanded ? (
+                                                    <>{t('profile_donation_qr_collapse')} <ChevronUp className="w-4 h-4" /></>
+                                                ) : (
+                                                    <>{t('profile_donation_qr_expand')} <ChevronDown className="w-4 h-4" /></>
+                                                )}
+                                            </button>
+
+                                            {donationExpanded && (
+                                                <div className="bg-[#F6F5EE]/80 dark:bg-[#121A18]/80 rounded-xl p-4 text-center mt-3 border border-[#0B3026]/10 dark:border-white/10">
+                                                    <Image
+                                                        src="/donation-qr.png"
+                                                        alt="Donation QR Code"
+                                                        width={180}
+                                                        height={180}
+                                                        className="mx-auto rounded-lg shadow-sm"
+                                                    />
+                                                    <p className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mt-2 mb-3">
+                                                        {t('profile_donation_scan_hint')}
+                                                    </p>
+
+                                                    <div className="text-left bg-white dark:bg-[#1E2927] p-3 rounded-xl border border-[#0B3026]/10 dark:border-white/10 mb-3 shadow-2xs">
+                                                        <h4 className="text-xs font-bold text-[#1E2927] dark:text-[#E5EBEA] mb-1 flex items-center gap-1.5">
+                                                            <Smartphone className="w-3.5 h-3.5 text-[#E56E25]" />
+                                                            {t('profile_donation_phone_pay')} <span className="text-[#0B3026]/50 dark:text-white/50 font-normal">(代碼 812)</span>
+                                                        </h4>
+                                                        <p className="text-[10px] text-[#0B3026]/70 dark:text-[#88A29A] mb-2 leading-relaxed">
+                                                            {t('profile_donation_phone_desc')}
+                                                        </p>
+                                                        <div className="flex items-center gap-2">
+                                                            <code className="bg-[#F6F5EE] dark:bg-[#121A18] border border-[#0B3026]/10 dark:border-white/10 px-2 py-1.5 rounded-lg text-xs font-mono text-[#1E2927] dark:text-[#E5EBEA] flex-1 text-center tracking-wider font-bold">
+                                                                0908879076
+                                                            </code>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                className="h-8 w-8 p-0 shrink-0 border-[#0B3026]/10 dark:border-white/10 hover:bg-[#0B3026]/5 dark:hover:bg-white/10 rounded-lg"
+                                                                onClick={() => {
+                                                                    navigator.clipboard.writeText("0908879076")
+                                                                    toast.success(t('profile_key_copied'))
+                                                                }}
+                                                                title={t('profile_copy_key')}
+                                                            >
+                                                                <Copy className="w-3.5 h-3.5 text-[#0B3026]/70 dark:text-[#88A29A]" />
+                                                            </Button>
+                                                        </div>
+                                                    </div>
+
+                                                    <p className="text-[10px] text-[#0B3026]/50 dark:text-white/50 mt-1">
+                                                        {t('profile_donation_pharmacist')}
                                                     </p>
                                                 </div>
                                             )}
                                         </div>
-                                    </DialogDescription>
-                                </DialogHeader>
-                                <DialogFooter className="mt-4">
-                                    <Button 
-                                        variant="outline" 
-                                        onClick={() => setMemoryToDelete(null)}
-                                        disabled={isDeletingMemory}
-                                    >
-                                        {t('cancel')}
-                                    </Button>
-                                    <Button
-                                        variant="destructive"
-                                        onClick={() => handleConfirmDeleteMemory()}
-                                        disabled={isDeletingMemory}
-                                        className="min-w-25"
-                                    >
-                                        {isDeletingMemory ? (
-                                            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t('profile_memory_deleting')}</>
-                                        ) : (
-                                            <>{t('profile_pref_delete')}</>
-                                        )}
-                                    </Button>
-                                </DialogFooter>
-                            </DialogContent>
-                        </Dialog>
+                                    )
+                                })()}
 
-                        {/* 🆕 POI 推薦偏好設定 */}
-                        <Separator />
-                        <div className="p-4 space-y-3">
-                            <div className="flex items-center gap-2 mb-2">
-                                <Globe className="w-5 h-5 text-blue-500" />
-                                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{t('poi_pref_title')}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <Label htmlFor="pref-rating" className="text-sm text-slate-600 dark:text-slate-300">{t('poi_pref_rating')}</Label>
-                                <Switch
-                                    id="pref-rating"
-                                    checked={poiPreferences.prefer_rating}
-                                    onCheckedChange={(checked) => {
-                                        const newPrefs = { ...poiPreferences, prefer_rating: checked }
-                                        setPoiPreferences(newPrefs)
-                                        localStorage.setItem("poi_preferences", JSON.stringify(newPrefs))
-                                    }}
-                                />
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <Label htmlFor="pref-distance" className="text-sm text-slate-600 dark:text-slate-300">{t('poi_pref_distance')}</Label>
-                                <Switch
-                                    id="pref-distance"
-                                    checked={poiPreferences.prefer_distance}
-                                    onCheckedChange={(checked) => {
-                                        const newPrefs = { ...poiPreferences, prefer_distance: checked }
-                                        setPoiPreferences(newPrefs)
-                                        localStorage.setItem("poi_preferences", JSON.stringify(newPrefs))
-                                    }}
-                                />
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <Label htmlFor="pref-price" className="text-sm text-slate-600 dark:text-slate-300">{t('poi_pref_price')}</Label>
-                                <Switch
-                                    id="pref-price"
-                                    checked={poiPreferences.prefer_price}
-                                    onCheckedChange={(checked) => {
-                                        const newPrefs = { ...poiPreferences, prefer_price: checked }
-                                        setPoiPreferences(newPrefs)
-                                        localStorage.setItem("poi_preferences", JSON.stringify(newPrefs))
-                                    }}
-                                />
+                                {/* Card 2: 帳號復原金鑰 (Tabiji Paper Card) */}
+                                <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl p-5 shadow-xs border border-[#0B3026]/10 dark:border-white/10 relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 p-3 opacity-10 text-[#0B3026] dark:text-white pointer-events-none select-none">
+                                        <Shield className="w-16 h-16" />
+                                    </div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <Shield className="w-4 h-4 text-[#E56E25]" />
+                                        <h3 className="text-xs font-bold text-[#0B3026]/60 dark:text-[#88A29A] uppercase tracking-wider">{t('account_recovery_key')}</h3>
+                                    </div>
+                                    <p className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mb-3 leading-relaxed">
+                                        {t('recovery_key_desc')}
+                                    </p>
+                                    <div className="bg-[#F6F5EE] dark:bg-[#121A18] rounded-xl p-3 flex items-center justify-between border border-[#0B3026]/10 dark:border-white/10">
+                                        <code className="text-xs font-mono text-[#E56E25] truncate max-w-50 font-semibold">
+                                            {typeof window !== 'undefined' ? localStorage.getItem("user_uuid") || "Loading..." : "Loading..."}
+                                        </code>
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg"
+                                            onClick={() => {
+                                                const uuid = localStorage.getItem("user_uuid") || "";
+                                                if (navigator.clipboard && navigator.clipboard.writeText) {
+                                                    navigator.clipboard.writeText(uuid);
+                                                    toast.success(t('code_copied'));
+                                                } else {
+                                                    const textArea = document.createElement("textarea");
+                                                    textArea.value = uuid;
+                                                    document.body.appendChild(textArea);
+                                                    textArea.select();
+                                                    document.execCommand('copy');
+                                                    document.body.removeChild(textArea);
+                                                    toast.success(t('code_copied'));
+                                                }
+                                            }}
+                                        >
+                                            <Copy className="w-3.5 h-3.5 mr-1 text-[#0B3026]/70 dark:text-[#88A29A]" /> {t('copy')}
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                {/* Bento Group 1: 外觀與顯示 */}
+                                <div className="space-y-2">
+                                    <h3 className="text-xs font-bold text-[#0B3026]/60 dark:text-[#88A29A] uppercase tracking-wider px-1">
+                                        {zh ? "外觀與顯示" : "Appearance & Display"}
+                                    </h3>
+                                    <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl border border-[#0B3026]/10 dark:border-white/10 overflow-hidden shadow-xs divide-y divide-[#0B3026]/5 dark:divide-white/5">
+                                        <MenuItem icon={Globe} label={t('language')} value={lang === 'zh' ? '繁體中文' : 'English'} onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')} />
+
+                                        {/* 🌙 Dark Mode Toggle */}
+                                        <div className="flex items-center justify-between p-4 text-[#1E2927] dark:text-[#E5EBEA]">
+                                            <div className="flex items-center gap-3">
+                                                {isDark ? <Moon className="w-5 h-5 text-indigo-400" /> : <Sun className="w-5 h-5 text-amber-500" />}
+                                                <span className="text-sm font-medium">{t('profile_theme')}</span>
+                                            </div>
+                                            <Switch checked={isDark} onCheckedChange={toggleDark} />
+                                        </div>
+
+                                        {/* 🎨 Accent Color Selector */}
+                                        <div className="p-4 text-[#1E2927] dark:text-[#E5EBEA]">
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <Palette className="w-5 h-5 text-[#0B3026]/60 dark:text-[#88A29A]" />
+                                                <span className="text-sm font-medium">{t('profile_accent_color')}</span>
+                                            </div>
+                                            <div className="flex gap-2 ml-8">
+                                                {(Object.keys(ACCENT_COLORS) as AccentColor[]).map(color => (
+                                                    <button
+                                                        key={color}
+                                                        onClick={() => setAccentColor(color)}
+                                                        className={cn(
+                                                            "w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all",
+                                                            `bg-linear-to-br ${ACCENT_COLORS[color].gradient}`,
+                                                            accentColor === color
+                                                                ? "ring-2 ring-offset-2 ring-[#0B3026] dark:ring-white scale-110"
+                                                                : "opacity-70 hover:opacity-100"
+                                                        )}
+                                                        title={ACCENT_COLORS[color].name}
+                                                    >
+                                                        {accentColor === color && "✓"}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* 🔤 Font Size / Text Scale Adjustment */}
+                                        <div className="p-4 text-[#1E2927] dark:text-[#E5EBEA]">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center gap-3">
+                                                    <Type className="w-5 h-5 text-[#0B3026]/60 dark:text-[#88A29A]" />
+                                                    <div className="flex flex-col">
+                                                        <span className="text-sm font-medium">{t('profile_font_size')}</span>
+                                                        <span className="text-[10px] text-[#0B3026]/60 dark:text-[#88A29A] font-normal">{t('profile_font_size_desc')}</span>
+                                                    </div>
+                                                </div>
+                                                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#0B3026]/5 dark:bg-white/10 text-[#0B3026] dark:text-[#E5EBEA]">
+                                                    {fontScale}% · {zh ? FONT_SCALE_TIERS[fontScale].labelZh : FONT_SCALE_TIERS[fontScale].labelEn}
+                                                </span>
+                                            </div>
+
+                                            {/* 📱 即時預覽卡 */}
+                                            <div className="p-3 mb-4 rounded-xl bg-[#F6F5EE]/80 dark:bg-[#121A18]/80 border border-[#0B3026]/10 dark:border-white/10 shadow-2xs transition-all">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="font-bold text-[#1E2927] dark:text-[#E5EBEA] text-sm">
+                                                        {t('profile_font_preview_title')}
+                                                    </span>
+                                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-700 dark:text-indigo-300">
+                                                        {t('profile_font_preview_tag')}
+                                                    </span>
+                                                </div>
+                                                <p className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mt-1">
+                                                    {t('profile_font_preview_subtitle')}
+                                                </p>
+                                            </div>
+
+                                            {/* 🎚️ 4 段式分段步進器 */}
+                                            <div 
+                                                className="flex items-center justify-between gap-3 px-2"
+                                                role="radiogroup"
+                                                aria-label={t('profile_font_size')}
+                                            >
+                                                <span className="text-xs font-bold text-[#0B3026]/50 dark:text-white/50 select-none" aria-hidden="true">A</span>
+                                                <div className="relative flex-1 flex items-center justify-between py-2">
+                                                    <div className="absolute left-2 right-2 h-1.5 bg-[#0B3026]/10 dark:bg-white/10 rounded-full" />
+                                                    {(() => {
+                                                        const minScale = VALID_FONT_SCALES[0]
+                                                        const maxScale = VALID_FONT_SCALES[VALID_FONT_SCALES.length - 1]
+                                                        const progressRatio = maxScale > minScale ? (fontScale - minScale) / (maxScale - minScale) : 0
+                                                        return (
+                                                            <div
+                                                                className="absolute left-2 h-1.5 rounded-full transition-all duration-200 bg-[#E56E25]"
+                                                                style={{
+                                                                    width: `${progressRatio * 100}%`
+                                                                }}
+                                                            />
+                                                        )
+                                                    })()}
+                                                    {VALID_FONT_SCALES.map((scale) => {
+                                                        const isSelected = fontScale === scale
+                                                        return (
+                                                            <button
+                                                                key={scale}
+                                                                type="button"
+                                                                role="radio"
+                                                                aria-checked={isSelected}
+                                                                onClick={() => {
+                                                                    haptic.selection()
+                                                                    setFontScale(scale)
+                                                                }}
+                                                                className={cn(
+                                                                    "relative z-10 w-6 h-6 rounded-full flex items-center justify-center transition-all cursor-pointer focus:outline-hidden",
+                                                                    isSelected
+                                                                        ? "bg-white dark:bg-[#1E2927] border-2 border-[#E56E25] shadow-md scale-115"
+                                                                        : "bg-[#0B3026]/20 dark:bg-white/20 hover:bg-[#0B3026]/40 dark:hover:bg-white/40 scale-90"
+                                                                )}
+                                                                aria-label={`${scale}% - ${zh ? FONT_SCALE_TIERS[scale].labelZh : FONT_SCALE_TIERS[scale].labelEn}`}
+                                                                title={`${scale}%`}
+                                                            >
+                                                                {isSelected && <span className="w-2 h-2 rounded-full bg-[#E56E25]" />}
+                                                            </button>
+                                                        )
+                                                    })}
+                                                </div>
+                                                <span className="text-base font-bold text-[#1E2927] dark:text-[#E5EBEA] select-none" aria-hidden="true">A</span>
+                                            </div>
+
+                                            <div className="flex justify-between text-[11px] text-[#0B3026]/60 dark:text-[#88A29A] px-1 mt-1 font-medium select-none">
+                                                {VALID_FONT_SCALES.map((scale) => (
+                                                    <span
+                                                        key={scale}
+                                                        className={cn(
+                                                            "transition-colors",
+                                                            fontScale === scale && "text-[#E56E25] font-bold"
+                                                        )}
+                                                    >
+                                                        {zh ? FONT_SCALE_TIERS[scale].labelZh : FONT_SCALE_TIERS[scale].labelEn}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Bento Group 2: AI 智慧核心 */}
+                                <div className="space-y-2">
+                                    <h3 className="text-xs font-bold text-[#0B3026]/60 dark:text-[#88A29A] uppercase tracking-wider px-1">
+                                        {zh ? "AI 智慧核心" : "AI Intelligence"}
+                                    </h3>
+                                    <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl border border-[#0B3026]/10 dark:border-white/10 overflow-hidden shadow-xs divide-y divide-[#0B3026]/5 dark:divide-white/5">
+                                        {/* 🧠 AI Adaptive Memory Section */}
+                                        <div className="p-4">
+                                            <div className="flex items-center justify-between mb-4">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                                                        <Brain className="w-5 h-5 text-blue-500" />
+                                                    </div>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-sm font-bold text-[#1E2927] dark:text-[#E5EBEA]">{t('profile_ai_memory')}</span>
+                                                        <span className="text-[10px] text-[#0B3026]/60 dark:text-[#88A29A] font-medium">{t('profile_ai_memory_desc')}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    {isLoadPrefs && <Loader2 className="w-4 h-4 animate-spin text-[#0B3026]/40 dark:text-white/40" />}
+                                                    {preferences.length > 0 && (
+                                                        <button
+                                                            onClick={() => setMemoryExpanded(!memoryExpanded)}
+                                                            className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-all text-[#0B3026]/60 dark:text-[#88A29A] cursor-pointer"
+                                                            title={memoryExpanded ? "收合" : "展開全部"}
+                                                        >
+                                                            {memoryExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {preferences.length === 0 ? (
+                                                <div className="ml-11 py-2 text-[11px] text-[#0B3026]/60 dark:text-[#88A29A] italic">
+                                                    {isLoadPrefs ? t('loading') : t('profile_ai_memory_empty')}
+                                                </div>
+                                            ) : (
+                                                <div className="relative group/memory">
+                                                    <div className={cn(
+                                                        "ml-11 flex flex-wrap gap-2 transition-all duration-500 ease-in-out relative",
+                                                        !memoryExpanded && preferences.length > 3 ? "max-h-24 overflow-hidden" : "max-h-250"
+                                                    )}>
+                                                        {preferences.map((pref) => (
+                                                            <div
+                                                                key={pref.id}
+                                                                className="group relative flex items-center gap-2 px-3 py-1.5 bg-[#F6F5EE] dark:bg-[#121A18] border border-[#0B3026]/10 dark:border-white/10 rounded-xl hover:border-blue-300 dark:hover:border-blue-800 transition-all"
+                                                            >
+                                                                <div className="flex flex-col">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <span className="text-[9px] font-bold uppercase tracking-wider text-blue-500">
+                                                                            {t(`profile_pref_${pref.category}` as TranslationKey) || pref.category}
+                                                                        </span>
+                                                                        <span className="text-xs font-medium text-[#1E2927] dark:text-[#E5EBEA]">{pref.preference}</span>
+                                                                    </div>
+                                                                    {pref.reasoning && (
+                                                                        <span className="text-[8px] text-[#0B3026]/60 dark:text-[#88A29A] leading-tight max-w-37.5 truncate">{pref.reasoning}</span>
+                                                                    )}
+                                                                </div>
+                                                                <button
+                                                                    onClick={() => setMemoryToDelete(pref)}
+                                                                    className="opacity-40 lg:opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/10 rounded-md transition-all cursor-pointer"
+                                                                    title={t('profile_pref_delete')}
+                                                                >
+                                                                    <Trash2 className="w-4 h-4 text-red-400" />
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+
+                                                    {!memoryExpanded && preferences.length > 3 && (
+                                                        <div className="absolute bottom-0 left-0 right-0 h-12 bg-linear-to-t from-white dark:from-[#1E2927] to-transparent pointer-events-none z-10" />
+                                                    )}
+
+                                                    {preferences.length > 3 && (
+                                                        <div className={cn(
+                                                            "ml-11 mt-2 flex justify-start transition-opacity duration-300",
+                                                            memoryExpanded ? "opacity-100" : "opacity-70 group-hover/memory:opacity-100"
+                                                        )}>
+                                                            <button
+                                                                onClick={() => setMemoryExpanded(!memoryExpanded)}
+                                                                className="text-[10px] font-bold text-blue-500 hover:text-blue-600 flex items-center gap-1 py-1 cursor-pointer"
+                                                            >
+                                                                {memoryExpanded ? (
+                                                                    <><ChevronUp className="w-3 h-3" /> {zh ? "收起" : "Collapse"}</>
+                                                                ) : (
+                                                                    <><ChevronDown className="w-3 h-3" /> {zh ? `瀏覽全部 (${preferences.length})` : `View All (${preferences.length})`}</>
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Gemini API Key */}
+                                        <div 
+                                            onClick={() => setApiKeyDialogOpen(true)}
+                                            className="flex items-center justify-between p-4 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-[#1E2927] dark:text-[#E5EBEA]"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <Sparkles className="w-5 h-5 text-amber-500" />
+                                                <span className="text-sm font-medium">{t('profile_gemini_api_key')}</span>
+                                            </div>
+                                            <span className={cn("text-xs px-2.5 py-1 rounded-full font-medium", hasApiKey ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20" : "bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20")}>
+                                                {hasApiKey ? t('profile_key_active') : t('profile_key_inactive')}
+                                            </span>
+                                        </div>
+
+                                        <AIKeyDialog
+                                            open={apiKeyDialogOpen}
+                                            onOpenChange={setApiKeyDialogOpen}
+                                        />
+
+                                        {/* 🧠 AI 記憶移除確認視窗 */}
+                                        <Dialog 
+                                            open={!!memoryToDelete} 
+                                            onOpenChange={() => {
+                                                if (!isDeletingMemory) setMemoryToDelete(null)
+                                            }}
+                                        >
+                                            <DialogContent className="sm:max-w-100 bg-white dark:bg-[#1E2927] border-[#0B3026]/10 dark:border-white/10">
+                                                <DialogHeader>
+                                                    <DialogTitle className="flex items-center gap-2 text-red-600">
+                                                        <Brain className="w-5 h-5 text-blue-500" />
+                                                        {t('profile_memory_delete_confirm_title')}
+                                                    </DialogTitle>
+                                                    <DialogDescription asChild>
+                                                        <div className="text-left text-sm text-[#0B3026]/70 dark:text-[#88A29A] pt-2">
+                                                            {t('profile_memory_delete_confirm_desc')}
+                                                            {memoryToDelete && (
+                                                                <div className="mt-4 p-3 bg-[#F6F5EE] dark:bg-[#121A18] rounded-xl border border-[#0B3026]/10 dark:border-white/10">
+                                                                    <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block mb-1">
+                                                                        {t(`profile_pref_${memoryToDelete.category}` as TranslationKey) || memoryToDelete.category}
+                                                                    </span>
+                                                                    <p className="text-sm font-medium text-[#1E2927] dark:text-[#E5EBEA]">
+                                                                        &quot;{memoryToDelete.preference}&quot;
+                                                                    </p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </DialogDescription>
+                                                </DialogHeader>
+                                                <DialogFooter className="mt-4">
+                                                    <Button 
+                                                        variant="outline" 
+                                                        onClick={() => setMemoryToDelete(null)}
+                                                        disabled={isDeletingMemory}
+                                                        className="border-[#0B3026]/10 dark:border-white/10"
+                                                    >
+                                                        {t('cancel')}
+                                                    </Button>
+                                                    <Button
+                                                        variant="destructive"
+                                                        onClick={() => handleConfirmDeleteMemory()}
+                                                        disabled={isDeletingMemory}
+                                                        className="min-w-25 bg-red-600 hover:bg-red-700"
+                                                    >
+                                                        {isDeletingMemory ? (
+                                                            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t('profile_memory_deleting')}</>
+                                                        ) : (
+                                                            <>{t('profile_pref_delete')}</>
+                                                        )}
+                                                    </Button>
+                                                </DialogFooter>
+                                            </DialogContent>
+                                        </Dialog>
+
+                                        {/* 🆕 POI 推薦偏好設定 */}
+                                        <div className="p-4 space-y-3">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Globe className="w-5 h-5 text-blue-500" />
+                                                <span className="text-sm font-medium text-[#1E2927] dark:text-[#E5EBEA]">{t('poi_pref_title')}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <Label htmlFor="pref-rating" className="text-sm text-[#0B3026]/80 dark:text-[#88A29A]">{t('poi_pref_rating')}</Label>
+                                                <Switch
+                                                    id="pref-rating"
+                                                    checked={poiPreferences.prefer_rating}
+                                                    onCheckedChange={(checked) => {
+                                                        const newPrefs = { ...poiPreferences, prefer_rating: checked }
+                                                        setPoiPreferences(newPrefs)
+                                                        localStorage.setItem("poi_preferences", JSON.stringify(newPrefs))
+                                                    }}
+                                                />
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <Label htmlFor="pref-distance" className="text-sm text-[#0B3026]/80 dark:text-[#88A29A]">{t('poi_pref_distance')}</Label>
+                                                <Switch
+                                                    id="pref-distance"
+                                                    checked={poiPreferences.prefer_distance}
+                                                    onCheckedChange={(checked) => {
+                                                        const newPrefs = { ...poiPreferences, prefer_distance: checked }
+                                                        setPoiPreferences(newPrefs)
+                                                        localStorage.setItem("poi_preferences", JSON.stringify(newPrefs))
+                                                    }}
+                                                />
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <Label htmlFor="pref-price" className="text-sm text-[#0B3026]/80 dark:text-[#88A29A]">{t('poi_pref_price')}</Label>
+                                                <Switch
+                                                    id="pref-price"
+                                                    checked={poiPreferences.prefer_price}
+                                                    onCheckedChange={(checked) => {
+                                                        const newPrefs = { ...poiPreferences, prefer_price: checked }
+                                                        setPoiPreferences(newPrefs)
+                                                        localStorage.setItem("poi_preferences", JSON.stringify(newPrefs))
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Bento Group 3: 系統與服務 */}
+                                <div className="space-y-2">
+                                    <h3 className="text-xs font-bold text-[#0B3026]/60 dark:text-[#88A29A] uppercase tracking-wider px-1">
+                                        {zh ? "系統與服務" : "System & Services"}
+                                    </h3>
+                                    <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl border border-[#0B3026]/10 dark:border-white/10 overflow-hidden shadow-xs divide-y divide-[#0B3026]/5 dark:divide-white/5">
+                                        {/* 🔔 推播通知開關 */}
+                                        {isSupported && (
+                                            <div 
+                                                className="flex items-center justify-between p-4 text-[#1E2927] dark:text-[#E5EBEA] cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                                                onClick={() => {
+                                                    if (permissionState === "denied") {
+                                                        setPushGuideOpen(true)
+                                                    }
+                                                }}
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <BellRing className="w-5 h-5 text-purple-500" />
+                                                    <div className="flex flex-col">
+                                                        <span className="text-sm font-medium">
+                                                            {zh ? "推播通知" : "Push Notifications"}
+                                                        </span>
+                                                        {permissionState === "denied" && (
+                                                            <span className="text-[10px] text-red-500 hover:underline">
+                                                                {zh ? "已在系統中封鎖 (點此查看解除指南)" : "Blocked in system (tap to view guide)"}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <Switch
+                                                    checked={isSubscribed}
+                                                    disabled={isPushLoading}
+                                                    className={`cursor-pointer ${permissionState === "denied" ? "opacity-60" : ""}`}
+                                                    onCheckedChange={async (checked) => {
+                                                        if (permissionState === "denied") {
+                                                            setPushGuideOpen(true)
+                                                            return
+                                                        }
+                                                        if (checked) {
+                                                            const ok = await subscribe()
+                                                            if (ok) {
+                                                                toast.success(zh ? "推播通知已開啟 🔔" : "Notifications enabled 🔔")
+                                                            } else {
+                                                                toast.error(zh ? "開啟推播失敗，請確認推播支援與服務狀態" : "Failed to enable notifications")
+                                                            }
+                                                        } else {
+                                                            await unsubscribe()
+                                                            toast.info(zh ? "推播通知已關閉" : "Notifications disabled")
+                                                        }
+                                                    }}
+                                                />
+                                            </div>
+                                        )}
+
+                                        <MenuItem 
+                                            icon={User} 
+                                            label={t('account_settings')} 
+                                            showChevron 
+                                            onClick={() => navigateToSubView('account')} 
+                                        />
+                                        <MenuItem 
+                                            icon={BookOpen} 
+                                            label={t('usage_guide')} 
+                                            showChevron 
+                                            onClick={() => navigateToSubView('guide')} 
+                                        />
+                                        <MenuItem icon={CreditCard} label={t('default_currency')} value="TWD (NT$)" />
+                                        <MenuItem 
+                                            icon={Mail} 
+                                            label={zh ? "聯絡開發者" : "Contact Developer"} 
+                                            showChevron 
+                                            onClick={() => setContactDialogOpen(true)} 
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* 登出按鈕 */}
+                                <Button 
+                                    variant="outline" 
+                                    className="w-full h-12 text-red-500 border-red-500/20 hover:bg-red-500/10 hover:text-red-600 rounded-2xl active:scale-98 transition-all cursor-pointer" 
+                                    onClick={handleLogout}
+                                >
+                                    <LogOut className="w-4 h-4 mr-2" /> {t('logout')}
+                                </Button>
                             </div>
                         </div>
-
-                        <Separator />
-                        {/* 🔔 推播通知開關 */}
-                        {isSupported && (
-                            <>
-                                <div 
-                                    className="flex items-center justify-between p-4 text-slate-700 dark:text-slate-200 cursor-pointer hover:bg-stone-50 dark:hover:bg-slate-800/40 transition-colors"
+                    </motion.div>
+                ) : subView === 'account' ? (
+                    <motion.div
+                        key="profile-account"
+                        initial={{ opacity: 0, x: "100%" }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: "100%" }}
+                        transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                        className="min-h-screen pb-32 bg-[#F6F5EE] dark:bg-[#121A18]"
+                    >
+                        <div className="w-full max-w-4xl lg:max-w-5xl mx-auto px-5 sm:px-8 pt-16 sm:pt-14">
+                            {/* 1. iOS Top Navigation Bar */}
+                            <div className="flex items-center justify-between mb-6">
+                                <button
+                                    type="button"
                                     onClick={() => {
-                                        if (permissionState === "denied") {
-                                            setPushGuideOpen(true)
+                                        haptic.selection()
+                                        setSubView('main')
+                                    }}
+                                    className="w-10 h-10 -ml-1 rounded-full flex items-center justify-center bg-white/80 dark:bg-[#1E2927]/80 border border-[#0B3026]/10 dark:border-white/10 text-[#1E2927] dark:text-[#E5EBEA] hover:bg-black/5 dark:hover:bg-white/5 active:scale-90 transition-all shadow-2xs cursor-pointer select-none"
+                                    aria-label="Back"
+                                >
+                                    <ChevronLeft className="w-5 h-5 -ml-0.5" />
+                                </button>
+                                <h2 className="text-base font-bold text-[#1E2927] dark:text-[#E5EBEA]">
+                                    {t('account_settings')}
+                                </h2>
+                                <div className="w-10" />
+                            </div>
+
+                            {/* 2. iOS Group 1: 帳號身分與復原碼 (Tabiji Paper Card) */}
+                            <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl p-4 mb-4 shadow-xs border border-[#0B3026]/10 dark:border-white/10">
+                                <div className="text-xs font-bold text-[#0B3026]/60 dark:text-[#88A29A] uppercase tracking-wider mb-2">
+                                    {t('account_uuid') || '帳號識別碼 (UUID)'}
+                                </div>
+                                <div className="p-3 bg-[#F6F5EE] dark:bg-[#121A18] rounded-xl font-mono text-xs text-[#1E2927] dark:text-[#E5EBEA] break-all border border-[#0B3026]/10 dark:border-white/10 mb-2 select-all">
+                                    {typeof window !== 'undefined' ? localStorage.getItem("user_uuid") || "guest-session" : "guest-session"}
+                                </div>
+                                <p className="text-[11px] text-[#0B3026]/70 dark:text-[#88A29A] mb-3 leading-relaxed">
+                                    {t('account_uuid_hint') || '用於在不同裝置復原帳號或備份資料'}
+                                </p>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="w-full h-10 rounded-xl text-xs font-medium border-[#0B3026]/10 dark:border-white/10 active:scale-98"
+                                    onClick={async () => {
+                                        const uuid = localStorage.getItem("user_uuid")
+                                        if (uuid) {
+                                            await navigator.clipboard.writeText(uuid)
+                                            haptic.tap()
+                                            setCopiedUuid(true)
+                                            toast.success(t('account_copied') || '已複製識別碼！')
+                                            setTimeout(() => setCopiedUuid(false), 2000)
                                         }
                                     }}
                                 >
-                                    <div className="flex items-center gap-3">
-                                        <BellRing className="w-5 h-5 text-purple-500" />
-                                        <div className="flex flex-col">
-                                            <span className="text-sm font-medium">
-                                                {zh ? "推播通知" : "Push Notifications"}
-                                            </span>
-                                            {permissionState === "denied" && (
-                                                <span className="text-[10px] text-red-500 hover:underline">
-                                                    {zh ? "已在系統中封鎖 (點此查看解除指南)" : "Blocked in system (tap to view guide)"}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <Switch
-                                        checked={isSubscribed}
-                                        disabled={isPushLoading}
-                                        className={`cursor-pointer ${permissionState === "denied" ? "opacity-60" : ""}`}
-                                        onCheckedChange={async (checked) => {
-                                            if (permissionState === "denied") {
-                                                setPushGuideOpen(true)
-                                                return
-                                            }
-                                            if (checked) {
-                                                const ok = await subscribe()
-                                                if (ok) {
-                                                    toast.success(zh ? "推播通知已開啟 🔔" : "Notifications enabled 🔔")
-                                                } else {
-                                                    toast.error(zh ? "開啟推播失敗，請確認推播支援與服務狀態" : "Failed to enable notifications")
-                                                }
-                                            } else {
-                                                await unsubscribe()
-                                                toast.info(zh ? "推播通知已關閉" : "Notifications disabled")
-                                            }
-                                        }}
-                                    />
+                                    {copiedUuid ? <Check className="w-3.5 h-3.5 mr-1.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
+                                    {copiedUuid ? (t('account_copied') || '已複製') : (t('account_copy_uuid') || '複製識別碼')}
+                                </Button>
+                            </div>
+
+                            {/* 3. iOS Group 2: 資料與快取維護 (Tabiji Paper Card) */}
+                            <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl overflow-hidden mb-4 shadow-xs border border-[#0B3026]/10 dark:border-white/10">
+                                <div className="px-4 pt-3 pb-1 text-xs font-bold text-[#0B3026]/60 dark:text-[#88A29A] uppercase tracking-wider">
+                                    {t('cache_and_data') || '資料維護'}
                                 </div>
-                                <Separator />
-                            </>
-                        )}
-                        <MenuItem 
-                            icon={User} 
-                            label={t('account_settings')} 
-                            showChevron 
-                            onClick={() => navigateToSubView('account')} 
-                        />
-                        <Separator />
-                        <MenuItem 
-                            icon={BookOpen} 
-                            label={t('usage_guide')} 
-                            showChevron 
-                            onClick={() => navigateToSubView('guide')} 
-                        />
-                        <Separator />
-                        {/* 📱 App 版本 (已依需求隱藏) */}
-                        {/* <MenuItem icon={Smartphone} label={t('app_version')} value="v1.0.0" /> */}
-                        {/* <Separator /> */}
-                        <MenuItem icon={CreditCard} label={t('default_currency')} value="TWD (NT$)" />
-                        <Separator />
-                        <MenuItem 
-                            icon={Mail} 
-                            label={zh ? "聯絡開發者" : "Contact Developer"} 
-                            showChevron 
-                            onClick={() => setContactDialogOpen(true)} 
-                        />
-                    </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        haptic.error()
+                                        handleClearCache()
+                                    }}
+                                    className="w-full flex items-center justify-between p-4 text-left hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer border-none bg-transparent outline-hidden"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <Trash2 className="w-4 h-4 text-amber-500" />
+                                        <span className="text-sm font-medium text-[#1E2927] dark:text-[#E5EBEA]">
+                                            {t('clear_cache')}
+                                        </span>
+                                    </div>
+                                    <ChevronRight className="w-4 h-4 text-[#0B3026]/40 dark:text-[#88A29A]/50" />
+                                </button>
+                            </div>
 
-                    <Button variant="outline" className="w-full h-12 text-red-500 border-red-100 dark:border-red-900/40 hover:bg-red-50 hover:text-red-600 mt-4 active:scale-98" onClick={handleLogout}>
-                        <LogOut className="w-4 h-4 mr-2" /> {t('logout')}
-                    </Button>
-                    <div className="h-20" />
-                </div>
-            </motion.div>
-        ) : subView === 'account' ? (
-            <motion.div
-                key="profile-account"
-                initial={{ opacity: 0, x: "100%" }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: "100%" }}
-                transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                className="min-h-screen pb-32 bg-stone-50 dark:bg-slate-900 px-4 pt-16 sm:pt-14"
-            >
-                {/* 1. iOS Top Navigation Bar */}
-                <div className="flex items-center justify-between mb-6">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            haptic.selection()
-                            setSubView('main')
-                        }}
-                        className="w-10 h-10 -ml-1 rounded-full flex items-center justify-center bg-white/80 dark:bg-slate-800/80 border border-stone-200/60 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 hover:bg-stone-100 dark:hover:bg-slate-700 active:scale-90 transition-all shadow-2xs cursor-pointer select-none"
-                        aria-label="Back"
-                    >
-                        <ChevronLeft className="w-5 h-5 -ml-0.5" />
-                    </button>
-                    <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
-                        {t('account_settings')}
-                    </h2>
-                    <div className="w-10" />
-                </div>
+                            {/* 4. iOS Group 3: 危險操作區 (Tabiji Paper Card) */}
+                            <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl overflow-hidden shadow-xs border border-red-500/20 mb-6">
+                                <div className="px-4 pt-3 pb-1 text-xs font-bold text-rose-500 uppercase tracking-wider">
+                                    {t('danger_zone') || '危險操作'}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        haptic.error()
+                                        setDeleteDialogOpen(true)
+                                    }}
+                                    className="w-full flex items-center justify-between p-4 text-left hover:bg-red-500/10 transition-colors text-red-600 cursor-pointer border-none bg-transparent outline-hidden"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <AlertTriangle className="w-4 h-4 text-red-500" />
+                                        <span className="text-sm font-medium">
+                                            {t('profile_delete_all_data')}
+                                        </span>
+                                    </div>
+                                    <span className="text-xs text-red-400 font-mono">GDPR</span>
+                                </button>
+                            </div>
 
-                {/* 2. iOS Group 1: 帳號身分與復原碼 */}
-                <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 mb-4 shadow-xs border border-stone-200/60 dark:border-slate-700/60">
-                    <div className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
-                        {t('account_uuid') || '帳號識別碼 (UUID)'}
-                    </div>
-                    <div className="p-3 bg-stone-50 dark:bg-slate-900 rounded-xl font-mono text-xs text-slate-700 dark:text-slate-300 break-all border border-stone-200 dark:border-slate-700 mb-2 select-all">
-                        {typeof window !== 'undefined' ? localStorage.getItem("user_uuid") || "guest-session" : "guest-session"}
-                    </div>
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-3 leading-relaxed">
-                        {t('account_uuid_hint') || '用於在不同裝置復原帳號或備份資料'}
-                    </p>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full h-10 rounded-xl text-xs font-medium dark:border-slate-700 active:scale-98"
-                        onClick={async () => {
-                            const uuid = localStorage.getItem("user_uuid")
-                            if (uuid) {
-                                await navigator.clipboard.writeText(uuid)
-                                haptic.tap()
-                                setCopiedUuid(true)
-                                toast.success(t('account_copied') || '已複製識別碼！')
-                                setTimeout(() => setCopiedUuid(false), 2000)
-                            }
-                        }}
-                    >
-                        {copiedUuid ? <Check className="w-3.5 h-3.5 mr-1.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
-                        {copiedUuid ? (t('account_copied') || '已複製') : (t('account_copy_uuid') || '複製識別碼')}
-                    </Button>
-                </div>
-
-                {/* 3. iOS Group 2: 資料與快取維護 */}
-                <div className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden mb-4 shadow-xs border border-stone-200/60 dark:border-slate-700/60">
-                    <div className="px-4 pt-3 pb-1 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                        {t('cache_and_data') || '資料維護'}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            haptic.error()
-                            handleClearCache()
-                        }}
-                        className="w-full flex items-center justify-between p-4 text-left hover:bg-stone-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer border-none bg-transparent outline-hidden active:bg-stone-100 dark:active:bg-slate-700"
-                    >
-                        <div className="flex items-center gap-3">
-                            <Trash2 className="w-4 h-4 text-amber-500" />
-                            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                                {t('clear_cache')}
-                            </span>
+                            {/* 5. 帳號登出 */}
+                            <Button 
+                                variant="outline" 
+                                className="w-full h-12 text-red-500 border-red-500/20 hover:bg-red-500/10 hover:text-red-600 rounded-2xl active:scale-98 transition-all cursor-pointer" 
+                                onClick={handleLogout}
+                            >
+                                <LogOut className="w-4 h-4 mr-2" /> {t('logout')}
+                            </Button>
                         </div>
-                        <ChevronRight className="w-4 h-4 text-slate-400/60" />
-                    </button>
-                </div>
-
-                {/* 4. iOS Group 3: 危險操作區 */}
-                <div className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden shadow-xs border border-red-100 dark:border-red-950/50 mb-6">
-                    <div className="px-4 pt-3 pb-1 text-xs font-bold text-rose-400 uppercase tracking-wider">
-                        {t('danger_zone') || '危險操作'}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            haptic.error()
-                            setDeleteDialogOpen(true)
-                        }}
-                        className="w-full flex items-center justify-between p-4 text-left hover:bg-red-50/50 dark:hover:bg-red-950/20 transition-colors text-red-600 cursor-pointer border-none bg-transparent outline-hidden active:bg-red-50 dark:active:bg-red-950/40"
+                    </motion.div>
+                ) : (
+                    <motion.div
+                        key="profile-guide"
+                        initial={{ opacity: 0, x: "100%" }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: "100%" }}
+                        transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                        className="min-h-screen pb-32 bg-[#F6F5EE] dark:bg-[#121A18]"
                     >
-                        <div className="flex items-center gap-3">
-                            <AlertTriangle className="w-4 h-4 text-red-500" />
-                            <span className="text-sm font-medium">
-                                {t('profile_delete_all_data')}
-                            </span>
+                        <div className="w-full max-w-4xl lg:max-w-5xl mx-auto px-5 sm:px-8 pt-16 sm:pt-14">
+                            {/* 1. iOS Top Navigation Bar */}
+                            <div className="flex items-center justify-between mb-6">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        haptic.selection()
+                                        setSubView('main')
+                                    }}
+                                    className="w-10 h-10 -ml-1 rounded-full flex items-center justify-center bg-white/80 dark:bg-[#1E2927]/80 border border-[#0B3026]/10 dark:border-white/10 text-[#1E2927] dark:text-[#E5EBEA] hover:bg-black/5 dark:hover:bg-white/5 active:scale-90 transition-all shadow-2xs cursor-pointer select-none"
+                                    aria-label="Back"
+                                >
+                                    <ChevronLeft className="w-5 h-5 -ml-0.5" />
+                                </button>
+                                <h2 className="text-base font-bold text-[#1E2927] dark:text-[#E5EBEA]">
+                                    {t('usage_guide')}
+                                </h2>
+                                <div className="w-10" />
+                            </div>
+
+                            {/* 2. Usage Guide Content */}
+                            <UsageGuideContent />
                         </div>
-                        <span className="text-xs text-red-400 font-mono">GDPR</span>
-                    </button>
-                </div>
-
-                {/* 5. 帳號登出 */}
-                <Button 
-                    variant="outline" 
-                    className="w-full h-12 text-red-500 border-red-100 dark:border-red-900/40 hover:bg-red-50 hover:text-red-600 rounded-2xl active:scale-98" 
-                    onClick={handleLogout}
-                >
-                    <LogOut className="w-4 h-4 mr-2" /> {t('logout')}
-                </Button>
-            </motion.div>
-        ) : (
-            <motion.div
-                key="profile-guide"
-                initial={{ opacity: 0, x: "100%" }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: "100%" }}
-                transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                className="min-h-screen pb-32 bg-stone-50 dark:bg-slate-900 px-4 pt-16 sm:pt-14"
-            >
-                {/* 1. iOS Top Navigation Bar */}
-                <div className="flex items-center justify-between mb-6">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            haptic.selection()
-                            setSubView('main')
-                        }}
-                        className="w-10 h-10 -ml-1 rounded-full flex items-center justify-center bg-white/80 dark:bg-slate-800/80 border border-stone-200/60 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 hover:bg-stone-100 dark:hover:bg-slate-700 active:scale-90 transition-all shadow-2xs cursor-pointer select-none"
-                        aria-label="Back"
-                    >
-                        <ChevronLeft className="w-5 h-5 -ml-0.5" />
-                    </button>
-                    <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
-                        {t('usage_guide')}
-                    </h2>
-                    <div className="w-10" />
-                </div>
-
-                {/* 2. Usage Guide Content */}
-                <UsageGuideContent />
-            </motion.div>
-        )}
+                    </motion.div>
+                )}
     </AnimatePresence>
 
     {/* 🔴 刪除所有資料 (GDPR) Dialog */}
@@ -1593,11 +1571,22 @@ interface MenuItemProps {
 
 function MenuItem({ icon: Icon, label, value, isDestructive, showChevron, onClick }: MenuItemProps) {
     return (
-        <div className={cn("flex items-center justify-between p-4 cursor-pointer hover:bg-stone-50 dark:hover:bg-slate-700/50 transition-colors select-none", isDestructive ? "text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20" : "text-slate-700 dark:text-slate-200")} onClick={onClick}>
-            <div className="flex items-center gap-3"><Icon className={cn("w-5 h-5", isDestructive ? "text-red-400" : "text-slate-400 dark:text-slate-500")} /><span className="text-sm font-medium">{label}</span></div>
+        <div 
+            className={cn(
+                "flex items-center justify-between p-4 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors select-none", 
+                isDestructive 
+                    ? "text-red-500 hover:bg-red-500/10" 
+                    : "text-[#1E2927] dark:text-[#E5EBEA]"
+            )} 
+            onClick={onClick}
+        >
+            <div className="flex items-center gap-3">
+                <Icon className={cn("w-5 h-5", isDestructive ? "text-red-400" : "text-[#0B3026]/60 dark:text-[#88A29A]")} />
+                <span className="text-sm font-medium">{label}</span>
+            </div>
             <div className="flex items-center gap-2">
-                {value && <span className="text-xs text-slate-400 dark:text-slate-400 bg-stone-100 dark:bg-slate-700 px-2 py-1 rounded">{value}</span>}
-                {showChevron && <ChevronRight className="w-4 h-4 text-slate-400/70" />}
+                {value && <span className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] bg-[#0B3026]/5 dark:bg-white/10 px-2 py-1 rounded-md">{value}</span>}
+                {showChevron && <ChevronRight className="w-4 h-4 text-[#0B3026]/40 dark:text-[#88A29A]/50" />}
             </div>
         </div>
     )

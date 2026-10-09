@@ -137,11 +137,9 @@ async def run_single_validator(
         f"Analyze the code above and return ONLY the JSON result object."
     )
 
-    # Bypass Windows CreateProcessW 32,767 limit (WinError 206) via stdin streaming flag '-'
+    # Bypass Windows CreateProcessW 32,767 limit (WinError 206) via stdin streaming
     cmd = [
         "agy.exe",
-        "-p",
-        "-",
         "--print-timeout",
         f"{timeout_seconds}s",
         "--output-format",

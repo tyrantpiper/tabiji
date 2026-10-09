@@ -1,0 +1,33 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 3,
+  "confirmed_count": 0,
+  "dismissed_count": 3,
+  "inconclusive_count": 0,
+  "findings": [
+    {
+      "target_id": "frontend/components/views/itinerary-view.tsx#responsive_overflow",
+      "verdict": "DISMISSED",
+      "reasoning": "In Tailwind CSS, combining `w-full` with `max-w-4xl` and `lg:max-w-5xl` sets a fluid width (`width: 100%`) with an upper bound (`max-width: 56rem` and `max-width: 64rem` on desktop). It does not impose a minimum or fixed width. On mobile viewports (e.g. 375px–430px), the element scales to 100% of the container width without exceeding the viewport bounds, preventing horizontal overflow or scrollbar physics degradation. Under the presumption of correctness and CSS layout specifications, no layout overflow defect exists.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/info-view.tsx#layout_alignment_parity",
+      "verdict": "DISMISSED",
+      "reasoning": "Both the header section and the main content body container enforce identical horizontal layout constraints: 'max-w-xl mx-auto w-full px-5'. Neither container defines divergent breakpoint-specific width or padding overrides (e.g., md:max-w-2xl or sm:px-6), ensuring strict horizontal alignment parity and gutter consistency across all viewports. Additionally, the outer wrapper enforces 'overflow-x-hidden overscroll-x-none', preventing horizontal shifts.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/profile-view.tsx#touch_target_accessibility",
+      "verdict": "DISMISSED",
+      "reasoning": "Static review of the component reveals that the profile view container is constrained to `max-w-xl mx-auto w-full px-5` without any responsive expansion to `max-w-4xl` or `max-w-5xl`. Furthermore, interactive action buttons are explicitly sized at `w-11 h-11` (44x44px, meeting WCAG 2.5.5 targets), and row items have generous padding (`p-4`). Scaling does not dynamically shrink or degrade touch targets on larger viewports. The reported issue is unsubstantiated.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

@@ -4,7 +4,8 @@ import React, { useEffect, useMemo, ReactNode } from "react"
 import { SWRConfig } from "swr"
 import { get, set } from "idb-keyval"
 
-const SWR_PERSIST_KEY = "tabidachi_swr_persisted_cache"
+const SWR_PERSIST_KEY = "tabiji_swr_persisted_cache"
+const LEGACY_SWR_PERSIST_KEY = "tabidachi_swr_persisted_cache"
 
 interface SwrCachePayload {
     data?: unknown
@@ -55,7 +56,7 @@ function createPersistedCacheMap(): Map<string, SwrCachePayload> {
 /**
  * ⚡ 全域 SWR 持久化快取 Provider
  * 1. 記憶體同步 Map 緩衝，保障 React 19 首幀 0ms 零骨架屏秒閃
- * 2. 背景非同步預載與 Proxy 防抖寫回 IndexedDB
+ * 2. 背景非同步預載與 Proxy 防抖寫回 IndexedDB (支援雙向回退升級)
  * 3. 呼叫 navigator.storage.persist() 申請 Safari 7 天免清理權限
  */
 export function IdbSwrProvider({ children }: { children: ReactNode }) {
@@ -72,19 +73,28 @@ export function IdbSwrProvider({ children }: { children: ReactNode }) {
             }).catch(() => {})
         }
 
-        // 🚀 從 IndexedDB 預熱歷史快照至記憶體 Map
-        get<Record<string, SwrCachePayload>>(SWR_PERSIST_KEY).then((stored) => {
-            if (stored && typeof stored === "object") {
-                Object.entries(stored).forEach(([key, val]) => {
-                    // 僅恢復無 Promise / 乾淨資料的項目
-                    if (val && typeof val === "object" && "data" in val && (val as { data?: unknown }).data !== undefined) {
-                        cacheMap.set(key, val)
-                    }
-                })
+        // 🚀 從 IndexedDB 預熱歷史快照至記憶體 Map (先查新 key，若無則回退查詢舊 key)
+        const loadCache = async () => {
+            try {
+                let stored = await get<Record<string, SwrCachePayload>>(SWR_PERSIST_KEY)
+                if (!stored || typeof stored !== "object") {
+                    stored = await get<Record<string, SwrCachePayload>>(LEGACY_SWR_PERSIST_KEY)
+                }
+
+                if (stored && typeof stored === "object") {
+                    Object.entries(stored).forEach(([key, val]) => {
+                        // 僅恢復無 Promise / 乾淨資料的項目
+                        if (val && typeof val === "object" && "data" in val && (val as { data?: unknown }).data !== undefined) {
+                            cacheMap.set(key, val)
+                        }
+                    })
+                }
+            } catch (err) {
+                console.warn("⚠️ [Storage] SWR Cache restore warning:", err)
             }
-        }).catch((err) => {
-            console.warn("⚠️ [Storage] SWR Cache restore warning:", err)
-        })
+        }
+
+        loadCache()
     }, [cacheMap])
 
     return (
@@ -99,3 +109,4 @@ export function IdbSwrProvider({ children }: { children: ReactNode }) {
         </SWRConfig>
     )
 }
+

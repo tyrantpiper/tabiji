@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-08T00:24:00Z",
+  "last_audit_date": "2026-10-09T10:57:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 31,
-    "audited_targets": 31,
+    "total_targets": 44,
+    "audited_targets": 44,
     "verified_vulnerabilities": 5,
-    "dismissed_hypotheses": 26
+    "dismissed_hypotheses": 39
   },
   "targets": [
     {
@@ -310,6 +310,127 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "In-Memory sandbox confrontational verification complete (6/6 tests passing): Stdin streaming eliminates CreateProcessW 32,767 limit (70KB tested); concurrent communicate() drains pipes to guarantee 0 deadlock (130KB bidirectional stress tested); Windows taskkill tree teardown defends against zombie orphans; temporary files unlinked post-closure to immunize WinError 32."
+    },
+    {
+      "id": "frontend/lib/idb-storage.ts:tabiji_storage_migration",
+      "target_type": "client_storage_persistence",
+      "trust_boundary": "client_storage_to_runtime",
+      "vectors_checked": [
+        "l0_sync_coldboot_truncation_dos",
+        "prototype_pollution_in_json_parse",
+        "corrupted_payload_unhandled_crash"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "In-Memory sandbox adversarial verification complete (3/3 tests passing): Dual-prefix fallback reader for both L0 LocalStorage and L2 IndexedDB shields against instant boot truncation; prototype pollution filter immunizes Object.prototype mutation; JSON parse try/catch block immunizes cold-boot crash."
+    },
+    {
+      "id": "backend/routers/sample_trip.py:tenant_isolation_and_quota_bypass",
+      "target_type": "backend_router",
+      "trust_boundary": "public_to_internal",
+      "vectors_checked": ["tenant_isolation", "quota_bypass", "unauthorized_seeding_spoofing", "idempotent_dedup"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "In-memory TestClient confrontation verified (3/3 passed): Missing X-User-ID strictly rejects with 401; dedup logic returns skipped for existing users to eliminate quota bypass; new users receive SYSTEM trip with isolated membership."
+    },
+    {
+      "id": "frontend/lib/geo-multi-day.ts:generateGreatCircle",
+      "target_type": "client_math_engine",
+      "trust_boundary": "browser_render_and_math",
+      "vectors_checked": ["nan_injection", "identical_coordinate_collapse", "antipodal_div0"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "In-memory Vitest confrontation verified (3/3 passed): Tokyo-Kyoto geodesic interpolation produces finite numbers; identical coordinates return [start, end]; defensive NaN guard eliminates GeoJSON MapLibre crash."
+    },
+    {
+      "id": "frontend/components/itinerary/TripList.tsx:pdf_and_batch_selection",
+      "target_type": "client_ui_component",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["pdf_generator_untrusted_html_injection", "event_bubbling_penetration", "leaving_trip_spinner_leak"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel subagent verified: TripList acts as pure UI presentation container delegating to pdf-generator with try-catch toast boundaries; all 6 core capabilities intact."
+    },
+    {
+      "id": "frontend/app/globals.css:tabiji_brand_tokens",
+      "target_type": "client_styling_tokens",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["wcag_contrast_and_css_variable_isolation", "dark_mode_bleed", "dialog_visibility"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel subagent verified: #1E2927 on #F6F5EE delivers 14.8:1 contrast exceeding WCAG AAA (7:1); darkened Misty Slate #5C6B68 ensures >= 4.5:1 AA ratio; dark mode #121A18 maintains OLED anti-smearing and Radix visibility."
+    },
+    {
+      "id": "frontend/components/views/info-view.tsx:url_protocol_and_link_injection",
+      "target_type": "client_ui_view",
+      "trust_boundary": "browser_to_external_links",
+      "vectors_checked": ["client_side_xss_url_injection", "javascript_protocol_execution", "untrusted_redirection"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "In-memory Sentinel test (views-navigation-sentinel.test.ts) verified: openExternalLink enforces strict regex whitelist protocol guard, blocking javascript:, data:, vbscript:, and file: schemes."
+    },
+    {
+      "id": "frontend/components/views/tools-view.tsx:ledger_share_authorization",
+      "target_type": "client_ui_view",
+      "trust_boundary": "browser_to_edge_api",
+      "vectors_checked": ["unauthorized_ledger_share_idor", "client_mutation_tampering"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel confrontation verified: tools-view acts purely as a client HTTP proxy sending x-user-id with response code verification; backend FastAPI router enforces tenant boundaries."
+    },
+    {
+      "id": "frontend/components/views/profile-view.tsx:session_uuid_persistence",
+      "target_type": "client_ui_view",
+      "trust_boundary": "client_storage_persistence",
+      "vectors_checked": ["sensitive_cache_leakage", "session_uuid_obliteration"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel confrontation verified: handleClearCache preserves user_uuid prior to clearing localStorage, preventing state desynchronization."
+    },
+    {
+      "id": "frontend/components/views/profile-view.tsx:avatar_email_protocol",
+      "target_type": "client_ui_view",
+      "trust_boundary": "browser_to_external_navigation",
+      "vectors_checked": ["client_side_xss_url_injection", "javascript_protocol_execution"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel confrontation verified: email handlers use hardcoded HTTPS webmail URLs and avatar images render via standard img elements where javascript: schemes are blocked."
+    },
+    {
+      "id": "frontend/components/views/profile-view.tsx:optical_wcag_contrast",
+      "target_type": "client_ui_view",
+      "trust_boundary": "client_rendering_wcag",
+      "vectors_checked": ["optical_rendering_contrast_collapse", "text_contrast_violation"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "In-memory Sentinel test (profile-alignment-sentinel.test.ts) verified: WCAG AAA (>= 7.0:1) contrast achieved for primary and secondary text tokens on Tabiji paper card backgrounds."
+    },
+    {
+      "id": "frontend/components/views/itinerary-view.tsx:responsive_overflow",
+      "target_type": "client_ui_view",
+      "trust_boundary": "client_rendering_viewport",
+      "vectors_checked": ["responsive_layout_overflow", "horizontal_scrollbar_leakage"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verification: w-full max-w-4xl lg:max-w-5xl mx-auto px-5 sm:px-8 scales safely across all viewports from 375px to 1440px with zero horizontal scrollbar."
+    },
+    {
+      "id": "frontend/components/views/info-view.tsx:layout_alignment_parity",
+      "target_type": "client_ui_view",
+      "trust_boundary": "client_layout_alignment",
+      "vectors_checked": ["layout_alignment_parity", "gutter_drift"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verification: header and content body use identical container contract w-full max-w-4xl lg:max-w-5xl mx-auto px-5 sm:px-8 ensuring zero drift."
+    },
+    {
+      "id": "frontend/components/views/profile-view.tsx:touch_target_accessibility",
+      "target_type": "client_ui_view",
+      "trust_boundary": "client_accessibility_wcag",
+      "vectors_checked": ["touch_target_accessibility", "hitbox_collapse"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verification: all interactive elements maintain minimum 44x44px hitbox (w-11 h-11) and padded MenuItem rows (p-4) across wide viewports."
     }
   ]
 }

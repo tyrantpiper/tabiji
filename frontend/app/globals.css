@@ -37,6 +37,13 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-tabiji-paper: var(--tabiji-paper);
+  --color-tabiji-dark: var(--tabiji-dark);
+  --color-tabiji-forest: var(--tabiji-forest);
+  --color-tabiji-amber: var(--tabiji-amber);
+  --color-tabiji-charcoal: var(--tabiji-charcoal);
+  --color-tabiji-slate: var(--tabiji-slate);
+  --color-tabiji-mist: var(--tabiji-mist);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -49,72 +56,93 @@
 :root {
   /* 🆕 Safe Area Bridge: exposes env() to JS via getComputedStyle */
   --sab: env(safe-area-inset-bottom, 0px);
-  --radius: 0.625rem;
-  --background: oklch(0.97 0.01 255);
-  --foreground: oklch(0.129 0.042 264.695);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.968 0.007 247.896);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
+  --radius: 0.75rem;
+
+  /* 🍃 Tabiji Wabi-Sabi Brand Palette Tokens */
+  --tabiji-paper: #F6F5EE;
+  --tabiji-dark: #121A18;
+  --tabiji-forest: #0B3026;
+  --tabiji-amber: #E56E25;
+  --tabiji-charcoal: #1E2927;
+  --tabiji-slate: #5C6B68;
+  --tabiji-mist: #EAE8DE;
+
+  /* Semantic UI Tokens mapped to authentic Tabiji Brand colors */
+  --background: #F6F5EE;
+  --foreground: #1E2927;
+  --card: #FFFFFF;
+  --card-foreground: #1E2927;
+  --popover: #FFFFFF;
+  --popover-foreground: #1E2927;
+  --primary: #0B3026;
+  --primary-foreground: #F6F5EE;
+  --secondary: #EAE8DE;
+  --secondary-foreground: #0B3026;
+  --muted: #EAE8DE;
+  --muted-foreground: #5C6B68;
+  --accent: #E56E25;
+  --accent-foreground: #FFFFFF;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.704 0.04 256.788);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.984 0.003 247.858);
-  --sidebar-foreground: oklch(0.129 0.042 264.695);
-  --sidebar-primary: oklch(0.208 0.042 265.755);
-  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.968 0.007 247.896);
-  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
-  --sidebar-border: oklch(0.929 0.013 255.508);
-  --sidebar-ring: oklch(0.704 0.04 256.788);
+  --border: rgba(11, 48, 38, 0.08);
+  --input: rgba(11, 48, 38, 0.12);
+  --ring: #0B3026;
+  --chart-1: #0B3026;
+  --chart-2: #E56E25;
+  --chart-3: #5C6B68;
+  --chart-4: #9D9065;
+  --chart-5: #2E5C52;
+  --sidebar: #F6F5EE;
+  --sidebar-foreground: #1E2927;
+  --sidebar-primary: #0B3026;
+  --sidebar-primary-foreground: #F6F5EE;
+  --sidebar-accent: #EAE8DE;
+  --sidebar-accent-foreground: #0B3026;
+  --sidebar-border: rgba(11, 48, 38, 0.08);
+  --sidebar-ring: #0B3026;
 }
 
 .dark {
-  --background: oklch(0.129 0.042 264.695);
-  --foreground: oklch(0.984 0.003 247.858);
-  --card: oklch(0.208 0.042 265.755);
-  --card-foreground: oklch(0.984 0.003 247.858);
-  --popover: oklch(0.208 0.042 265.755);
-  --popover-foreground: oklch(0.984 0.003 247.858);
-  --primary: oklch(0.929 0.013 255.508);
-  --primary-foreground: oklch(0.208 0.042 265.755);
-  --secondary: oklch(0.279 0.041 260.031);
-  --secondary-foreground: oklch(0.984 0.003 247.858);
-  --muted: oklch(0.279 0.041 260.031);
-  --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.279 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
+  /* 🍃 Tabiji Wabi-Sabi Brand Palette Tokens (Dark Mode) */
+  --tabiji-paper: #F6F5EE;
+  --tabiji-dark: #121A18;
+  --tabiji-forest: #164E40;
+  --tabiji-amber: #F0803C;
+  --tabiji-charcoal: #E5EBEA;
+  --tabiji-slate: #A2B1AE;
+  --tabiji-mist: #1A2522;
+
+  /* Semantic UI Tokens (Dark Mode - OLED Purple Ghosting Immunized) */
+  --background: #121A18;
+  --foreground: #E5EBEA;
+  --card: #182320;
+  --card-foreground: #E5EBEA;
+  --popover: #182320;
+  --popover-foreground: #E5EBEA;
+  --primary: #164E40;
+  --primary-foreground: #E5EBEA;
+  --secondary: #1F2C29;
+  --secondary-foreground: #E5EBEA;
+  --muted: #1F2C29;
+  --muted-foreground: #A2B1AE;
+  --accent: #F0803C;
+  --accent-foreground: #121A18;
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.551 0.027 264.364);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.208 0.042 265.755);
-  --sidebar-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.279 0.041 260.031);
-  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.551 0.027 264.364);
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.12);
+  --ring: #164E40;
+  --chart-1: #164E40;
+  --chart-2: #F0803C;
+  --chart-3: #A2B1AE;
+  --chart-4: #C2B68C;
+  --chart-5: #3F7568;
+  --sidebar: #182320;
+  --sidebar-foreground: #E5EBEA;
+  --sidebar-primary: #164E40;
+  --sidebar-primary-foreground: #E5EBEA;
+  --sidebar-accent: #1F2C29;
+  --sidebar-accent-foreground: #E5EBEA;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #164E40;
 }
 
 @layer base {
@@ -292,5 +320,21 @@ button:not(:disabled):active,
   transform: translate3d(0, 0, 0);
   backface-visibility: hidden;
   will-change: transform;
+}
+
+/* 🍃 Tabiji Bento Snap Carousel */
+.bento-snap-carousel {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.bento-snap-carousel::-webkit-scrollbar {
+  display: none;
+}
+.bento-snap-item {
+  scroll-snap-align: start;
+  flex-shrink: 0;
 }
 

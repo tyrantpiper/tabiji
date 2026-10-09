@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/components/views/itinerary-view.tsx#responsive_overflow",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "responsive_layout_overflow",
+    "hypothesis": "Expanding max-w-xl to w-full max-w-4xl lg:max-w-5xl causes horizontal overflow or broken scrollbar physics on mobile devices"
+  },
+  {
+    "id": "frontend/components/views/info-view.tsx#layout_alignment_parity",
+    "file_path": "frontend/components/views/info-view.tsx",
+    "attack_vector": "layout_alignment_parity",
+    "hypothesis": "Responsive width extension introduces header and content body gutter alignment mismatch or horizontal shift"
+  },
+  {
+    "id": "frontend/components/views/profile-view.tsx#touch_target_accessibility",
+    "file_path": "frontend/components/views/profile-view.tsx",
+    "attack_vector": "touch_target_accessibility",
+    "hypothesis": "Bento grid cards and subviews lose touch target compliance (WCAG 2.5.5 >= 44x44px) when scaling up to max-w-4xl/5xl"
+  }
+]

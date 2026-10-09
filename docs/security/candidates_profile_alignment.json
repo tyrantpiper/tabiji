@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/components/views/profile-view.tsx#avatar_email_protocol",
+    "file_path": "frontend/components/views/profile-view.tsx",
+    "attack_vector": "client_side_xss_url_injection",
+    "hypothesis": "Avatar upload or mailto email triggers in profile-view might execute javascript pseudo-protocol or invalid URIs without protocol sanitization"
+  },
+  {
+    "id": "frontend/components/views/profile-view.tsx#cache_session_persistence",
+    "file_path": "frontend/components/views/profile-view.tsx",
+    "attack_vector": "sensitive_cache_leakage",
+    "hypothesis": "Clearing app cache or deleting GDPR data in profile-view might obliterate user_uuid or throw SecurityError in Safari private browsing"
+  },
+  {
+    "id": "frontend/components/views/profile-view.tsx#optical_wcag_contrast",
+    "file_path": "frontend/components/views/profile-view.tsx",
+    "attack_vector": "optical_rendering_contrast_collapse",
+    "hypothesis": "Refactoring therapeutic monitor and recovery key to Tabiji paper cards might leave hardcoded white text causing optical unreadability in light mode"
+  }
+]

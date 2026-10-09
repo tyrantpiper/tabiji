@@ -39,8 +39,8 @@ export function BottomNav({ activeTab, onTabChange, onActiveTabClick, isVisible 
                 "relative rounded-full px-2 flex justify-around items-center h-17 select-none transition-colors duration-200",
                 "transform-gpu will-change-transform",
                 // 物理 Liquid Glass：高飽和透光 + 雙重鏡面光緣 (Rim Light)
-                "bg-white/75 dark:bg-slate-950/75 backdrop-blur-2xl saturate-190",
-                "border border-white/40 dark:border-white/10",
+                "bg-white/85 dark:bg-[#121A18]/85 backdrop-blur-2xl saturate-190",
+                "border border-[#0B3026]/10 dark:border-white/12",
                 "shadow-[inset_0_1.5px_1px_0_rgba(255,255,255,0.85),inset_0_-1px_1px_0_rgba(0,0,0,0.05),0_12px_36px_rgba(0,0,0,0.12)]"
             )}>
                 {tabs.map((tab) => {
@@ -61,10 +61,10 @@ export function BottomNav({ activeTab, onTabChange, onActiveTabClick, isVisible 
                                 }
                             }}
                             className={cn(
-                                "relative flex flex-col items-center justify-center w-full h-[85%] gap-1 rounded-full transition-all duration-200 z-10 cursor-pointer active:scale-95 select-none",
+                                "relative flex flex-col items-center justify-center w-full h-[88%] gap-0.5 rounded-full transition-all duration-200 z-10 cursor-pointer active:scale-95 select-none",
                                 isActive 
-                                    ? (accentColor === 'default' ? "text-slate-900 dark:text-white font-bold" : "font-bold") 
-                                    : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"
+                                    ? (accentColor === 'default' ? "text-[#0B3026] dark:text-[#E5EBEA] font-bold" : "font-bold") 
+                                    : "text-[#5C6B68] hover:text-[#1E2927] dark:text-[#A2B1AE] dark:hover:text-white"
                             )}
                             style={isActive && accentColor !== 'default' ? { color: currentTheme.primary } : {}}
                         >
@@ -73,7 +73,7 @@ export function BottomNav({ activeTab, onTabChange, onActiveTabClick, isVisible 
                                     layoutId="nav-indicator"
                                     className={cn(
                                         "absolute inset-0 rounded-full -z-10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.7),0_2px_8px_rgba(0,0,0,0.06)]",
-                                        accentColor === 'default' && "bg-slate-100/85 dark:bg-white/15 border border-white/60 dark:border-white/15"
+                                        accentColor === 'default' && "bg-[#0B3026]/8 dark:bg-white/10 border border-[#0B3026]/12 dark:border-white/15"
                                     )}
                                     style={accentColor !== 'default' ? {
                                         backgroundColor: `${currentTheme.primary}22`,
@@ -82,8 +82,11 @@ export function BottomNav({ activeTab, onTabChange, onActiveTabClick, isVisible 
                                     transition={{ type: "spring", stiffness: 420, damping: 28 }}
                                 />
                             )}
-                            <tab.icon className="w-5.5 h-5.5" strokeWidth={isActive ? 2.5 : 1.5} />
+                            <tab.icon className="w-5 h-5" strokeWidth={isActive ? 2.5 : 1.5} />
                             <span className="text-[10px] font-semibold tracking-tight">{tab.label}</span>
+                            {isActive && (
+                                <span className="w-1 h-1 rounded-full bg-[#E56E25] mt-0.5 shrink-0" />
+                            )}
                         </button>
                     );
                 })}

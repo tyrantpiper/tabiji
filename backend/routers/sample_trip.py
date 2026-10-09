@@ -30,7 +30,7 @@ SAMPLE_TRIP_META = {
     "start_date": "2026-03-10",
     "end_date": "2026-03-12",
     "status": "active",
-    "creator_name": "Tabidachi",
+    "creator_name": "Tabiji",
     "created_by": "SYSTEM",
     "share_code": None,
     "public_id": None,

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "backend/routers/sample_trip.py",
+    "file_path": "backend/routers/sample_trip.py",
+    "attack_vector": "tenant_isolation_and_quota_bypass",
+    "hypothesis": "Seed endpoint accepts arbitrary X-User-ID header, potentially allowing an attacker to trigger unbounded database insertion or seed demo trips under another user's identifier to corrupt tenant isolation."
+  },
+  {
+    "id": "frontend/lib/geo-multi-day.ts",
+    "file_path": "frontend/lib/geo-multi-day.ts",
+    "attack_vector": "nan_injection_and_unbounded_loop",
+    "hypothesis": "generateGreatCircle calculates d as spherical angular distance, but when start and end coordinates are antipodal (d = PI radians, where Math.sin(d) ≈ 0) or contain invalid coordinates, Math.sin(d) evaluates to 0 causing division by zero and resulting in NaN coordinate injection in Map layers."
+  },
+  {
+    "id": "frontend/components/itinerary/TripList.tsx",
+    "file_path": "frontend/components/itinerary/TripList.tsx",
+    "attack_vector": "pdf_generator_untrusted_html_injection",
+    "hypothesis": "handleDownloadPDF forwards user-controlled trip titles and activity memos to PDF generator without sanitization, creating an opportunity for unhandled exceptions or memory bloat during html2canvas rendering."
+  },
+  {
+    "id": "frontend/lib/idb-storage.ts",
+    "file_path": "frontend/lib/idb-storage.ts",
+    "attack_vector": "tabiji_sync_race_condition",
+    "hypothesis": "getTripSnapshotSync reads from localStorage and updates L1 RAM cache, but concurrent writes during key migration (tabidachi_ to tabiji_) could lead to unhandled JSON parse exceptions or stale state desynchronization."
+  },
+  {
+    "id": "frontend/app/globals.css",
+    "file_path": "frontend/app/globals.css",
+    "attack_vector": "wcag_contrast_and_css_variable_isolation",
+    "hypothesis": "Binding Tabiji brand tokens (#F6F5EE background and #1E2927 text) to root CSS variables without tuning muted-foreground (#7D8B88) creates contrast ratios falling below WCAG 2.1 AA standards or breaking Radix UI dialog visibility in dark mode."
+  }
+]
