@@ -228,7 +228,7 @@ const serwist: Serwist = new Serwist({
 
               // 🛡️ 絕不向 WebKit 回傳 Response.error()！回傳內聯 Zero-JS 物理硬骨架，杜絕「Safari無法打開網頁」
               return new Response(
-                `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Tabiji App</title><style>body{margin:0;background:#fafaf9;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;height:100vh}.hdr{height:56px;background:#fff;border-bottom:1px solid #e7e5e4;display:flex;align-items:center;padding:0 16px;font-weight:700}.cnt{flex:1;padding:16px;display:flex;flex-direction:column;gap:12px}.bx{height:96px;background:#e7e5e4;border-radius:16px;animation:pulse 1.5s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}</style></head><body><div class="hdr">Tabiji App</div><div class="cnt"><div class="bx"></div><div class="bx"></div><div class="bx"></div></div></body></html>`,
+                `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Tabiji</title><style>body{margin:0;background:#fafaf9;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;height:100vh}.hdr{height:56px;background:#fff;border-bottom:1px solid #e7e5e4;display:flex;align-items:center;padding:0 16px;font-weight:700}.cnt{flex:1;padding:16px;display:flex;flex-direction:column;gap:12px}.bx{height:96px;background:#e7e5e4;border-radius:16px;animation:pulse 1.5s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}</style></head><body><div class="hdr">Tabiji</div><div class="cnt"><div class="bx"></div><div class="bx"></div><div class="bx"></div></div></body></html>`,
                 {
                   status: 200,
                   headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -252,7 +252,7 @@ serwist.addEventListeners();
 // === Web Push Notification Handler (Ported from legacy sw.js) ===
 self.addEventListener("push", (event) => {
   const data = event.data ? event.data.json() : {};
-  const title = data.title || "Tabiji App";
+  const title = data.title || "Tabiji";
   const options = {
     body: data.body || "",
     icon: "/icon.png",

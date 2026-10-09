@@ -31,13 +31,13 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: "Tabiji App | Generative AI Travel Companion",
+  title: "Tabiji | Generative AI Travel Companion",
   description: "Next-generation travel orchestrator powered by Generative AI. Features real-time multi-user collaboration, offline-first maps, and intelligent itinerary synthesis.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Tabiji App",
+    title: "Tabiji",
   },
   icons: {
     icon: "/favicon.ico",
@@ -46,7 +46,7 @@ export const metadata: Metadata = {
   keywords: ["Generative AI", "Travel AI", "PWA", "Offline Maps", "Itinerary Planner", "AI Agent", "Innovation", "Travel Tech"],
   authors: [{ name: "Ryan Su" }],
   openGraph: {
-    title: "Tabiji App - 旅路",
+    title: "Tabiji - 旅路",
     description: "Plan your trips with AI-powered itinerary generation, offline maps, and real-time collaboration.",
     type: "website",
   },

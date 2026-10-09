@@ -141,7 +141,7 @@ export function PWAInstallPrompt() {
 
                             <div className="flex-1 pr-6">
                                 <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
-                                    {zh ? "安裝 Tabiji App" : "Install Tabiji App"}
+                                    {zh ? "安裝 Tabiji" : "Install Tabiji"}
                                 </h3>
                                 <div className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                                     {platform === 'ios' ? (
