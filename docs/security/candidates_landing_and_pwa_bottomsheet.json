@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/components/pwa-install-prompt.tsx:mobile_keyboard_and_safe_area_overlap",
+    "file_path": "frontend/components/pwa-install-prompt.tsx",
+    "attack_vector": "mobile_viewport_and_safe_area_occlusion",
+    "hypothesis": "PWAInstallPrompt when docked at bottom-0 without env(safe-area-inset-bottom) and virtual keyboard occlusion defense causes touch hijacking on iOS Home Bar and covers nickname input when the mobile keyboard rises."
+  },
+  {
+    "id": "frontend/components/pwa-install-prompt.tsx:app_shell_bottom_nav_collision",
+    "file_path": "frontend/components/pwa-install-prompt.tsx",
+    "attack_vector": "post_login_navigation_blockade",
+    "hypothesis": "PWAInstallPrompt mounted globally in layout.tsx lacks active session state awareness, causing a bottom-0 sheet to physically collide with and disable the BottomNav bar once a user logs in."
+  },
+  {
+    "id": "frontend/lib/translations.ts:subtitle_i18n_desync",
+    "file_path": "frontend/lib/translations.ts",
+    "attack_vector": "i18n_multi_tier_desync",
+    "hypothesis": "Updating landing_subtitle in translations.ts without synchronously updating remaining.ts introduces locale dictionary divergence and potential fallback hydration mismatches."
+  }
+]

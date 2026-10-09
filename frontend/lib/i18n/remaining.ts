@@ -9,7 +9,7 @@ export const remainingTranslations = {
     en: {
         // Landing Page
         landing_title: "Tabiji",
-        landing_subtitle: "Travel Planner",
+        landing_subtitle: "Tabiji | Travel Planner",
         landing_nickname_label: "Your Nickname",
         landing_nickname_placeholder: "E.g. Ryan",
         landing_start_journey: "Start Journey",
@@ -704,7 +704,7 @@ export const remainingTranslations = {
     zh: {
         // Landing Page
         landing_title: "Tabiji",
-        landing_subtitle: "旅行規劃師",
+        landing_subtitle: "旅路 ｜ 旅行提案",
         landing_nickname_label: "您的暱稱",
         landing_nickname_placeholder: "例如：小明",
         landing_start_journey: "開始旅程",

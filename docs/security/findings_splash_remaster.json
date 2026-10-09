@@ -1,0 +1,33 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 3,
+  "confirmed_count": 1,
+  "dismissed_count": 1,
+  "inconclusive_count": 1,
+  "findings": [
+    {
+      "target_id": "frontend/components/views/landing-page.tsx:unmounted_skeleton_fouc",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"Eligibility check failed: UNAVAILABLE (code 503): The service is currently unavailable.\",\"duration_seconds\":0,\"num_turns\":0,\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"thinking_tokens\":0,",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/ui/splash-screen.tsx:premature_dismissal_gap",
+      "verdict": "CONFIRMED",
+      "reasoning": "The component initializes `isStandalone` to `false`, causing it to render `null` on initial mount. In `useEffect`, `__dismissHardSkeleton()` is called synchronously before React processes the `setIsStandalone(standalone)` state update and mounts `<TabijiSplashAnimation />`. Additionally, `__dismissHardSkeleton()` is invoked before checking `hasShown || !standalone`. This tears down the static hard skeleton 1-2 frames before the animated splash component can be rendered and painted by the browser, resulting in a flash of unhydrated/bare DOM.",
+      "poc_type": "unit_test",
+      "poc_script": "import { render } from '@testing-library/react';\nimport { SplashScreen } from './splash-screen';\n\ntest('confirms __dismissHardSkeleton is invoked before splash animation is rendered in DOM', () => {\n  let dismissedBeforeSplashInDOM = false;\n  (window as any).__dismissHardSkeleton = jest.fn(() => {\n    if (!document.querySelector('[data-testid=\"tabiji-splash-animation\"]')) {\n      dismissedBeforeSplashInDOM = true;\n    }\n  });\n\n  Object.defineProperty(window, 'matchMedia', {\n    writable: true,\n    value: jest.fn().mockImplementation((query: string) => ({\n      matches: query === '(display-mode: standalone)',\n    })),\n  });\n\n  render(<SplashScreen />);\n\n  expect((window as any).__dismissHardSkeleton).toHaveBeenCalled();\n  expect(dismissedBeforeSplashInDOM).toBe(true);\n});",
+      "remediation_hint": "Do not invoke `__dismissHardSkeleton()` synchronously in the mount `useEffect` when standalone splash animation is going to be displayed. Instead, only invoke `__dismissHardSkeleton()` immediately if `hasShown || !standalone`. When showing the splash animation, defer dismissal until `TabijiSplashAnimation` signals its first painted frame via an `onReady` callback or after `requestAnimationFrame`."
+    },
+    {
+      "target_id": "frontend/components/views/landing-page.tsx:person_artwork_viewport_overflow",
+      "verdict": "DISMISSED",
+      "reasoning": "The person icon is constrained to compact fixed dimensions (w-24 h-24 / 96px by 96px, with mb-5) rather than being an oversized or unconstrained illustration. The cumulative vertical height from the top of the container through the title, subtitle, nickname input (h-14), and CTA button (h-14) is approximately 400px to 430px. On a standard 375x667 viewport, both the input field and primary CTA button sit comfortably above the 667px fold with over 200px of remaining vertical headroom.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

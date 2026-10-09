@@ -16,6 +16,11 @@ const VECTOR_GUIDE_PATH =
 
 export function TabijiSplashAnimation({ onComplete }: TabijiSplashAnimationProps) {
     useEffect(() => {
+        // 🛡️ 動畫 DOM 實體掛載就緒，安全平滑隱藏底層硬骨架
+        if (typeof window !== "undefined" && typeof (window as unknown as { __dismissHardSkeleton?: () => void }).__dismissHardSkeleton === "function") {
+            (window as unknown as { __dismissHardSkeleton: () => void }).__dismissHardSkeleton()
+        }
+
         const timer = setTimeout(() => {
             onComplete?.()
         }, 2000)

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/components/views/landing-page.tsx:unmounted_skeleton_fouc",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "optical_flash_and_unmounted_fouc",
+    "hypothesis": "LandingPage in unmounted SSR phase directly returns AppShellSkeleton containing high-contrast white header (bg-white/50), gray cards (bg-stone-200), and white nav (bg-white), which strobes against dark PWA window (#162832) before React hydration and splash overlay take over."
+  },
+  {
+    "id": "frontend/components/ui/splash-screen.tsx:premature_dismissal_gap",
+    "file_path": "frontend/components/ui/splash-screen.tsx",
+    "attack_vector": "lifecycle_race_condition",
+    "hypothesis": "SplashScreen invokes __dismissHardSkeleton immediately upon useEffect execution before TabijiSplashAnimation finishes DOM render and browser paint, tearing down PwaHardSkeleton 1-2 frames too early and exposing unhydrated DOM underneath."
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:person_artwork_viewport_overflow",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "responsive_layout_overflow_dos",
+    "hypothesis": "Enlarged person line artwork without strict viewport height capping (e.g., max-h-[28vh] shrink) pushes login nickname input and CTA button below screen fold on compact 375x667 mobile devices."
+  }
+]
