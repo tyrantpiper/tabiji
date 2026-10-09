@@ -1,7 +1,7 @@
 {
     "id": "/",
-    "name": "Tabiji App - 旅路",
-    "short_name": "Tabiji App",
+    "name": "Tabiji - 旅路",
+    "short_name": "Tabiji",
     "description": "Next-generation travel orchestrator powered by Generative AI. Offline-first, real-time, and adaptive.",
     "start_url": "/",
     "display": "standalone",

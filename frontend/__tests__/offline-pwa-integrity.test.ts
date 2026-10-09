@@ -71,7 +71,7 @@ describe("🛡️ PWA 離線秒開與 Precache 完整性硬核驗證 (Offline PW
 
     it("TC-6: 離線導航保險機制邏輯執行模擬 (Offline Navigation Fallback Logic Simulation)", async () => {
         // 模擬 CacheStorage 環境
-        const mockShellHtml = "<!DOCTYPE html><html><head><title>Tabiji App</title></head><body><div id='__next'>AppShell</div></body></html>";
+        const mockShellHtml = "<!DOCTYPE html><html><head><title>Tabiji</title></head><body><div id='__next'>AppShell</div></body></html>";
         const mockCacheStorage = new Map<string, Map<string, Response>>();
 
         const fakeCaches = {
@@ -116,7 +116,7 @@ describe("🛡️ PWA 離線秒開與 Precache 完整性硬核驗證 (Offline PW
         const fallbackResponse = await simulateHandlerDidError();
         expect(fallbackResponse.status).toBe(200);
         const text = await fallbackResponse.text();
-        expect(text).toContain("<title>Tabiji App</title>");
+        expect(text).toContain("<title>Tabiji</title>");
         expect(text).toContain("AppShell");
     });
 
