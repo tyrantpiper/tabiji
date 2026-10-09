@@ -1,15 +1,17 @@
 # 📅 Daily Report - 2026-10-09
 
-> **系統狀態**：🟢 Production Hardened, Tabiji Brand Identity Deployed, Wabi-Sabi Paper Design System Active, 3-Act Aurora Paper Airplane Splash Operational, Fluid Responsive Bento Scaling Active across All Views (Itinerary, Info, Tools, Profile), Dual-Prefix Backward-Compatible Storage Engine (tabiji_ ⇄ tabidachi_) Verified, PWA Home Screen Streamlined to "Tabiji", 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 49/49 Suites Passing, 360/360 Tests Passing), GitHub main branch synced (`9055df1`).  
+> **系統狀態**：🟢 Production Hardened, Zero-FOUC Splash Deployed, Tabiji Brand Identity Deployed, Wabi-Sabi Paper Design System Active, 3-Act Aurora Paper Airplane Splash Operational, Fluid Responsive Bento Scaling Active across All Views (Itinerary, Info, Tools, Profile), Dual-Prefix Backward-Compatible Storage Engine (tabiji_ ⇄ tabidachi_) Verified, PWA Home Screen Streamlined to "Tabiji", 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 51/51 Suites Passing, 371/371 Tests Passing; Backend 121/121 Passing), GitHub main branch synced (`7804a03`).  
 > **今日關鍵提交串列 (Full Day Commit Stream)**：
-> - [`9055df1`](https://github.com/tyrantpiper/travel-pwa/commit/9055df1) `feat(pwa): streamline home screen app name from Tabiji App to Tabiji`
-> - [`f4255c0`](https://github.com/tyrantpiper/travel-pwa/commit/f4255c0) `feat(brand): complete tabiji rebranding with responsive bento grid, paper cards, and offline sync`
+> - [`7804a03`](https://github.com/tyrantpiper/tabiji/commit/7804a03) `feat(splash): eliminate pwa cold boot skeleton flash with #162832 dark base and coordinated unmount`
+> - [`5d2b114`](https://github.com/tyrantpiper/tabiji/commit/5d2b114) `chore(deps): bump source-map-js (#20)`
+> - [`9055df1`](https://github.com/tyrantpiper/tabiji/commit/9055df1) `feat(pwa): streamline home screen app name from Tabiji App to Tabiji`
+> - [`f4255c0`](https://github.com/tyrantpiper/tabiji/commit/f4255c0) `feat(brand): complete tabiji rebranding with responsive bento grid, paper cards, and offline sync`
 
 ---
 
-## 🏆 深度專案復盤：五大核心工程里程碑
+## 🏆 深度專案復盤：七大核心工程里程碑
 
-本日聚焦於全端品牌識別蛻變（Brand Identity Rebirth）、和紙美學設計語彙建構（Wabi-Sabi Paper Design Tokens）、三幕式極光手繪紙飛機開屏動效（Three-Act Dynamic Gradient Splash Animation）、大螢幕流式自適應縮放（Fluid Responsive Bento Scaling）、雙前綴資料無損升級引擎，以及首頁登入視覺規格化，完成了全棧架構的跨越式升級：
+本日聚焦於全端品牌識別蛻變（Brand Identity Rebirth）、和紙美學設計語彙建構（Wabi-Sabi Paper Design Tokens）、三幕式極光手繪紙飛機開屏動效（Three-Act Dynamic Gradient Splash Animation）、大螢幕流式自適應縮放（Fluid Responsive Bento Scaling）、雙前綴資料無損升級引擎、首頁登入視覺規格化重塑，以及冷啟動零閃爍夜幕防線（Zero-FOUC Splash），完成了全棧架構的跨越式升級：
 
 ---
 
@@ -71,15 +73,34 @@
 
 ---
 
-### 里程碑五：PWA 桌面命名精簡與登入畫面品牌規格化
+### 里程碑五：PWA 桌面命名精簡 (Tabiji App -> Tabiji)
 1. **PWA 桌面圖示名稱精簡**：
    - 根據使用者體驗回饋，手機主畫面若顯示「Tabiji App」帶有冗餘軟體尾綴，顯得不夠俐落；將 `manifest.json`（`name` / `short_name`）、`layout.tsx` 與安裝引導元件全面精簡為純粹的 **`Tabiji`**。
    - Service Worker 快取外殼重新構建，離線安裝體驗更加原生自然。
-2. **登入頁面 (Landing Page) 品牌視覺重塑規格梳理**：
-   - 針對登入頁面仍使用舊版 `<Compass>` 圖示與舊案名文字的問題，完成 `/Idea to Spec` 與 `/grill-me` 互動決策：
-     - 中央 Icon 採用「莫蘭迪藍綠至暮光暖橘」原畫漸層圓角卡片，襯托白色線條回眸人物。
-     - 正下方呈現原畫手寫「tabiji」草寫體與飛翔紙飛機，並透過 CSS `mask-image` 實現淺色沉穩墨黑（`#162832`）與深色夜光純白（`#FFFFFF`）動態自適應。
-     - 已產出完整實作計畫與技術規格書（[`implementation_plan.md`](file:///C:/Users/Ryan%20su/.gemini/antigravity-ide/brain/bb0db1c7-bfcd-4310-ad2a-c65daf5a1fdd/implementation_plan.md)）。
+
+---
+
+### 里程碑六：登入頁面品牌視覺重構與引繼碼安全防禦
+1. **視覺層重塑 ([`landing-page.tsx`](file:///d:/Project/Tabidachi/travel-pwa/frontend/components/views/landing-page.tsx))**：
+   - 將舊有通用 `<Compass>` 圖示替換為中央專屬 **白色線條回眸人物頭像**（`tabiji-person-icon.png`），外嵌原畫夕陽漸層圓角浮雕卡片。
+   - 標題升級為原畫手寫草寫體「tabiji」與飛翔紙飛機透明遮罩（`tabiji-cursive-logo.png`），藉由 CSS `mask-image` 搭配 `bg-slate-900 dark:bg-white` 達成淺色墨黑與深色夜光白之高精度主題切換。
+2. **安全防線與向下游 Schema 破壞防禦**：
+   - 透過 `/security-sentinel` 審查，發現舊有引繼碼僅驗證長度，惡意字串會寫入 `localStorage.setItem("user_uuid")` 並破壞後續所有 UUID 端點。
+   - 於 [`security.ts`](file:///d:/Project/Tabidachi/travel-pwa/frontend/lib/security.ts) 實裝 `isValidUUID` 正則驗證器，前端輸入送出前 100% 嚴格攔截非法輸入，並新增 [`landing-page-sentinel.test.tsx`](file:///d:/Project/Tabidachi/travel-pwa/frontend/__tests__/landing-page-sentinel.test.tsx) 進行防護驗證。
+
+---
+
+### 里程碑七：PWA 冷啟動白屏骨架屏全鏈路消滅 (Zero-FOUC Splash)
+1. **痛點根因剖析 (Root Cause)**：
+   - 使用者透過螢幕錄影（`ScreenRecording_10-09-2026 22-17-20_1.MP4`）回報：App 啟動至開屏動畫出現前，會閃現極短暫（50~150ms）的白色骨架屏。
+   - 透過 `/Bug Hunter` 與沙盒審查實證兩大真因：
+     1. `manifest.json` 與 `layout.tsx` 之 `background_color` / `themeColor` 設為淺白石色 `#fafaf9`。
+     2. `pwa-hard-skeleton.tsx` 在 `DOMContentLoaded`（HTML 解析完成約 20ms）就提早添加 `hydrated` 類別並隱藏；但 React 水合尚未完成，導致底層未水合的 `AppShellSkeleton` 淺色骨架條暴露出螢幕；而 `splash-screen.tsx` 在首幀因為 `isStandalone=false` 渲染 `null`。
+2. **四重防禦鏈路與生命週期協同實裝**：
+   - **視窗與主題基底對齊**：`manifest.json` 與 `layout.tsx` 之 `background_color` / `themeColor` 統一為 `#162832`，iOS 狀態列對齊 `black-translucent`。
+   - **媒體查詢首幀夜幕**：`pwa-hard-skeleton.tsx` 透過 `@media (display-mode: standalone)` 渲染 `#162832` 漸層並徹底隱藏 `.pwa-pulse-box` 脈衝方塊。
+   - **生命週期協調卸除**：移除 `DOMContentLoaded` 盲目卸除，提供 `window.__dismissHardSkeleton` 鉤子，由 `SplashScreen` 在水合掛載開屏動畫時主動調用釋放。
+   - **測試守門**：撰寫專屬驗證套件 [`zero-fouc-splash.test.ts`](file:///d:/Project/Tabidachi/travel-pwa/frontend/__tests__/zero-fouc-splash.test.ts)，6 項測試全數綠燈通過。
 
 ---
 
@@ -95,15 +116,19 @@
   - 在高解析手繪開屏動效中，嚴禁在前景疊加生硬之人造貝茲向量軌跡線；主體顯現必須以原畫遮罩（Track Matte）結合多階水墨光斑（Trailing Bloom）展開，GPU 背景極光與前景手繪線條採 Stacking Context 物理隔離，穩鎖 60~120 FPS。
 - **[AD-071] PWA 桌面圖示與主標題純淨命名法則 (Streamlined PWA Brand Identity)**:
   - PWA 應用程式名稱在 Manifest 與系統元數據中保持簡潔單一詞彙「Tabiji」，省略「App / 應用 / 行程」等修飾後綴，符合 iOS/Android 主畫面 App 名稱極簡化人體工學。
+- **[AD-072] 品牌草寫體 CSS 遮罩雙模適配原則 (CSS Mask Image Theming Invariance)**:
+  - 手繪品牌標題嚴禁採用多張不同顏色的點陣圖反覆切換。應提取單一高解析度透明通道遮罩圖（`tabiji-cursive-logo.png`），藉由 CSS `mask-image: url(...)` 配合 Tailwind 語意化背景色（`bg-slate-900 dark:bg-white`），達成 0 資源冗餘且與文字渲染引擎同級的完美主題對齊。
+- **[AD-073] 冷啟動零閃爍夜幕與生命週期協調防線 (Zero-FOUC Splash & Lifecycle Coordinated Guard)**:
+  - PWA 獨立視窗冷啟動時，嚴禁在 `DOMContentLoaded` 就提前卸除硬骨架屏（`body.classList.add('hydrated')`），否則在 React 水合前會露出未水合 SSR 骨架條；必須將 `manifest.json` 與 `viewport.themeColor` 統一鎖定為 `#162832`，硬骨架透過 `@media (display-mode: standalone)` 呈現 `#162832` 漸層並隱藏脈衝方塊，並由 React `SplashScreen` 在水合掛載時主動調用 `window.__dismissHardSkeleton` 無縫交棒，徹底消滅白屏與骨架閃爍。
 
 ---
 
 ## 🔴 技術債 (Technical Debt)
 
-1. **登入頁面品牌代碼替換接續實作 (Landing Page Modernization)**:
-   - 規格已定義完成，待使用者審查核准 `implementation_plan.md` 後，正式替換 `landing-page.tsx` 中的 `<Compass>` 圖示與語系檔舊案名殘留。
-2. **多語系檔 `remaining.ts` 領域模組化拆分**:
+1. **多語系檔 `remaining.ts` 領域模組化拆分**:
    - `remaining.ts` 內仍承載超過 1,300 行翻譯代碼，後續排程依 Sprint 規劃拆分為 `landing.ts`、`itinerary.ts`、`profile.ts` 獨立模組。
+2. **iOS Safari WebKit 離線快取透明度追蹤**:
+   - iOS 18 針對 PWA 獨立模式有更嚴格的 7 天無活動清理政策，後續需評估於每次上線時主動觸發快取保活信標。
 
 ---
 
@@ -115,11 +140,17 @@
 2. **淺色模式下白線手寫字失真對比度陷阱**:
    - 原畫手寫「tabiji」字體為白色線條，若直接以 PNG 貼於淺色米白畫布上，對比度將降至不可讀。
    - **正確解法**：提取高解析透明遮罩圖（`tabiji-cursive-logo.png`），以 CSS `mask-image` 配合 `bg-slate-900 dark:bg-white` 達成原生主題自適應，淺色墨黑、深色夜光白，零邊緣鋸齒。
+3. **硬骨架屏綁定 `DOMContentLoaded` 提早卸除引發水合空窗閃屏陷阱**:
+   - `pwa-hard-skeleton.tsx` 在 `DOMContentLoaded` 立即加上 `hydrated` 類別，誤以為 HTML 解析結束等同於 React 水合完畢，結果在 20ms~100ms 之間將未水合的 `AppShellSkeleton` 淺色方塊直接暴露在畫面上。
+   - **正確解法**：由 React `SplashScreen` 在水合且開屏準備就緒時主動調用 `window.__dismissHardSkeleton`，達成無縫平滑交棒。
+4. **`SplashScreen` 依賴 `isStandalone` 客戶端狀態導致首幀 `null` 渲染盲區**:
+   - `SplashScreen` 初始 `isStandalone` 為 `false`，首幀在 SSR 與客戶端均為 `null`，直到繪製後的 `useEffect` 觸發才非同步重繪掛載動畫，導致底層畫面曝光。
+   - **正確解法**：前置透過 `manifest.json` 與靜態 `#pwa-hard-skeleton` 在第 0 毫秒就鎖死 `#162832` 漸層，消除首幀空窗。
 
 ---
 
 ## 🚀 下一步計畫 (Next Steps)
 
-1. 執行登入頁面實作計畫：更新 [`landing-page.tsx`](file:///d:/Project/Tabidachi/travel-pwa/frontend/components/views/landing-page.tsx)、替換圖示為 `tabiji-person-icon.png`、掛載主題自適應手寫字體 `tabiji-cursive-logo.png`。
-2. 同步更新語系檔 [`remaining.ts`](file:///d:/Project/Tabidachi/travel-pwa/frontend/lib/i18n/remaining.ts) 與 [`translations.ts`](file:///d:/Project/Tabidachi/travel-pwa/frontend/lib/translations.ts)，消除最後的 `Tabidachi` 殘留字串。
-3. 執行全套品質守門（`npx tsc --noEmit`、`npm run lint`、`npm run test:run`）並進行端到端截圖核驗。
+1. 進行生產環境真機 PWA 安裝驗收（iOS / Android 實機加入主畫面，確認點擊圖示瞬間至開屏動畫結束全程 0 白屏、0 骨架閃爍）。
+2. 多語系檔 `remaining.ts` 模組化拆分排程實施。
+3. 監控線上錯誤回報與 Service Worker 離線快取命中率。
