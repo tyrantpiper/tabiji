@@ -1,0 +1,33 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 3,
+  "confirmed_count": 0,
+  "dismissed_count": 2,
+  "inconclusive_count": 1,
+  "findings": [
+    {
+      "target_id": "frontend/components/pwa-install-prompt.tsx:mobile_keyboard_and_safe_area_overlap",
+      "verdict": "DISMISSED",
+      "reasoning": "The defect assertion claims that PWAInstallPrompt is docked at bottom-0 without safe area padding, causing iOS Home Bar touch hijacking. However, static inspection reveals that the component is positioned with 'bottom-24' ('fixed bottom-24 left-4 right-4 z-100'). This provides 96px (6rem) of bottom clearance, floating well above the iOS Home Indicator (~34px safe area) and bottom navigation elements, invalidating the premise of bottom-0 docking and home bar occlusion.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/pwa-install-prompt.tsx:app_shell_bottom_nav_collision",
+      "verdict": "DISMISSED",
+      "reasoning": "The audit premise asserts that the component is a 'bottom-0 sheet' that physically collides with and disables the BottomNav. Static inspection reveals the container is styled with 'fixed bottom-24' (6rem / 96px from the bottom), specifically hovering above standard mobile bottom navigation bars. Additionally, PWA installation prompts are designed to be environment- and platform-specific rather than session-dependent, and the component includes a dismiss mechanism with a 7-day localStorage cooldown.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/lib/translations.ts:subtitle_i18n_desync",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"441364e9-6797-47a9-bac7-aa96c4f2cce7\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools[20].function_declarations[0].parameters.properties[migrations].items: field predicate failed",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

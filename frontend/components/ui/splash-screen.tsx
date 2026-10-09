@@ -23,9 +23,19 @@ export function SplashScreen() {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- PWA detection requires init on mount
         setIsStandalone(standalone)
 
-        // 🛡️ 開屏動畫掛載就緒，安全釋放硬骨架屏
-        if (typeof window !== "undefined" && typeof (window as unknown as { __dismissHardSkeleton?: () => void }).__dismissHardSkeleton === "function") {
-            (window as unknown as { __dismissHardSkeleton: () => void }).__dismissHardSkeleton()
+        // 檢查是否已經顯示過（若 forcePreview 則忽略 sessionStorage 限制，允許反覆調試預覽）
+        const hasShown =
+            !forcePreview &&
+            (sessionStorage.getItem("tabiji_splash_shown") ||
+                sessionStorage.getItem("splash_shown"))
+
+        if (hasShown || !standalone) {
+            setShow(false)
+            // 🛡️ 不需播放開屏動畫時，立即釋放硬骨架屏
+            if (typeof window !== "undefined" && typeof (window as unknown as { __dismissHardSkeleton?: () => void }).__dismissHardSkeleton === "function") {
+                (window as unknown as { __dismissHardSkeleton: () => void }).__dismissHardSkeleton()
+            }
+            return
         }
 
         // 綁定全域調試函式，方便開發者在控制台隨時重播動畫
@@ -35,17 +45,6 @@ export function SplashScreen() {
                 setShow(true)
                 setRenderKey(prev => prev + 1)
             }
-        }
-
-        // 檢查是否已經顯示過（若 forcePreview 則忽略 sessionStorage 限制，允許反覆調試預覽）
-        const hasShown =
-            !forcePreview &&
-            (sessionStorage.getItem("tabiji_splash_shown") ||
-                sessionStorage.getItem("splash_shown"))
-
-        if (hasShown || !standalone) {
-            setShow(false)
-            return
         }
     }, [])
 

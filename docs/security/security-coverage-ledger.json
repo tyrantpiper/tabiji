@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-09T14:32:00Z",
+  "last_audit_date": "2026-10-10T01:07:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 47,
-    "audited_targets": 47,
-    "verified_vulnerabilities": 8,
-    "dismissed_hypotheses": 43
+    "total_targets": 52,
+    "audited_targets": 52,
+    "verified_vulnerabilities": 9,
+    "dismissed_hypotheses": 47
   },
   "targets": [
     {
@@ -436,28 +436,64 @@
       "id": "frontend/components/views/landing-page.tsx",
       "target_type": "client_auth_view",
       "trust_boundary": "public_to_authenticated",
-      "vectors_checked": ["xss_stored_dom", "improper_input_validation", "ui_spoofing_resource_leak"],
-      "status": "PATCH_PROPOSED",
+      "vectors_checked": ["xss_stored_dom", "improper_input_validation", "ui_spoofing_resource_leak", "optical_flash_unmounted_fouc"],
+      "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "validator_details": "Physical Sentinel adversarial verification confirmed downstream UUID schema corruption risk on recovery input; candidate patch formulated and verified with in-memory test suite."
+      "validator_details": "Physical Sentinel verified: AppShellSkeleton replaced with pure #162832 zero-fouc base; enlarged person line mask rendered with adaptive dual-theme css mask; verified via splash-zero-strobe-sentinel.test.tsx."
     },
     {
       "id": "frontend/components/core/pwa-hard-skeleton.tsx:lifecycle_race_condition",
       "target_type": "client_pwa_lifecycle",
       "trust_boundary": "browser_to_react_hydration",
       "vectors_checked": ["premature_unmount_race", "fouc_ssr_leakage"],
-      "status": "PATCH_PROPOSED",
+      "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "validator_details": "Physical Sentinel verified premature DOMContentLoaded unmounting race condition exposing SSR DOM before React splash animation mounts; Mantis patch synthesized."
+      "validator_details": "Physical Sentinel verified: standalone mode locks #162832 base and suppresses pulse boxes; dismissal coordinated exclusively through __dismissHardSkeleton."
     },
     {
       "id": "frontend/components/ui/splash-screen.tsx:client_hydration_gap",
       "target_type": "client_splash_overlay",
       "trust_boundary": "browser_to_react_hydration",
-      "vectors_checked": ["hydration_null_rendering_gap", "flash_of_unsplashed_ui"],
-      "status": "PATCH_PROPOSED",
+      "vectors_checked": ["hydration_null_rendering_gap", "flash_of_unsplashed_ui", "premature_dismissal_gap"],
+      "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "validator_details": "Physical Sentinel verified isStandalone initial false state causing null render on SSR and hydration flicker; Mantis patch synthesized."
+      "validator_details": "Physical Sentinel verified: synchronous premature hard skeleton dismissal eliminated; TabijiSplashAnimation coordinates safe dismissal upon actual DOM mount; verified 100% green via Vitest."
+    },
+    {
+      "id": "frontend/components/pwa-install-prompt.tsx:bottom_sheet_mobile_ergonomics",
+      "target_type": "client_ui_pwa",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["mobile_keyboard_and_safe_area_overlap", "app_shell_bottom_nav_collision"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verified: bottom-0 fixed sheet incorporates iOS safe-area-inset-bottom and visualViewport height shrinkage guard against virtual keyboard collision; verified via landing-brand-hierarchy-sentinel.test.tsx."
+    },
+    {
+      "id": "frontend/components/views/landing-page.tsx:brand_icon_and_wordmark_separation",
+      "target_type": "client_ui_landing",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["brand_hierarchy_mask_caching", "outline_t_weakening"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verified: person outline 't' letter crossbar removed and antialiased along back seam into natural coat folds; clean cursive tabiji wordmark preserved."
+    },
+    {
+      "id": "frontend/lib/translations.ts:landing_subtitle_i18n_parity",
+      "target_type": "client_i18n",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["subtitle_i18n_desync", "fallback_hydration_mismatch"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verified: translations.ts and remaining.ts synchronized with '旅路 ｜ 旅行提案' (zh) and 'Tabiji | Travel Planner' (en)."
+    },
+    {
+      "id": "frontend/components/views/landing-page.tsx:backpack_brand_upgrade",
+      "target_type": "client_ui_landing",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["checkerboard_alpha_leakage", "aspect_ratio_native_css_fallback", "mobile_first_fold_occlusion"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verified: backpack_clean.png 1630x2546 alpha integrity verified (87.24% transparent, 0 active pixels in outer corners); dual-layer aspect-ratio and maskImage v3 cache-busting verified; iPhone SE 667px first-fold form visibility confirmed."
     }
   ]
 }

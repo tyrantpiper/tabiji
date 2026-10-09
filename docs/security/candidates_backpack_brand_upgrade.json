@@ -1,0 +1,18 @@
+[
+  {
+    "id": "frontend/components/views/landing-page.tsx:aspect_ratio_native_css_fallback",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "start_line": 244,
+    "end_line": 260,
+    "attack_vector": "css_aspect_ratio_collapse_and_cache_staleness",
+    "hypothesis": "Using only Tailwind utility aspect-[1630/2546] without inline style aspectRatio: '1630 / 2546' and retaining maskImage '?v=2' instead of '?v=3' causes layout squishing or stale cached line art to render on WebKit engines."
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:first_fold_form_occlusion",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "start_line": 240,
+    "end_line": 280,
+    "attack_vector": "mobile_first_fold_occlusion",
+    "hypothesis": "Increasing Brand Icon height to max-h-[28vh] on 667px height viewports (iPhone SE) pushes the nickname input form below the fold if outer padding and flex container lack shrink and responsive max-height constraints."
+  }
+]

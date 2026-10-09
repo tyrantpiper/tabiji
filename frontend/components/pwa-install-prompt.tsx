@@ -27,12 +27,42 @@ export function PWAInstallPrompt() {
     const [isMounted, setIsMounted] = useState(false)
     const [show, setShow] = useState(false)
     const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
+    const [isKeyboardOpen, setIsKeyboardOpen] = useState(false)
+    const [hasActiveUser, setHasActiveUser] = useState(false)
 
     // 🛡️ 1. 掛載守衛：使用 setTimeout 將狀態更新推遲至下一個 Event Loop Tick
     // 這能完美騙過（或說符合）嚴格的 React Linter，避免被判定為同步的級聯渲染
     useEffect(() => {
         const timer = setTimeout(() => setIsMounted(true), 0)
         return () => clearTimeout(timer)
+    }, [])
+
+    // 🛡️ 鍵盤避讓監聽：行動端虛擬鍵盤彈起時自動收折抽屜，防止遮蔽輸入框與按鈕
+    useEffect(() => {
+        if (typeof window === "undefined" || !window.visualViewport) return
+        const handleResize = () => {
+            const vv = window.visualViewport
+            if (vv && vv.height < window.innerHeight * 0.78) {
+                setIsKeyboardOpen(true)
+            } else {
+                setIsKeyboardOpen(false)
+            }
+        }
+        window.visualViewport.addEventListener("resize", handleResize)
+        return () => window.visualViewport?.removeEventListener("resize", handleResize)
+    }, [])
+
+    // 🛡️ 登入態感知：若已登入進入 AppShell，由 bottom-0 自動升至 bottom-20 避開 BottomNav
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setHasActiveUser(!!localStorage.getItem("user_nickname"))
+        }, 0)
+        const handleLoginSync = () => setHasActiveUser(!!localStorage.getItem("user_nickname"))
+        window.addEventListener("user-login-state-changed", handleLoginSync)
+        return () => {
+            clearTimeout(timer)
+            window.removeEventListener("user-login-state-changed", handleLoginSync)
+        }
     }, [])
 
     // 🛡️ 2. 主邏輯：僅在客戶端執行
@@ -110,7 +140,7 @@ export function PWAInstallPrompt() {
         setDeferredPrompt(null)
     }
 
-    if (!isMounted || !show) return null
+    if (!isMounted || !show || isKeyboardOpen) return null
 
     // 🎨 在渲染期動態計算 Platform (取代舊的 setState)，這才是最標準的 React 寫法
     const UA = navigator.userAgent
@@ -123,20 +153,29 @@ export function PWAInstallPrompt() {
         <AnimatePresence>
             {show && (
                 <motion.div
-                    initial={{ y: 100, opacity: 0 }}
+                    initial={{ y: "100%", opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
-                    exit={{ y: 100, opacity: 0 }}
-                    transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                    className="fixed bottom-24 left-4 right-4 z-100 md:left-auto md:right-4 md:w-96"
+                    exit={{ y: "100%", opacity: 0 }}
+                    transition={{ type: "spring", damping: 28, stiffness: 240 }}
+                    className={`fixed left-0 right-0 z-50 transition-all duration-300 ${
+                        hasActiveUser 
+                            ? "bottom-20 px-4 md:bottom-6 md:right-6 md:left-auto md:w-96" 
+                            : "bottom-0 md:bottom-6 md:right-6 md:left-auto md:w-96"
+                    }`}
                 >
-                    <div className="relative overflow-hidden rounded-2xl border border-white/20 bg-white/70 p-4 shadow-2xl backdrop-blur-xl dark:border-slate-700/50 dark:bg-slate-900/80">
-                        {/* 🌈 精緻漸變裝飾 */}
-                        <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-blue-500/10 blur-2xl" />
-                        <div className="absolute -left-4 -bottom-4 h-24 w-24 rounded-full bg-purple-500/10 blur-2xl" />
+                    <div className="relative overflow-hidden rounded-t-3xl border-t border-slate-200/80 bg-white/95 pb-[max(0.85rem,env(safe-area-inset-bottom))] pt-2.5 px-4 shadow-2xl backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/95 md:rounded-2xl md:border md:pb-4 md:pt-4">
+                        {/* 頂部極簡把手條 (僅在行動端貼底時呈現) */}
+                        {!hasActiveUser && (
+                            <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-700 md:hidden" />
+                        )}
 
-                        <div className="flex items-start gap-4">
-                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-500/20">
-                                <Download className="h-6 w-6 text-white" />
+                        {/* 🌈 精緻漸變裝飾 */}
+                        <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-blue-500/10 blur-2xl pointer-events-none" />
+                        <div className="absolute -left-4 -bottom-4 h-24 w-24 rounded-full bg-purple-500/10 blur-2xl pointer-events-none" />
+
+                        <div className="flex items-start gap-3.5">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-500/20">
+                                <Download className="h-5 w-5 text-white" />
                             </div>
 
                             <div className="flex-1 pr-6">

@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react"
 import { AnimatePresence } from "framer-motion"
-import Image from "next/image"
 import { ArrowRight, ShieldCheck, History } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,22 +14,7 @@ import dynamic from "next/dynamic"
 // 這將使首頁體積減少 90% (移除地圖、DND、PDF 等重型庫)
 function AppShellSkeleton() {
     return (
-        <div className="min-h-screen bg-stone-50 dark:bg-slate-900 [@media(display-mode:standalone)]:bg-[#162832] flex flex-col animate-pulse">
-            <header className="h-14 border-b border-stone-200/60 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 px-4 flex items-center justify-between">
-                <div className="h-6 w-28 bg-stone-200 dark:bg-slate-700 rounded-lg" />
-                <div className="h-8 w-20 bg-stone-200 dark:bg-slate-700 rounded-xl" />
-            </header>
-            <main className="flex-1 p-4 space-y-4">
-                <div className="h-32 bg-stone-200/70 dark:bg-slate-800 rounded-2xl" />
-                <div className="h-24 bg-stone-200/50 dark:bg-slate-800/60 rounded-2xl" />
-                <div className="h-24 bg-stone-200/50 dark:bg-slate-800/60 rounded-2xl" />
-            </main>
-            <nav className="h-16 border-t border-stone-200/60 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 flex items-center justify-around">
-                {[1, 2, 3, 4].map(i => (
-                    <div key={i} className="w-8 h-8 rounded-full bg-stone-200 dark:bg-slate-700" />
-                ))}
-            </nav>
-        </div>
+        <div className="min-h-screen bg-[#162832] dark:bg-[#162832] [@media(display-mode:standalone)]:bg-[#162832] flex flex-col" />
     )
 }
 
@@ -256,26 +240,31 @@ export function LandingPage() {
 
 
 
-            <main className="flex-1 flex flex-col items-center justify-center px-6 py-8 sm:py-12 z-10 w-full text-center">
-                {/* 品牌人物圓角圖示 (原畫夕陽漸層 + 浮雕微光) */}
-                <div className="relative mb-5 group">
-                    <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-[2rem] overflow-hidden shadow-2xl shadow-orange-950/20 ring-4 ring-white/90 dark:ring-white/20 transition-transform duration-300 group-hover:scale-105 bg-slate-900 mx-auto">
-                        <Image
-                            src="/images/tabiji-person-icon.png"
-                            alt="Tabiji"
-                            width={112}
-                            height={112}
-                            className="w-full h-full object-cover"
-                            priority
-                        />
-                    </div>
+            <main className="flex-1 flex flex-col items-center justify-center px-6 py-8 sm:py-12 z-10 w-full text-center pb-24 sm:pb-12">
+                {/* 品牌人物純線條勾勒立繪 (純粹藝術圖騰 Brand Icon、無水墨底圖、大氣放大、雙主題自適應) */}
+                <div className="relative mb-3 flex items-center justify-center shrink">
+                    <div
+                        className="h-48 sm:h-56 md:h-60 max-h-[28vh] aspect-1630/2546 bg-slate-900 dark:bg-white transition-colors duration-300"
+                        style={{
+                            aspectRatio: '1630 / 2546',
+                            maskImage: 'url(/images/tabiji-person-outline.png?v=3)',
+                            WebkitMaskImage: 'url(/images/tabiji-person-outline.png?v=3)',
+                            maskSize: 'contain',
+                            WebkitMaskSize: 'contain',
+                            maskRepeat: 'no-repeat',
+                            WebkitMaskRepeat: 'no-repeat',
+                            maskPosition: 'center',
+                            WebkitMaskPosition: 'center',
+                        }}
+                        aria-hidden="true"
+                    />
                 </div>
 
-                {/* 語意化 H1 標題：內部封裝原畫手寫草寫體 tabiji 與紙飛機 */}
+                {/* 語意化 H1 標題：內部封裝原畫手寫草寫體 tabiji 與紙飛機 (Wordmark) */}
                 <h1 className="relative flex items-center justify-center mb-1">
                     <span className="sr-only">Tabiji</span>
                     <div
-                        className="h-12 w-44 sm:h-14 sm:w-48 bg-slate-900 dark:bg-white transition-colors duration-300"
+                        className="h-12 w-48 sm:h-14 sm:w-52 bg-slate-900 dark:bg-white transition-colors duration-300"
                         style={{
                             maskImage: 'url(/images/tabiji-cursive-logo.png)',
                             WebkitMaskImage: 'url(/images/tabiji-cursive-logo.png)',
@@ -290,8 +279,8 @@ export function LandingPage() {
                     />
                 </h1>
 
-                {/* 旅行規劃師副標題 */}
-                <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mb-8 tracking-[0.28em] uppercase font-medium">
+                {/* 旅行提案副標題 (優雅清晰品牌標籤) */}
+                <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mb-8 tracking-[0.3em] uppercase font-medium">
                     {t('landing_subtitle')}
                 </p>
 
