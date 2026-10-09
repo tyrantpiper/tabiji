@@ -23,6 +23,11 @@ export function SplashScreen() {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- PWA detection requires init on mount
         setIsStandalone(standalone)
 
+        // 🛡️ 開屏動畫掛載就緒，安全釋放硬骨架屏
+        if (typeof window !== "undefined" && typeof (window as unknown as { __dismissHardSkeleton?: () => void }).__dismissHardSkeleton === "function") {
+            (window as unknown as { __dismissHardSkeleton: () => void }).__dismissHardSkeleton()
+        }
+
         // 綁定全域調試函式，方便開發者在控制台隨時重播動畫
         if (typeof window !== "undefined") {
             ;(window as unknown as { __replayTabijiSplash?: () => void }).__replayTabijiSplash = () => {
@@ -47,6 +52,9 @@ export function SplashScreen() {
     const handleComplete = useCallback(() => {
         setShow(false)
         sessionStorage.setItem("tabiji_splash_shown", "true")
+        if (typeof window !== "undefined" && typeof (window as unknown as { __dismissHardSkeleton?: () => void }).__dismissHardSkeleton === "function") {
+            (window as unknown as { __dismissHardSkeleton: () => void }).__dismissHardSkeleton()
+        }
     }, [])
 
     // 非 PWA 模式且非強制預覽則不顯示

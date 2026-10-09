@@ -1,0 +1,23 @@
+[
+  {
+    "id": "frontend/components/views/landing-page.tsx:input_sanitization",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "xss_stored_dom",
+    "trust_boundary": "public_to_authenticated",
+    "hypothesis": "Nickname and recovery code are written to localStorage and UI state without strict sanitization, creating Stored XSS or token injection risks."
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:uuid_recovery_validation",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "improper_input_validation",
+    "trust_boundary": "public_to_authenticated",
+    "hypothesis": "Recovery code validation allows arbitrary malformed strings to be saved into user_uuid during offline fallback, causing downstream API authentication corruption."
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:visual_asset_tampering",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "ui_spoofing_resource_leak",
+    "trust_boundary": "browser_to_edge",
+    "hypothesis": "CSS mask-image and Next.js Image component usage without error boundaries or local asset verification could cause rendering lockup or client-side layout distortion."
+  }
+]

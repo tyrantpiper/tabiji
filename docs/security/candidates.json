@@ -1,20 +1,26 @@
 [
   {
-    "id": "frontend/components/itinerary/ActivityEditModal.tsx",
-    "file_path": "frontend/components/itinerary/ActivityEditModal.tsx",
-    "attack_vector": "ui_concurrency_race_condition",
-    "hypothesis": "When handleResolveAddress or handleResolveLink is inflight and user triggers onSave or switches items, state updates on unmounted or changed editItem can corrupt data or trigger race conditions."
+    "id": "frontend/components/core/pwa-hard-skeleton.tsx",
+    "file_path": "frontend/components/core/pwa-hard-skeleton.tsx",
+    "attack_vector": "pwa_lifecycle_race_condition",
+    "hypothesis": "Premature unmounting on DOMContentLoaded creates a race condition where unhydrated SSR DOM is exposed before React splash animation mounts, and lacks check for session storage or standalone mode."
   },
   {
-    "id": "frontend/components/itinerary/ActivityEditModal.tsx:rerender",
-    "file_path": "frontend/components/itinerary/ActivityEditModal.tsx",
-    "attack_vector": "infinite_rerender_state_mutation",
-    "hypothesis": "The useEffect hook tracking editItem and isOpen performs setEditItem if editItem.isManualCoords is undefined, potentially causing cascading renders if parent passes a new object reference."
+    "id": "frontend/components/ui/splash-screen.tsx",
+    "file_path": "frontend/components/ui/splash-screen.tsx",
+    "attack_vector": "client_hydration_gap",
+    "hypothesis": "Client component returns null on initial SSR/hydration render because isStandalone defaults to false, exposing underlying UI elements and creating hydration flicker."
   },
   {
-    "id": "frontend/components/itinerary/ActivityEditModal.tsx:protocol_injection",
-    "file_path": "frontend/components/itinerary/ActivityEditModal.tsx",
-    "attack_vector": "input_xss_and_client_injection",
-    "hypothesis": "User-supplied link_url is accepted without protocol sanitization (e.g. javascript:), potentially allowing script execution if rendered as an href."
+    "id": "frontend/components/views/landing-page.tsx",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "ui_fouc_leakage",
+    "hypothesis": "AppShellSkeleton uses fixed light theme stone-50 colors without standalone display mode media query defense, leaking bright skeleton during pre-hydration."
+  },
+  {
+    "id": "frontend/app/layout.tsx",
+    "file_path": "frontend/app/layout.tsx",
+    "attack_vector": "pwa_viewport_theme_mismatch",
+    "hypothesis": "Mismatch between viewport themeColor (#fafaf9), appleWebApp statusBarStyle (default), and splash animation dark theme (#162832) causes WebKit cold start status bar flash."
   }
 ]

@@ -15,7 +15,7 @@ export const translations = {
         update_success: "Updated!",
 
         // Landing Page
-        landing_title: "Tabiji App",
+        landing_title: "Tabiji",
         landing_subtitle: "Travel Planner",
         landing_nickname_label: "Your Nickname",
         landing_nickname_placeholder: "E.g. Ryan",
@@ -345,7 +345,7 @@ export const translations = {
         update_success: "已更新！",
 
         // Landing Page
-        landing_title: "Tabiji App",
+        landing_title: "Tabiji",
         landing_subtitle: "旅行規劃師",
         landing_nickname_label: "您的暱稱",
         landing_nickname_placeholder: "例如：小明",

@@ -1,0 +1,33 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 3,
+  "confirmed_count": 1,
+  "dismissed_count": 2,
+  "inconclusive_count": 0,
+  "findings": [
+    {
+      "target_id": "frontend/components/views/landing-page.tsx:input_sanitization",
+      "verdict": "DISMISSED",
+      "reasoning": "In React and Next.js, state variables rendered in JSX expressions are automatically HTML-escaped by the virtual DOM, preventing DOM-based XSS. Storing strings in localStorage via setItem is standard client-side state persistence and does not create Stored XSS or token injection vulnerabilities without an unescaped sink (such as dangerouslySetInnerHTML, document.write, or eval), none of which exist in this component. Sonner toast text parameters are also rendered as safe text nodes by default.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/landing-page.tsx:uuid_recovery_validation",
+      "verdict": "CONFIRMED",
+      "reasoning": "In `handleRecover`, validation only verifies that `cleanCode` is non-empty, not 'null'/'undefined', and has length >= 10. It lacks UUID format validation (such as regex pattern matching). Furthermore, raw `recoverCode` rather than sanitized `cleanCode` is saved to `localStorage` under `user_uuid` both after caught API errors and in the outer catch offline fallback. Storing arbitrary malformed non-UUID strings corrupts downstream API operations where endpoints enforce UUID schemas, resulting in 422/500 failures.",
+      "poc_type": "pytest_in_memory",
+      "poc_script": "import pytest\nfrom uuid import UUID\nfrom fastapi import FastAPI\nfrom fastapi.testclient import TestClient\n\napp = FastAPI()\n\n@app.get(\"/users/profile/{user_uuid}\")\ndef get_profile(user_uuid: UUID):\n    return {\"status\": \"ok\", \"uuid\": str(user_uuid)}\n\ndef simulate_handle_recover(recover_code: str):\n    clean_code = recover_code.strip()\n    if not clean_code or clean_code in (\"null\", \"undefined\"):\n        return False, \"Invalid code\"\n    if len(clean_code) < 10:\n        return False, \"Invalid code\"\n    # Code snippet stores raw recover_code even if non-UUID\n    stored_uuid = recover_code\n    return True, stored_uuid\n\ndef test_malformed_recovery_code_persisted_and_breaks_downstream_api():\n    client = TestClient(app)\n    malformed_input = \"invalid_uuid_string_exceeding_10_chars\"\n\n    # 1. Malformed recovery code passes client-side validation\n    passed, stored_uuid = simulate_handle_recover(malformed_input)\n    assert passed is True\n\n    # 2. Downstream backend expecting UUID fails with 422 Unprocessable Entity\n    response = client.get(f\"/users/profile/{stored_uuid}\")\n    assert response.status_code == 422\n",
+      "remediation_hint": "Validate `cleanCode` against a UUID v4 regular expression (e.g. `/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i`) prior to profile fetching or offline recovery, and persist the sanitized `cleanCode` instead of raw `recoverCode`."
+    },
+    {
+      "target_id": "frontend/components/views/landing-page.tsx:visual_asset_tampering",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection reveals that neither the Next.js Image component nor CSS mask-image properties/classes are imported or utilized in this file. The visual elements rely exclusively on inline SVG icons from lucide-react and standard Tailwind CSS classes. Furthermore, dynamic loading is guarded with ChunkErrorBoundary and an AppShellSkeleton fallback.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}
