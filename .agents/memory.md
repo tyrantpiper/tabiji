@@ -54,6 +54,14 @@
   1. 移除動態 SVG 容器上的 `drop-shadow-2xl`，徹底消除 2048×2048 動態遮罩每幀 25px 高斯卷積光柵化瓶頸，幀率自 30 FPS 飆升並穩鎖 60~120 FPS。
   2. 背景層封裝於 `isolate pointer-events-none transform-gpu` 獨立 Stacking Context，使背景極光暈染與前景手繪光斑在 GPU 雙通道獨立並行合成，互不干擾。
   3. 連帽兜帽（Hood，位於 X:[600, 899], Y:[650, 949] 計 15,714 像素）由專屬光斑 `Zone Hood` (`cx=740, cy=790, rx=240, ry=200`, `delay=0.32s`) 接管，於 0.32s~0.87s 自然顯現，順暢銜接頭部 (0.18s) 與衣身連筆 (0.48s)，徹底杜絕最後全畫布淡入時帽子突兀彈出 (Pop-in) 瑕疵。
+- **品牌圖騰「揹包旅人」升級與上圖下字純粹識別架構 (Backpack Traveler Brand Icon & Decoupled Wordmark Hierarchy)**:
+  1. 登入首頁釋放純粹「上圖下字」結構：上方為 1630×2546 高解析度藝術立繪（Brand Icon），完整展現雙肩後背包翻蓋、皮帶釦環與立體口袋；下方為原畫手寫草寫體 `tabiji` 字標（Wordmark）與副標題「旅路 ｜ 旅行提案」。
+  2. 容器宣告 `aspect-1630/2546` 與行內 `style.aspectRatio: '1630 / 2546'` 雙重防禦，搭配 `max-h-[28vh]` 響應式上限，在 iPhone SE 667px 至 1280px 桌面端均維持垂直黃金比例與首屏呼吸感。
+  3. 遮罩路徑注入 `?v=3` 快取穿透查詢參數，支援日式和紙墨黑（`#0f172a`）與夜幕純白（`#ffffff`）雙主題即時自適應。
+- **PWA 底抽屜人體工學與軟體鍵盤動態避讓標準 (Docked PWA Bottom Sheet & VisualViewport Evasion)**:
+  1. PWA 安裝導引徹底摒棄破壞視覺呼吸感的中央懸浮浮動方塊，重構為固定置底抽屜（`bottom-0`），外加頂部 32px 圓角拖曳把手指示條。
+  2. 底部內邊距注入 `pb-[max(0.75rem,env(safe-area-inset-bottom))]`，徹底消除 iOS 系統 Home Bar（34px）誤觸與手勢衝突。
+  3. 引入 `visualViewport` 視窗高度收縮監聽（高度縮小至視窗 78% 以下判定鍵盤彈起），自動向下滑出隱藏，杜絕行動端輸入暱稱時鍵盤頂起抽屜遮擋輸入框與開始按鈕之瑕疵；登入進入 AppShell 後自動升級為 `bottom-20` 避讓常駐 `BottomNav`。
 
 ### 4. 離線架構與 PWA 快取 (Offline, Service Worker & PWA)
 - **Service Worker 構建路徑絕對化標準 (Hermetic Build-Time Path Resolution)**: 工具腳本中的靜態資產掃描嚴禁依賴非確定性的 `process.cwd()`。必須以模組目錄 `import.meta.url` 為錨點解析絕對路徑，確保無論從專案根目錄或子模組呼叫皆具備相同的產出確定性。
