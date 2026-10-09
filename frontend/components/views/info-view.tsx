@@ -360,34 +360,38 @@ export function InfoView() {
 
 
     return (
-        <div className="h-full bg-stone-50 dark:bg-slate-900 overflow-y-auto overflow-x-hidden overscroll-y-contain overscroll-x-none">
+        <div className="h-full bg-[#F6F5EE] dark:bg-[#121A18] overflow-y-auto overflow-x-hidden overscroll-y-contain overscroll-x-none">
             <div className="min-h-screen pb-32">
-                {/* 🆕 v4.8: Dark Premium Header (Matching ToolsView) */}
-                <div className="bg-linear-to-b from-slate-900 to-slate-800 pt-12 pb-6 px-6 text-white">
+                {/* 🆕 Tabiji Breathing Header */}
+                <div className="pt-10 pb-5 px-5 sm:px-8 w-full max-w-4xl lg:max-w-5xl mx-auto">
                     <div className="space-y-4">
                         <div className="flex justify-between items-start">
                             <div>
-                                <h1 className="text-3xl font-serif mb-2 text-white">{t('trip_info')}</h1>
-                                <p className="text-slate-300 text-sm">{t('trip_details')}</p>
+                                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#E56E25]/10 border border-[#E56E25]/20 text-[#E56E25] text-xs font-semibold tracking-wider mb-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-[#E56E25] animate-pulse" />
+                                    tabiji・資訊
+                                </div>
+                                <h1 className="text-2xl font-bold tracking-tight text-[#1E2927] dark:text-[#E5EBEA]">{t('trip_info')}</h1>
+                                <p className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mt-0.5">{t('trip_details')}</p>
                             </div>
                             <ZenRenew
                                 onRefresh={refreshInfo}
                                 successMessage={t('update_success')}
                                 errorMessage={t('update_failed')}
-                                className="text-white/80 hover:text-white"
+                                className="text-[#1E2927]/70 dark:text-[#E5EBEA]/70 hover:text-[#0B3026] dark:hover:text-[#E5EBEA]"
                             />
                         </div>
 
                         <div className="flex items-center justify-between gap-2">
-                            <TripSwitcher className="bg-white/10 text-white border-white/20 hover:bg-white/20 flex-1" />
+                            <TripSwitcher className="bg-white/80 dark:bg-[#1E2927]/80 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/10 dark:border-white/10 hover:bg-white dark:hover:bg-[#1E2927] flex-1" />
                             <Button
                                 variant={isEditing ? "default" : "outline"}
                                 size="sm"
                                 disabled={!activeTripId}
                                 onClick={() => isEditing ? handleSave() : setIsEditing(true)}
                                 className={cn(
-                                    "shrink-0 h-10 px-4",
-                                    isEditing ? "bg-white text-slate-900 border-0" : "bg-white/10 text-white border-white/20 hover:bg-white/20"
+                                    "shrink-0 h-10 px-4 rounded-xl font-semibold transition-all shadow-xs",
+                                    isEditing ? "bg-[#0B3026] text-white hover:bg-[#0B3026]/90 dark:bg-[#164E40]" : "bg-white/80 dark:bg-[#1E2927]/80 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/10 dark:border-white/10 hover:bg-white dark:hover:bg-[#1E2927]"
                                 )}
                             >
                                 {isEditing ? <><Save className="w-4 h-4 mr-1.5" /> {t('save')}</> : <><Edit3 className="w-4 h-4 mr-1.5" /> {t('edit')}</>}
@@ -396,17 +400,17 @@ export function InfoView() {
                     </div>
                 </div>
 
-                <div className="px-4 -mt-4">
+                <div className="w-full max-w-4xl lg:max-w-5xl mx-auto px-5 sm:px-8">
                     {!activeTripId ? (
-                        <div className="text-center py-20 text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl bg-white mt-8">
+                        <div className="text-center py-20 text-[#1E2927]/40 dark:text-[#88A29A]/40 border-2 border-dashed border-[#0B3026]/10 dark:border-white/10 rounded-2xl bg-white/60 dark:bg-[#1E2927]/40 mt-4">
                             <Info className="w-12 h-12 mx-auto mb-4 opacity-20" />
-                            <p>No trip selected</p>
-                            <p className="text-sm">Please select or create a trip to view details.</p>
+                            <p className="font-semibold text-sm">No trip selected</p>
+                            <p className="text-xs mt-1">Please select or create a trip to view details.</p>
                         </div>
                     ) : (
                         <Tabs value={activeSection} onValueChange={setActiveSection} className="space-y-6">
-                            {/* 🆕 v4.8: Segmented Sliding Tab Menu */}
-                            <div className="grid grid-cols-3 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md shadow-lg rounded-2xl p-1.5 mb-8 border border-white/50 dark:border-slate-700/50">
+                            {/* Segmented Sliding Tab Menu */}
+                            <div className="grid grid-cols-3 bg-white/70 dark:bg-[#1E2927]/60 backdrop-blur-md shadow-sm rounded-2xl p-1.5 mb-6 border border-[#0B3026]/10 dark:border-white/10">
                                 {[
                                     { value: 'flights', label: '✈️ ' + t('flight_details') },
                                     { value: 'hotels', label: '🏨 ' + t('accommodation') },
@@ -416,16 +420,16 @@ export function InfoView() {
                                         key={tab.value}
                                         onClick={() => setActiveSection(tab.value)}
                                         className={cn(
-                                            "relative z-10 py-3.5 px-4 rounded-xl text-sm font-black transition-all duration-300",
+                                            "relative z-10 py-3 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300",
                                             activeSection === tab.value
-                                                ? "text-slate-900 dark:text-white"
-                                                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                                                ? "text-white"
+                                                : "text-[#1E2927]/60 hover:text-[#1E2927] dark:text-[#88A29A] dark:hover:text-[#E5EBEA]"
                                         )}
                                     >
                                         {activeSection === tab.value && (
                                             <motion.div
                                                 layoutId="info-tab-indicator"
-                                                className="absolute inset-0 bg-white dark:bg-slate-700 shadow-sm rounded-xl -z-10"
+                                                className="absolute inset-0 bg-[#0B3026] dark:bg-[#164E40] shadow-sm rounded-xl -z-10"
                                                 transition={{ type: "spring", stiffness: 400, damping: 30 }}
                                             />
                                         )}
@@ -444,24 +448,24 @@ export function InfoView() {
                                         <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center shadow-sm">
                                             <Plane className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                                         </div>
-                                        <h2 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-[0.2em]">
+                                        <h2 className="text-xs font-bold text-[#1E2927]/80 dark:text-[#E5EBEA]/80 uppercase tracking-wider">
                                             {t('flight_details')}
                                         </h2>
                                     </div>
 
                                     {/* Flight Tabs with Sliding Indicator */}
                                     <div className="w-full">
-                                        <div className="grid grid-cols-2 mb-4 bg-white/50 dark:bg-slate-700/50 p-1 rounded-xl relative border border-slate-200 shadow-sm">
+                                        <div className="grid grid-cols-2 mb-4 bg-white/70 dark:bg-[#1E2927]/60 p-1 rounded-xl relative border border-[#0B3026]/10 dark:border-white/10 shadow-xs">
                                             {(['outbound', 'inbound'] as const).map((tab) => (
                                                 <button
                                                     key={tab}
                                                     onClick={() => setFlightTab(tab)}
-                                                    className={`relative z-10 py-2.5 px-4 rounded-lg text-xs font-bold transition-all ${flightTab === tab ? 'text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
+                                                    className={`relative z-10 py-2.5 px-4 rounded-lg text-xs font-bold transition-all ${flightTab === tab ? 'text-white' : 'text-[#1E2927]/60 hover:text-[#1E2927] dark:text-[#88A29A] dark:hover:text-[#E5EBEA]'}`}
                                                 >
                                                     {flightTab === tab && (
                                                         <motion.div
                                                             layoutId="flight-tab-indicator"
-                                                            className="absolute inset-0 bg-white rounded-lg shadow-sm -z-10"
+                                                            className="absolute inset-0 bg-[#0B3026] dark:bg-[#164E40] rounded-lg shadow-sm -z-10"
                                                             transition={{ type: "spring", stiffness: 500, damping: 30 }}
                                                         />
                                                     )}
@@ -771,32 +775,33 @@ export function InfoView() {
 
                                                                         {/* 🆕 Website 按鈕 (Primary Link) */}
                                                                         {item.link_url && (
-                                                                            <a
-                                                                                href={item.link_url}
-                                                                                target="_blank"
-                                                                                rel="noreferrer"
-                                                                                onClick={() => haptic.tap()}
-                                                                                className="flex items-center gap-1.5 px-3 h-9 text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md transition-all active:scale-95"
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    haptic.tap()
+                                                                                    openExternalLink(item.link_url)
+                                                                                }}
+                                                                                className="flex items-center gap-1.5 px-3 h-9 text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-md transition-all active:scale-95 cursor-pointer"
                                                                             >
                                                                                 <LinkIcon className="w-3.5 h-3.5" /> Site
-                                                                            </a>
+                                                                            </button>
                                                                         )}
 
                                                                         {/* 🆕 導航開關按鈕 (尊重隱藏設定) */}
                                                                         {!item.hide_navigation && ((item.lat && item.lng) || item.address || item.name || item.link_url) ? (
-                                                                            <a
-                                                                                href={
-                                                                                    item.link_url?.startsWith('http')
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    haptic.tap()
+                                                                                    const navUrl = item.link_url?.startsWith('http')
                                                                                         ? item.link_url
                                                                                         : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.link_url || item.address || item.name || '')}`
-                                                                                }
-                                                                                target="_blank"
-                                                                                rel="noreferrer"
-                                                                                onClick={() => haptic.tap()}
-                                                                                className="flex items-center gap-1.5 px-3 h-9 text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-md transition-all active:scale-95"
+                                                                                    openExternalLink(navUrl)
+                                                                                }}
+                                                                                className="flex items-center gap-1.5 px-3 h-9 text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-md transition-all active:scale-95 cursor-pointer"
                                                                             >
                                                                                 <Navigation2 className="w-3.5 h-3.5" /> Maps
-                                                                            </a>
+                                                                            </button>
                                                                         ) : (
                                                                             <div className="flex items-center gap-1.5 px-3 h-9 text-xs bg-slate-100 text-slate-400 rounded-md opacity-60" title={t('info_no_location_title')}>
                                                                                 <Navigation2 className="w-3.5 h-3.5" /> Maps
@@ -1015,7 +1020,15 @@ export function InfoView() {
                                                         </span>
                                                         <div className="space-y-2">
                                                             {hotels[currentHotelIdx].links.map((link: { title: string; url: string }, i: number) => (
-                                                                <a key={i} href={link.url} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-indigo-50/50 dark:bg-indigo-900/10 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-xl border border-indigo-100 dark:border-indigo-800 transition-colors">
+                                                                <button
+                                                                    type="button"
+                                                                    key={i}
+                                                                    onClick={() => {
+                                                                        haptic.tap()
+                                                                        openExternalLink(link.url)
+                                                                    }}
+                                                                    className="w-full flex items-center justify-between p-3 bg-indigo-50/50 dark:bg-indigo-900/10 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-xl border border-indigo-100 dark:border-indigo-800 transition-colors text-left cursor-pointer"
+                                                                >
                                                                     <div className="flex items-center gap-3">
                                                                         <div className="w-8 h-8 rounded-lg bg-white dark:bg-slate-800 flex items-center justify-center shadow-sm text-indigo-600 dark:text-indigo-400">
                                                                             <ExternalLink className="w-4 h-4" />
@@ -1023,7 +1036,7 @@ export function InfoView() {
                                                                         <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{link.title || "Link"}</span>
                                                                     </div>
                                                                     <ChevronRight className="w-4 h-4 text-slate-300" />
-                                                                </a>
+                                                                </button>
                                                             ))}
                                                         </div>
                                                     </div>

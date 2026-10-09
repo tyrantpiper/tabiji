@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/components/views/info-view.tsx",
+    "file_path": "frontend/components/views/info-view.tsx",
+    "attack_vector": "client_side_xss_url_injection",
+    "hypothesis": "External URLs in hotel and booking tabs might allow javascript pseudo-protocol if not piped through openExternalLink"
+  },
+  {
+    "id": "frontend/components/views/tools-view.tsx",
+    "file_path": "frontend/components/views/tools-view.tsx",
+    "attack_vector": "unauthorized_ledger_share_idor",
+    "hypothesis": "Ledger sharing endpoint might allow unauthenticated access if x-user-id header is missing"
+  },
+  {
+    "id": "frontend/components/views/profile-view.tsx",
+    "file_path": "frontend/components/views/profile-view.tsx",
+    "attack_vector": "sensitive_cache_leakage",
+    "hypothesis": "Clearing app cache might clear user_uuid from localStorage breaking anonymous session persistence"
+  }
+]

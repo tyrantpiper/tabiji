@@ -1,0 +1,33 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 3,
+  "confirmed_count": 0,
+  "dismissed_count": 3,
+  "inconclusive_count": 0,
+  "findings": [
+    {
+      "target_id": "frontend/components/views/info-view.tsx",
+      "verdict": "DISMISSED",
+      "reasoning": "Static review of `info-view.tsx` confirms that external URLs are properly routed through `openExternalLink`. Both the hotel website button, maps navigation button, and dialog reference links invoke `openExternalLink(...)` rather than raw anchor tags (`<a href>`) or direct `window.location` assignments. In addition, `openExternalLink` enforces strict protocol whitelisting (/^(https?|maps|geo|tel|mailto):/i), completely blocking `javascript:` and other pseudo-protocols.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/tools-view.tsx",
+      "verdict": "DISMISSED",
+      "reasoning": "The target file is a client-side React component, not the backend API endpoint. In `handleShareLedger`, the client explicitly includes the `x-user-id` header in the request (`headers: { 'x-user-id': userId }`). Furthermore, endpoint authentication, authorization checks, and IDOR prevention are enforced server-side on the `/api/trips/:id/ledger-share` handler. The proposed endpoint defect does not exist in this frontend code snippet.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/profile-view.tsx",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection of `handleClearCache` demonstrates that the proposed issue is already mitigated. The function explicitly reads `user_uuid` from `localStorage` into a local variable before executing `localStorage.clear()`, and immediately restores `user_uuid` back into `localStorage` prior to `window.location.reload()`. Consequently, clearing the application cache preserves the anonymous session identifier.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

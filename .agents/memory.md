@@ -49,6 +49,11 @@
 - **速度收斂穩定追蹤優於瞬態採樣原則 (Velocity-Settled Convergence over Premature Snapshot)**: 當路由或視圖切換伴隨 Framer Motion 進場動畫（如 `x: -20% -> 0`）時，若在切換瞬間僅執行一次 `getBoundingClientRect()`，會捕捉到位移途中的座標，導致導引外框偏位（如偏左 42px）。引導定位嚴禁單次採樣，必須啟用 RAF 速度收斂演算法：設定 180ms 最小觀察窗，且必須連續 4 幀在 X 與 Y 軸的位移差均小於 0.5px，才判定目標已完全靜止並鎖定座標；同時設置 600ms 算力熔斷計時器防止無效耗電。
 - **破壞性動作隔離與專屬動作白名單原則 (Destructive Action Defense & Tour White-listing)**: 為完整框選卡片容器而提升導引 ID 時，卡片內通常包含刪除按鈕等高危操作。若聚光燈點擊穿透僅執行 `container.querySelector("button")`，將有極高機率誤點擊右上角的刪除按鈕。規範在主要業務按鈕上顯式宣告 `data-tour-action="primary"` 作為最高優先級目標；穿透點擊轉發引擎嚴格過濾排除帶有 `.bg-red-500`、`variant="destructive"` 之元素，杜絕新手誤刪資料。
 - **視圖切換雙重 RAF 佈局重排等待原則 (Double-RAF Layout Reflow Invariance)**: 在具有過渡動畫的容器（`AnimatePresence mode="wait"`）中返回上一層視圖時，第 1 幀 DOM 剛被掛載，瀏覽器尚未完成 CSS 計算與佈局重排（Layout/Reflow），此時容器 `scrollHeight` 尚未展開，立即調用 `scrollTo` 會被截斷至 0。必須採用雙重 `requestAnimationFrame`：第 1 幀等待舊視圖卸載與新節點掛載，第 2 幀等待瀏覽器重排完畢後再執行 `scrollTo({ top: targetPos, behavior: 'instant' })`，並搭配 `active` 旗標與清理函式消除競態條件。
+- **開屏動畫去人造向量線與純手繪遮罩顯現準則 (Pure Artwork Matte Reveal over Synthetic Vector Overlay)**: 在開屏手繪描摹動畫中，嚴禁在前景疊加未貼合原畫人體結構的單一向量光軌路徑（`VECTOR_GUIDE_PATH`）；人造貝茲曲線穿過角色五官臉頰會形成「幽靈曲線（Ghost Curve）」瑕疵。動畫主幹與枝節顯現必須 100% 由原畫 PNG 遮罩（Track Matte）之 Trailing Bloom 階梯式區域展開接管，前景保持零向量覆蓋線，保證純淨自然手繪美感與 100% 畫質還原。
+- **開屏動畫人物背景雙通道硬體解耦與連帽光斑同步原則 (Dual-Channel Compositor Decoupling & Hood Bloom Sync)**:
+  1. 移除動態 SVG 容器上的 `drop-shadow-2xl`，徹底消除 2048×2048 動態遮罩每幀 25px 高斯卷積光柵化瓶頸，幀率自 30 FPS 飆升並穩鎖 60~120 FPS。
+  2. 背景層封裝於 `isolate pointer-events-none transform-gpu` 獨立 Stacking Context，使背景極光暈染與前景手繪光斑在 GPU 雙通道獨立並行合成，互不干擾。
+  3. 連帽兜帽（Hood，位於 X:[600, 899], Y:[650, 949] 計 15,714 像素）由專屬光斑 `Zone Hood` (`cx=740, cy=790, rx=240, ry=200`, `delay=0.32s`) 接管，於 0.32s~0.87s 自然顯現，順暢銜接頭部 (0.18s) 與衣身連筆 (0.48s)，徹底杜絕最後全畫布淡入時帽子突兀彈出 (Pop-in) 瑕疵。
 
 ### 4. 離線架構與 PWA 快取 (Offline, Service Worker & PWA)
 - **Service Worker 構建路徑絕對化標準 (Hermetic Build-Time Path Resolution)**: 工具腳本中的靜態資產掃描嚴禁依賴非確定性的 `process.cwd()`。必須以模組目錄 `import.meta.url` 為錨點解析絕對路徑，確保無論從專案根目錄或子模組呼叫皆具備相同的產出確定性。

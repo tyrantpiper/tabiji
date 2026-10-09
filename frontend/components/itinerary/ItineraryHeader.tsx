@@ -89,7 +89,7 @@ export function ItineraryHeader({
     return (
         <>
             {/* 頂部 Hero 資訊與操作區 (隨滾動自然隱藏，釋放視野) */}
-            <div className="bg-white dark:bg-slate-800 pt-12 pb-3">
+            <div className="bg-[#F6F5EE] dark:bg-[#121A18] pt-12 pb-3">
                 <div className="px-6 flex flex-col sm:flex-row justify-between items-start sm:items-end mb-1 gap-4 sm:gap-2">
                     <div className="w-full sm:w-auto min-w-0">
                         <button
@@ -102,7 +102,7 @@ export function ItineraryHeader({
                         >
                             <ChevronLeft className="w-5 h-5 -ml-0.5" />
                         </button>
-                        <TripSwitcher className="w-full sm:w-60 justify-start px-0 font-serif font-bold text-2xl border-none shadow-none bg-transparent hover:bg-slate-100/50 h-auto py-1" />
+                        <TripSwitcher className="w-full sm:w-60 justify-start px-0 font-bold text-2xl tracking-tight border-none shadow-none bg-transparent text-[#1E2927] dark:text-[#E5EBEA] hover:bg-black/5 dark:hover:bg-white/5 h-auto py-1" />
                         
                         {/* 📅 iOS Date Range Capsule Button */}
                         {onOpenDatePicker && (
@@ -146,7 +146,7 @@ export function ItineraryHeader({
             {/* 🗓️ 智慧吸頂天數膠囊列 (Sticky Blur: 始終吸附頂部且透出下方時間軸毛玻璃，吸頂閒置時 20% 呼吸極透) */}
             <div
                 className={cn(
-                    "sticky top-0 z-30 bg-white/85 dark:bg-slate-800/85 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-700/80 py-2 shadow-2xs transition-all",
+                    "sticky top-0 z-30 bg-[#F6F5EE]/85 dark:bg-[#121A18]/85 backdrop-blur-md border-b border-[#0B3026]/8 dark:border-white/10 py-2 shadow-2xs transition-all",
                     isDimmed
                         ? "opacity-20 duration-500 ease-in-out hover:opacity-100"
                         : "opacity-100 duration-150 ease-out"
@@ -167,14 +167,14 @@ export function ItineraryHeader({
                                     className={cn(
                                         "day-btn relative flex flex-col items-center min-w-14 py-2 px-2.5 rounded-lg border transition-colors",
                                         day === 0
-                                            ? "text-white bg-slate-900 dark:bg-slate-100 dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
-                                            : "bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 border-slate-200 dark:border-slate-700"
+                                            ? "text-white bg-[#0B3026] dark:bg-[#164E40] border-[#0B3026] dark:border-[#164E40] shadow-sm"
+                                            : "bg-white dark:bg-[#182320] hover:bg-[#EAE8DE]/60 dark:hover:bg-[#1F2C29] text-[#1E2927] dark:text-[#E5EBEA] border-[#0B3026]/10 dark:border-white/10"
                                     )}
                                 >
                                     {day === 0 && (
                                         <motion.div
                                             layoutId="day-indicator"
-                                            className="absolute inset-0 bg-slate-900 dark:bg-slate-100 rounded-lg -z-10"
+                                            className="absolute inset-0 bg-[#0B3026] dark:bg-[#164E40] rounded-lg -z-10"
                                             transition={{ type: "spring", stiffness: 500, damping: 30 }}
                                         />
                                     )}
@@ -192,14 +192,14 @@ export function ItineraryHeader({
                                             className={cn(
                                                 "day-btn relative flex flex-col items-center min-w-14 py-2 rounded-lg border",
                                                 day === d
-                                                    ? "text-white bg-slate-900 dark:bg-slate-100 dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
-                                                    : "bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 border-slate-200 dark:border-slate-700"
+                                                    ? "text-white bg-[#0B3026] dark:bg-[#164E40] border-[#0B3026] dark:border-[#164E40] shadow-sm"
+                                                    : "bg-white dark:bg-[#182320] hover:bg-[#EAE8DE]/60 dark:hover:bg-[#1F2C29] text-[#1E2927] dark:text-[#E5EBEA] border-[#0B3026]/10 dark:border-white/10"
                                             )}
                                         >
                                             {day === d && (
                                                 <motion.div
                                                     layoutId="day-indicator"
-                                                    className="absolute inset-0 bg-slate-900 dark:bg-slate-100 rounded-lg -z-10"
+                                                    className="absolute inset-0 bg-[#0B3026] dark:bg-[#164E40] rounded-lg -z-10"
                                                     transition={{ type: "spring", stiffness: 500, damping: 30 }}
                                                 />
                                             )}

@@ -32,7 +32,7 @@ const TAB_INDICES: Record<string, number> = {
 const ItineraryView = dynamic(() => import("@/components/views/itinerary-view").then(mod => mod.ItineraryView), {
     ssr: false,
     loading: () => (
-        <div className="flex-1 flex flex-col bg-stone-50 animate-pulse">
+        <div className="flex-1 flex flex-col bg-[#F6F5EE] dark:bg-[#121A18] animate-pulse">
             <div className="h-20 bg-white/50 border-b border-stone-100" />
             <div className="p-6 space-y-6">
                 <div className="h-8 bg-stone-200/50 rounded-xl w-1/2" />
@@ -51,7 +51,7 @@ const ItineraryView = dynamic(() => import("@/components/views/itinerary-view").
 const InfoView = dynamic(() => import("@/components/views/info-view").then(mod => mod.InfoView), {
     ssr: false,
     loading: () => (
-        <div className="flex-1 flex flex-col bg-stone-50 animate-pulse p-6 space-y-8">
+        <div className="flex-1 flex flex-col bg-[#F6F5EE] dark:bg-[#121A18] animate-pulse p-6 space-y-8">
             <div className="h-12 bg-stone-200/50 rounded-2xl w-3/4" />
             <div className="space-y-4">
                 <div className="h-40 bg-stone-200/30 rounded-3xl w-full" />
@@ -63,7 +63,7 @@ const InfoView = dynamic(() => import("@/components/views/info-view").then(mod =
 const ToolsView = dynamic(() => import("@/components/views/tools-view").then(mod => mod.ToolsView), {
     ssr: false,
     loading: () => (
-        <div className="flex-1 flex flex-col bg-stone-50 animate-pulse p-6 space-y-6">
+        <div className="flex-1 flex flex-col bg-[#F6F5EE] dark:bg-[#121A18] animate-pulse p-6 space-y-6">
             <div className="h-10 bg-stone-200/50 rounded-xl w-1/3" />
             <div className="h-48 bg-stone-200/30 rounded-3xl w-full" />
             <div className="h-32 bg-stone-200/30 rounded-3xl w-full" />
@@ -73,7 +73,7 @@ const ToolsView = dynamic(() => import("@/components/views/tools-view").then(mod
 const ProfileView = dynamic(() => import("@/components/views/profile-view").then(mod => mod.ProfileView), {
     ssr: false,
     loading: () => (
-        <div className="flex-1 flex flex-col bg-stone-50 animate-pulse p-6 space-y-6">
+        <div className="flex-1 flex flex-col bg-[#F6F5EE] dark:bg-[#121A18] animate-pulse p-6 space-y-6">
             <div className="h-20 bg-stone-200/50 rounded-2xl w-full" />
             <div className="space-y-3">
                 <div className="h-12 bg-stone-200/30 rounded-xl w-full" />

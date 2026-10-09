@@ -883,14 +883,19 @@ export function ToolsView() {
 
     return (
         <>
-            <div className="h-full bg-stone-50 dark:bg-slate-950 overflow-y-auto overflow-x-hidden overscroll-y-contain overscroll-x-none">
+            <div className="h-full bg-[#F6F5EE] dark:bg-[#121A18] overflow-y-auto overflow-x-hidden overscroll-y-contain overscroll-x-none">
                 <div className="min-h-screen pb-32">
-                    <div className="bg-linear-to-b from-slate-900 to-slate-800 pt-12 pb-6 px-6 text-white">
-                        <div className="space-y-3">
+                    {/* 🆕 Tabiji Breathing Header */}
+                    <div className="pt-10 pb-5 px-5 sm:px-8 w-full max-w-4xl lg:max-w-5xl mx-auto">
+                        <div className="space-y-4">
                             <div className="flex justify-between items-start">
                                 <div>
-                                    <h1 className="text-3xl font-serif mb-2">{t('tools')}</h1>
-                                    <p className="text-slate-300 text-sm">{t('expense_ai')}</p>
+                                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#E56E25]/10 border border-[#E56E25]/20 text-[#E56E25] text-xs font-semibold tracking-wider mb-2">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-[#E56E25] animate-pulse" />
+                                        tabiji・工具箱
+                                    </div>
+                                    <h1 className="text-2xl font-bold tracking-tight text-[#1E2927] dark:text-[#E5EBEA]">{t('tools')}</h1>
+                                    <p className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mt-0.5">{t('expense_ai')}</p>
                                 </div>
                                 <ZenRenew
                                     onRefresh={async () => {
@@ -900,17 +905,17 @@ export function ToolsView() {
                                     }}
                                     successMessage={t('tv_receipt_synced')}
                                     errorMessage={t('update_failed')}
-                                    className="text-white/80 hover:text-white"
+                                    className="text-[#1E2927]/70 dark:text-[#E5EBEA]/70 hover:text-[#0B3026] dark:hover:text-[#E5EBEA]"
                                 />
                             </div>
-                            <TripSwitcher className="bg-white/10 text-white border-white/20 hover:bg-white/20" />
+                            <TripSwitcher className="bg-white/80 dark:bg-[#1E2927]/80 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/10 dark:border-white/10 hover:bg-white dark:hover:bg-[#1E2927] w-full" />
                         </div>
                     </div>
 
-                    <div className="px-4 -mt-4">
+                    <div className="w-full max-w-4xl lg:max-w-5xl mx-auto px-5 sm:px-8">
                         <Tabs value={activeSection} onValueChange={setActiveSection}>
-                            {/* Custom Sliding Tab Strip */}
-                            <div className="grid grid-cols-3 bg-white dark:bg-slate-800 shadow-md rounded-xl p-1 mb-4">
+                            {/* Segmented Sliding Tab Strip */}
+                            <div className="grid grid-cols-3 bg-white/70 dark:bg-[#1E2927]/60 backdrop-blur-md shadow-sm rounded-2xl p-1.5 mb-6 border border-[#0B3026]/10 dark:border-white/10">
                                 {[
                                     { value: 'cards', label: t('tv_cards') },
                                     { value: 'expense', label: t('expense') },
@@ -923,13 +928,18 @@ export function ToolsView() {
                                                 setActiveSection(tab.value)
                                             }
                                         }}
-                                        className={`relative z-10 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${activeSection === tab.value ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                                        className={cn(
+                                            "relative z-10 py-3 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300",
+                                            activeSection === tab.value
+                                                ? "text-white"
+                                                : "text-[#1E2927]/60 hover:text-[#1E2927] dark:text-[#88A29A] dark:hover:text-[#E5EBEA]"
+                                        )}
                                     >
                                         {activeSection === tab.value && (
                                             <motion.div
                                                 layoutId="tools-tab-indicator"
-                                                className="absolute inset-0 bg-slate-100 dark:bg-slate-700 rounded-lg -z-10"
-                                                transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                                                className="absolute inset-0 bg-[#0B3026] dark:bg-[#164E40] shadow-sm rounded-xl -z-10"
+                                                transition={{ type: "spring", stiffness: 400, damping: 30 }}
                                             />
                                         )}
                                         {tab.label}

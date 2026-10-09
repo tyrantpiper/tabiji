@@ -176,7 +176,7 @@ export function TripList({
                                 onSelectTrip(trip.id)
                             }}
                         >
-                            By {trip.creator_name || 'Guest'}
+                            By {trip.is_sample ? 'Tabiji' : (trip.creator_name || 'Guest')}
                         </button>
                         <div className="flex items-center gap-2">
                             {trip.is_sample ? (

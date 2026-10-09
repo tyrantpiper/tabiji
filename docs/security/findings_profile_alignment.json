@@ -1,0 +1,33 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 3,
+  "confirmed_count": 0,
+  "dismissed_count": 3,
+  "inconclusive_count": 0,
+  "findings": [
+    {
+      "target_id": "frontend/components/views/profile-view.tsx#avatar_email_protocol",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection confirms that neither avatar rendering nor email triggers expose client-side XSS or protocol injection vulnerabilities. In `handleWriteEmail`, the target URL is a constant compile-time HTTPS string ('https://mail.google.com/mail/?view=cm&fs=1&to=ryanpig228@gmail.com') without any dynamic user input or `mailto:` pseudo-protocol usage. For avatar handling, `profile.avatarUrl` is passed solely to image display components (`AvatarImage` and `ZoomableImage`), which render in standard image element contexts where modern browser security standards prohibit script execution via `javascript:` URIs.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/profile-view.tsx#cache_session_persistence",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection shows that `handleClearCache` explicitly backs up and restores `user_uuid` (`const uuid = localStorage.getItem('user_uuid')`, `localStorage.clear()`, `if (uuid) localStorage.setItem('user_uuid', uuid)`), preventing loss of user identity during cache clearing. For `handleDeleteAllData`, clearing `localStorage` entirely following backend deletion is expected for GDPR right-to-erasure workflows. Furthermore, WebKit / Safari has supported `localStorage` in Private Browsing Mode via ephemeral in-memory storage without throwing `SecurityError` since Safari 11 (2017). Under the presumption of correctness, no defect exists.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/profile-view.tsx#optical_wcag_contrast",
+      "verdict": "DISMISSED",
+      "reasoning": "In the provided code snippet, neither the therapeutic monitor nor the recovery key card has been refactored into a Tabiji paper card. The therapeutic monitor maintains saturated gradient backgrounds via `bg-linear-to-br ${status.color}` (with dark label badges `bg-*-900/80` and drop shadows for text), and the recovery key card explicitly enforces a dark background via `bg-slate-900 text-white` in both light and dark modes. The white, amber-400, and slate-400 text elements remain bounded within these dark/saturated background containers, preserving contrast. The concern describes a speculative risk rather than an existing defect.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

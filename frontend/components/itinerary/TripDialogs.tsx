@@ -26,6 +26,8 @@ interface CreateTripModalProps {
     userId: string
     trips?: Trip[]
     onSuccess: (trip?: { id: string; title: string }) => void
+    initialPrompt?: string
+    hideTrigger?: boolean
 }
 
 const INSPIRATION_PILLS = [
@@ -54,6 +56,8 @@ export function CreateTripModal({
     userId,
     trips,
     onSuccess,
+    initialPrompt,
+    hideTrigger = false,
 }: CreateTripModalProps) {
     const { t } = useLanguage()
     const haptic = useHaptic()
@@ -98,6 +102,14 @@ export function CreateTripModal({
             setSelectedTripId(trips[0].id)
         }
     }, [trips, selectedTripId])
+
+    useEffect(() => {
+        if (isOpen && initialPrompt && initialPrompt.trim()) {
+            setActiveTab('ai_generate')
+            setAiMode('freeform')
+            setAiPrompt(initialPrompt.trim())
+        }
+    }, [isOpen, initialPrompt])
 
     // 手動建立提交
     const handleCreate = async () => {
@@ -271,13 +283,18 @@ export function CreateTripModal({
 
     return (
         <Dialog open={isOpen} onOpenChange={onOpenChange}>
-            <DialogTrigger asChild>
-                <Button id="tour-create-trip" className="h-24 border-2 border-dashed border-slate-300 dark:border-slate-700 bg-transparent text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-2xl flex flex-col gap-2 cursor-pointer transition-all active:scale-[0.98]">
-                    <Plus className="w-6 h-6 text-amber-500" />
-                    <span className="text-xs font-bold uppercase tracking-wider">{t('new_trip')}</span>
-                </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+            {!hideTrigger && (
+                <DialogTrigger asChild>
+                    <Button id="tour-create-trip" className="h-24 border-2 border-dashed border-slate-300 dark:border-slate-700 bg-transparent text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-2xl flex flex-col gap-2 cursor-pointer transition-all active:scale-[0.98]">
+                        <Plus className="w-6 h-6 text-amber-500" />
+                        <span className="text-xs font-bold uppercase tracking-wider">{t('new_trip')}</span>
+                    </Button>
+                </DialogTrigger>
+            )}
+            <DialogContent 
+                className="sm:max-w-lg max-h-[90vh] overflow-y-auto"
+                onCloseAutoFocus={(e) => e.preventDefault()}
+            >
                 <DialogHeader className="pb-2">
                     <DialogTitle className="text-xl font-serif">{t('create_trip')}</DialogTitle>
                     <DialogDescription className="sr-only">
@@ -771,15 +788,27 @@ export function CreateTripModal({
 interface JoinTripDialogProps {
     userId: string
     onSuccess: () => void
+    isOpen?: boolean
+    onOpenChange?: (open: boolean) => void
+    hideTrigger?: boolean
 }
 
 export function JoinTripDialog({
     userId,
     onSuccess,
+    isOpen: propIsOpen,
+    onOpenChange: propOnOpenChange,
+    hideTrigger = false,
 }: JoinTripDialogProps) {
     const { t } = useLanguage()
     const haptic = useHaptic()
-    const [isOpen, setIsOpen] = useState(false)
+    const [internalOpen, setInternalOpen] = useState(false)
+    const isControlled = propIsOpen !== undefined
+    const isOpen = isControlled ? propIsOpen : internalOpen
+    const setIsOpen = (val: boolean) => {
+        if (propOnOpenChange) propOnOpenChange(val)
+        if (!isControlled) setInternalOpen(val)
+    }
     const [joinCode, setJoinCode] = useState("")
     const [isLoading, setIsLoading] = useState(false)
     const [showPushPrompt, setShowPushPrompt] = useState(false)
@@ -822,20 +851,22 @@ export function JoinTripDialog({
     return (
         <>
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
-            <DialogTrigger asChild>
-                <Button
-                    onClick={() => {
-                        haptic.selection()
-                        setIsOpen(true)
-                    }}
-                    className="h-24 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-2xl flex flex-col gap-2 shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer active:scale-[0.98] select-none"
-                >
-                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 dark:bg-amber-400/20 flex items-center justify-center">
-                        <Hash className="w-5 h-5 text-amber-500 dark:text-amber-400" />
-                    </div>
-                    <span className="text-xs font-bold uppercase tracking-wider">{t('join_code')}</span>
-                </Button>
-            </DialogTrigger>
+            {!hideTrigger && (
+                <DialogTrigger asChild>
+                    <Button
+                        onClick={() => {
+                            haptic.selection()
+                            setIsOpen(true)
+                        }}
+                        className="h-24 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-2xl flex flex-col gap-2 shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer active:scale-[0.98] select-none"
+                    >
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 dark:bg-amber-400/20 flex items-center justify-center">
+                            <Hash className="w-5 h-5 text-amber-500 dark:text-amber-400" />
+                        </div>
+                        <span className="text-xs font-bold uppercase tracking-wider">{t('join_code')}</span>
+                    </Button>
+                </DialogTrigger>
+            )}
             <DialogContent className="sm:max-w-sm rounded-3xl p-6 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xl">
                 <DialogHeader className="flex flex-col items-center text-center space-y-2 pb-1">
                     <div className="w-12 h-12 rounded-2xl bg-amber-500/10 dark:bg-amber-400/20 flex items-center justify-center text-amber-500 dark:text-amber-400 shadow-2xs">

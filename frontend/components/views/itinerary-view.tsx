@@ -23,7 +23,6 @@ import { useTripContext } from "@/lib/trip-context"
 import { useTripStore } from "@/lib/stores/tripStore"
 import { useWeatherStore } from "@/lib/stores/weatherStore"
 import { toast } from "sonner"
-import { ZenRenew } from "@/components/ui/zen-renew"
 import { fetchWeatherWithSDK, generateHourlyCurve } from "@/lib/weather-api"
 import { debugLog } from "@/lib/debug"
 import { VirtuosoHandle } from "react-virtuoso"
@@ -40,7 +39,7 @@ import { POIBasicData } from "@/components/POIDetailDrawer"
 
 import { WeatherPanel } from "@/components/itinerary/WeatherPanel"
 import { LocationEditDialog } from "@/components/itinerary/LocationEditDialog"
-import { TripList } from "@/components/itinerary/TripList"
+import { TabijiHomeDashboard } from "@/components/itinerary/TabijiHomeDashboard"
 import { ItineraryHeader } from "@/components/itinerary/ItineraryHeader"
 import { ItineraryTimeline } from "@/components/itinerary/ItineraryTimeline"
 import { TripMasterOverview } from "@/components/itinerary/TripMasterOverview"
@@ -86,6 +85,8 @@ export function ItineraryView() {
     const [isDeleting, setIsDeleting] = useState(false)
 
     const [isCreateOpen, setIsCreateOpen] = useState(false)
+    const [createInitialPrompt, setCreateInitialPrompt] = useState<string>("")
+    const [isJoinOpen, setIsJoinOpen] = useState(false)
     const haptic = useHaptic()
     const isOnline = useOnlineStatus()  // 🆕 離線狀態偵測
 
@@ -1351,7 +1352,7 @@ export function ItineraryView() {
     }
 
     return (
-        <div className="flex-1 flex flex-col h-full bg-stone-50 dark:bg-slate-900 overflow-hidden relative">
+        <div className="flex-1 flex flex-col h-full bg-[#F6F5EE] dark:bg-[#121A18] overflow-hidden relative">
             <AnimatePresence mode="wait" initial={false}>
                 {viewMode === 'list' ? (
                     <motion.div
@@ -1360,33 +1361,11 @@ export function ItineraryView() {
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: "-20%" }}
                         transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                        className="w-full h-full overflow-y-auto overscroll-contain bg-stone-50 dark:bg-slate-900 gpu-layer-accelerated"
+                        className="w-full h-full overflow-y-auto overscroll-contain bg-[#F6F5EE] dark:bg-[#121A18] gpu-layer-accelerated"
                     >
-                        <div className="flex flex-col bg-stone-50 dark:bg-slate-900 pb-32">
-                            <div className="flex-1 px-6 py-12 pb-32">
-                                <header className="mb-8 flex justify-between items-start">
-                                    <div>
-                                        <h1 className="text-3xl font-serif text-slate-900 dark:text-slate-100 mb-2">{t('my_trips')}</h1>
-                                        <p className="text-slate-500 text-sm">{t('manage_journeys')}</p>
-                                    </div>
-                                    <ZenRenew onRefresh={async () => { await reloadTrips() }} successMessage={t('update_success')} errorMessage={t('update_failed')} />
-                                </header>
-
-                                <div className="grid grid-cols-2 gap-3 mb-6">
-                                    <CreateTripModal
-                                        isOpen={isCreateOpen}
-                                        onOpenChange={setIsCreateOpen}
-                                        userId={userId || ""}
-                                        trips={trips}
-                                        onSuccess={() => {
-                                            reloadTrips()
-                                            setTimeout(() => reloadTrips(), 500)
-                                        }}
-                                    />
-                                    <JoinTripDialog userId={userId || ""} onSuccess={reloadTrips} />
-                                </div>
-
-                                <TripList
+                        <div className="flex flex-col bg-[#F6F5EE] dark:bg-[#121A18] pb-32 min-h-screen">
+                            <div className="flex-1 px-5 sm:px-8 pt-6 pb-32 w-full max-w-4xl lg:max-w-5xl mx-auto">
+                                <TabijiHomeDashboard
                                     trips={trips}
                                     userId={userId}
                                     isTripsLoading={isTripsLoading}
@@ -1398,6 +1377,37 @@ export function ItineraryView() {
                                     onDeleteTrip={handleDeleteTrip}
                                     onLeaveTrip={handleLeaveTrip}
                                     leavingTripId={leavingTripId}
+                                    onRefresh={async () => { await reloadTrips() }}
+                                    onOpenCreateModal={() => {
+                                        setIsCreateOpen(true)
+                                    }}
+                                    onOpenJoinDialog={() => {
+                                        setIsJoinOpen(true)
+                                    }}
+                                />
+
+                                {/* Create & Join Dialogs (Controlled via Dashboard Action Pills) */}
+                                <CreateTripModal
+                                    isOpen={isCreateOpen}
+                                    onOpenChange={(open) => {
+                                        setIsCreateOpen(open)
+                                        if (!open) setCreateInitialPrompt("")
+                                    }}
+                                    userId={userId || ""}
+                                    trips={trips}
+                                    initialPrompt={createInitialPrompt}
+                                    hideTrigger={true}
+                                    onSuccess={() => {
+                                        reloadTrips()
+                                        setTimeout(() => reloadTrips(), 500)
+                                    }}
+                                />
+                                <JoinTripDialog 
+                                    userId={userId || ""} 
+                                    onSuccess={reloadTrips} 
+                                    isOpen={isJoinOpen}
+                                    onOpenChange={setIsJoinOpen}
+                                    hideTrigger={true}
                                 />
 
                                 {/* Delete Confirmation Dialog */}
@@ -1433,7 +1443,7 @@ export function ItineraryView() {
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: "100%" }}
                         transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                        className="w-full flex-1 flex flex-col h-full overflow-hidden relative bg-stone-50 dark:bg-slate-900 gpu-layer-accelerated"
+                        className="w-full flex-1 flex flex-col h-full overflow-hidden relative bg-[#F6F5EE] dark:bg-[#121A18] gpu-layer-accelerated"
                     >
             {/* 🆕 Phase 3: Modular Header */}
 

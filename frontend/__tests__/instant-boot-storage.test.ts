@@ -64,16 +64,16 @@ describe('Instant Boot L1/L2 Storage Engine Tests', () => {
         const syncResult = getTripSnapshotSync('trip-alpha-123')
         expect(syncResult).toEqual(sampleTrip)
 
-        // 2. L2 IndexedDB 已持久化
-        expect(mockIdbStore.has('tabidachi_trip_snapshot_trip-alpha-123')).toBe(true)
-        const storedPayload = mockIdbStore.get('tabidachi_trip_snapshot_trip-alpha-123')
+        // 2. L2 IndexedDB 已持久化 (以新前綴 tabiji_ 保存)
+        expect(mockIdbStore.has('tabiji_trip_snapshot_trip-alpha-123')).toBe(true)
+        const storedPayload = mockIdbStore.get('tabiji_trip_snapshot_trip-alpha-123')
         expect(storedPayload).toBeDefined()
         expect(storedPayload!.data).toEqual(sampleTrip)
         expect(storedPayload!.version).toBe(1)
     })
 
-    it('TC-2: preloadTripSnapshot loads from L2 IndexedDB into L1 memory when L1 is empty', async () => {
-        // 手動在 L2 IndexedDB 塞入資料（模擬關閉瀏覽器後重開）
+    it('TC-2: preloadTripSnapshot loads from L2 IndexedDB into L1 memory when L1 is empty (supports legacy tabidachi_ fallback)', async () => {
+        // 手動在 L2 IndexedDB 塞入舊版 key 資料（模擬升級前已有的快照）
         mockIdbStore.set('tabidachi_trip_snapshot_trip-beta-456', {
             data: { id: 'trip-beta-456', title: '大阪美食行' },
             timestamp: Date.now(),
@@ -83,7 +83,7 @@ describe('Instant Boot L1/L2 Storage Engine Tests', () => {
         // 此時 L1 記憶體中為空
         expect(getTripSnapshotSync('trip-beta-456')).toBeNull()
 
-        // 觸發非同步預熱
+        // 觸發非同步預熱：自動從舊 key 讀取並升級遷移至新 key
         const loaded = await preloadTripSnapshot('trip-beta-456')
         expect(loaded).toEqual({ id: 'trip-beta-456', title: '大阪美食行' })
 
@@ -94,7 +94,7 @@ describe('Instant Boot L1/L2 Storage Engine Tests', () => {
     it('TC-3: deleteTripSnapshot clears both L1 memory and L2 IndexedDB (Triple-Purge Defense)', async () => {
         await saveTripSnapshot('trip-alpha-123', sampleTrip)
         expect(getTripSnapshotSync('trip-alpha-123')).not.toBeNull()
-        expect(mockIdbStore.has('tabidachi_trip_snapshot_trip-alpha-123')).toBe(true)
+        expect(mockIdbStore.has('tabiji_trip_snapshot_trip-alpha-123')).toBe(true)
 
         // 觸發自癒清除
         await deleteTripSnapshot('trip-alpha-123')
@@ -102,12 +102,12 @@ describe('Instant Boot L1/L2 Storage Engine Tests', () => {
         // 驗證 L1 已清除
         expect(getTripSnapshotSync('trip-alpha-123')).toBeNull()
         // 驗證 L2 IndexedDB 已清除
-        expect(mockIdbStore.has('tabidachi_trip_snapshot_trip-alpha-123')).toBe(false)
+        expect(mockIdbStore.has('tabiji_trip_snapshot_trip-alpha-123')).toBe(false)
     })
 
     it('TC-4: Outdated schema version in IndexedDB is safely discarded', async () => {
         // 模擬上一代舊版快照 (version: 0)
-        mockIdbStore.set('tabidachi_trip_snapshot_trip-old', {
+        mockIdbStore.set('tabiji_trip_snapshot_trip-old', {
             data: { id: 'trip-old', legacyField: true },
             timestamp: Date.now() - 100000,
             version: 0 // 版本不符
@@ -141,8 +141,8 @@ describe('Instant Boot L1/L2 Storage Engine Tests', () => {
         const syncResult = getTripsListSnapshotSync('user-test-uuid')
         expect(syncResult).toEqual(tripsList)
 
-        // 驗證 L2 IndexedDB 已持久化
-        expect(mockIdbStore.has('tabidachi_trips_list_user-test-uuid')).toBe(true)
+        // 驗證 L2 IndexedDB 已持久化 (以新前綴 tabiji_ 保存)
+        expect(mockIdbStore.has('tabiji_trips_list_user-test-uuid')).toBe(true)
     })
 
     it('TC-7: Process Kill Simulation — L0 LocalStorage mirror recovers data synchronously when L1 RAM is cleared', async () => {
@@ -158,6 +158,23 @@ describe('Instant Boot L1/L2 Storage Engine Tests', () => {
         // 3. 驗證冷啟動第 0 毫秒：即使 L1 RAM 是空的，L0 LocalStorage 依然 100% 同步秒回資料！
         const coldBootResult = getTripSnapshotSync('trip-cold-boot')
         expect(coldBootResult).toEqual(tripData)
+    })
+
+    it('TC-8: Zero Data Loss — L0 legacy key tabidachi_l0_sync_trip_ seamlessly migrates on sync read', async () => {
+        const { getTripSnapshotSync, clearAllMemorySnapshots } = await import('@/lib/idb-storage')
+        const legacyTrip = { id: 'trip-legacy-upgrade', title: '沖繩自駕之旅', days: [] }
+
+        // 手動模擬使用者升級前殘留的舊前綴 L0 資料
+        localStorage.setItem('tabidachi_l0_sync_trip_trip-legacy-upgrade', JSON.stringify(legacyTrip))
+        clearAllMemorySnapshots()
+
+        // 同步讀取：應能命中舊前綴資料
+        const result = getTripSnapshotSync('trip-legacy-upgrade')
+        expect(result).toEqual(legacyTrip)
+
+        // 同時驗證自動升級遷移：新 key 已被寫入，舊 key 已被清除
+        expect(localStorage.getItem('tabiji_l0_sync_trip_trip-legacy-upgrade')).toBe(JSON.stringify(legacyTrip))
+        expect(localStorage.getItem('tabidachi_l0_sync_trip_trip-legacy-upgrade')).toBeNull()
     })
 })
 
