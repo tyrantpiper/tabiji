@@ -1,7 +1,7 @@
-# 📐 Tabidachi 系統架構規格全景地圖 (System Specification Matrix)
+# 📐 Tabiji 系統架構規格全景地圖 (System Specification Matrix)
 
 > **定位守則 (Master Doctrine)**:  
-> 本目錄採用 **Domain-Driven (領域驅動)** 組織架構，收錄 Tabidachi 旅遊 PWA 全棧各業務與技術核心的工程規格書（Mini Design Docs）。  
+> 本目錄採用 **Domain-Driven (領域驅動)** 組織架構，收錄 Tabiji 旅遊 PWA 全棧各業務與技術核心的工程規格書（Mini Design Docs）。  
 > 任何跨越單一檔案或涉及核心邏輯重構之功能，均須依據 `/Idea to Spec` 規範於此落地規格，經審查核准後方可實作。
 
 ---
@@ -94,6 +94,7 @@ docs/specs/
 | [**`tabijiapp-cloudflare-setup-sop-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/tabijiapp-cloudflare-setup-sop-spec.md) | 🟢 Active | tabijiapp.com 零缺陷生產級部署 SOP、灰雲/橘雲平滑過渡與雙軌網域存活。 | Cloudflare DNS<br>Vercel 網域配置 |
 | [**`supabase-keepalive-architecture-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/supabase-keepalive-architecture-spec.md) | 🟢 Active | Supabase 7 天防休眠雙柱保活架構、PostgREST 實體穿透與 60s 防抖鎖。 | `backend/main.py` (Lifespan & `/health/deep`) |
 | [**`git-identity-and-history-reconciliation-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/git-identity-and-history-reconciliation-spec.md) | 🟢 Active | 去中心化 Git 身分防偽、官方 ID 錨定隱私信箱標準、全量 DAG Bundle 獨立備份。 | `~/.gitconfig`<br>Git Commit 規範 |
+| [**`repository-topology-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/repository-topology-spec.md) | 🟢 Active | 全棧 5 大領域工程目錄拓撲白皮書、14 個目錄職責劃分與暫存治理指南。 | 專案根目錄<br>全棧目錄拓撲 |
 | [**`architecture-evolution-backlog-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/infra/architecture-evolution-backlog-spec.md) | 📋 Backlog | 全專案架構演進路線圖、技術債追蹤與未來大版本里程碑清單。 | 全專案架構規劃 |
 
 ---

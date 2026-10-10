@@ -13,6 +13,7 @@ __pycache__/
 .venv/
 venv/
 ENV/
+.pytest_cache/
 
 # IDE
 .idea/
@@ -45,6 +46,7 @@ test-results/
 blob-report/
 
 # AI Agent Workspace
+.agent/
 /.agents/*.log
 
 backend/migrations/20260308_security_hardening.sql
