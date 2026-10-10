@@ -1,4 +1,4 @@
-# Tabidachi 領域模型 (Domain Models)
+# Tabiji 領域模型與架構慣例 (Domain Models & Conventions)
 
 ## 🧳 旅遊與行程模型 (Travel & Itinerary)
 

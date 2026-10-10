@@ -3,10 +3,10 @@
   "last_audit_date": "2026-10-10T08:22:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 58,
-    "audited_targets": 58,
+    "total_targets": 59,
+    "audited_targets": 59,
     "verified_vulnerabilities": 12,
-    "dismissed_hypotheses": 54
+    "dismissed_hypotheses": 56
   },
   "targets": [
     {
@@ -548,6 +548,15 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Rebranding to Tabiji verified decoupled from UI state keys; gitignore pattern verified non-conflicting with ledger."
+    },
+    {
+      "id": "infra/repository_topology_and_cleanup",
+      "target_type": "infra_governance",
+      "trust_boundary": "repo_topology_and_devops",
+      "vectors_checked": ["git_exclusion_leakage", "catastrophic_traversal_deletion", "spec_matrix_broken_reference", "domain_convention_drift"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Repository topology whitepaper established; stray caches (.agent, .pytest_cache, root node_modules) safely cleared via absolute anchoring."
     }
   ]
 }
