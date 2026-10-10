@@ -337,4 +337,11 @@ button:not(:disabled):active,
   scroll-snap-align: start;
   flex-shrink: 0;
 }
+
+/* 🛡️ WebKit Standalone PWA Viewport & Safe-Area Height Chain (Zero-Deadzone) */
+html, body {
+  height: 100%;
+  min-height: 100%;
+}
+
 
