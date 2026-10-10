@@ -418,3 +418,10 @@
 - **Stdin Stream Hyphen Flag Invariance (AD-064)**: 減號管道旗標規範。調用 `agy.exe` 執行大數據提示詞時，傳遞 `-p -`（或 `--print -`），指示 CLI 自標準輸入讀取資料，保證 100% 二進位純淨度與繞過 Quote Hell。
 - **Zero-Deadlock Async Communicate Protocol (AD-065)**: 零死鎖通訊協定。子進程通訊必須以 `asyncio.wait_for(proc.communicate(input=...), timeout=...)` 統一包裹，禁止使用手動 `stdin.write()` 搭配 `wait()`，由事件迴圈並行排程讀寫抽空雙向管道緩衝區（4KB~64KB），根除 Pipe Buffer Deadlock。
 - **File-based Fallback for Non-Streaming Tools (AD-066)**: 非串流工具檔案降級防線。若外部工具不支援 stdin，採用 `tempfile.NamedTemporaryFile` 寫入後立即關閉 handle（防止 Windows `WinError 32: Sharing Violation`），並於 `try...finally` 區塊中安全 unlink 清理。
+
+### 20. 智財保護、品牌純淨化與全棧工程目錄拓撲領域 (Legal IP, Rebranding & Repository Topology)
+- **代碼與美術資產雙軌分案授權架構 (AD-067)**: 嚴禁將 CC BY-NC 4.0 誤用於軟體程式碼（缺乏專利反制且非代碼友善），亦不可寄望 AGPLv3 能禁止商業營利。架構上採三向分案：軟體原始碼受官方標準 PolyForm Noncommercial License 1.0.0 保護；視覺圖資（立繪、字標、開屏原畫、3D紙飛機、App Icon）受 `LICENSE-ASSETS.md` 專有版權（All Rights Reserved）保護；以 Git Tag `v1.0.0-mit-final` 劃界於 `NOTICE.md` 保留歷史 MIT 權利。
+- **商標獨立分案與防廢止梯隊部署 (AD-068)**: 文字「Tabiji 旅路」與圖樣「揹包旅人立繪/Icon」採獨立分案申請，避免因複合圖文產生審查駁回連帶風險；梯隊佈局採 Phase 1 數位核心（第 09/42/39 類，零三年不使用廢止風險），後續隨實體出貨發票推進第 18/16 類與動態商標。
+- **全棧品牌純淨化與底層相容雙軌防禦 (AD-069)**: 使用者可見介面、手冊、推播說明與 README 雙份文件全面更名為 Tabiji；底層持久化 Key（`tabiji_` / `tabidachi_` 雙向回退）與跨組件通訊事件（`tabidachi-focus-map-activity`）保持不變，達成視覺 100% 純淨化而老使用者離線資料零丟失。
+- **Gitignore 雙星遞迴白名單與暫存安全解耦 (AD-070)**: 既有單星模式 `!docs/security/*.json` 無法跨越目錄，重構為 `!docs/security/**/*.json` 確保 `history/` 子目錄受到版本追蹤；已追蹤之暫存檔若需解耦必須顯式執行 `git rm --cached`，並以兩段式腳本區分 Tracked (`git mv`) 與 Untracked (`Move-Item`)，杜絕 `fatal: not under version control` 批次中斷。
+- **5 大領域目錄拓撲與部署鏈路零破壞原則 (AD-071)**: 嚴格劃分應用服務、維運自動化、架構規範、Agent 大腦與版本控制 5 大領域層級。`frontend/`、`backend/`、`cloudflare/`、`supabase/` 核心代碼目錄保持一級結構，保障 Vercel 與 Cloud Run 部署管線零破壞；清理孤立快取時採用完全限定之絕對路徑防衛，杜絕相對路徑穿透誤刪前端 node_modules。
