@@ -102,7 +102,7 @@ export function TabijiHomeDashboard({
     return (
         <div className="space-y-6 pb-24 select-none">
             {/* ── 1. Hero 簡約大標與重新整理 ───────────────────────────────────────── */}
-            <header className="flex items-center justify-between pt-14 sm:pt-8">
+            <header className="flex items-center justify-between pt-[calc(max(env(safe-area-inset-top,0px),0px)+3.5rem)] sm:pt-[calc(max(env(safe-area-inset-top,0px),0px)+2.5rem)]">
                 <div className="space-y-1">
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold tracking-widest text-[#E56E25] uppercase">

@@ -201,15 +201,15 @@ export function AppShell() {
             />
             {/* 🌟 聚光燈新手導引全域掛載 */}
             <SpotlightTour />
-            <div className="h-dvh bg-background flex flex-col overflow-hidden">
+            <div className="h-screen bg-background flex flex-col overflow-hidden">
                 <main className="flex-1 flex flex-col min-h-0 relative" data-scroll="true">
-                    {/* ✨ 全域 AI 狀態按鈕 — 左上角固定定位 (與右上角通知對稱) */}
-                    <div className="absolute top-2 left-3 z-100">
+                    {/* ✨ 全域 AI 狀態按鈕 — 左上角固定定位 (注入 safe-area-inset-top 杜絕與動態島/狀態列撞車) */}
+                    <div className="absolute top-[calc(max(env(safe-area-inset-top,0px),0px)+0.5rem)] left-3 z-100">
                         <AIStatusButton />
                     </div>
 
-                    {/* 🔔 通知鈴鐺與 ☁️ 離線同步狀態膠囊 — 右上角固定定位 */}
-                    <div className="absolute top-2 right-3 z-100 flex items-center gap-2">
+                    {/* 🔔 通知鈴鐺與 ☁️ 離線同步狀態膠囊 — 右上角固定定位 (注入 safe-area-inset-top) */}
+                    <div className="absolute top-[calc(max(env(safe-area-inset-top,0px),0px)+0.5rem)] right-3 z-100 flex items-center gap-2">
                         <SyncStatusCapsule />
                         <NotificationBell />
                     </div>

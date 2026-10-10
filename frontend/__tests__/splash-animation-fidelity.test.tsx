@@ -51,13 +51,18 @@ describe('TabijiSplashAnimation Fidelity & Full Artwork Mask Tests', () => {
         expect(inkOrb).not.toBeNull()
     })
 
-    it('triggers onComplete callback after standard healing duration', () => {
+    it('triggers onComplete callback after standard healing duration (2400ms) without clipping early at 2000ms', () => {
         vi.useFakeTimers()
         const onComplete = vi.fn()
         render(<TabijiSplashAnimation onComplete={onComplete} />)
 
         expect(onComplete).not.toHaveBeenCalled()
+        // 2000ms: 紙飛機正在飛行動畫末期，守護不被提早掐斷
         vi.advanceTimersByTime(2000)
+        expect(onComplete).not.toHaveBeenCalled()
+
+        // 2400ms: 紙飛機完全飛離視野且極光平滑釋放，優雅交棒
+        vi.advanceTimersByTime(400)
         expect(onComplete).toHaveBeenCalledTimes(1)
         vi.useRealTimers()
     })

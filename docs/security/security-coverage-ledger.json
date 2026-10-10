@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-10T08:22:00Z",
+  "last_audit_date": "2026-10-10T15:20:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 59,
-    "audited_targets": 59,
+    "total_targets": 65,
+    "audited_targets": 65,
     "verified_vulnerabilities": 12,
-    "dismissed_hypotheses": 56
+    "dismissed_hypotheses": 62
   },
   "targets": [
     {
@@ -557,6 +557,60 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Repository topology whitepaper established; stray caches (.agent, .pytest_cache, root node_modules) safely cleared via absolute anchoring."
+    },
+    {
+      "id": "frontend/components/views/app-shell.tsx:webkit_viewport_standalone_deadzone",
+      "target_type": "client_ui_shell",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["viewport_truncation_deadzone", "webkit_standalone_dvh_subtraction", "safe_area_leak"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Remediation verified: Root container restored to h-screen; eliminates 64-150px deadzone in iOS standalone mode; verified via ios-standalone-viewport-sentinel.test.tsx."
+    },
+    {
+      "id": "frontend/components/views/app-shell.tsx:floating_controls_status_bar_collision",
+      "target_type": "client_ui_shell",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["dynamic_island_collision", "notch_occlusion", "status_bar_overlap"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Remediation verified: AIStatusButton and Notification/Sync controls dynamically offset via calc(max(env(safe-area-inset-top),0px)+0.5rem)."
+    },
+    {
+      "id": "frontend/components/itinerary/TabijiHomeDashboard.tsx:tablet_header_overlap",
+      "target_type": "client_ui_view",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["tablet_breakpoint_occlusion", "status_bar_text_collision"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Remediation verified: Dashboard header incorporates safe-area-inset-top and 2.5rem buffer on tablet/desktop, eliminating clock overlap on iPadOS."
+    },
+    {
+      "id": "frontend/components/ui/splash/tabiji-splash-animation.tsx:lifecycle_timer_truncation",
+      "target_type": "client_ui_splash",
+      "trust_boundary": "client_ui_animation",
+      "vectors_checked": ["animation_lifecycle_midair_clipping", "jank_and_hydration_race"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Remediation verified: Splash timer safe-guarded to 2400ms; paper plane 2.0s flight completes 400ms prior to unmount; verified via splash-animation-fidelity.test.tsx."
+    },
+    {
+      "id": "frontend/app/layout.tsx:apple_standalone_meta_omission",
+      "target_type": "client_pwa_layout",
+      "trust_boundary": "browser_to_pwa",
+      "vectors_checked": ["pwa_fullscreen_fallback_regression", "status_bar_white_leak"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Remediation verified: Static apple-mobile-web-app-capable and black-translucent meta tags declared in head for microsecond-0 WebKit fullscreen."
+    },
+    {
+      "id": "scripts/opencv_frame_analyzer.py:subprocess_and_path_traversal",
+      "target_type": "offline_telemetry_script",
+      "trust_boundary": "local_dev_tooling",
+      "vectors_checked": ["file_traversal", "resource_leak", "untrusted_cli_injection"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verified: Offline tool using hardcoded local constants; cap.release() cleanly closes video handle without leaks."
     }
   ]
 }

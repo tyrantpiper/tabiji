@@ -62,6 +62,8 @@ export default function RootLayout({
       <head>
         <meta name="google" content="notranslate" />
         <meta name="agd-partner-manual-verification" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         {/* 🚀 Zero-FOUC Font Scale Pre-Hydration Sync */}
         <script
           dangerouslySetInnerHTML={{
