@@ -114,6 +114,27 @@
 
 ---
 
+### 里程碑九：iOS/iPadOS Standalone PWA 視口幾何、狀態列採樣與開屏動畫生命週期深潛隔離戰役 (iOS/iPadOS Viewport & Zero-Regression Gate)
+1. **問題背景與真機物理現象**：
+   - 用戶在 iPad 真機（Standalone PWA 模式）反饋底部橫貫全螢幕的白色橫條，且在該區域觸控完全無反應（不可互動死區 Deadzone）；現象不只存在於過渡期，登入頁面與主畫面全域存在。
+   - 在 iPhone 手機上，開屏動畫過渡淡出進入頁面瞬間，頂部 56px 狀態列安全區浮現純白色斷層（採樣自根層底色）。
+   - **嚴重回歸警報**：前次嘗試在 `tabiji-splash-animation.tsx` 的 `useEffect` 內動態操作 `document.documentElement.classList.add("splash-active")`，導致在 React 19 與父層 re-render 生命週期中觸發定時器被提前清除（`clearTimeout`），引發開場動畫有機率性被腰斬提前進入頁面的重大回歸。
+2. **根因定位與 NotebookLM 知識庫神經推導**：
+   - 建立專屬 NotebookLM 研究筆記本（ID: `f28f1ae4-a6d3-4897-b6c7-1e3018a184f6`）並產出深度研究報告 `docs/research/ios-ipados-pwa-viewport-statusbar-splash-deep-research-2026.md`。
+   - **WebKit 100dvh Standalone 缺陷**：iPadOS 在加入主畫面（Standalone PWA）模式下，WebKit 引擎內部計算 `100dvh` 時會自螢幕物理高度扣除底部 Home Bar 安全區（約 20px~24px），使宣告 `h-dvh` 的 `AppShell` 比物理螢幕短了 21px，未被任何 React 元素覆蓋，露出底層空白且無點擊事件監聽，形成「不可互動死區」。
+   - **Microsecond 0 根層渲染白底閃爍**：在 HTML 解析至 CSS Bundle / Tailwind 完全水合的短暫 FOUC 窗口，WebKit 默認 Canvas 為純白 `#FFFFFF`。若 `<head>` 缺少原生全螢幕 Meta 與靜態同步 `<style>`，狀態列取樣到微秒級純白底色，在淡出過渡時產生色彩突變。
+3. **架構決策：開場動畫 0 侵入原則與三位一體根層防禦**：
+   - **Zero-Touch Isolation (AD-072)**：開場動畫組件本身在基準版本表現完全正常。病灶在於外部視口與根底色，嚴禁修改 `tabiji-splash-animation.tsx` 內部的計時器與 Effect 生命週期。
+   - **三位一體靜態根層 (AD-073)**：在 `layout.tsx` 的 `<head>` 靜態注入原生 `<meta name="apple-mobile-web-app-capable" content="yes" />`、`black-translucent` 與 microsecond 0 同步 `<style>`（鎖定 `html, body { height: 100%; min-height: 100%; background-color: #F6F5EE; }` / dark `#121A18`）。
+   - **Standalone Viewport 免疫 (AD-074)**：在 `app-shell.tsx` 宣告 `[@media(display-mode:standalone)]:h-full! [@media(display-mode:standalone)]:min-h-full!`，在 `landing-page.tsx` 建立完整百分比高程鏈與底部 safe-area 避讓。
+4. **雙哨兵測試與 Chrome DevTools 物理實測**：
+   - 建立雙哨兵測試套件（11 項測試）：`ipad-standalone-viewport-sentinel.test.tsx`（幾何死區免疫）與 `ios-pwa-splash-fullscreen-sentinel.test.tsx`（全螢幕與動畫零侵入守門）。
+   - 透過 Chrome DevTools MCP 注入 iPad（820×1180）與 iPhone 15 Pro（393×852）真實參數，實測證明主容器覆蓋率達到 100%（`top: 0`, `bottom: 1180`, `Deadzone = 0px`），並產出實體驗證截圖歸檔於 `docs/screenshots/verification/`。
+5. **人類主權與純淨回滾閉環 (Human Sovereignty & Clean Rollback)**：
+   - 依據使用者在真機實測後之體驗決策（「沒有差異 繼續回這一版本 921450f」），嚴格恪守 L0 憲法人類主權，絕不主觀辯解，立即透過安全 Revert 機制（Commit: `950e75c`）無縫復原並推送至遠端 `origin/main`，確保代碼庫與基準版本 `921450f`（`0d91b9b`）精確達成 0 diff。
+
+---
+
 ## 4. 多維度知識提煉 (Multi-Dimensional Synthesis)
 
 ### 🟢 Features & Fixes
@@ -124,12 +145,16 @@
 - **Stray Cache Purge**: 物理清除根層 `.agent/`、`.pytest_cache/` 與 `node_modules/`，補強 `.gitignore`。
 - **Brand Icon Upgrade**: 部署 1630×2546 高解析度雙肩「揹包旅人」純線條遮罩立繪。
 - **PWA Bottom Sheet**: 將安裝導引升級為固定置底抽屜，支援安全區、鍵盤避讓與雙態位移。
+- **iOS/iPadOS Standalone Viewport & Splash Research**: 產出 2026 深度調研報告，建立雙哨兵測試（11 項），完成 Chrome DevTools 真機視口與死區幾何驗證。
 
 ### 🏛️ Architecture Decisions
-- **代碼與美術資產雙軌拆分**: 軟體原始碼受 PolyForm 保護，視覺圖資受 All Rights Reserved 保護，兼顧開源社群檢視與商業防禦。
+- **代碼與美術資產雙軌拆分 (AD-067)**: 軟體原始碼受 PolyForm 保護，視覺圖資受 All Rights Reserved 保護，兼顧開源社群檢視與商業防禦。
 - **版本回溯 Git Tag 錨定**: 透過 `v1.0.0-mit-final` 固化歷史邊界，未來版本全數納入防商用授權，徹底消除追溯性法律爭議。
-- **核心應用目錄路徑不動原則**: 拒絕盲目物理合併為 `apps/`，維持 `frontend/`、`backend/` 一級結構，保護雲端部署流水線。
-- **Git ignore 雙星遞迴白名單**: 採用 `!docs/security/**/*.json` 確保 `history/` 子目錄受到版本追蹤，同時由 `docs/security/findings_*.json` 防護運行時暫存污染。
+- **核心應用目錄路徑不動原則 (AD-071)**: 拒絕盲目物理合併為 `apps/`，維持 `frontend/`、`backend/` 一級結構，保護雲端部署流水線。
+- **Git ignore 雙星遞迴白名單 (AD-070)**: 採用 `!docs/security/**/*.json` 確保 `history/` 子目錄受到版本追蹤，同時由 `docs/security/findings_*.json` 防護運行時暫存污染。
+- **開場動畫 0 侵入與純粹呈現原則 (AD-072)**: 開屏動畫組件嚴格保持為純淨視覺呈現層，禁止在內部 `useEffect` 中注入全域 DOM 操作（如 `classList.add`），杜絕 React 19 與父層 re-render 時觸發 timer 清除引發的動畫腰斬。
+- **WebKit Standalone 100dvh 扣除缺陷與高度鏈路免疫 (AD-073)**: 在 iPadOS Standalone PWA 中，`100dvh` 會扣除安全區產生 21px 幾何死區；架構上必須由 `html, body { height: 100%; min-height: 100%; }` 配合容器 `@media(display-mode:standalone): h-full! min-h-full!` 達成百分之百物理螢幕覆蓋。
+- **Microsecond 0 靜態根底色鎖定防線 (AD-074)**: 狀態列採樣 FOUC 白底之根治點在於 HTML 解析的第一微秒，必須在 `<head>` 靜態宣告 `<style>` 鎖定 `background-color: #F6F5EE`（dark: `#121A18`）與原生 `apple-mobile-web-app-capable="yes"`，不依賴 JS 水合。
 
 ### 🔴 Technical Debt
 - **Dependabot 待處理**: GitHub 遠端回報 1 項高風險依賴安全性警告（Dependabot #105），待專責工作流評估升級。
@@ -139,16 +164,18 @@
 - **直覺裁切誤判**: 初次測試裁切邊界時，誤將人物捲髮頂部當成截圖雜訊；經單行直方圖掃描證實捲髮自 Y: 57 展開，重新校準達成 100% 保真裁切。
 - **`git mv` 批次執行中斷**: 針對包含未追蹤檔案的檔案群若直接執行萬用字元 `git mv`，會因未追蹤檔案觸發 `fatal: not under version control` 中斷；改為兩段式安全腳本（Tracked 執行 `git mv`，Untracked 執行 `Move-Item`）達成零中斷平滑遷移。
 - **.gitignore 單星深度盲點**: `!docs/security/*.json` 無法跨越目錄斜槓，移入 `history/` 後一度被全域 `*.json` 忽略；升級為 `!docs/security/**/*.json` 徹底根治。
+- **動畫組件內部操作 DOM Class 引發 React 19 清理競爭與動畫腰斬陷阱 (FP-019)**: 在 `tabiji-splash-animation.tsx` 中向 `useEffect` 注入 `classList.add("splash-active")` 與 cleanup 邏輯，當父層發生 re-render 或狀態更新時，清理函式提早執行 `clearTimeout(timer)`，在真機上造成開場動畫機率性被腰斬提前進入頁面。教訓：病灶在根層視口與狀態列採樣，絕不可將全域副作用揉入純淨的動畫展示組件內部。
 
 ---
 
 ## 5. 品質閘門驗證清單 (Quality Gates Checklist)
 - [x] **TypeScript**: `npx tsc --noEmit` (0 Errors)
 - [x] **ESLint**: `npm run lint` (0 Errors, 0 Warnings)
-- [x] **Vitest (Frontend)**: 54 Suites, 385 Tests Passed (100%)
+- [x] **Vitest (Frontend)**: 56 Suites, 396 Tests Passed (100%)
 - [x] **Pytest (Backend)**: 121 Tests Passed, 5 Skipped (100%)
-- [x] **Security Sentinel**: 3 輪對抗沙盒審計全數 DISMISSED / SECURE (台帳 targets 擴增至 59 項)
-- [x] **Chrome DevTools MCP**: 4 Viewport/Theme permutations verified via live screenshots
+- [x] **Security Sentinel**: 3 輪對抗沙盒審計全數 DISMISSED / SECURE
+- [x] **Chrome DevTools MCP**: 4 Viewport/Theme permutations verified via live screenshots & DOM telemetry
+- [x] **Git Cleanliness**: `Working tree clean`，與基準版本 `921450f` 保持 100% 純淨無差異
 
 ---
 
@@ -156,3 +183,4 @@
 1. **Dependabot 漏洞評估**: 檢視 Dependabot #105 依賴警告並進行安全性升級。
 2. **PWA 離線推播與背景同步實機演練**: 驗證 Service Worker 在深層飛行模式下的景點備份寫入。
 3. **TIPO 商標申請文件初稿準備**: 依據八大類階梯式佈局整理第 09 類與 42 類商標樣張。
+
