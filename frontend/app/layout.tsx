@@ -21,7 +21,7 @@ import { IdbSwrProvider } from "@/lib/idb-swr-provider"
 const inter = Inter({ subsets: ["latin"] });
 
 export const viewport: Viewport = {
-  themeColor: "#162832",
+  themeColor: "#fafaf9",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -36,7 +36,7 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default",
     title: "Tabiji",
   },
   icons: {
@@ -63,7 +63,7 @@ export default function RootLayout({
         <meta name="google" content="notranslate" />
         <meta name="agd-partner-manual-verification" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         {/* 🚀 Zero-FOUC Font Scale Pre-Hydration Sync */}
         <script
           dangerouslySetInnerHTML={{

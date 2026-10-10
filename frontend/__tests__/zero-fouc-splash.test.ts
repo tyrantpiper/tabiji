@@ -13,14 +13,14 @@ describe("🛡️ Zero-FOUC Splash & Cold Boot Integrity (冷啟動開屏零閃�
     it("SEC-1: public/manifest.json background_color 與 theme_color 必須對齊墨夜基底色 #162832", () => {
         expect(fs.existsSync(manifestPath)).toBe(true);
         const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-        expect(manifest.background_color).toBe("#162832");
-        expect(manifest.theme_color).toBe("#162832");
+        expect(manifest.background_color).toBe("#fafaf9");
+        expect(manifest.theme_color).toBe("#fafaf9");
     });
 
-    it("SEC-2: app/layout.tsx viewport.themeColor 必須對齊 #162832 且 iOS statusBarStyle 支援深色夜幕", () => {
+    it("SEC-2: app/layout.tsx viewport.themeColor 必須對齊 #fafaf9 且 iOS statusBarStyle 回歸標準 default 佈局", () => {
         const layoutSource = fs.readFileSync(layoutPath, "utf-8");
-        expect(layoutSource).toContain('themeColor: "#162832"');
-        expect(layoutSource).toContain('statusBarStyle: "black-translucent"');
+        expect(layoutSource).toContain('themeColor: "#fafaf9"');
+        expect(layoutSource).toContain('statusBarStyle: "default"');
     });
 
     it("SEC-3: pwa-hard-skeleton.tsx 必須具備 standalone 媒體查詢夜幕漸層且封死骨架脈衝塊", () => {
