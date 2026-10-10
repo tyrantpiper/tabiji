@@ -46,7 +46,7 @@ export function UsageGuideDialog({ open, onOpenChange }: UsageGuideDialogProps) 
                         {zh ? '使用說明' : 'Usage Guide'}
                     </DialogTitle>
                     <DialogDescription className="text-xs text-slate-400">
-                        {zh ? '了解如何使用 Tabidachi 的所有功能' : 'Learn how to use all Tabidachi features'}
+                        {zh ? '了解如何使用 Tabiji 的所有功能' : 'Learn how to use all Tabiji features'}
                     </DialogDescription>
                 </DialogHeader>
 

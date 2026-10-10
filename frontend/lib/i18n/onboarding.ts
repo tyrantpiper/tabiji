@@ -99,7 +99,7 @@ export const onboardingTranslations = {
         tour_restart: "重新啟動互動導引",
         tour_restart_desc: "重新體驗一步一步帶著走的聚光燈新手導引，快速熟悉核心操作",
         tour_step1_title: "啟用 AI 智慧旅伴",
-        tour_step1_desc: "Tabidachi 具備即時行程生成與語意建議功能。綁定免費 Gemini API Key 即可解鎖核心 AI 規劃能力。",
+        tour_step1_desc: "Tabiji 具備即時行程生成與語意建議功能。綁定免費 Gemini API Key 即可解鎖核心 AI 規劃能力。",
         tour_step1_action: "👉 請點擊左上角亮起的按鈕開啟設定（亦可點擊下一步稍後再設）",
         tour_step2_title: "Ryan AI 隨行助理",
         tour_step2_desc: "旅途中有任何疑問？隨時點擊右下角 AI 助理，為你即時解答行程問題、景點推薦與在地資訊。",
@@ -114,7 +114,7 @@ export const onboardingTranslations = {
         tour_step5_desc: "內建多幣別離線記帳、即時匯率自動換算、多人分帳與行李清單，即使在飛機離線無網路時也能隨手記帳。",
         tour_step5_action: "👉 請點擊底部導覽列「工具」分頁",
         tour_step6_title: "探索完成，準備出發！",
-        tour_step6_desc: "您已完全掌握 Tabidachi 的核心功能！隨時可於「個人檔案 ➔ 使用說明」第一項重新開啟這項導引。",
+        tour_step6_desc: "您已完全掌握 Tabiji 的核心功能！隨時可於「個人檔案 ➔ 使用說明」第一項重新開啟這項導引。",
         tour_step6_action: "🚀 準備就緒！請點擊下方「立即出發」開始旅程",
 
         // TaskCard (Preserved for compatibility)

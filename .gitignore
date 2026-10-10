@@ -27,6 +27,23 @@ Thumbs.db
 # Logs
 *.log
 
+# Dependencies & Web Frameworks
+node_modules/
+.next/
+.turbo/
+out/
+build/
+dist/
+.vercel/
+*.tsbuildinfo
+*.pem
+
+# Testing & Coverage
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
 # AI Agent Workspace
 /.agents/*.log
 
@@ -34,6 +51,8 @@ backend/migrations/20260308_security_hardening.sql
 *.json
 !docs/security/*.json
 !.agents/skills/**/*.json
+# Sentinel 中間產物排除 (避免追蹤臨時 scan findings)
+docs/security/findings_*.json
 gcp-sa-key.json
 
 # Scratch, Diff & Backup files
