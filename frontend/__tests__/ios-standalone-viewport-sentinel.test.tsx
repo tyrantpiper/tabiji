@@ -32,7 +32,7 @@ describe('iOS/iPadOS Standalone Viewport & Animation Completion Sentinel Tests',
     it('TC-4: Guarantee Apple PWA standalone meta tags in layout.tsx head', () => {
         const content = fs.readFileSync(layoutPath, 'utf-8')
         expect(content).toContain('<meta name="apple-mobile-web-app-capable" content="yes" />')
-        expect(content).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />')
+        expect(content).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default" />')
     })
 
     it('TC-5: Guarantee splash animation lifecycle covers full airplane trajectory (>= 2400ms)', () => {
