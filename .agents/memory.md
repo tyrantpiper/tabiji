@@ -425,3 +425,9 @@
 - **全棧品牌純淨化與底層相容雙軌防禦 (AD-069)**: 使用者可見介面、手冊、推播說明與 README 雙份文件全面更名為 Tabiji；底層持久化 Key（`tabiji_` / `tabidachi_` 雙向回退）與跨組件通訊事件（`tabidachi-focus-map-activity`）保持不變，達成視覺 100% 純淨化而老使用者離線資料零丟失。
 - **Gitignore 雙星遞迴白名單與暫存安全解耦 (AD-070)**: 既有單星模式 `!docs/security/*.json` 無法跨越目錄，重構為 `!docs/security/**/*.json` 確保 `history/` 子目錄受到版本追蹤；已追蹤之暫存檔若需解耦必須顯式執行 `git rm --cached`，並以兩段式腳本區分 Tracked (`git mv`) 與 Untracked (`Move-Item`)，杜絕 `fatal: not under version control` 批次中斷。
 - **5 大領域目錄拓撲與部署鏈路零破壞原則 (AD-071)**: 嚴格劃分應用服務、維運自動化、架構規範、Agent 大腦與版本控制 5 大領域層級。`frontend/`、`backend/`、`cloudflare/`、`supabase/` 核心代碼目錄保持一級結構，保障 Vercel 與 Cloud Run 部署管線零破壞；清理孤立快取時採用完全限定之絕對路徑防衛，杜絕相對路徑穿透誤刪前端 node_modules。
+
+### 21. iOS/iPadOS Standalone 視口幾何、狀態列採樣與開屏動畫生命週期領域 (iOS/iPadOS Viewport, Status Bar & Splash Lifecycle)
+- **開場動畫 0 侵入與純粹呈現原則 (AD-072)**: 開屏動畫組件（`TabijiSplashAnimation`）嚴格保持為純淨視覺呈現層，禁止在內部 `useEffect` 中注入全域 DOM 操作（如 `document.documentElement.classList.add` 或動態 style 操作），杜絕在 React 19 與父層 re-render 生命週期中觸發定時器被提前清除（`clearTimeout`）引發的動畫機率性腰斬回歸。
+- **WebKit Standalone 100dvh 扣除缺陷與高程鏈路免疫 (AD-073)**: 在 iPadOS Standalone PWA 中，WebKit 計算 `100dvh` 時會扣除底部 Home Bar 安全區（約 20px~24px），造成容器比物理螢幕短而露出 21px~30px 不可互動死區（Deadzone）；架構上必須由 `html, body { height: 100%; min-height: 100%; }` 繼承鏈配合容器 `@media(display-mode:standalone): h-full! min-h-full!` 達成 100% 物理螢幕覆蓋。
+- **Microsecond 0 靜態根底色鎖定防線 (AD-074)**: 狀態列採樣 FOUC 白底之根治點在於 HTML 解析的第一微秒，必須在 `<head>` 靜態宣告 `<style>` 鎖定 `background-color: #F6F5EE`（dark: `#121A18`）與原生 `<meta name="apple-mobile-web-app-capable" content="yes" />`，不依賴 JS 水合。
+- **動畫內部 DOM 操作干擾 React 19 事件循環與計時器腰斬陷阱 (FP-019)**: 在 `tabiji-splash-animation.tsx` 中向 `useEffect` 注入全域 class 清理，當父層發生 re-render 或狀態更新時，清理函式提早執行 `clearTimeout(timer)`，在真機上造成開場動畫機率性被腰斬提前進入頁面。教訓：病灶在根層視口與狀態列採樣，絕不可將全域副作用揉入純淨的動畫展示組件內部。
