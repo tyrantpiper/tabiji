@@ -58,27 +58,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-Hant" translate="no" className="h-full" suppressHydrationWarning>
+    <html lang="zh-Hant" translate="no" suppressHydrationWarning>
       <head>
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="google" content="notranslate" />
         <meta name="agd-partner-manual-verification" />
-        {/* 🛡️ Microsecond 0 靜態根底色鎖定：杜絕 FOUC 期間狀態列採樣純白 #FFFFFF */}
-        <style
-          dangerouslySetInnerHTML={{
-            __html: `
-              html, body {
-                height: 100%;
-                min-height: 100%;
-                background-color: #F6F5EE;
-              }
-              html.dark, html.dark body {
-                background-color: #121A18;
-              }
-            `
-          }}
-        />
         {/* 🚀 Zero-FOUC Font Scale Pre-Hydration Sync */}
         <script
           dangerouslySetInnerHTML={{
@@ -96,7 +79,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${inter.className} h-full bg-background text-foreground`} suppressHydrationWarning>
+      <body className={inter.className} suppressHydrationWarning>
         <PwaHardSkeleton />
         {process.env.NEXT_PUBLIC_TP_DRIVE_URL && (
           <Script 
