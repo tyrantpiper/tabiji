@@ -1528,7 +1528,7 @@ export function ProfileView() {
                     </p>
                     <ol className="list-decimal list-inside space-y-1 text-slate-500 dark:text-slate-400">
                         <li>{zh ? "回到手機主畫面，開啟「設定」" : "Go to iPhone Settings"}</li>
-                        <li>{zh ? "往下滑找到「Tabidachi」或「Safari」" : "Scroll down to 'Tabidachi' or 'Safari'"}</li>
+                        <li>{zh ? "往下滑找到「Tabiji」或「Safari」" : "Scroll down to 'Tabiji' or 'Safari'"}</li>
                         <li>{zh ? "點選「通知」並開啟「允許通知」" : "Tap 'Notifications' and toggle 'Allow'"}</li>
                     </ol>
                 </div>

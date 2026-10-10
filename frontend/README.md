@@ -6,7 +6,7 @@
   <img src="../docs/screenshots/showcase/expense-tracker.png" width="180" />
 </p>
 
-<h1 align="center">Tabidachi 旅立ち</h1>
+<h1 align="center">Tabiji 旅路</h1>
 
 <p align="center">
   <strong>Next-Generation Generative AI Travel Orchestrator</strong><br/>

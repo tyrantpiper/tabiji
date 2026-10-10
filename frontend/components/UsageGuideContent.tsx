@@ -72,7 +72,7 @@ export function UsageGuideContent() {
                 </div>
                 <div>
                     <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
-                        {zh ? 'Tabidachi 全功能操作手冊' : 'Tabidachi Comprehensive Guide'}
+                        {zh ? 'Tabiji 全功能操作手冊' : 'Tabiji Comprehensive Guide'}
                     </h3>
                     <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
                         {zh ? '收錄 3D 巡航、全球實景、離線同步與 11 大核心模組操作詳解' : 'Complete instructions for 3D tours, street view, offline sync, and 11 core modules'}
@@ -295,7 +295,7 @@ export function UsageGuideContent() {
                     <AccordionContent className="px-4 pb-4 space-y-3">
                         <Step n={1}
                             title={zh ? '飛航模式 0 秒極速啟動' : 'Zero-Second Instant Boot in Airplane Mode'}
-                            desc={zh ? 'Tabidachi 具備極速離線運算架構，即使完全沒有網路或處於飛航模式，也能瞬間秒開查閱！' : 'Tabidachi features an instant offline architecture, booting and loading your plans immediately even without internet or in airplane mode.'}
+                            desc={zh ? 'Tabiji 具備極速離線運算架構，即使完全沒有網路或處於飛航模式，也能瞬間秒開查閱！' : 'Tabiji features an instant offline architecture, booting and loading your plans immediately even without internet or in airplane mode.'}
                         />
                         <Step n={2}
                             title={zh ? '離線查閱行程與快取圖資' : 'Browse Itinerary & Cached Tiles Offline'}

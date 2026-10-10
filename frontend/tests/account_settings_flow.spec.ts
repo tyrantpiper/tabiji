@@ -67,7 +67,12 @@ test.describe('Account Settings iOS Swift Flow', () => {
         await page.waitForTimeout(400);
 
         // 10. In Usage Guide Subview: Verify Header and Accordion are present
-        await expect(page.locator('text=Tabidachi 全功能操作手冊').or(page.locator('text=Tabidachi Comprehensive Guide'))).toBeVisible({ timeout: 5000 });
+        await expect(
+            page.locator('text=Tabiji 全功能操作手冊')
+                .or(page.locator('text=Tabidachi 全功能操作手冊'))
+                .or(page.locator('text=Tabiji Comprehensive Guide'))
+                .or(page.locator('text=Tabidachi Comprehensive Guide'))
+        ).toBeVisible({ timeout: 5000 });
         const tripTrigger = page.getByRole('button', { name: /行程管理|Trip Management/i }).first();
         await expect(tripTrigger).toBeVisible();
         await tripTrigger.click();

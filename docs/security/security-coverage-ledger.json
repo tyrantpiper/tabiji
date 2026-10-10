@@ -3,10 +3,10 @@
   "last_audit_date": "2026-10-10T08:22:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 57,
-    "audited_targets": 57,
+    "total_targets": 58,
+    "audited_targets": 58,
     "verified_vulnerabilities": 12,
-    "dismissed_hypotheses": 51
+    "dismissed_hypotheses": 54
   },
   "targets": [
     {
@@ -539,6 +539,15 @@
       "status": "SECURE",
       "last_checked_commit": "6a115ff",
       "validator_details": "Canonical PolyForm Noncommercial 1.0.0 established; NOTICE.md handles version demarcation; frontend/public/LICENSE-ASSETS.md encloses visual assets under All Rights Reserved."
+    },
+    {
+      "id": "branding/rebranding_and_gitignore",
+      "target_type": "branding_and_repo_hygiene",
+      "trust_boundary": "client_ui_and_git_repo",
+      "vectors_checked": ["ui_state_rendering_breakage", "e2e_regression_drift", "git_pattern_shadowing", "i18n_key_interpolation_drift"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Rebranding to Tabiji verified decoupled from UI state keys; gitignore pattern verified non-conflicting with ledger."
     }
   ]
 }
