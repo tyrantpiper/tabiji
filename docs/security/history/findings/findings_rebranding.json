@@ -1,0 +1,41 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 4,
+  "confirmed_count": 0,
+  "dismissed_count": 3,
+  "inconclusive_count": 1,
+  "findings": [
+    {
+      "target_id": "frontend/components/UsageGuideContent.tsx:rebranding_state_breakage",
+      "verdict": "DISMISSED",
+      "reasoning": "The strings 'Tabidachi 全功能操作手冊' and the offline description text are strictly static display copy rendered inside informational JSX elements (`<h3>` and `Step` component props). The Accordion components use explicit, semantic identifier strings (`value=\"trip\"`, `value=\"offline\"`, etc.) that are completely decoupled from UI display text. Furthermore, the custom event dispatched (`tabidachi-restart-tour`) is triggered by the tour restart button and does not observe or depend on the manual guide titles or descriptions. Modifying the display strings has zero effect on accordion state or event dispatching.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/tests/account_settings_flow.spec.ts:locator_ambiguity",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"1eb1cb4c-aab9-4329-b5a5-1315defe0ae0\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools[20].function_declarations[0].parameters.properties[migrations].items: field predicate failed",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": ".gitignore:pattern_shadowing",
+      "verdict": "DISMISSED",
+      "reasoning": "The reported pattern 'docs/security/*findings_*.json' does not exist in the provided .gitignore snippet. Instead, line 35 specifies '!docs/security/*.json', which is an un-ignore (whitelist) rule covering all JSON files within 'docs/security/'. Any security ledger or audit file placed in 'docs/security/' (such as 'docs/security/security-coverage-ledger.json') is properly whitelisted by this pattern rather than shadowed or ignored by a narrower findings pattern.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/lib/i18n/onboarding.ts:string_interpolation_drift",
+      "verdict": "DISMISSED",
+      "reasoning": "The strings containing 'Tabidachi' (zh.tour_step1_desc and zh.tour_step6_desc) are static string literals enclosed in double quotes without interpolation placeholders (${...} or format parameters). Replacing 'Tabidachi' with 'Tabiji' involves purely alphanumeric characters with no quotes or special escape sequences, which cannot introduce unescaped quotes or cause TypeScript syntax/compilation errors.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}

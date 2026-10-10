@@ -49,7 +49,7 @@ blob-report/
 
 backend/migrations/20260308_security_hardening.sql
 *.json
-!docs/security/*.json
+!docs/security/**/*.json
 !.agents/skills/**/*.json
 # Sentinel 中間產物排除 (避免追蹤臨時 scan findings)
 docs/security/findings_*.json
@@ -59,6 +59,7 @@ gcp-sa-key.json
 scratch/
 scratch_*.txt
 *.diff
+!docs/security/history/**/*.diff
 *.bak
 tmp/
 failing_page.html

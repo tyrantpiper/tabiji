@@ -1,0 +1,70 @@
+diff --git a/frontend/components/timeline-card.tsx b/frontend/components/timeline-card.tsx
+--- a/frontend/components/timeline-card.tsx
++++ b/frontend/components/timeline-card.tsx
+@@ -58,6 +58,41 @@ export const TimelineCard = memo(function TimelineCard({
+     const [showDetail, setShowDetail] = useState(false)
+     const [showPhotoPreview, setShowPhotoPreview] = useState(false)  // 🆕 圖片預覽狀態
+     const [imageError, setImageError] = useState(false) // 🆕 圖片載入失敗狀態
++    const [menuOpen, setMenuOpen] = useState(false) // 🆕 三點選單手勢消歧義受控狀態
++    const isTouchInteraction = useRef(false)
++    const startCoords = useRef<{ x: number; y: number } | null>(null)
++    const isScrolling = useRef(false)
++
++    // 📱 iOS 原生級 Touch-Slop 手勢消歧義防衛
++    const handleMenuPointerDown = (e: React.PointerEvent) => {
++        e.stopPropagation()
++        if (e.pointerType === 'touch') {
++            isTouchInteraction.current = true
++            isScrolling.current = false
++            startCoords.current = { x: e.clientX, y: e.clientY }
++            e.preventDefault() // 阻止 Radix 在 touch pointerdown 的第 0 毫秒立即開啟選單
++        } else {
++            isTouchInteraction.current = false
++        }
++    }
++
++    const handleMenuPointerMove = (e: React.PointerEvent) => {
++        if (!isTouchInteraction.current || !startCoords.current) return
++        const deltaX = Math.abs(e.clientX - startCoords.current.x)
++        const deltaY = Math.abs(e.clientY - startCoords.current.y)
++        if (deltaX > 8 || deltaY > 8) {
++            isScrolling.current = true // 超過 8px 判定為 iOS 原生滾動手勢
++        }
++    }
++
++    const handleMenuPointerUp = (e: React.PointerEvent) => {
++        if (!isTouchInteraction.current) return
++        startCoords.current = null
++    }
++
++    const handleMenuClick = (e: React.MouseEvent) => {
++        e.stopPropagation() // 🛡️ 無條件切斷冒泡：絕不穿透至背後卡片的地圖跳轉
++        if (isTouchInteraction.current) {
++            if (isScrolling.current) {
++                e.preventDefault()
++                isScrolling.current = false
++                isTouchInteraction.current = false
++                return // 滑動中：100% 阻斷選單開啟
++            }
++            // 精準輕點 (Tap)：安全切換開關
++            setMenuOpen((prev) => !prev)
++            isTouchInteraction.current = false
++            return
++        }
++        // 桌面端滑鼠/鍵盤點擊：交由 Radix 原生閉環處理
++    }
+@@ -188,9 +223,13 @@ export const TimelineCard = memo(function TimelineCard({
+                     {/* 右側：iOS 玻璃圓盤三點選單 */}
+                     <div className="shrink-0" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+-                        <DropdownMenu>
++                        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+                             <DropdownMenuTrigger asChild>
+                                 <Button
+                                     variant="ghost"
+                                     size="icon"
++                                    onPointerDown={handleMenuPointerDown}
++                                    onPointerMove={handleMenuPointerMove}
++                                    onPointerUp={handleMenuPointerUp}
++                                    onClick={handleMenuClick}
+                                     className="h-7 w-7 rounded-full transition-all touch-manipulation flex items-center justify-center p-0 shadow-xs active:scale-90 bg-slate-100/90 hover:bg-slate-200/90 dark:bg-slate-800/90 dark:hover:bg-slate-700/90 text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white backdrop-blur-md border border-slate-200/80 dark:border-slate-700/80"
+                                 >
