@@ -58,29 +58,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-Hant" translate="no" suppressHydrationWarning className="h-full">
+    <html lang="zh-Hant" translate="no" suppressHydrationWarning>
       <head>
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="google" content="notranslate" />
         <meta name="agd-partner-manual-verification" />
-        {/* 🚀 Zero-FOUC Splash Root Background Guard: 在開屏期間保持根層夜幕底色，杜絕 iOS 狀態列採樣白底 */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                try {
-                  var isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator && window.navigator.standalone === true);
-                  var hasShown = sessionStorage.getItem('tabiji_splash_shown') || sessionStorage.getItem('splash_shown');
-                  if (isStandalone && !hasShown) {
-                    document.documentElement.style.backgroundColor = '#162832';
-                    document.documentElement.classList.add('splash-active');
-                  }
-                } catch (e) {}
-              })();
-            `
-          }}
-        />
         {/* 🚀 Zero-FOUC Font Scale Pre-Hydration Sync */}
         <script
           dangerouslySetInnerHTML={{
@@ -98,7 +79,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${inter.className} h-full bg-background text-foreground`} suppressHydrationWarning>
+      <body className={inter.className} suppressHydrationWarning>
         <PwaHardSkeleton />
         {process.env.NEXT_PUBLIC_TP_DRIVE_URL && (
           <Script 
