@@ -186,8 +186,13 @@ export function TripProvider({ children }: { children: ReactNode }) {
                     const tripExists = trips.some((t: { id: string }) => t.id === activeTripId)
                     if (!tripExists) {
                         console.log("⚠️ 快取的行程已刪除或不屬於當前使用者，自動選擇最新行程")
-                        // 🛡️ 只有在身分穩定且確實在清單遺失時才彈出警告；帳號切換期間保持靜默
-                        if (prevUserIdRef.current === userId) {
+                        // 🛡️ 只有在身分穩定且確實在清單遺失時才彈出警告；帳號切換/引繼過渡期間保持靜默
+                        const isTransitionLocked = () => {
+                            if (typeof window === "undefined") return false
+                            const lock = sessionStorage.getItem("tabiji_identity_transition_lock")
+                            return lock ? Date.now() - parseInt(lock, 10) < 5000 : false
+                        }
+                        if (prevUserIdRef.current === userId && !isTransitionLocked()) {
                             toast.warning("該行程不存在或無存取權限，已切換至預設行程")
                         }
                         deleteTripSnapshot(activeTripId)

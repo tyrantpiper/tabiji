@@ -64,6 +64,9 @@ export default function RootLayout({
         <meta name="agd-partner-manual-verification" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        {/* 🚀 開場動畫黑線立繪與紙飛機原生高優先級預載入 (Preload)，杜絕首幀卡頓等待 */}
+        <link rel="preload" href="/images/tabiji-art-mask.png" as="image" type="image/png" fetchPriority="high" />
+        <link rel="preload" href="/images/tabiji-paper-plane.png" as="image" type="image/png" fetchPriority="high" />
         {/* 🚀 Zero-FOUC Font Scale Pre-Hydration Sync */}
         <script
           dangerouslySetInnerHTML={{
