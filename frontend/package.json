@@ -2,6 +2,8 @@
   "name": "tabiji-pwa",
   "version": "0.1.0",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Ryan Su",
   "scripts": {
     "predev": "node ./scripts/copy-maplibre-worker.mjs && node ./scripts/build-sw.mjs",
     "dev": "next dev",

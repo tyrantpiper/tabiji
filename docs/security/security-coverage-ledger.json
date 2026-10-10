@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-10T02:57:00Z",
+  "last_audit_date": "2026-10-10T08:22:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 56,
-    "audited_targets": 56,
+    "total_targets": 57,
+    "audited_targets": 57,
     "verified_vulnerabilities": 12,
-    "dismissed_hypotheses": 48
+    "dismissed_hypotheses": 51
   },
   "targets": [
     {
@@ -530,6 +530,15 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Remediation verified: Root container upgraded to h-dvh, eliminating 60-80px WebKit dynamic toolbar overflow on iOS/iPadOS."
+    },
+    {
+      "id": "legal/licensing_and_assets",
+      "target_type": "legal_ip_governance",
+      "trust_boundary": "public_to_repository",
+      "vectors_checked": ["licensing_inconsistency", "asset_scope_leakage", "spdx_compliance_drift", "retroactivity_boundary_bypass"],
+      "status": "SECURE",
+      "last_checked_commit": "6a115ff",
+      "validator_details": "Canonical PolyForm Noncommercial 1.0.0 established; NOTICE.md handles version demarcation; frontend/public/LICENSE-ASSETS.md encloses visual assets under All Rights Reserved."
     }
   ]
 }
