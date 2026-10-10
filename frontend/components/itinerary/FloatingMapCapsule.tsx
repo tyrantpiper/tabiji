@@ -87,7 +87,11 @@ export function FloatingMapCapsule({ scrollerEl, activityCount }: FloatingMapCap
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 24, scale: 0.9 }}
                     transition={{ type: "spring", stiffness: 450, damping: 30 }}
-                    className="fixed bottom-6 right-5 z-40"
+                    className={cn(
+                        "fixed z-50 transition-all",
+                        "bottom-[calc(max(env(safe-area-inset-bottom,16px),16px)+72px)] right-4",
+                        "md:bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))] md:right-6"
+                    )}
                     {...idleHandlers}
                 >
                     <button

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/views/landing-page.tsx:handle_recover_stale_trip_leak",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "session_state_desync_and_cache_leak",
+    "hypothesis": "When account recovery succeeds in handleRecover, the client fails to purge legacy localStorage active_trip_id and Zustand activeTripId, leaking previous anonymous or temporary trip IDs into the newly authenticated session."
+  },
+  {
+    "id": "frontend/lib/trip-context.tsx:identity_switch_false_positive_toast",
+    "file_path": "frontend/lib/trip-context.tsx",
+    "attack_vector": "unhandled_identity_transition_alert_loop",
+    "hypothesis": "TripProvider lacks previous userId transition awareness. When userId changes upon recovery, the retained stale activeTripId fails validation against the new user's valid trip list, triggering destructive deleteTripSnapshot and false-positive '該行程不存在或無存取權限' toast warning."
+  },
+  {
+    "id": "frontend/components/itinerary/FloatingMapCapsule.tsx:containing_block_trap_and_nav_collision",
+    "file_path": "frontend/components/itinerary/FloatingMapCapsule.tsx",
+    "attack_vector": "css_transform_containing_block_and_safe_area_truncation",
+    "hypothesis": "FloatingMapCapsule declared with fixed bottom-6 is trapped inside transformed ancestor gpu-layer-accelerated and lacks safe-area-inset-bottom and mobile BottomNav clearance, causing physical truncation off-screen on tablet and occlusion by the bottom navigation bar on mobile."
+  },
+  {
+    "id": "frontend/components/views/app-shell.tsx:webkit_viewport_toolbar_overflow",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "attack_vector": "mobile_viewport_height_overflow",
+    "hypothesis": "AppShell uses h-screen (100vh) without dynamic viewport height (h-dvh), extending the root layout 60-80px below the visible screen on iOS Safari and iPadOS, clipping bottom-anchored content behind the browser toolbar."
+  }
+]

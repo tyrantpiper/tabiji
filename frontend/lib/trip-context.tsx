@@ -81,13 +81,17 @@ export function TripProvider({ children }: { children: ReactNode }) {
             if (storedId && isValidUserId(storedId)) {
                 console.log("🔐 [TripProvider] Login state change detected, syncing identity:", storedId)
                 setUserId(storedId)
+                setActiveTripId(null)
+                setActiveTripTitle(null)
+                localStorage.removeItem("active_trip_id")
+                localStorage.removeItem("active_trip_title")
             }
         }
         window.addEventListener('user-login-state-changed', handleLoginStateChanged)
         return () => {
             window.removeEventListener('user-login-state-changed', handleLoginStateChanged)
         }
-    }, [setUserId])
+    }, [setUserId, setActiveTripId, setActiveTripTitle])
 
     const { trips, isLoading, isError, mutate } = useTrips(userId)
 
@@ -160,6 +164,19 @@ export function TripProvider({ children }: { children: ReactNode }) {
         })
     }, [trips, setActiveTripId, setActiveTripTitle])
 
+    // 🛡️ 身分過渡守衛：追蹤 userId 變更，防止帳號切換誤判為行程遭刪除
+    const prevUserIdRef = useRef<string | null>(userId)
+    useEffect(() => {
+        if (prevUserIdRef.current && prevUserIdRef.current !== userId) {
+            console.log("🔐 [TripProvider] User transition detected:", prevUserIdRef.current, "->", userId)
+            setActiveTripId(null)
+            setActiveTripTitle(null)
+            localStorage.removeItem("active_trip_id")
+            localStorage.removeItem("active_trip_title")
+        }
+        prevUserIdRef.current = userId
+    }, [userId, setActiveTripId, setActiveTripTitle])
+
     // 當 trips 載入完成，驗證 activeTripId 是否有效
     useEffect(() => {
         if (!isLoading) {
@@ -168,8 +185,11 @@ export function TripProvider({ children }: { children: ReactNode }) {
                     // 檢查快取的 ID 是否存在於 trips 中
                     const tripExists = trips.some((t: { id: string }) => t.id === activeTripId)
                     if (!tripExists) {
-                        console.log("⚠️ 快取的行程已刪除，自動選擇最新行程")
-                        toast.warning("該行程不存在或無存取權限，已切換至預設行程")
+                        console.log("⚠️ 快取的行程已刪除或不屬於當前使用者，自動選擇最新行程")
+                        // 🛡️ 只有在身分穩定且確實在清單遺失時才彈出警告；帳號切換期間保持靜默
+                        if (prevUserIdRef.current === userId) {
+                            toast.warning("該行程不存在或無存取權限，已切換至預設行程")
+                        }
                         deleteTripSnapshot(activeTripId)
                         const latestTrip = trips[0]
                         setActiveTripId(latestTrip.id)
@@ -197,7 +217,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
                 }
             }
         }
-    }, [isLoading, isError, trips, activeTripId, setActiveTripId, setActiveTripTitle])
+    }, [isLoading, isError, trips, activeTripId, setActiveTripId, setActiveTripTitle, userId])
 
     // 當切換行程時的處理函數
     const handleSetActiveTripId = (id: string | null) => {

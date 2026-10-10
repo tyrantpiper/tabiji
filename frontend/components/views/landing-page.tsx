@@ -171,6 +171,10 @@ export function LandingPage() {
                 localStorage.setItem("user_avatar", fetchedAvatar)
             }
 
+            // 🛡️ 物理雙清：引繼換帳號時立即抹除前一階段匿名或殘留的行程狀態
+            localStorage.removeItem("active_trip_id")
+            localStorage.removeItem("active_trip_title")
+
             // 🆕 通知 App 身分已切換，觸發 SWR 重新 fetch 行程
             window.dispatchEvent(new CustomEvent('user-login-state-changed'))
 
@@ -195,6 +199,8 @@ export function LandingPage() {
             // Fallback anyway to allow recovery even if API fails
             localStorage.setItem("user_uuid", cleanCode)
             localStorage.setItem("user_nickname", nickname || "Traveler")
+            localStorage.removeItem("active_trip_id")
+            localStorage.removeItem("active_trip_title")
             toast.success("Account recovered (Offline Mode)")
             setTimeout(() => {
                 if (typeof document !== 'undefined' && 'startViewTransition' in document) {

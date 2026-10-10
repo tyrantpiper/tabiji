@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-10T01:07:00Z",
+  "last_audit_date": "2026-10-10T02:57:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 52,
-    "audited_targets": 52,
-    "verified_vulnerabilities": 9,
-    "dismissed_hypotheses": 47
+    "total_targets": 56,
+    "audited_targets": 56,
+    "verified_vulnerabilities": 12,
+    "dismissed_hypotheses": 48
   },
   "targets": [
     {
@@ -494,6 +494,42 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: backpack_clean.png 1630x2546 alpha integrity verified (87.24% transparent, 0 active pixels in outer corners); dual-layer aspect-ratio and maskImage v3 cache-busting verified; iPhone SE 667px first-fold form visibility confirmed."
+    },
+    {
+      "id": "frontend/components/views/landing-page.tsx:handle_recover_stale_trip_leak",
+      "target_type": "client_auth_recovery",
+      "trust_boundary": "client_session_state",
+      "vectors_checked": ["session_state_desync", "cache_leak"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Physical Sentinel verified: LandingPage decoupled from internal trip stores; recovery dispatches user-login-state-changed for downstream state clearing."
+    },
+    {
+      "id": "frontend/lib/trip-context.tsx:identity_switch_false_positive_toast",
+      "target_type": "client_state_context",
+      "trust_boundary": "client_session_state",
+      "vectors_checked": ["unhandled_identity_transition", "false_positive_alert", "destructive_cache_wipe"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Remediation verified: prevUserIdRef tracks userId transitions; suppresses toast warning and destructive deleteTripSnapshot during identity changes while smoothly falling back to latest trip."
+    },
+    {
+      "id": "frontend/components/itinerary/FloatingMapCapsule.tsx:containing_block_trap_and_nav_collision",
+      "target_type": "client_ui_floating",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["css_transform_containing_block", "navigation_occlusion", "safe_area_truncation"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Remediation verified: Responsive clearance elevates capsule above BottomNav on mobile (+72px) and anchors cleanly at 1.5rem on tablet/desktop, elevated to z-50 with idle breathing."
+    },
+    {
+      "id": "frontend/components/views/app-shell.tsx:webkit_viewport_toolbar_overflow",
+      "target_type": "client_ui_shell",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": ["mobile_viewport_height_overflow", "webkit_toolbar_clipping"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Remediation verified: Root container upgraded to h-dvh, eliminating 60-80px WebKit dynamic toolbar overflow on iOS/iPadOS."
     }
   ]
 }
