@@ -430,4 +430,11 @@
 - **開場動畫 0 侵入與純粹呈現原則 (AD-072)**: 開屏動畫組件（`TabijiSplashAnimation`）嚴格保持為純淨視覺呈現層，禁止在內部 `useEffect` 中注入全域 DOM 操作（如 `document.documentElement.classList.add` 或動態 style 操作），杜絕在 React 19 與父層 re-render 生命週期中觸發定時器被提前清除（`clearTimeout`）引發的動畫機率性腰斬回歸。
 - **WebKit Standalone 100dvh 扣除缺陷與高程鏈路免疫 (AD-073)**: 在 iPadOS Standalone PWA 中，WebKit 計算 `100dvh` 時會扣除底部 Home Bar 安全區（約 20px~24px），造成容器比物理螢幕短而露出 21px~30px 不可互動死區（Deadzone）；架構上必須由 `html, body { height: 100%; min-height: 100%; }` 繼承鏈配合容器 `@media(display-mode:standalone): h-full! min-h-full!` 達成 100% 物理螢幕覆蓋。
 - **Microsecond 0 靜態根底色鎖定防線 (AD-074)**: 狀態列採樣 FOUC 白底之根治點在於 HTML 解析的第一微秒，必須在 `<head>` 靜態宣告 `<style>` 鎖定 `background-color: #F6F5EE`（dark: `#121A18`）與原生 `<meta name="apple-mobile-web-app-capable" content="yes" />`，不依賴 JS 水合。
-- **動畫內部 DOM 操作干擾 React 19 事件循環與計時器腰斬陷阱 (FP-019)**: 在 `tabiji-splash-animation.tsx` 中向 `useEffect` 注入全域 class 清理，當父層發生 re-render 或狀態更新時，清理函式提早執行 `clearTimeout(timer)`，在真機上造成開場動畫機率性被腰斬提前進入頁面。教訓：病灶在根層視口與狀態列採樣，絕不可將全域副作用揉入純淨的動畫展示組件內部。
+- **動畫內部 DOM 操作干擾 React 19 事件循環與計時器腰斬陷阱 (FP-019)**: 在 `tabiji-splash-animation.tsx` 中向 `useEffect` 注入全域 class 清理，當父層發生 re-render 或狀態更新時，清理函式提早執行 `clearTimeout(timer)`，在真機上造成開場動畫機率性被腰斬提前進入頁面。教訓：病灶在根層視口與狀態列採樣，絕不可將全域副作用揉入純淨的動畫展示組件內部。
+
+### 22. iOS 視口狀態列黃金回滾、開場動畫紋理預載與帳號引繼原子四清領域 (iOS Status Bar Rollback, Splash Preload & Atomic Recovery Reset)
+- **iOS Standalone Status Bar 模式與視口原點黃金律 (AD-075)**: WebKit PWA 嚴禁在未設計自定義頂部延伸 Padding 的版型下宣告 `statusBarStyle: "black-translucent"`；必須維持 `"default"` 保留獨立系統狀態列空間，使視口座標原點 (0,0) 嚴格對齊狀態列下緣，配合 `themeColor: "#fafaf9"` 達成自然融合，徹底根除 Header 與系統狀態列重疊上移問題。
+- **原生最高優先級紋理預載入與解碼停頓根治 (AD-076)**: 針對開機首幀涉及大型向量遮罩（2048×2048）或關鍵圖騰之資產，嚴禁等待 React 元件水合後才發起下載；必須在 HTML `<head>` 靜態配置 `<link rel="preload" as="image" fetchPriority="high">`，由瀏覽器管線在 HTML 解析前 0 毫秒提前解碼完畢，保證進場動畫 60FPS 絲滑展開。
+- **帳號引繼原子四清與 5 秒過渡靜音鎖架構 (AD-077)**: 跨使用者身分切換時，必須同步抹除 Zustand 本機持久化快照（`tabidachi-trip-storage` 中的 `activeTripId` 與 `activeTripTitle`）；並透過 `sessionStorage` 宣告 5 秒時間窗口鎖（`tabiji_identity_transition_lock`），阻斷 SWR 非同步載入期間因快取錯位觸發的破壞性誤判警告。
+- **引繼金鑰極致容錯與拒絕過度工程化原則 (AD-078)**: 在純複製貼上 UUID 的操作場景中，格式錯誤已被前端正則嚴密攔截，且雲端資料具備完全可逆性；堅決拒絕為了理論上的極端輸入錯誤而盲目增加後端跨表驗證往返與延遲。
+- **引繼情境下老使用者 Sample Trip 逆向污染陷阱 (FP-020)**: 在全新設備還原時，若只重設了 `user_uuid`，本地 `sample_trip_seeded` 為空會導致 `trip-context.tsx` 的種子守門器將老使用者誤判為新使用者，背景發起 `sampleTripApi.seed` 塞入示範行程。教訓：引繼流程必須同時覆蓋新人引導相關的所有本機旗標。
