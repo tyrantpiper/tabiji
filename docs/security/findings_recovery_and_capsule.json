@@ -1,0 +1,41 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 4,
+  "confirmed_count": 1,
+  "dismissed_count": 1,
+  "inconclusive_count": 2,
+  "findings": [
+    {
+      "target_id": "frontend/components/views/landing-page.tsx:handle_recover_stale_trip_leak",
+      "verdict": "DISMISSED",
+      "reasoning": "Static inspection reveals that `LandingPage` is architecturally decoupled from the core application shell and does not directly import or manage trip-related Zustand stores or `active_trip_id`. Instead, `handleRecover` systematically fires `window.dispatchEvent(new CustomEvent('user-login-state-changed'))` to notify subscribers and SWR to re-evaluate and re-fetch session data. Under the Presumption of Correctness, delegating session and trip cache invalidation to downstream event listeners preserves component isolation, and there is no unhandled defect or state leakage within this component.",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/lib/trip-context.tsx:identity_switch_false_positive_toast",
+      "verdict": "CONFIRMED",
+      "reasoning": "TripProvider does not track previous userId transitions. When userId changes (e.g. upon user login or identity sync), activeTripId retained in Zustand store and localStorage is not cleared or flagged as transitioning. Once useTrips(userId) finishes loading the new user's trips, the validation useEffect evaluates `tripExists = trips.some(t => t.id === activeTripId)`. Because the activeTripId belongs to the previous user, tripExists is false. This incorrectly treats the foreign/stale trip as deleted, firing a false-positive warning toast ('該行程不存在或無存取權限，已切換至預設行程') and destructively invoking deleteTripSnapshot(activeTripId), which wipes the previous user's offline IndexedDB cached snapshot.",
+      "poc_type": "pytest_in_memory",
+      "poc_script": "import pytest\nfrom unittest.mock import MagicMock\n\nclass MockTripProviderState:\n    def __init__(self, user_id=None, active_trip_id=None):\n        self.user_id = user_id\n        self.active_trip_id = active_trip_id\n        self.active_trip_title = None\n        self.toast_warning = MagicMock()\n        self.delete_trip_snapshot = MagicMock()\n\n    def set_user_id(self, new_user_id):\n        self.user_id = new_user_id\n        # Unhandled identity transition: does not clear active_trip_id or record transition\n\n    def on_trips_loaded(self, trips, is_loading, is_error=False):\n        if not is_loading:\n            if len(trips) > 0:\n                if self.active_trip_id:\n                    trip_exists = any(t[\"id\"] == self.active_trip_id for t in trips)\n                    if not trip_exists:\n                        # Defect: False-positive warning and destructive deletion of previous user's snapshot\n                        self.toast_warning(\"該行程不存在或無存取權限，已切換至預設行程\")\n                        self.delete_trip_snapshot(self.active_trip_id)\n                        latest_trip = trips[0]\n                        self.active_trip_id = latest_trip[\"id\"]\n                        self.active_trip_title = latest_trip.get(\"title\")\n\ndef test_identity_switch_triggers_false_positive_toast_and_destructive_delete():\n    # User A is active with trip-A-1\n    state = MockTripProviderState(user_id=\"user-A\", active_trip_id=\"trip-A-1\")\n    \n    # Identity transitions to User B\n    state.set_user_id(\"user-B\")\n    \n    # User B's valid trips load\n    user_b_trips = [{\"id\": \"trip-B-1\", \"title\": \"User B Trip\"}]\n    state.on_trips_loaded(trips=user_b_trips, is_loading=False)\n    \n    # Demonstrates unhandled transition causes false positive warning toast and snapshot wipe\n    state.toast_warning.assert_called_once_with(\"該行程不存在或無存取權限，已切換至預設行程\")\n    state.delete_trip_snapshot.assert_called_once_with(\"trip-A-1\")\n",
+      "remediation_hint": "Track previous userId using a `useRef(userId)`. When userId transitions (`prevUserIdRef.current !== userId`), either clear `activeTripId` immediately upon identity change or suppress `toast.warning` and `deleteTripSnapshot` during identity transitions, seamlessly switching `activeTripId` to `trips[0]?.id`."
+    },
+    {
+      "target_id": "frontend/components/itinerary/FloatingMapCapsule.tsx:containing_block_trap_and_nav_collision",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"1a599b78-4bbf-404e-8f08-ce5c75099c2c\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools[50].function_declarations[0].parameters.properties[migrations].items: field predicate failed",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    },
+    {
+      "target_id": "frontend/components/views/app-shell.tsx:webkit_viewport_toolbar_overflow",
+      "verdict": "INCONCLUSIVE",
+      "reasoning": "Validator subagent did not produce a structured verdict. Raw output: {\"conversation_id\":\"f874f733-c2b1-49c2-b645-91fa97d90493\",\"status\":\"ERROR\",\"response\":\"\",\"error\":\"INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools[20].function_declarations[0].parameters.properties[migrations].items: field predicate failed",
+      "poc_type": "none",
+      "poc_script": null,
+      "remediation_hint": null
+    }
+  ]
+}
