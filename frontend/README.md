@@ -25,7 +25,7 @@
   <img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi" />
   <img src="https://img.shields.io/badge/Gemini_3.5_Flash_&_Gemma-4285F4?logo=google" />
   <img src="https://img.shields.io/badge/PWA-Installable-5A0FC8?logo=pwa" />
-  <img src="https://img.shields.io/badge/License-MIT-green" />
+  <img src="https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-blue" />
 </p>
 
 <p align="center">
@@ -313,33 +313,11 @@ gcloud run deploy tabidachi-backend \
 
 ---
 
-## 📄 License
+## 📄 License & Intellectual Property
 
-This project is licensed under the [MIT License](LICENSE).
-
-```
-MIT License
-
-Copyright (c) 2026 Ryan Su
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+- **Frontend Code**: Licensed under the [PolyForm Noncommercial License 1.0.0](../LICENSE).
+- **Historical Releases**: Releases up to Git Tag `v1.0.0-mit-final` remain under the MIT License (see [NOTICE.md](../NOTICE.md)).
+- **Visual & Brand Assets**: App icons, splash art, and brand illustrations are proprietary under [All Rights Reserved](public/LICENSE-ASSETS.md). Please refer to [TRADEMARK.md](../TRADEMARK.md) for brand usage guidelines.
 
 ---
 
