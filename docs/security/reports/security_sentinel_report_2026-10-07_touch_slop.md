@@ -48,5 +48,5 @@ Tests       5 passed (5)
 
 ## 4. 候選補丁 (Candidate Patch)
 
-- 候選補丁檔案：[`docs/security/patch_candidate_touch_slop.diff`](file:///d:/Project/Tabidachi/travel-pwa/docs/security/patch_candidate_touch_slop.diff)
+- 候選補丁檔案：[`docs/security/history/patches/patch_candidate_touch_slop.diff`](file:///d:/Project/Tabidachi/travel-pwa/docs/security/history/patches/patch_candidate_touch_slop.diff)
 - 安全台帳更新：[`docs/security/security-coverage-ledger.json`](file:///d:/Project/Tabidachi/travel-pwa/docs/security/security-coverage-ledger.json)
