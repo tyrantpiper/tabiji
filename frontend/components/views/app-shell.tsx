@@ -201,7 +201,7 @@ export function AppShell() {
             />
             {/* 🌟 聚光燈新手導引全域掛載 */}
             <SpotlightTour />
-            <div className="h-dvh bg-background flex flex-col overflow-hidden">
+            <div className="h-full min-h-full [@supports(height:100dvh)]:h-dvh [@media(display-mode:standalone)]:h-full! [@media(display-mode:standalone)]:min-h-full! bg-background flex flex-col overflow-hidden">
                 <main className="flex-1 flex flex-col min-h-0 relative" data-scroll="true">
                     {/* ✨ 全域 AI 狀態按鈕 — 左上角固定定位 (與右上角通知對稱) */}
                     <div className="absolute top-2 left-3 z-100">
