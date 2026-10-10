@@ -34,12 +34,12 @@ class ChunkErrorBoundary extends React.Component<
     render() {
         if (this.state.hasError) {
             return (
-                <div className="h-full min-h-full bg-background text-foreground flex flex-col items-center justify-center p-6 text-center">
+                <div className="min-h-screen bg-stone-50 dark:bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
                     <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 dark:text-amber-400 mb-4 text-2xl">
                         ☁️
                     </div>
-                    <h2 className="text-lg font-bold">離線載入中</h2>
-                    <p className="text-sm text-muted-foreground mt-1 mb-6 max-w-xs">
+                    <h2 className="text-lg font-bold text-stone-800 dark:text-stone-100">離線載入中</h2>
+                    <p className="text-sm text-stone-500 dark:text-stone-400 mt-1 mb-6 max-w-xs">
                         核心模組正在嘗試從本地離線快取載入，請確認裝置快取或重試
                     </p>
                     <button
@@ -48,7 +48,7 @@ class ChunkErrorBoundary extends React.Component<
                             this.setState({ hasError: false });
                             window.location.reload();
                         }}
-                        className="px-5 py-2.5 bg-foreground text-background rounded-xl text-sm font-medium active:scale-95 transition-transform shadow-md cursor-pointer"
+                        className="px-5 py-2.5 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 rounded-xl text-sm font-medium active:scale-95 transition-transform shadow-md cursor-pointer"
                     >
                         重新整理
                     </button>
@@ -238,7 +238,7 @@ export function LandingPage() {
     }
 
     return (
-        <div className="h-full min-h-full bg-background text-foreground flex flex-col relative">
+        <div className="min-h-screen bg-stone-50 dark:bg-slate-900 flex flex-col relative">
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute -top-20 -left-20 w-64 h-64 bg-amber-100 dark:bg-amber-900/30 rounded-full blur-3xl opacity-50"></div>
                 <div className="absolute top-40 -right-20 w-80 h-80 bg-blue-100 dark:bg-blue-900/30 rounded-full blur-3xl opacity-50"></div>
@@ -310,7 +310,7 @@ export function LandingPage() {
                             </Button>
 
                             <div className="pt-6">
-                                <div className="relative"><div className="absolute inset-0 flex items-center"><span className="w-full border-t border-stone-200 dark:border-slate-700" /></div><div className="relative flex justify-center text-xs uppercase"><span className="bg-background px-2 text-stone-400 dark:text-slate-500">{t('landing_or')}</span></div></div>
+                                <div className="relative"><div className="absolute inset-0 flex items-center"><span className="w-full border-t border-stone-200 dark:border-slate-700" /></div><div className="relative flex justify-center text-xs uppercase"><span className="bg-stone-50 dark:bg-slate-900 px-2 text-stone-400 dark:text-slate-500">{t('landing_or')}</span></div></div>
                                 <Button variant="ghost" className="w-full mt-4 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-stone-100 dark:hover:bg-slate-800" onClick={() => setShowRecover(true)}><History className="w-4 h-4 mr-2" /> {t('landing_use_recovery')}</Button>
                             </div>
                         </div>
@@ -321,7 +321,7 @@ export function LandingPage() {
                                 <h3 className="font-bold text-slate-800 dark:text-white">{t('landing_account_recovery')}</h3>
                                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('landing_enter_uuid')}</p>
                             </div>
-                            <Input className="h-10 text-xs font-mono bg-background dark:border-slate-600 dark:text-white mb-4 text-center" placeholder="xxxxxxxx-xxxx-xxxx..." value={recoverCode} onChange={e => setRecoverCode(e.target.value)} />
+                            <Input className="h-10 text-xs font-mono bg-stone-50 dark:bg-slate-900 dark:border-slate-600 dark:text-white mb-4 text-center" placeholder="xxxxxxxx-xxxx-xxxx..." value={recoverCode} onChange={e => setRecoverCode(e.target.value)} />
                             <div className="flex gap-2"><Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700" onClick={() => setShowRecover(false)}>{t('cancel')}</Button><Button className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white" onClick={handleRecover}>{t('landing_recover')}</Button></div>
                         </div>
                     )}
@@ -329,7 +329,7 @@ export function LandingPage() {
                 </div>
             </main>
 
-            <footer className="py-6 text-center pb-[max(env(safe-area-inset-bottom,24px),24px)]">
+            <footer className="py-6 text-center">
                 <p className="text-[10px] text-slate-300 dark:text-slate-600 uppercase tracking-widest">Your Smart Travel Companion</p>
             </footer>
         </div>
