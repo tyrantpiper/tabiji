@@ -171,9 +171,27 @@ export function LandingPage() {
                 localStorage.setItem("user_avatar", fetchedAvatar)
             }
 
-            // 🛡️ 物理雙清：引繼換帳號時立即抹除前一階段匿名或殘留的行程狀態
+            // 🛡️ 物理四清：引繼換帳號時立即抹除前一階段匿名或殘留的行程狀態 (含 Zustand 持久化快取)
             localStorage.removeItem("active_trip_id")
             localStorage.removeItem("active_trip_title")
+            try {
+                const rawTripStorage = localStorage.getItem("tabidachi-trip-storage")
+                if (rawTripStorage) {
+                    const parsed = JSON.parse(rawTripStorage)
+                    if (parsed && parsed.state) {
+                        parsed.state.activeTripId = null
+                        parsed.state.activeTripTitle = null
+                        localStorage.setItem("tabidachi-trip-storage", JSON.stringify(parsed))
+                    }
+                }
+            } catch {
+                // Ignore json parse error
+            }
+
+            // 🔒 設置 5 秒引繼過渡時間鎖，杜絕跨帳號異步加載時之誤判 Toast 警報
+            if (typeof window !== "undefined") {
+                sessionStorage.setItem("tabiji_identity_transition_lock", Date.now().toString())
+            }
 
             // 🆕 通知 App 身分已切換，觸發 SWR 重新 fetch 行程
             window.dispatchEvent(new CustomEvent('user-login-state-changed'))
@@ -201,6 +219,20 @@ export function LandingPage() {
             localStorage.setItem("user_nickname", nickname || "Traveler")
             localStorage.removeItem("active_trip_id")
             localStorage.removeItem("active_trip_title")
+            try {
+                const rawTripStorage = localStorage.getItem("tabidachi-trip-storage")
+                if (rawTripStorage) {
+                    const parsed = JSON.parse(rawTripStorage)
+                    if (parsed && parsed.state) {
+                        parsed.state.activeTripId = null
+                        parsed.state.activeTripTitle = null
+                        localStorage.setItem("tabidachi-trip-storage", JSON.stringify(parsed))
+                    }
+                }
+            } catch {}
+            if (typeof window !== "undefined") {
+                sessionStorage.setItem("tabiji_identity_transition_lock", Date.now().toString())
+            }
             toast.success("Account recovered (Offline Mode)")
             setTimeout(() => {
                 if (typeof document !== 'undefined' && 'startViewTransition' in document) {

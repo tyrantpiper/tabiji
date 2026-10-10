@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/app/layout.tsx:splash_artwork_async_decode_jank",
+    "file_path": "frontend/app/layout.tsx",
+    "attack_vector": "async_image_decode_render_jank",
+    "hypothesis": "Omitting static high-priority preloads for tabiji-art-mask.png and tabiji-paper-plane.png causes WebKit to asynchronously fetch and decode 2048px textures during the first animation frame, causing jank, dropped frames, and visual stuttering in the vector outline path."
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:recovery_state_cache_pollution",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "zustand_persist_reverse_hydration_leak",
+    "hypothesis": "When account recovery succeeds, only standalone localStorage keys are removed while Zustand persist cache (tabidachi-trip-storage) remains untouched, allowing stale activeTripId to rehydrate and corrupt new account state."
+  },
+  {
+    "id": "frontend/lib/trip-context.tsx:identity_transition_race_false_toast",
+    "file_path": "frontend/lib/trip-context.tsx",
+    "attack_vector": "identity_transition_timing_race_alert",
+    "hypothesis": "prevUserIdRef is updated synchronously before SWR trips finish fetching, so when valid trips return and fail to match stale activeTripId, prevUserIdRef === userId evaluates to true, triggering a false-positive 'trip does not exist or access denied' warning toast."
+  }
+]
