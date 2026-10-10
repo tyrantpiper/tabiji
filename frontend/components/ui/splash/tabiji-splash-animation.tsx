@@ -23,7 +23,7 @@ export function TabijiSplashAnimation({ onComplete }: TabijiSplashAnimationProps
 
         const timer = setTimeout(() => {
             onComplete?.()
-        }, 2000)
+        }, 2400)
 
         return () => clearTimeout(timer)
     }, [onComplete])

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "frontend/components/views/app-shell.tsx:webkit_viewport_standalone_deadzone",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "attack_vector": "viewport_truncation_deadzone",
+    "hypothesis": "When using h-dvh in iOS/iPadOS Standalone PWA mode, WebKit erroneously subtracts safe area insets from dynamic viewport height, truncating root container by 64px and creating an unresponsive bottom deadzone where underlying body color leaks through."
+  },
+  {
+    "id": "frontend/components/views/app-shell.tsx:floating_controls_status_bar_collision",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "attack_vector": "ui_occlusion_collision",
+    "hypothesis": "Hardcoded top-2 (8px) on AIStatusButton and notification controls collides with hardware Dynamic Island, notch, or tablet status bar in standalone fullscreen mode without env(safe-area-inset-top) offset."
+  },
+  {
+    "id": "frontend/components/itinerary/TabijiHomeDashboard.tsx:tablet_header_overlap",
+    "file_path": "frontend/components/itinerary/TabijiHomeDashboard.tsx",
+    "attack_vector": "layout_breakpoint_occlusion",
+    "hypothesis": "TabijiHomeDashboard header shrinks to sm:pt-8 (32px) on tablet breakpoints, which directly collides with iPadOS system clock, battery, and control center indicators when standalone status bar is rendered transparently."
+  },
+  {
+    "id": "frontend/components/ui/splash/tabiji-splash-animation.tsx:lifecycle_timer_truncation",
+    "file_path": "frontend/components/ui/splash/tabiji-splash-animation.tsx",
+    "attack_vector": "animation_lifecycle_midair_clipping",
+    "hypothesis": "Hardcoded 2000ms setTimeout triggers React unmount while paper airplane vector animation is at peak flight speed (2.0s duration), causing visual jarring and thread thrashing during simultaneous AppShell hydration."
+  },
+  {
+    "id": "frontend/app/layout.tsx:apple_standalone_meta_omission",
+    "file_path": "frontend/app/layout.tsx",
+    "attack_vector": "pwa_fullscreen_fallback_regression",
+    "hypothesis": "Omitting static meta apple-mobile-web-app-capable and status-bar-style in head causes WebKit to downgrade standalone webclip to browser default mode, pushing viewport down and leaking white status bar band."
+  },
+  {
+    "id": "scripts/opencv_frame_analyzer.py:subprocess_and_path_traversal",
+    "file_path": "scripts/opencv_frame_analyzer.py",
+    "attack_vector": "file_traversal_and_resource_leak",
+    "hypothesis": "OpenCV frame extraction script could leak file descriptors or suffer path traversal if unvalidated video paths are parsed from external CLI parameters."
+  }
+]
