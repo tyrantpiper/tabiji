@@ -21,27 +21,11 @@ export function TabijiSplashAnimation({ onComplete }: TabijiSplashAnimationProps
             (window as unknown as { __dismissHardSkeleton: () => void }).__dismissHardSkeleton()
         }
 
-        // 🛡️ 確保開屏播放期間根層物理鎖定為深色夜幕，杜絕任何狀態列採樣白底洩漏
-        if (typeof document !== "undefined") {
-            document.documentElement.classList.add("splash-active")
-        }
-
         const timer = setTimeout(() => {
-            // 動畫結束，平滑釋放根層背景給主畫面
-            if (typeof document !== "undefined") {
-                document.documentElement.classList.remove("splash-active")
-                document.documentElement.style.backgroundColor = ""
-            }
             onComplete?.()
         }, 2000)
 
-        return () => {
-            clearTimeout(timer)
-            if (typeof document !== "undefined") {
-                document.documentElement.classList.remove("splash-active")
-                document.documentElement.style.backgroundColor = ""
-            }
-        }
+        return () => clearTimeout(timer)
     }, [onComplete])
 
     return (

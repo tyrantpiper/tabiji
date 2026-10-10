@@ -1,23 +1,19 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-10T11:56:45Z",
+  "last_audit_date": "2026-10-10T08:22:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 64,
-    "audited_targets": 64,
-    "verified_vulnerabilities": 14,
-    "dismissed_hypotheses": 59
+    "total_targets": 59,
+    "audited_targets": 59,
+    "verified_vulnerabilities": 12,
+    "dismissed_hypotheses": 56
   },
   "targets": [
     {
       "id": "backend/main.py",
       "target_type": "backend_gateway",
       "trust_boundary": "public_to_internal",
-      "vectors_checked": [
-        "cors_misconfiguration",
-        "rate_limit_bypass",
-        "unhandled_exceptions"
-      ],
+      "vectors_checked": ["cors_misconfiguration", "rate_limit_bypass", "unhandled_exceptions"],
       "status": "SECURE",
       "last_checked_commit": "916024d",
       "validator_details": "CORS restricted to authorized origins; slowapi limiter mounted."
@@ -26,11 +22,7 @@
       "id": "backend/services/intent_router.py",
       "target_type": "backend_service",
       "trust_boundary": "public_to_llm",
-      "vectors_checked": [
-        "prompt_injection",
-        "regex_dos",
-        "deserialization"
-      ],
+      "vectors_checked": ["prompt_injection", "regex_dos", "deserialization"],
       "status": "SECURE",
       "last_checked_commit": "916024d",
       "validator_details": "Prompt sanitization and strict regex length capping implemented."
@@ -39,11 +31,7 @@
       "id": "backend/services/destinations.py",
       "target_type": "backend_service",
       "trust_boundary": "backend_to_external_api",
-      "vectors_checked": [
-        "ssrf",
-        "credential_leakage",
-        "timeout_exhaustion"
-      ],
+      "vectors_checked": ["ssrf", "credential_leakage", "timeout_exhaustion"],
       "status": "SECURE",
       "last_checked_commit": "916024d",
       "validator_details": "HTTP client uses strictly scoped timeouts and sanitized destination queries."
@@ -52,10 +40,7 @@
       "id": "frontend/lib/api.ts",
       "target_type": "client_gateway",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": [
-        "bearer_token_leakage",
-        "header_injection"
-      ],
+      "vectors_checked": ["bearer_token_leakage", "header_injection"],
       "status": "SECURE",
       "last_checked_commit": "916024d",
       "validator_details": "Tokens retrieved securely via Supabase Auth session client."
@@ -64,11 +49,7 @@
       "id": "frontend/app/api/cloudinary/route.ts",
       "target_type": "edge_proxy",
       "trust_boundary": "public_to_third_party",
-      "vectors_checked": [
-        "ssrf",
-        "open_proxy_abuse",
-        "content_type_bypass"
-      ],
+      "vectors_checked": ["ssrf", "open_proxy_abuse", "content_type_bypass"],
       "status": "SECURE",
       "last_checked_commit": "916024d",
       "validator_details": "Target domains strictly whitelisted to res.cloudinary.com and authorized assets."
@@ -77,11 +58,7 @@
       "id": "supabase/migrations",
       "target_type": "database_rls",
       "trust_boundary": "client_to_database",
-      "vectors_checked": [
-        "rls_policy_bypass",
-        "privilege_escalation",
-        "anon_overexposure"
-      ],
+      "vectors_checked": ["rls_policy_bypass", "privilege_escalation", "anon_overexposure"],
       "status": "SECURE",
       "last_checked_commit": "916024d",
       "validator_details": "RLS enabled across all tables; tenant isolation enforced by auth.uid()."
@@ -90,12 +67,7 @@
       "id": "backend/services/geocode_service.py",
       "target_type": "backend_service",
       "trust_boundary": "backend_to_external_api",
-      "vectors_checked": [
-        "cross_border_filter_zero_out",
-        "malformed_bbox_injection",
-        "cjk_tokenization_collapse",
-        "straggler_timeout_blocking"
-      ],
+      "vectors_checked": ["cross_border_filter_zero_out", "malformed_bbox_injection", "cjk_tokenization_collapse", "straggler_timeout_blocking"],
       "status": "PENDING_PATCH",
       "last_checked_commit": "35d7d3d",
       "validator_details": "Strict filter bug confirmed; Photon raw importance absence proven; In-memory PoC verified."
@@ -104,9 +76,7 @@
       "id": "frontend/components/ui/dialog.tsx",
       "target_type": "ui_primitive",
       "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "ui_overflow_defense_and_a11y"
-      ],
+      "vectors_checked": ["ui_overflow_defense_and_a11y"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "DialogContent is fixed with max-w-[calc(100%-2rem)] and overflow-y-auto. Children are constrained within local scroll context. Adding overflow-x-hidden is an optional defensive enhancement."
@@ -115,9 +85,7 @@
       "id": "frontend/components/ai/ai-key-dialog.tsx",
       "target_type": "client_feature_dialog",
       "trust_boundary": "client_ui_and_storage",
-      "vectors_checked": [
-        "mobile_responsive_overflow_and_key_handling"
-      ],
+      "vectors_checked": ["mobile_responsive_overflow_and_key_handling"],
       "status": "PENDING_PATCH",
       "last_checked_commit": "HEAD",
       "validator_details": "DialogFooter unconstrained flex-row forces horizontal overflow under large font scales; Accordion text lacks min-w-0; Input lacks Enter key handler."
@@ -126,9 +94,7 @@
       "id": "frontend/lib/security.ts",
       "target_type": "client_security_helper",
       "trust_boundary": "client_storage_and_headers",
-      "vectors_checked": [
-        "client_key_encryption_and_leakage"
-      ],
+      "vectors_checked": ["client_key_encryption_and_leakage"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Sanitization strictly strips control characters and CRLF, preventing HTTP header injection."
@@ -137,10 +103,7 @@
       "id": "frontend/components/itinerary/WeatherPanel.tsx",
       "target_type": "client_ui_component",
       "trust_boundary": "browser_render",
-      "vectors_checked": [
-        "division_by_zero_and_nan_injection",
-        "xss_and_html_injection"
-      ],
+      "vectors_checked": ["division_by_zero_and_nan_injection", "xss_and_html_injection"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "React JSX child encoding protects against XSS; zero-delta Math.max(1, range) bound implemented in new Bento architecture."
@@ -149,9 +112,7 @@
       "id": "frontend/components/views/itinerary-view.tsx#weather",
       "target_type": "client_view_container",
       "trust_boundary": "browser_state",
-      "vectors_checked": [
-        "stale_day_cross_contamination_and_race_condition"
-      ],
+      "vectors_checked": ["stale_day_cross_contamination_and_race_condition"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Weather state isolated in store/local state; keyed unmount enforced across day transitions."
@@ -160,11 +121,7 @@
       "id": "frontend/lib/itinerary-metrics.ts",
       "target_type": "client_utility_module",
       "trust_boundary": "client_compute",
-      "vectors_checked": [
-        "regex_dos",
-        "prototype_or_nan_pollution",
-        "uncaught_type_error"
-      ],
+      "vectors_checked": ["regex_dos", "prototype_or_nan_pollution", "uncaught_type_error"],
       "status": "PENDING_PATCH",
       "last_checked_commit": "HEAD",
       "validator_details": "Confirmed vulnerability: malformed dayChecklists causes TypeError: d0 is not iterable during Day 1 spread; Candidate patch synthesized."
@@ -173,11 +130,7 @@
       "id": "frontend/components/itinerary/IOSBottomSheet.tsx",
       "target_type": "client_ui_primitive",
       "trust_boundary": "dom_and_gestures",
-      "vectors_checked": [
-        "scroll_lock_leak",
-        "unhandled_touch_event",
-        "a11y_escape"
-      ],
+      "vectors_checked": ["scroll_lock_leak", "unhandled_touch_event", "a11y_escape"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "React useEffect cleanup reliably restores document.body overflow and touchAction styles; ESC key and backdrop click verified."
@@ -186,10 +139,7 @@
       "id": "frontend/components/itinerary/ItineraryDashboardHub.tsx",
       "target_type": "client_ui_component",
       "trust_boundary": "browser_render",
-      "vectors_checked": [
-        "svg_render_overflow",
-        "currency_string_injection"
-      ],
+      "vectors_checked": ["svg_render_overflow", "currency_string_injection"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Defensive fallback handles null/NaN ratings gracefully without breaking SVG path or card layouts."
@@ -198,10 +148,7 @@
       "id": "frontend/lib/utils.ts#openExternalLink",
       "target_type": "client_security_helper",
       "trust_boundary": "browser_to_external_url",
-      "vectors_checked": [
-        "client_xss_open_redirect",
-        "pseudo_protocol_injection"
-      ],
+      "vectors_checked": ["client_xss_open_redirect", "pseudo_protocol_injection"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Strict protocol scheme validation implemented; javascript: and data: pseudo-protocols blocked."
@@ -210,10 +157,7 @@
       "id": "frontend/components/timeline-card.tsx",
       "target_type": "client_ui_component",
       "trust_boundary": "dom_and_gestures",
-      "vectors_checked": [
-        "dnd_gesture_hijacking",
-        "ui_gesture_deadlock"
-      ],
+      "vectors_checked": ["dnd_gesture_hijacking", "ui_gesture_deadlock"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Defensive hardening implemented: onPointerDown stopPropagation mounted on thumbnail, sub_items table, and action buttons."
@@ -222,10 +166,7 @@
       "id": "frontend/lib/transit-connector.ts",
       "target_type": "client_math_engine",
       "trust_boundary": "browser_to_external_url",
-      "vectors_checked": [
-        "protocol_manipulation_and_nan_injection",
-        "open_redirect"
-      ],
+      "vectors_checked": ["protocol_manipulation_and_nan_injection", "open_redirect"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Strict coordinate validation, finite checks, and RFC 3986 URL construction eliminate NaN and injection vectors."
@@ -234,10 +175,7 @@
       "id": "frontend/lib/undo-delete-manager.ts",
       "target_type": "client_state_engine",
       "trust_boundary": "lifecycle_and_async_queue",
-      "vectors_checked": [
-        "race_condition_and_timer_leak",
-        "unmount_desync"
-      ],
+      "vectors_checked": ["race_condition_and_timer_leak", "unmount_desync"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Queue-based timer management with synchronous flushAll() prevents unmount leaks and ghost data."
@@ -246,10 +184,7 @@
       "id": "frontend/components/itinerary/TransitSegmentConnector.tsx",
       "target_type": "client_ui_component",
       "trust_boundary": "dom_and_gestures",
-      "vectors_checked": [
-        "stored_xss_in_custom_note",
-        "gesture_hijacking"
-      ],
+      "vectors_checked": ["stored_xss_in_custom_note", "gesture_hijacking"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "JSX automatic escaping prevents stored XSS; gesture stopPropagation prevents DND collision."
@@ -283,9 +218,7 @@
       "id": "frontend/components/itinerary/SortableTimelineCard.tsx",
       "target_type": "client_dnd_wrapper",
       "trust_boundary": "dom_and_gestures",
-      "vectors_checked": [
-        "dnd_gesture_and_state_coupling"
-      ],
+      "vectors_checked": ["dnd_gesture_and_state_coupling"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Independent sandbox validation confirmed: removing framer-motion drag='x' frees native vertical scroll with zero dangling listeners; useSortable lifecycle remains properly handled."
@@ -306,9 +239,7 @@
       "id": "frontend/components/itinerary/ItineraryTimeline.tsx:layout_padding",
       "target_type": "client_timeline_container",
       "trust_boundary": "browser_render",
-      "vectors_checked": [
-        "virtuoso_layout_measurement_shift"
-      ],
+      "vectors_checked": ["virtuoso_layout_measurement_shift"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Independent sandbox validation confirmed: Virtuoso ResizeObserver dynamically measures wrappers and accommodates px-4 sm:px-6 container width without height cache desynchronization."
@@ -317,9 +248,7 @@
       "id": "frontend/components/itinerary/TimelineCardOverlay.tsx:drag_mirror",
       "target_type": "client_dnd_overlay",
       "trust_boundary": "browser_render",
-      "vectors_checked": [
-        "drag_overlay_visual_desync"
-      ],
+      "vectors_checked": ["drag_overlay_visual_desync"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Independent sandbox validation confirmed: Overlay layout will mirror the active card's full-width top-pill structure to maintain seamless visual parity during drag."
@@ -399,12 +328,7 @@
       "id": "backend/routers/sample_trip.py:tenant_isolation_and_quota_bypass",
       "target_type": "backend_router",
       "trust_boundary": "public_to_internal",
-      "vectors_checked": [
-        "tenant_isolation",
-        "quota_bypass",
-        "unauthorized_seeding_spoofing",
-        "idempotent_dedup"
-      ],
+      "vectors_checked": ["tenant_isolation", "quota_bypass", "unauthorized_seeding_spoofing", "idempotent_dedup"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "In-memory TestClient confrontation verified (3/3 passed): Missing X-User-ID strictly rejects with 401; dedup logic returns skipped for existing users to eliminate quota bypass; new users receive SYSTEM trip with isolated membership."
@@ -413,11 +337,7 @@
       "id": "frontend/lib/geo-multi-day.ts:generateGreatCircle",
       "target_type": "client_math_engine",
       "trust_boundary": "browser_render_and_math",
-      "vectors_checked": [
-        "nan_injection",
-        "identical_coordinate_collapse",
-        "antipodal_div0"
-      ],
+      "vectors_checked": ["nan_injection", "identical_coordinate_collapse", "antipodal_div0"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "In-memory Vitest confrontation verified (3/3 passed): Tokyo-Kyoto geodesic interpolation produces finite numbers; identical coordinates return [start, end]; defensive NaN guard eliminates GeoJSON MapLibre crash."
@@ -426,11 +346,7 @@
       "id": "frontend/components/itinerary/TripList.tsx:pdf_and_batch_selection",
       "target_type": "client_ui_component",
       "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "pdf_generator_untrusted_html_injection",
-        "event_bubbling_penetration",
-        "leaving_trip_spinner_leak"
-      ],
+      "vectors_checked": ["pdf_generator_untrusted_html_injection", "event_bubbling_penetration", "leaving_trip_spinner_leak"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel subagent verified: TripList acts as pure UI presentation container delegating to pdf-generator with try-catch toast boundaries; all 6 core capabilities intact."
@@ -439,11 +355,7 @@
       "id": "frontend/app/globals.css:tabiji_brand_tokens",
       "target_type": "client_styling_tokens",
       "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "wcag_contrast_and_css_variable_isolation",
-        "dark_mode_bleed",
-        "dialog_visibility"
-      ],
+      "vectors_checked": ["wcag_contrast_and_css_variable_isolation", "dark_mode_bleed", "dialog_visibility"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel subagent verified: #1E2927 on #F6F5EE delivers 14.8:1 contrast exceeding WCAG AAA (7:1); darkened Misty Slate #5C6B68 ensures >= 4.5:1 AA ratio; dark mode #121A18 maintains OLED anti-smearing and Radix visibility."
@@ -452,11 +364,7 @@
       "id": "frontend/components/views/info-view.tsx:url_protocol_and_link_injection",
       "target_type": "client_ui_view",
       "trust_boundary": "browser_to_external_links",
-      "vectors_checked": [
-        "client_side_xss_url_injection",
-        "javascript_protocol_execution",
-        "untrusted_redirection"
-      ],
+      "vectors_checked": ["client_side_xss_url_injection", "javascript_protocol_execution", "untrusted_redirection"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "In-memory Sentinel test (views-navigation-sentinel.test.ts) verified: openExternalLink enforces strict regex whitelist protocol guard, blocking javascript:, data:, vbscript:, and file: schemes."
@@ -465,10 +373,7 @@
       "id": "frontend/components/views/tools-view.tsx:ledger_share_authorization",
       "target_type": "client_ui_view",
       "trust_boundary": "browser_to_edge_api",
-      "vectors_checked": [
-        "unauthorized_ledger_share_idor",
-        "client_mutation_tampering"
-      ],
+      "vectors_checked": ["unauthorized_ledger_share_idor", "client_mutation_tampering"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel confrontation verified: tools-view acts purely as a client HTTP proxy sending x-user-id with response code verification; backend FastAPI router enforces tenant boundaries."
@@ -477,10 +382,7 @@
       "id": "frontend/components/views/profile-view.tsx:session_uuid_persistence",
       "target_type": "client_ui_view",
       "trust_boundary": "client_storage_persistence",
-      "vectors_checked": [
-        "sensitive_cache_leakage",
-        "session_uuid_obliteration"
-      ],
+      "vectors_checked": ["sensitive_cache_leakage", "session_uuid_obliteration"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel confrontation verified: handleClearCache preserves user_uuid prior to clearing localStorage, preventing state desynchronization."
@@ -489,10 +391,7 @@
       "id": "frontend/components/views/profile-view.tsx:avatar_email_protocol",
       "target_type": "client_ui_view",
       "trust_boundary": "browser_to_external_navigation",
-      "vectors_checked": [
-        "client_side_xss_url_injection",
-        "javascript_protocol_execution"
-      ],
+      "vectors_checked": ["client_side_xss_url_injection", "javascript_protocol_execution"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel confrontation verified: email handlers use hardcoded HTTPS webmail URLs and avatar images render via standard img elements where javascript: schemes are blocked."
@@ -501,10 +400,7 @@
       "id": "frontend/components/views/profile-view.tsx:optical_wcag_contrast",
       "target_type": "client_ui_view",
       "trust_boundary": "client_rendering_wcag",
-      "vectors_checked": [
-        "optical_rendering_contrast_collapse",
-        "text_contrast_violation"
-      ],
+      "vectors_checked": ["optical_rendering_contrast_collapse", "text_contrast_violation"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "In-memory Sentinel test (profile-alignment-sentinel.test.ts) verified: WCAG AAA (>= 7.0:1) contrast achieved for primary and secondary text tokens on Tabiji paper card backgrounds."
@@ -513,10 +409,7 @@
       "id": "frontend/components/views/itinerary-view.tsx:responsive_overflow",
       "target_type": "client_ui_view",
       "trust_boundary": "client_rendering_viewport",
-      "vectors_checked": [
-        "responsive_layout_overflow",
-        "horizontal_scrollbar_leakage"
-      ],
+      "vectors_checked": ["responsive_layout_overflow", "horizontal_scrollbar_leakage"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verification: w-full max-w-4xl lg:max-w-5xl mx-auto px-5 sm:px-8 scales safely across all viewports from 375px to 1440px with zero horizontal scrollbar."
@@ -525,10 +418,7 @@
       "id": "frontend/components/views/info-view.tsx:layout_alignment_parity",
       "target_type": "client_ui_view",
       "trust_boundary": "client_layout_alignment",
-      "vectors_checked": [
-        "layout_alignment_parity",
-        "gutter_drift"
-      ],
+      "vectors_checked": ["layout_alignment_parity", "gutter_drift"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verification: header and content body use identical container contract w-full max-w-4xl lg:max-w-5xl mx-auto px-5 sm:px-8 ensuring zero drift."
@@ -537,10 +427,7 @@
       "id": "frontend/components/views/profile-view.tsx:touch_target_accessibility",
       "target_type": "client_ui_view",
       "trust_boundary": "client_accessibility_wcag",
-      "vectors_checked": [
-        "touch_target_accessibility",
-        "hitbox_collapse"
-      ],
+      "vectors_checked": ["touch_target_accessibility", "hitbox_collapse"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verification: all interactive elements maintain minimum 44x44px hitbox (w-11 h-11) and padded MenuItem rows (p-4) across wide viewports."
@@ -549,12 +436,7 @@
       "id": "frontend/components/views/landing-page.tsx",
       "target_type": "client_auth_view",
       "trust_boundary": "public_to_authenticated",
-      "vectors_checked": [
-        "xss_stored_dom",
-        "improper_input_validation",
-        "ui_spoofing_resource_leak",
-        "optical_flash_unmounted_fouc"
-      ],
+      "vectors_checked": ["xss_stored_dom", "improper_input_validation", "ui_spoofing_resource_leak", "optical_flash_unmounted_fouc"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: AppShellSkeleton replaced with pure #162832 zero-fouc base; enlarged person line mask rendered with adaptive dual-theme css mask; verified via splash-zero-strobe-sentinel.test.tsx."
@@ -563,10 +445,7 @@
       "id": "frontend/components/core/pwa-hard-skeleton.tsx:lifecycle_race_condition",
       "target_type": "client_pwa_lifecycle",
       "trust_boundary": "browser_to_react_hydration",
-      "vectors_checked": [
-        "premature_unmount_race",
-        "fouc_ssr_leakage"
-      ],
+      "vectors_checked": ["premature_unmount_race", "fouc_ssr_leakage"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: standalone mode locks #162832 base and suppresses pulse boxes; dismissal coordinated exclusively through __dismissHardSkeleton."
@@ -575,11 +454,7 @@
       "id": "frontend/components/ui/splash-screen.tsx:client_hydration_gap",
       "target_type": "client_splash_overlay",
       "trust_boundary": "browser_to_react_hydration",
-      "vectors_checked": [
-        "hydration_null_rendering_gap",
-        "flash_of_unsplashed_ui",
-        "premature_dismissal_gap"
-      ],
+      "vectors_checked": ["hydration_null_rendering_gap", "flash_of_unsplashed_ui", "premature_dismissal_gap"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: synchronous premature hard skeleton dismissal eliminated; TabijiSplashAnimation coordinates safe dismissal upon actual DOM mount; verified 100% green via Vitest."
@@ -588,10 +463,7 @@
       "id": "frontend/components/pwa-install-prompt.tsx:bottom_sheet_mobile_ergonomics",
       "target_type": "client_ui_pwa",
       "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "mobile_keyboard_and_safe_area_overlap",
-        "app_shell_bottom_nav_collision"
-      ],
+      "vectors_checked": ["mobile_keyboard_and_safe_area_overlap", "app_shell_bottom_nav_collision"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: bottom-0 fixed sheet incorporates iOS safe-area-inset-bottom and visualViewport height shrinkage guard against virtual keyboard collision; verified via landing-brand-hierarchy-sentinel.test.tsx."
@@ -600,10 +472,7 @@
       "id": "frontend/components/views/landing-page.tsx:brand_icon_and_wordmark_separation",
       "target_type": "client_ui_landing",
       "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "brand_hierarchy_mask_caching",
-        "outline_t_weakening"
-      ],
+      "vectors_checked": ["brand_hierarchy_mask_caching", "outline_t_weakening"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: person outline 't' letter crossbar removed and antialiased along back seam into natural coat folds; clean cursive tabiji wordmark preserved."
@@ -612,10 +481,7 @@
       "id": "frontend/lib/translations.ts:landing_subtitle_i18n_parity",
       "target_type": "client_i18n",
       "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "subtitle_i18n_desync",
-        "fallback_hydration_mismatch"
-      ],
+      "vectors_checked": ["subtitle_i18n_desync", "fallback_hydration_mismatch"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: translations.ts and remaining.ts synchronized with '旅路 ｜ 旅行提案' (zh) and 'Tabiji | Travel Planner' (en)."
@@ -624,11 +490,7 @@
       "id": "frontend/components/views/landing-page.tsx:backpack_brand_upgrade",
       "target_type": "client_ui_landing",
       "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "checkerboard_alpha_leakage",
-        "aspect_ratio_native_css_fallback",
-        "mobile_first_fold_occlusion"
-      ],
+      "vectors_checked": ["checkerboard_alpha_leakage", "aspect_ratio_native_css_fallback", "mobile_first_fold_occlusion"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: backpack_clean.png 1630x2546 alpha integrity verified (87.24% transparent, 0 active pixels in outer corners); dual-layer aspect-ratio and maskImage v3 cache-busting verified; iPhone SE 667px first-fold form visibility confirmed."
@@ -637,10 +499,7 @@
       "id": "frontend/components/views/landing-page.tsx:handle_recover_stale_trip_leak",
       "target_type": "client_auth_recovery",
       "trust_boundary": "client_session_state",
-      "vectors_checked": [
-        "session_state_desync",
-        "cache_leak"
-      ],
+      "vectors_checked": ["session_state_desync", "cache_leak"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: LandingPage decoupled from internal trip stores; recovery dispatches user-login-state-changed for downstream state clearing."
@@ -649,11 +508,7 @@
       "id": "frontend/lib/trip-context.tsx:identity_switch_false_positive_toast",
       "target_type": "client_state_context",
       "trust_boundary": "client_session_state",
-      "vectors_checked": [
-        "unhandled_identity_transition",
-        "false_positive_alert",
-        "destructive_cache_wipe"
-      ],
+      "vectors_checked": ["unhandled_identity_transition", "false_positive_alert", "destructive_cache_wipe"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Remediation verified: prevUserIdRef tracks userId transitions; suppresses toast warning and destructive deleteTripSnapshot during identity changes while smoothly falling back to latest trip."
@@ -662,11 +517,7 @@
       "id": "frontend/components/itinerary/FloatingMapCapsule.tsx:containing_block_trap_and_nav_collision",
       "target_type": "client_ui_floating",
       "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "css_transform_containing_block",
-        "navigation_occlusion",
-        "safe_area_truncation"
-      ],
+      "vectors_checked": ["css_transform_containing_block", "navigation_occlusion", "safe_area_truncation"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Remediation verified: Responsive clearance elevates capsule above BottomNav on mobile (+72px) and anchors cleanly at 1.5rem on tablet/desktop, elevated to z-50 with idle breathing."
@@ -675,10 +526,7 @@
       "id": "frontend/components/views/app-shell.tsx:webkit_viewport_toolbar_overflow",
       "target_type": "client_ui_shell",
       "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "mobile_viewport_height_overflow",
-        "webkit_toolbar_clipping"
-      ],
+      "vectors_checked": ["mobile_viewport_height_overflow", "webkit_toolbar_clipping"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Remediation verified: Root container upgraded to h-dvh, eliminating 60-80px WebKit dynamic toolbar overflow on iOS/iPadOS."
@@ -687,12 +535,7 @@
       "id": "legal/licensing_and_assets",
       "target_type": "legal_ip_governance",
       "trust_boundary": "public_to_repository",
-      "vectors_checked": [
-        "licensing_inconsistency",
-        "asset_scope_leakage",
-        "spdx_compliance_drift",
-        "retroactivity_boundary_bypass"
-      ],
+      "vectors_checked": ["licensing_inconsistency", "asset_scope_leakage", "spdx_compliance_drift", "retroactivity_boundary_bypass"],
       "status": "SECURE",
       "last_checked_commit": "6a115ff",
       "validator_details": "Canonical PolyForm Noncommercial 1.0.0 established; NOTICE.md handles version demarcation; frontend/public/LICENSE-ASSETS.md encloses visual assets under All Rights Reserved."
@@ -701,12 +544,7 @@
       "id": "branding/rebranding_and_gitignore",
       "target_type": "branding_and_repo_hygiene",
       "trust_boundary": "client_ui_and_git_repo",
-      "vectors_checked": [
-        "ui_state_rendering_breakage",
-        "e2e_regression_drift",
-        "git_pattern_shadowing",
-        "i18n_key_interpolation_drift"
-      ],
+      "vectors_checked": ["ui_state_rendering_breakage", "e2e_regression_drift", "git_pattern_shadowing", "i18n_key_interpolation_drift"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Rebranding to Tabiji verified decoupled from UI state keys; gitignore pattern verified non-conflicting with ledger."
@@ -715,74 +553,10 @@
       "id": "infra/repository_topology_and_cleanup",
       "target_type": "infra_governance",
       "trust_boundary": "repo_topology_and_devops",
-      "vectors_checked": [
-        "git_exclusion_leakage",
-        "catastrophic_traversal_deletion",
-        "spec_matrix_broken_reference",
-        "domain_convention_drift"
-      ],
+      "vectors_checked": ["git_exclusion_leakage", "catastrophic_traversal_deletion", "spec_matrix_broken_reference", "domain_convention_drift"],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Repository topology whitepaper established; stray caches (.agent, .pytest_cache, root node_modules) safely cleared via absolute anchoring."
-    },
-    {
-      "id": "frontend/components/views/landing-page.tsx:viewport_cutoff_and_stone50_leak",
-      "target_type": "client_ui_view",
-      "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "viewport_height_truncation",
-        "theme_token_leakage",
-        "keyboard_evasion"
-      ],
-      "status": "SECURE",
-      "last_checked_commit": "HEAD",
-      "validator_details": "Remediation verified: Root container upgraded to min-h-full bg-background, stone-50 purged across all secondary tokens, and footer safe-area padding established."
-    },
-    {
-      "id": "frontend/components/views/app-shell.tsx:dual_mode_viewport_guard",
-      "target_type": "client_ui_shell",
-      "trust_boundary": "client_ui_render",
-      "vectors_checked": [
-        "standalone_viewport_deadzone",
-        "touch_event_truncation"
-      ],
-      "status": "SECURE",
-      "last_checked_commit": "HEAD",
-      "validator_details": "Remediation verified: Root container upgraded to dual-mode viewport guard (h-full min-h-full [@supports(height:100dvh)]:h-dvh [@media(display-mode:standalone)]:h-full!), eliminating iPad Standalone PWA 30px dead zone."
-    },
-    {
-      "id": "frontend/app/layout.tsx",
-      "target_type": "client_metadata_root",
-      "trust_boundary": "browser_to_edge",
-      "vectors_checked": [
-        "xss_and_injection",
-        "apple_pwa_metadata_truncation"
-      ],
-      "status": "SECURE",
-      "last_checked_commit": "current",
-      "validator_details": "Dismissed in sandbox; inline font-scale and splash-active guard uses hardcoded allowlists."
-    },
-    {
-      "id": "frontend/components/ui/splash/tabiji-splash-animation.tsx",
-      "target_type": "client_ui_motion",
-      "trust_boundary": "browser_ui",
-      "vectors_checked": [
-        "dom_state_lock_and_leakage"
-      ],
-      "status": "SECURE",
-      "last_checked_commit": "current",
-      "validator_details": "Dismissed in sandbox; state cleanup is idempotent on component unmount."
-    },
-    {
-      "id": "frontend/app/globals.css",
-      "target_type": "global_styling_rules",
-      "trust_boundary": "browser_ui",
-      "vectors_checked": [
-        "css_injection_and_ui_blocking"
-      ],
-      "status": "SECURE",
-      "last_checked_commit": "current",
-      "validator_details": "Dismissed in sandbox; scoped splash-active styles do not block dialogs or interaction."
     }
   ]
 }
