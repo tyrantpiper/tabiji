@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/app/layout.tsx",
+    "file_path": "frontend/app/layout.tsx",
+    "attack_vector": "xss_and_injection",
+    "hypothesis": "Inline script for splash background pre-hydration sync reads sessionStorage and localStorage; if manipulated via malicious key, could it lead to prototype pollution, script injection, or DOM clobbering?"
+  },
+  {
+    "id": "frontend/components/ui/splash/tabiji-splash-animation.tsx",
+    "file_path": "frontend/components/ui/splash/tabiji-splash-animation.tsx",
+    "attack_vector": "dom_state_lock_and_leakage",
+    "hypothesis": "Adding and removing splash-active class and backgroundColor on document.documentElement: does an unmounted component or exception leave the root element permanently stuck in dark background lock, causing UI blindness?"
+  },
+  {
+    "id": "frontend/app/globals.css",
+    "file_path": "frontend/app/globals.css",
+    "attack_vector": "css_injection_and_ui_blocking",
+    "hypothesis": "Global !important override on html.splash-active body: does it unintentionally block modal dialogs, portals, or toast notifications during the splash lifecycle?"
+  }
+]

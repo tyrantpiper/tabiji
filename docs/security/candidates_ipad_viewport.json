@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/views/app-shell.tsx",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "attack_vector": "viewport_deadzone_and_touch_truncation",
+    "hypothesis": "Root container uses h-dvh which WebKit in iPad Standalone PWA calculates by deducting safe-area-inset-bottom (~30px), physically terminating AppShell container and BottomNav at 681px rather than 711px. This leaves a 30px unhandled non-interactive dead zone where user touches cannot reach React DOM.",
+    "start_line": 200,
+    "end_line": 215
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "color_seam_and_keyboard_evasion",
+    "hypothesis": "Root container uses min-h-screen bg-stone-50 which in Standalone PWA terminates at 681px, exposing underlying body --tabiji-paper (#F6F5EE) background across the bottom 27-30px, generating a sharp horizontal cut seam; secondary elements (or divider badge, recovery input) leak stone-50 token.",
+    "start_line": 235,
+    "end_line": 255
+  },
+  {
+    "id": "frontend/app/layout.tsx",
+    "file_path": "frontend/app/layout.tsx",
+    "attack_vector": "root_height_inheritance_breakage",
+    "hypothesis": "Root html and body elements lack explicit h-full min-h-full classes in RootLayout, risking CSS percentage height inheritance chain breakage across WebKit webviews.",
+    "start_line": 55,
+    "end_line": 85
+  }
+]
