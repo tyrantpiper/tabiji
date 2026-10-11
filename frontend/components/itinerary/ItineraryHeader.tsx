@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { ChevronLeft, Calendar, ChevronDown } from "lucide-react"
+import { ChevronLeft, Calendar, ChevronDown, Settings } from "lucide-react"
 import { motion } from "framer-motion"
 import { cn } from "@/lib/utils"
 import { TripSwitcher } from "@/components/trip-switcher"
@@ -20,6 +20,7 @@ interface ItineraryHeaderProps {
     setDay: (d: number) => void
     onBack: () => void
     onOpenDatePicker?: () => void
+    onOpenSettings?: () => void
     onDeleteDay: (dayNum: number) => void
     getDateInfo: (dayNum: number) => { date: string; week: string }
     userId: string | null
@@ -35,6 +36,7 @@ export function ItineraryHeader({
     setDay,
     onBack,
     onOpenDatePicker,
+    onOpenSettings,
     onDeleteDay,
     getDateInfo,
     userId,
@@ -89,19 +91,37 @@ export function ItineraryHeader({
     return (
         <>
             {/* 頂部 Hero 資訊與操作區 (隨滾動自然隱藏，釋放視野) */}
-            <div className="bg-[#F6F5EE] dark:bg-[#121A18] pt-12 pb-3">
-                <div className="px-6 flex flex-col sm:flex-row justify-between items-start sm:items-end mb-1 gap-4 sm:gap-2">
-                    <div className="w-full sm:w-auto min-w-0">
+            <div className="bg-[#F6F5EE] dark:bg-[#121A18] pt-12 pb-3 px-6">
+                {/* 頂部黃金對稱列：最左側返回按鈕 ⟷ 最右側行程設定齒輪按鈕 */}
+                <div className="flex items-center justify-between w-full mb-3">
+                    <button
+                        onClick={() => {
+                            haptic.selection()
+                            onBack()
+                        }}
+                        className="w-10 h-10 -ml-1 rounded-full flex items-center justify-center bg-stone-100/80 dark:bg-slate-700/80 hover:bg-stone-200/80 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 active:scale-90 transition-all cursor-pointer shadow-2xs select-none"
+                        aria-label="Back"
+                    >
+                        <ChevronLeft className="w-5 h-5 -ml-0.5" />
+                    </button>
+
+                    {currentTrip && onOpenSettings && (
                         <button
                             onClick={() => {
                                 haptic.selection()
-                                onBack()
+                                onOpenSettings()
                             }}
-                            className="w-10 h-10 -ml-1 rounded-full flex items-center justify-center bg-stone-100/80 dark:bg-slate-700/80 hover:bg-stone-200/80 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 active:scale-90 transition-all cursor-pointer shadow-2xs mb-2 select-none"
-                            aria-label="Back"
+                            className="w-10 h-10 -mr-1 rounded-full flex items-center justify-center bg-stone-100/80 dark:bg-slate-700/80 hover:bg-stone-200/80 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 active:scale-90 transition-all cursor-pointer shadow-2xs select-none"
+                            aria-label={t('settings') || '行程設定'}
+                            title={t('settings') || '行程設定'}
                         >
-                            <ChevronLeft className="w-5 h-5 -ml-0.5" />
+                            <Settings className="w-5 h-5" />
                         </button>
+                    )}
+                </div>
+
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-1 gap-4 sm:gap-2">
+                    <div className="w-full sm:w-auto min-w-0">
                         <TripSwitcher className="w-full sm:w-60 justify-start px-0 font-bold text-2xl tracking-tight border-none shadow-none bg-transparent text-[#1E2927] dark:text-[#E5EBEA] hover:bg-black/5 dark:hover:bg-white/5 h-auto py-1" />
                         
                         {/* 📅 iOS Date Range Capsule Button */}
