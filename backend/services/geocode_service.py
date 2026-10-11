@@ -1076,6 +1076,18 @@ LOCATION_KEYWORDS = {
         "銅鑼灣", "causeway bay", "中環", "central", "太平山", "victoria peak",
         "迪士尼", "disney", "海洋公園", "ocean park", "大嶼山", "lantau",
     ],
+    "FR": [
+        "巴黎", "paris", "法國", "france", "尼斯", "nice", "里昂", "lyon",
+        "馬賽", "marseille", "波爾多", "bordeaux", "羅浮宮", "louvre",
+        "艾菲爾", "eiffel", "凡爾賽", "versailles", "聖母院", "notre dame",
+        "奧賽", "orsay", "蒙馬特", "montmartre",
+    ],
+    "US": [
+        "紐約", "new york", "nyc", "美國", "usa", "洛杉磯", "los angeles",
+        "舊金山", "san francisco", "西雅圖", "seattle", "芝加哥", "chicago",
+        "曼哈頓", "manhattan", "布魯克林", "brooklyn", "時代廣場", "times square",
+        "中央公園", "central park", "大都會", "metropolitan", "自由女神", "statue of liberty",
+    ],
 }
 
 def detect_country_from_keywords(query: Optional[str]) -> Optional[str]:

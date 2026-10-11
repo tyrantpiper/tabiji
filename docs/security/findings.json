@@ -1,0 +1,25 @@
+{
+  "audit_version": "2.0.0",
+  "total_validated": 2,
+  "confirmed_count": 2,
+  "dismissed_count": 0,
+  "inconclusive_count": 0,
+  "findings": [
+    {
+      "target_id": "backend/services/geocode_service.py:LOCATION_KEYWORDS",
+      "verdict": "CONFIRMED",
+      "reasoning": "Static analysis confirms that LOCATION_KEYWORDS only defines keyword mappings for JP, KR, TW, TH, VN, SG, and HK. Major travel regions present in COUNTRY_BOUNDS and COUNTRY_TO_CURRENCY—such as US (United States/New York) and FR (France/Paris)—are completely absent from LOCATION_KEYWORDS. Because detect_country_from_keywords only searches LOCATION_KEYWORDS and does not fall back to GLOBAL_COUNTRY_TO_ISO or country_to_iso, queries containing 'Paris', 'New York', 'France', or 'USA' return None. As a direct consequence, infer_currency_from_destination falls back to the default 'TWD' instead of returning EUR or USD, and any downstream geocoding logic loses country-level bias filtering.",
+      "poc_type": "pytest_in_memory",
+      "poc_script": "import pytest\nfrom unittest.mock import MagicMock\nimport sys\n\ndef test_location_keywords_omits_western_destinations_causing_twd_misattribution():\n    # Mock external framework imports if not present in test environment\n    for mod in [\"utils.ai_config\", \"services.model_manager\", \"google\", \"google.genai\", \"rapidfuzz\"]:\n        if mod not in sys.modules:\n            sys.modules[mod] = MagicMock()\n\n    from backend.services.geocode_service import (\n        LOCATION_KEYWORDS,\n        detect_country_from_keywords,\n        infer_currency_from_destination,\n    )\n\n    # Verify missing country keys in LOCATION_KEYWORDS\n    assert \"FR\" not in LOCATION_KEYWORDS\n    assert \"US\" not in LOCATION_KEYWORDS\n\n    # Verify country detection failure\n    assert detect_country_from_keywords(\"Paris, France\") is None\n    assert detect_country_from_keywords(\"New York, USA\") is None\n\n    # Verify currency misattribution defaulting to TWD instead of EUR / USD\n    assert infer_currency_from_destination(\"Paris, France\") == \"TWD\"  # Expected EUR\n    assert infer_currency_from_destination(\"New York, USA\") == \"TWD\"  # Expected USD\n",
+      "remediation_hint": "1. Expand LOCATION_KEYWORDS to include entries for US, FR, GB, DE, IT, etc. with common English and Chinese keywords (e.g., 'paris', '巴黎', 'france', 'new york', '紐約', 'usa').\n2. In detect_country_from_keywords, add a fallback check to country_to_iso(query) or iterate GLOBAL_COUNTRY_TO_ISO when no keyword matches."
+    },
+    {
+      "target_id": "frontend/components/itinerary/AiImportTripWizard.tsx:TEMPLATE_PILLS",
+      "verdict": "CONFIRMED",
+      "reasoning": "Static inspection verifies that TEMPLATE_PILLS exhibits severe content-label discrepancies: '東京 5 日自由行' provides only 3 days (Day 1-Day 3), '京都 3 日古城漫遊' provides only 2 days (Day 1-Day 2), and '沖繩 4 日自駕度假' provides only 2 days (Day 1-Day 2). Applying these templates passes truncated Markdown itineraries to aiApi.parseMarkdown, leading to incomplete trip generation. Additionally, TEMPLATE_PILLS is defined as a module-level constant with hardcoded Traditional Chinese text, bypassing the useLanguage i18n system and leaking untranslated Chinese content in non-Chinese locales.",
+      "poc_type": "pytest_in_memory",
+      "poc_script": "import re\nimport pytest\n\nTEMPLATE_PILLS = [\n    {\n        \"label\": \"🇯🇵 東京 5 日自由行\",\n        \"content\": \"\"\"# 東京 5 日遊行程表\n## Day 1 (10/01)\n- 10:30 抵達 成田機場\n## Day 2 (10/02)\n- 09:00 築地場外市場\n## Day 3 (10/03)\n- 09:30 明治神宮\"\"\",\n    },\n    {\n        \"label\": \"🍵 京都 3 日古城漫遊\",\n        \"content\": \"\"\"# 京都古都悠閒 3 日遊\n## Day 1 (11/10)\n- 08:30 伏見稻荷大社\n## Day 2 (11/11)\n- 09:00 嵐山渡月橋\"\"\",\n    },\n    {\n        \"label\": \"🏖️ 沖繩 4 日自駕度假\",\n        \"content\": \"\"\"# 沖繩海灘自駕 4 日行程\n## Day 1 (07/15)\n- 11:00 那霸機場抵達\n## Day 2 (07/16)\n- 09:30 萬座毛\"\"\",\n    },\n]\n\ndef test_template_pills_day_count_consistency():\n    for tmpl in TEMPLATE_PILLS:\n        match = re.search(r\"(\\d+)\\s*日\", tmpl[\"label\"])\n        assert match is not None, f\"Could not parse day count from label: {tmpl['label']}\"\n        expected_days = int(match.group(1))\n        actual_days = len(re.findall(r\"## Day \\d+\", tmpl[\"content\"]))\n        assert actual_days == expected_days, (\n            f\"Template '{tmpl['label']}' advertised {expected_days} days, \"\n            f\"but markdown content only provides {actual_days} days.\"\n        )\n",
+      "remediation_hint": "1. Populate the missing days in each template's markdown content (Days 4-5 for Tokyo, Day 3 for Kyoto, Days 3-4 for Okinawa) so the content matches the advertised day count.\n2. Move TEMPLATE_PILLS inside the component or abstract it into a helper function receiving `t` and `lang` from `useLanguage()`, providing localized English and Chinese templates accordingly."
+    }
+  ]
+}
