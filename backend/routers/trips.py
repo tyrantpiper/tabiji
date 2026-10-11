@@ -24,6 +24,7 @@ from models.base import (
     JoinTripRequest,
     CreateManualTripRequest,
     UpdateTripTitleRequest,
+    UpdateCoverRequest,
     SaveItineraryRequest,
     ImportToTripRequest,
     UpdateDayDataRequest,
@@ -39,6 +40,7 @@ from models.base import (
 )
 from .expenses import normalize_items  # 🆕 Data Parity
 from services.link_resolver import resolve_google_maps_link
+from services.cover_service import resolve_destination_cover_url
 from utils.deps import get_supabase, get_verified_user
 from utils.helpers import generate_room_code, generate_public_id, ensure_user_exists
 from utils.constants import DAY_MAP_FIELDS, CLONEABLE_FIELDS
@@ -587,8 +589,39 @@ async def update_trip_title(
 
         supabase.table("itineraries").update({"title": request.title}).eq("id", trip_id).execute()
         return {"status": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{trip_id}/cover")
+async def update_trip_cover(
+    trip_id: str,
+    request: UpdateCoverRequest,
+    user_id: str = Depends(get_verified_user),
+    supabase=Depends(get_supabase)
+):
+    """🖼️ 修改行程封面圖 (支援上傳、換圖或移除)"""
+    try:
+        # 🛡️ 權限檢查 (只有行程成員或創建者能修改封面)
+        member_check = supabase.table("trip_members")\
+            .select("user_id")\
+            .eq("itinerary_id", trip_id)\
+            .eq("user_id", user_id)\
+            .execute()
+        
+        if not member_check.data:
+            raise HTTPException(status_code=403, detail="您沒有權限修改此行程封面")
+
+        clean_cover = request.cover_image.strip() if (request.cover_image and request.cover_image.strip()) else None
+        supabase.table("itineraries").update({"cover_image": clean_cover}).eq("id", trip_id).execute()
+        return {"status": "success", "cover_image": clean_cover}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -788,6 +821,8 @@ async def save_itinerary(
             end_date = start_date
         
         # 2. 建立主行程 (Parent) - 將每日資訊存入 content
+        cover_image = request.cover_image.strip() if (request.cover_image and request.cover_image.strip()) else resolve_destination_cover_url(request.title)
+
         trip_data = {
             "title": request.title,
             "creator_name": request.creator_name,
@@ -797,6 +832,7 @@ async def save_itinerary(
             "start_date": start_date,
             "end_date": end_date,
             "status": "active",
+            "cover_image": cover_image,
             # 👇 存入 JSONB 欄位: 包含 daily_locations 及新的 daily tips
             # 👇 存入 JSONB 欄位 (🆕 v4.Long-term: 預留欄位以防未來擴充)
             "content": {

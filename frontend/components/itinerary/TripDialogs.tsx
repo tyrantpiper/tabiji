@@ -19,6 +19,8 @@ import { type Trip, tryParseItinerary } from "@/lib/itinerary-types"
 import { PushPermissionPrompt } from "@/components/notifications/push-permission-prompt"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
+import Image from "next/image"
+import { resolveDestinationCover } from "@/lib/destination-covers"
 
 interface CreateTripModalProps {
     isOpen: boolean
@@ -88,10 +90,12 @@ export function CreateTripModal({
     const [aiProgress, setAiProgress] = useState<string | null>(null)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [aiResult, setAiResult] = useState<any | null>(null)
+    const [aiCoverImage, setAiCoverImage] = useState<string>("")
 
     // 4. 原地 AI 匯入狀態
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [importResult, setImportResult] = useState<any | null>(null)
+    const [importCoverImage, setImportCoverImage] = useState<string>("")
 
     // 5. 儲存目標選擇 (建立新行程 vs 合併現有行程)
     const [saveTarget, setSaveTarget] = useState<'new' | 'existing'>('new')
@@ -151,7 +155,7 @@ export function CreateTripModal({
                 end_date: endDate,
                 creator_name: userName || undefined,
                 user_id: activeUserId,
-                cover_image: coverImage || undefined
+                cover_image: coverImage || resolveDestinationCover(title.trim())
             })
             haptic.success()
             toast.success(t('trip_created_success'))
@@ -205,6 +209,7 @@ export function CreateTripModal({
             }
 
             setAiResult(itineraryData)
+            setAiCoverImage(resolveDestinationCover(itineraryData.title))
             haptic.success()
             toast.success(t('tv_ai_generated', { count: String(itineraryData.items?.length || 0) }))
         } catch (error) {
@@ -267,6 +272,8 @@ export function CreateTripModal({
                 calculatedEndDateObj.setDate(calculatedEndDateObj.getDate() + (maxDay - 1))
                 const endDateStr = result.end_date || calculatedEndDateObj.toISOString().split('T')[0]
 
+                const chosenCover = (result === aiResult ? aiCoverImage : importCoverImage) || result.cover_image || resolveDestinationCover(result.title)
+
                 const data = await tripsApi.saveItinerary({
                     title: result.title || "New AI Trip",
                     start_date: startDateStr,
@@ -275,6 +282,7 @@ export function CreateTripModal({
                     items: result.items,
                     user_id: activeUserId,
                     creator_name: userName || "Traveler",
+                    cover_image: chosenCover,
                     daily_locations: result.daily_locations || {},
                     day_notes: result.day_notes || {},
                     day_costs: result.day_costs || {},
@@ -493,6 +501,23 @@ export function CreateTripModal({
                             {/* Generated Result Preview */}
                             {aiResult && !isAiLoading && (
                                 <div className="p-4 rounded-2xl bg-stone-100 dark:bg-slate-800 border border-stone-200 dark:border-slate-700 space-y-3">
+                                    {/* 🖼️ AI 行程封面預覽 */}
+                                    <div className="relative h-28 w-full rounded-xl overflow-hidden border border-stone-200/80 dark:border-slate-700/80 shadow-2xs group mb-2">
+                                        <Image
+                                            src={aiCoverImage || resolveDestinationCover(aiResult.title)}
+                                            alt={aiResult.title || "Trip Cover"}
+                                            fill
+                                            className="object-cover"
+                                            sizes="(max-width: 768px) 100vw, 500px"
+                                        />
+                                        <div className="absolute inset-0 bg-linear-to-t from-black/70 via-black/20 to-transparent flex items-end justify-between p-2.5">
+                                            <span className="text-[11px] font-bold text-white drop-shadow-xs flex items-center gap-1.5">
+                                                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                                                <span>自動匹配精緻封面</span>
+                                            </span>
+                                        </div>
+                                    </div>
+
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
                                             <Sparkles className="w-4 h-4 text-indigo-500" />
@@ -681,6 +706,23 @@ export function CreateTripModal({
                             {/* Imported Result Preview */}
                             {importResult ? (
                                 <div className="p-4 rounded-2xl bg-stone-100 dark:bg-slate-800 border border-stone-200 dark:border-slate-700 space-y-3">
+                                    {/* 🖼️ 匯入行程封面預覽 */}
+                                    <div className="relative h-28 w-full rounded-xl overflow-hidden border border-stone-200/80 dark:border-slate-700/80 shadow-2xs group mb-2">
+                                        <Image
+                                            src={importCoverImage || resolveDestinationCover(importResult.title)}
+                                            alt={importResult.title || "Imported Trip Cover"}
+                                            fill
+                                            className="object-cover"
+                                            sizes="(max-width: 768px) 100vw, 500px"
+                                        />
+                                        <div className="absolute inset-0 bg-linear-to-t from-black/70 via-black/20 to-transparent flex items-end justify-between p-2.5">
+                                            <span className="text-[11px] font-bold text-white drop-shadow-xs flex items-center gap-1.5">
+                                                <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
+                                                <span>自動匹配精緻封面</span>
+                                            </span>
+                                        </div>
+                                    </div>
+
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
                                             <FileText className="w-4 h-4 text-emerald-500" />
@@ -781,7 +823,10 @@ export function CreateTripModal({
                             ) : (
                                 <AiImportTripWizard
                                     userId={userId}
-                                    onComplete={(data) => setImportResult(data)}
+                                    onComplete={(data) => {
+                                        setImportResult(data)
+                                        setImportCoverImage(resolveDestinationCover(data.title))
+                                    }}
                                 />
                             )}
                         </motion.div>

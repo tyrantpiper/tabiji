@@ -182,6 +182,7 @@ export interface SaveItineraryParams {
     items: Record<string, unknown>[]
     user_id: string
     creator_name: string
+    cover_image?: string | null
     daily_locations?: Record<string, Record<string, unknown>>
     day_notes?: Record<string, Record<string, unknown>>
     day_costs?: Record<string, Record<string, unknown>>
@@ -457,6 +458,23 @@ export const tripsApi = {
             body: JSON.stringify({ title })
         })
         if (!res.ok) throw new Error("Failed to update title")
+        return res.json()
+    },
+
+    /** 🖼️ Update trip cover image */
+    updateCover: async (tripId: string, coverImage: string | null, userId?: string) => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        if (userId) headers["X-User-ID"] = userId
+
+        const res = await fetch(`${API.TRIPS}/${tripId}/cover`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ cover_image: coverImage })
+        })
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: "Failed to update cover image" }))
+            throw new Error(err.detail || "Failed to update cover image")
+        }
         return res.json()
     },
 

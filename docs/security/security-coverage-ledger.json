@@ -3,10 +3,10 @@
   "last_audit_date": "2026-10-11T18:05:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 67,
-    "audited_targets": 67,
+    "total_targets": 69,
+    "audited_targets": 69,
     "verified_vulnerabilities": 14,
-    "dismissed_hypotheses": 62
+    "dismissed_hypotheses": 66
   },
   "targets": [
     {
@@ -629,6 +629,51 @@
       "status": "PENDING_PATCH",
       "last_checked_commit": "HEAD",
       "validator_details": "Confirmed vulnerability: TEMPLATE_PILLS states 3-5 days but only provides 2-3 days in markdown, and lacks globalization and i18n support. Vitest sentinel test verified."
+    },
+    {
+      "id": "backend/models/base.py:cover_contracts",
+      "target_type": "backend_model_schema",
+      "trust_boundary": "client_to_backend_api",
+      "vectors_checked": ["schema_validation", "null_type_handling"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Patched: SaveItineraryRequest now accepts Optional[str] = None cover_image; UpdateCoverRequest accepts Optional[str] = None."
+    },
+    {
+      "id": "backend/routers/trips.py:update_trip_cover",
+      "target_type": "backend_router_endpoint",
+      "trust_boundary": "authenticated_to_database",
+      "vectors_checked": ["broken_access_control_idor", "empty_string_normalization"],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Verified: PATCH /api/trips/{trip_id}/cover requires explicit trip_members/creator authorization check and empty-string normalization to None."
+    },
+    {
+      "id": "frontend/lib/destination-covers.ts:pre_curated_covers",
+      "target_type": "client_library",
+      "trust_boundary": "browser_to_cdn",
+      "vectors_checked": ["xss_injection_safety", "cdn_url_validation"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Verified: Pre-curated WebP dictionary uses whitelisted image URLs and pure regex string matching, strictly immune to client-side script injection."
+    },
+    {
+      "id": "frontend/components/itinerary/TripSettingsView.tsx",
+      "target_type": "client_subview_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": ["xss_pseudo_scheme_injection", "state_pollution", "popstate_leakage"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Verified via trip-settings-sentinel.test.ts: Blocks dangerous javascript:/data: URIs, sanitizes title whitespace, ensures popstate cleanup idempotency."
+    },
+    {
+      "id": "backend/routers/trips.py:delete_and_leave_permissions",
+      "target_type": "backend_router_endpoint",
+      "trust_boundary": "authenticated_to_database",
+      "vectors_checked": ["broken_access_control_idor", "orphan_resource_state_pollution"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Verified via test_trip_settings_sentinel.py: Creator ownership strictly enforced on DELETE (403), Owner prohibited from /leave (400) to prevent orphaned records."
     }
   ]
 }

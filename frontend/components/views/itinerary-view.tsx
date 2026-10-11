@@ -45,6 +45,7 @@ import { ItineraryTimeline } from "@/components/itinerary/ItineraryTimeline"
 import { TripMasterOverview } from "@/components/itinerary/TripMasterOverview"
 import { CalendarRangeSheet } from "@/components/itinerary/CalendarRangeSheet"
 import { FloatingMapCapsule } from "@/components/itinerary/FloatingMapCapsule"
+import { TripSettingsView } from "@/components/itinerary/TripSettingsView"
 
 /**
  * 🔧 Helper to access day data with number/string key fallback
@@ -75,6 +76,18 @@ export function ItineraryView() {
         }
         return 'list'
     })
+    const [itinerarySubView, setItinerarySubView] = useState<'main' | 'settings'>('main')
+
+    // 🔙 物理返回鍵與瀏覽器上一頁事件監聽 (當處於 settings 子視圖時退回 main)
+    useEffect(() => {
+        const handlePopState = () => {
+            if (itinerarySubView === 'settings') {
+                setItinerarySubView('main')
+            }
+        }
+        window.addEventListener('popstate', handlePopState)
+        return () => window.removeEventListener('popstate', handlePopState)
+    }, [itinerarySubView])
 
     // 🆕 Hyper-Heuristics: Dynamic Polling Interval
     const refreshInterval = useDynamicPolling()
@@ -109,6 +122,7 @@ export function ItineraryView() {
     // 🚀 Spotlight Tour: 當導引進入建立行程步驟時，自動切換至清單視圖
     useEffect(() => {
         const handleReset = () => {
+            setItinerarySubView('main')
             setViewMode('list')
         }
         window.addEventListener('tabidachi-reset-itinerary-view', handleReset)
@@ -1372,6 +1386,7 @@ export function ItineraryView() {
                                     onSelectTrip={(id) => {
                                         setActiveTripId(id)
                                         setDay(1)
+                                        setItinerarySubView('main')
                                         setViewMode('detail')
                                     }}
                                     onDeleteTrip={handleDeleteTrip}
@@ -1445,6 +1460,38 @@ export function ItineraryView() {
                         transition={{ type: "spring", stiffness: 420, damping: 32 }}
                         className="w-full flex-1 flex flex-col h-full overflow-hidden relative bg-[#F6F5EE] dark:bg-[#121A18] gpu-layer-accelerated"
                     >
+            {/* ⚙️ Full-Page Trip Settings Overlay (iOS Slide-Over with Inverse Back Transition) */}
+            <AnimatePresence>
+                {itinerarySubView === 'settings' && (
+                    <motion.div
+                        key="trip-settings"
+                        initial={{ opacity: 0, x: "100%" }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: "100%" }}
+                        transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                        className="absolute inset-0 z-50 w-full h-full overflow-y-auto overscroll-contain bg-[#F6F5EE] dark:bg-[#121A18] gpu-layer-accelerated"
+                    >
+                        <TripSettingsView
+                            currentTrip={currentTrip}
+                            userId={userId}
+                            onBack={() => {
+                                haptic.selection()
+                                setItinerarySubView('main')
+                            }}
+                            onTripUpdated={async () => {
+                                await reloadTripDetail()
+                                await reloadTrips()
+                            }}
+                            onTripDeleted={() => {
+                                setItinerarySubView('main')
+                                setViewMode('list')
+                                setActiveTripId(null)
+                                reloadTrips()
+                            }}
+                        />
+                    </motion.div>
+                )}
+            </AnimatePresence>
             {/* 🆕 Phase 3: Modular Header */}
 
             <LocationEditDialog
@@ -1487,9 +1534,17 @@ export function ItineraryView() {
                     onBack={() => {
                         window.history.pushState({}, '', '/')
                         setActiveTripId(null)
+                        setItinerarySubView('main')
                         setViewMode('list')
                     }}
                     onOpenDatePicker={() => setIsDatePickerOpen(true)}
+                    onOpenSettings={() => {
+                        haptic.selection()
+                        if (typeof window !== 'undefined') {
+                            window.history.pushState({ itinerarySubView: 'settings' }, '')
+                        }
+                        setItinerarySubView('settings')
+                    }}
                     onDeleteDay={handleDeleteDay}
                     getDateInfo={getDateInfo}
                     userId={userId}

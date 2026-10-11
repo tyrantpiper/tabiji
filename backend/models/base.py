@@ -248,6 +248,7 @@ class SaveItineraryRequest(BaseModel):
     title: str
     creator_name: str
     user_id: str
+    cover_image: Optional[str] = None
     items: List[ItineraryItem] = Field(default_factory=list)
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -385,7 +386,7 @@ class CloneTripRequest(BaseModel):
 
 class UpdateCoverRequest(BaseModel):
     """更新封面圖請求"""
-    cover_image: str
+    cover_image: Optional[str] = None
 
 
 class UpdateLocationRequest(BaseModel):
