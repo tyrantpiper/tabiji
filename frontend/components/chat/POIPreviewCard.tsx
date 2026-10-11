@@ -199,11 +199,13 @@ export default function POIPreviewCard({
 
     return (
         <div className={cn(
-            "relative overflow-hidden rounded-xl border-2 shadow-sm my-2",
-            isAdded ? "border-green-300 bg-green-50" : "border-slate-200 bg-white"
+            "relative overflow-hidden rounded-xl border-2 shadow-xs my-2 transition-all",
+            isAdded
+                ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/30"
+                : "border-tabiji-forest/15 dark:border-white/10 bg-white dark:bg-[#182320]"
         )}>
-            {/* 🎫 票券頂部裝飾 */}
-            <div className="absolute top-0 left-0 right-0 h-1 bg-linear-to-r from-blue-500 via-indigo-500 to-purple-500" />
+            {/* 🎫 票券頂部裝飾：日式紙膠帶自然漸層 */}
+            <div className="absolute top-0 left-0 right-0 h-1 bg-linear-to-r from-tabiji-forest via-emerald-700 to-tabiji-amber" />
 
             {/* Header */}
             <div className="p-3 pb-2">
@@ -276,7 +278,7 @@ export default function POIPreviewCard({
                         href={poiData.link_url || enriched?.official_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[10px] text-indigo-600 hover:underline inline-flex items-center gap-1 font-medium bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded w-fit"
+                        className="text-[10px] text-tabiji-forest dark:text-emerald-400 hover:underline inline-flex items-center gap-1 font-medium bg-tabiji-forest/5 dark:bg-white/5 px-1.5 py-0.5 rounded w-fit"
                     >
                         <ExternalLink className="w-3 h-3" />
                         {zh ? '官方網站' : 'Official Site'}

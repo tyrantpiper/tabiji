@@ -237,6 +237,7 @@ export const remainingTranslations = {
 
         // Tools extras
         tv_cards: "💳 Cards",
+        tv_actuary: "🧮 Actuary",
         tv_list: "📋 List",
         tv_my_cards: "My Credit Cards",
         tv_add_card: "Add",
@@ -967,6 +968,7 @@ export const remainingTranslations = {
 
         // Tools extras
         tv_cards: "💳 卡片",
+        tv_actuary: "🧮 精算器",
         tv_list: "📋 列表",
         tv_my_cards: "我的信用卡",
         tv_add_card: "新增",

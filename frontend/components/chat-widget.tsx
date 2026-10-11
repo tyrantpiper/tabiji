@@ -861,35 +861,35 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
         <>
             {/* Chat Window - Fullscreen Immersive with Desktop Centering & Dark Mode */}
             {isOpen && (
-                <div className="fixed inset-0 z-110 flex flex-col bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200">
-                    <div className="w-full max-w-3xl mx-auto h-full flex flex-col bg-white dark:bg-slate-900 shadow-2xl md:border-x md:border-slate-200 dark:md:border-slate-800 overflow-hidden">
-                        {/* Header - No longer draggable */}
-                        <div className="bg-linear-to-r from-blue-600 to-indigo-600 dark:from-slate-900 dark:to-indigo-950 p-4 flex justify-between items-center text-white shrink-0 border-b border-white/10">
+                <div className="fixed inset-0 z-110 flex flex-col bg-black/35 backdrop-blur-xs animate-in fade-in duration-200">
+                    <div className="w-full max-w-3xl mx-auto h-full flex flex-col bg-tabiji-paper dark:bg-tabiji-dark shadow-2xl md:border-x md:border-tabiji-forest/10 dark:md:border-white/10 overflow-hidden">
+                        {/* Header - 和紙透光微毛玻璃手帳風 */}
+                        <div className="bg-tabiji-paper/85 dark:bg-tabiji-dark/85 backdrop-blur-md p-4 flex justify-between items-center shrink-0 border-b border-tabiji-forest/10 dark:border-white/10">
                             <div className="flex items-center gap-2.5">
-                                <div className="relative w-9 h-9 rounded-full overflow-hidden bg-white/20 dark:bg-slate-800/80 flex items-center justify-center shrink-0 border border-white/30 dark:border-cyan-500/30 shadow-xs">
+                                <div className="relative w-9 h-9 rounded-full overflow-hidden bg-white/80 dark:bg-tabiji-charcoal/80 flex items-center justify-center shrink-0 border border-tabiji-forest/15 dark:border-white/20 shadow-xs">
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
                                     <img src="/images/ryan-bot-avatar.webp" alt="Ryan AI" className="w-8 h-8 object-contain" />
                                 </div>
                                 <div>
-                                    <h3 className="font-bold text-sm flex items-center gap-1.5">
+                                    <h3 className="font-bold text-sm text-tabiji-charcoal dark:text-tabiji-paper flex items-center gap-1.5">
                                         Ryan AI Assistant
-                                        <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse inline-block" />
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
                                     </h3>
-                                    <p className="text-[10px] text-blue-100 dark:text-cyan-200/70 opacity-90">{t('ai_subtitle')}</p>
+                                    <p className="text-[10px] text-tabiji-slate opacity-90">{t('ai_subtitle')}</p>
                                 </div>
                             </div>
-                            <button onClick={() => setIsOpen(false)} className="hover:bg-white/20 p-1 rounded-full text-white/80 hover:text-white transition-colors">
+                            <button onClick={() => setIsOpen(false)} className="hover:bg-tabiji-forest/5 dark:hover:bg-white/10 p-1.5 rounded-full text-tabiji-slate hover:text-tabiji-charcoal dark:hover:text-tabiji-paper transition-colors cursor-pointer">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
 
                         {/* Messages Area */}
-                        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 space-y-4 bg-slate-50 dark:bg-slate-950/90 scroll-smooth">
+                        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 space-y-4 bg-tabiji-paper dark:bg-tabiji-dark scroll-smooth">
                             {messages.map((msg, idx) => (
                                 <div key={idx} className={cn("flex gap-3 min-w-0", msg.role === "user" ? "max-w-[85%] ml-auto flex-row-reverse" : "max-w-[95%]")}>
                                     <div className={cn(
                                         "w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-1 overflow-hidden",
-                                        msg.role === "model" ? "bg-indigo-100 dark:bg-indigo-950/80 border border-indigo-200/50 dark:border-indigo-800/50 shadow-xs" : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
+                                        msg.role === "model" ? "bg-white/90 dark:bg-[#182320] border border-tabiji-forest/15 dark:border-white/15 shadow-xs" : "bg-tabiji-forest/10 dark:bg-tabiji-charcoal text-tabiji-forest dark:text-tabiji-paper"
                                     )}>
                                         {msg.role === "model" ? (
                                             /* eslint-disable-next-line @next/next/no-img-element */
@@ -899,8 +899,8 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                         )}
                                     </div>
                                     <div className={cn(
-                                        "p-3.5 md:p-4 rounded-2xl text-sm shadow-sm min-w-0 wrap-anywhere",
-                                        msg.role === "model" ? "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 rounded-tl-none border border-slate-200 dark:border-slate-800 shadow-xs" : "bg-blue-600 text-white rounded-tr-none"
+                                        "p-3.5 md:p-4 rounded-2xl text-sm shadow-xs min-w-0 wrap-anywhere",
+                                        msg.role === "model" ? "bg-white dark:bg-[#182320] text-tabiji-charcoal dark:text-tabiji-paper rounded-tl-none border border-tabiji-forest/8 dark:border-white/8 shadow-xs" : "bg-tabiji-forest text-tabiji-paper dark:bg-tabiji-forest dark:text-tabiji-paper rounded-tr-none shadow-xs"
                                     )}>
                                         {msg.role === "model" ? (
                                             <>
@@ -952,13 +952,13 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                             const event = new CustomEvent("ai-import-itinerary", { detail: { content } })
                                                             window.dispatchEvent(event)
                                                             toast.success(zh ? "已將研究成果傳送至行程匯入器" : "Sent to itinerary importer")
-                                                            const navEvent = new CustomEvent("navigate-to-tools")
+                                                            const navEvent = new CustomEvent("navigate-to-trips")
                                                             window.dispatchEvent(navEvent)
                                                             setIsOpen(false)
                                                         }}
                                                     />
                                                 )}
-                                                <div className="markdown-body prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-a:text-blue-600 wrap-anywhere">
+                                                <div className="markdown-body prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-a:text-tabiji-forest dark:prose-a:text-emerald-400 prose-a:font-semibold hover:prose-a:underline wrap-anywhere">
                                                     {(() => {
                                                         const itinerary = tryParseItinerary(msg.displayContent)
                                                         if (itinerary) {
@@ -971,49 +971,49 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                         if (msg.displayContent === "__GREETING__") {
                                                             return (
                                                                 <div className="space-y-3">
-                                                                    <div className="p-3.5 rounded-xl bg-linear-to-br from-blue-500/10 via-indigo-500/5 to-cyan-500/10 border border-blue-200/60 dark:border-cyan-900/40 shadow-xs">
+                                                                    <div className="p-3.5 rounded-xl bg-tabiji-mist/35 dark:bg-white/5 border border-tabiji-forest/10 dark:border-white/10 shadow-xs">
                                                                         {/* 頂部 Header */}
-                                                                        <div className="flex items-center gap-3 pb-2.5 mb-2.5 border-b border-blue-100/80 dark:border-slate-800/80">
+                                                                        <div className="flex items-center gap-3 pb-2.5 mb-2.5 border-b border-tabiji-forest/8 dark:border-white/10">
                                                                             <div className="relative shrink-0">
                                                                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                                                                 <img
                                                                                     src="/images/ryan-bot-hero.webp"
                                                                                     alt="Ryan AI Companion"
-                                                                                    className="w-11 h-11 object-contain drop-shadow-[0_4px_12px_rgba(6,182,212,0.3)]"
+                                                                                    className="w-11 h-11 object-contain drop-shadow-[0_4px_12px_rgba(11,48,38,0.2)]"
                                                                                 />
-                                                                                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900" />
+                                                                                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-tabiji-dark" />
                                                                             </div>
                                                                             <div className="min-w-0">
                                                                                 <div className="flex items-center gap-1.5">
-                                                                                    <h4 className="font-semibold text-xs text-blue-700 dark:text-cyan-400">
+                                                                                    <h4 className="font-semibold text-xs text-tabiji-charcoal dark:text-tabiji-paper">
                                                                                         {zh ? 'Ryan AI 隨行旅伴' : 'Ryan AI Companion'}
                                                                                     </h4>
                                                                                     <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20">
                                                                                         Online
                                                                                     </span>
                                                                                 </div>
-                                                                                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                                                                <p className="text-[11px] text-tabiji-slate">
                                                                                     {t('ai_subtitle')}
                                                                                 </p>
                                                                             </div>
                                                                         </div>
 
                                                                         {/* 迎賓內容 Markdown 渲染 */}
-                                                                        <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed [&_p]:my-1.5 [&_strong]:text-blue-700 dark:[&_strong]:text-cyan-300 [&_strong]:font-semibold [&_ul]:my-1.5 [&_ul]:space-y-1 [&_ul]:pl-4 [&_ul]:list-disc [&_li]:leading-normal">
+                                                                        <div className="text-xs text-tabiji-charcoal dark:text-tabiji-paper/90 leading-relaxed [&_p]:my-1.5 [&_strong]:text-tabiji-forest dark:[&_strong]:text-emerald-300 [&_strong]:font-semibold [&_ul]:my-1.5 [&_ul]:space-y-1 [&_ul]:pl-4 [&_ul]:list-disc [&_li]:leading-normal">
                                                                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                                                                 {t('ai_greet_msg')}
                                                                             </ReactMarkdown>
                                                                         </div>
 
                                                                         {/* 🆕 快捷提示詞膠囊按鈕 */}
-                                                                        <div className="mt-3 pt-2.5 border-t border-blue-100/60 dark:border-slate-800/60 flex flex-wrap gap-1.5">
+                                                                        <div className="mt-3 pt-2.5 border-t border-tabiji-forest/8 dark:border-white/10 flex flex-wrap gap-1.5">
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={() => {
                                                                                     setInput(t('ai_quick_checkup' as TranslationKey) || "幫我看這行程順不順？")
                                                                                     textareaRef.current?.focus()
                                                                                 }}
-                                                                                className="text-[11px] px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-800/80 text-blue-600 dark:text-cyan-300 border border-blue-200/80 dark:border-cyan-800/60 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors cursor-pointer active:scale-95 shadow-2xs font-medium flex items-center gap-1"
+                                                                                className="text-[11px] px-2.5 py-1 rounded-full bg-white/90 dark:bg-white/10 text-tabiji-forest dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-colors cursor-pointer active:scale-95 shadow-2xs font-medium flex items-center gap-1"
                                                                             >
                                                                                 🩺 {t('ai_quick_checkup' as TranslationKey) || "幫我看這行程順不順？"}
                                                                             </button>
@@ -1023,7 +1023,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                                                     setInput(t('ai_quick_food' as TranslationKey) || "推薦這附近必吃美食")
                                                                                     textareaRef.current?.focus()
                                                                                 }}
-                                                                                className="text-[11px] px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
+                                                                                className="text-[11px] px-2.5 py-1 rounded-full bg-white/90 dark:bg-white/10 text-tabiji-charcoal dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-colors cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
                                                                             >
                                                                                 🍜 {t('ai_quick_food' as TranslationKey) || "推薦這附近必吃美食"}
                                                                             </button>
@@ -1033,7 +1033,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                                                     setInput(t('ai_quick_traffic' as TranslationKey) || "今天行程交通怎麼搭最順？")
                                                                                     textareaRef.current?.focus()
                                                                                 }}
-                                                                                className="text-[11px] px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
+                                                                                className="text-[11px] px-2.5 py-1 rounded-full bg-white/90 dark:bg-white/10 text-tabiji-charcoal dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-colors cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
                                                                             >
                                                                                 🚇 {t('ai_quick_traffic' as TranslationKey) || "今天行程交通怎麼搭？"}
                                                                             </button>
@@ -1052,7 +1052,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                         <Button
                                                             size="sm"
                                                             variant="outline"
-                                                            className="w-full h-9 rounded-xl border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:border-blue-300 font-bold gap-2 shadow-sm transition-all active:scale-95"
+                                                            className="w-full h-9 rounded-xl border-tabiji-amber/30 bg-tabiji-amber/15 text-tabiji-amber hover:bg-tabiji-amber/25 hover:border-tabiji-amber/40 font-bold gap-2 shadow-xs transition-all active:scale-95 cursor-pointer"
                                                             onClick={async () => {
                                                                 // 將內容傳遞給 ToolsView (透過事件)
                                                                 const event = new CustomEvent('ai-import-itinerary', {
@@ -1060,8 +1060,8 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                                 })
                                                                 window.dispatchEvent(event)
                                                                 toast.success(t('ai_sending_to_import' as TranslationKey))
-                                                                // 自動開啟 ToolsView
-                                                                const navEvent = new CustomEvent('navigate-to-tools')
+                                                                // 自動開啟行程介面 (Itinerary View)
+                                                                const navEvent = new CustomEvent('navigate-to-trips')
                                                                 window.dispatchEvent(navEvent)
                                                                 setIsOpen(false)
                                                             }}
@@ -1085,19 +1085,19 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                             ))}
                             {isLoading && (
                                 <div className="flex gap-3 max-w-[85%]">
-                                    <div className="relative w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-950/80 border border-indigo-200/50 dark:border-indigo-800/50 flex items-center justify-center shrink-0 mt-1 overflow-hidden shadow-xs">
+                                    <div className="relative w-8 h-8 rounded-full bg-white/90 dark:bg-[#182320] border border-tabiji-forest/15 dark:border-white/15 flex items-center justify-center shrink-0 mt-1 overflow-hidden shadow-xs">
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img src="/images/ryan-bot-avatar.webp" alt="Ryan AI Thinking" className="w-6 h-6 object-contain animate-pulse" />
-                                        <span className="absolute inset-0 rounded-full border border-cyan-400/60 animate-ping pointer-events-none" />
+                                        <span className="absolute inset-0 rounded-full border border-emerald-500/40 animate-ping pointer-events-none" />
                                     </div>
                                     <div className="flex flex-col gap-2">
                                         {/* 🆕 脈衝手風琴 */}
                                         <ThinkingIndicator phase={searchStatus.phase} />
                                         {searchStatus.phase === "searching" && (searchStatus.query || searchStatus.url) && (
-                                            <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded-xl shadow-2xs animate-in fade-in duration-200 max-w-sm">
+                                            <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-tabiji-forest dark:text-emerald-300 bg-tabiji-mist/50 dark:bg-white/5 border border-tabiji-forest/15 dark:border-white/10 rounded-xl shadow-2xs animate-in fade-in duration-200 max-w-sm">
                                                 <span className="relative flex h-2 w-2 shrink-0">
-                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
-                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                                                 </span>
                                                 <span className="truncate">
                                                     {searchStatus.query ? `🔍 ${searchStatus.query}` : `🌐 ${searchStatus.url}`}
@@ -1110,7 +1110,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                 abortControllerRef.current?.abort()
                                                 setIsLoading(false)
                                             }}
-                                            className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors"
+                                            className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors cursor-pointer"
                                         >
                                             <X className="w-3 h-3" /> {t('ai_stop')}
                                         </button>
@@ -1127,7 +1127,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                             // 移除最後一條錯誤訊息
                                             setMessages(prev => prev.slice(0, -1))
                                         }}
-                                        className="text-sm bg-blue-50 text-blue-600 px-4 py-2 rounded-full hover:bg-blue-100 transition-colors flex items-center gap-2"
+                                        className="text-sm bg-tabiji-forest/10 text-tabiji-forest dark:text-tabiji-paper dark:bg-white/10 px-4 py-2 rounded-full hover:bg-tabiji-forest/15 transition-colors flex items-center gap-2 cursor-pointer"
                                     >
                                         🔄 {t('ai_retry')}
                                     </button>
@@ -1137,14 +1137,14 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                         </div>
 
                         {/* Input Area */}
-                        <div className="p-3 md:p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                        <div className="p-3 md:p-4 bg-tabiji-paper/95 dark:bg-tabiji-dark/95 border-t border-tabiji-forest/10 dark:border-white/10 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
                             {selectedImage && (
                                 <div className="mb-2 relative inline-block">
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
                                     <img src={selectedImage} alt="Selected" className="h-16 w-auto rounded-lg border border-slate-200 dark:border-slate-700" />
                                     <button
                                         onClick={() => setSelectedImage(null)}
-                                        className="absolute -top-2 -right-2 bg-slate-500 text-white rounded-full p-0.5 hover:bg-slate-600"
+                                        className="absolute -top-2 -right-2 bg-slate-500 text-white rounded-full p-0.5 hover:bg-slate-600 cursor-pointer"
                                     >
                                         <X className="w-3 h-3" />
                                     </button>
@@ -1161,7 +1161,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="shrink-0 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                                    className="shrink-0 text-tabiji-slate hover:text-tabiji-charcoal dark:hover:text-tabiji-paper cursor-pointer"
                                     onClick={() => fileInputRef.current?.click()}
                                 >
                                     <ImageIcon className="w-5 h-5" />
@@ -1176,8 +1176,8 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                         toast.info(!isDeepResearch ? (zh ? "已啟用 🔬 AI 深度研究模式" : "Deep Research Enabled") : (zh ? "已切換回即時對話模式" : "Real-time Mode Enabled"))
                                     }}
                                     className={cn(
-                                        "h-8 px-2.5 text-xs rounded-xl font-medium transition-all shrink-0",
-                                        isDeepResearch ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm" : "text-indigo-600 border-indigo-200 hover:bg-indigo-50 dark:border-indigo-900/60 dark:text-indigo-300"
+                                        "h-8 px-2.5 text-xs rounded-xl font-medium transition-all shrink-0 cursor-pointer",
+                                        isDeepResearch ? "bg-tabiji-forest hover:bg-tabiji-forest/90 text-tabiji-paper shadow-xs" : "text-tabiji-forest border-tabiji-forest/20 hover:bg-tabiji-forest/5 dark:border-white/15 dark:text-tabiji-paper"
                                     )}
                                 >
                                     🔬 {zh ? "深度研究" : "Deep"}
@@ -1186,7 +1186,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                     ref={textareaRef}
                                     rows={1}
                                     placeholder={t('ai_ask_placeholder')}
-                                    className="flex min-h-9 max-h-32 w-full resize-none rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500/50 transition-all leading-normal"
+                                    className="flex min-h-9 max-h-32 w-full resize-none rounded-xl border border-tabiji-forest/15 dark:border-white/15 bg-white dark:bg-[#182320] px-3 py-2 text-sm text-tabiji-charcoal dark:text-tabiji-paper placeholder:text-tabiji-slate focus:outline-hidden focus-visible:ring-2 focus-visible:ring-tabiji-forest/30 dark:focus-visible:ring-white/20 transition-all leading-normal"
                                     value={input}
                                     onChange={(e) => {
                                         setInput(e.target.value)
@@ -1203,7 +1203,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                 />
                                 <Button
                                     size="icon"
-                                    className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-xs"
+                                    className="shrink-0 bg-tabiji-forest hover:bg-tabiji-forest/90 text-tabiji-paper rounded-xl shadow-xs cursor-pointer active:scale-95 transition-all"
                                     onClick={handleSendMessage}
                                     disabled={isLoading || (!input.trim() && !selectedImage)}
                                 >
@@ -1231,10 +1231,10 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                     size="icon"
                     className={cn(
                         "h-14 w-14 rounded-full transition-all duration-300 hover:scale-105 touch-none relative overflow-hidden",
-                        "backdrop-blur-2xl border border-white/60 dark:border-white/15",
+                        "backdrop-blur-2xl border border-tabiji-forest/15 dark:border-white/20",
                         isOpen
-                            ? "bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 shadow-lg"
-                            : "bg-white/85 dark:bg-slate-900/85 text-indigo-600 dark:text-indigo-400 shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_1px_rgba(255,255,255,0.8)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.4),inset_0_1px_1px_rgba(255,255,255,0.15)]",
+                            ? "bg-tabiji-paper/90 dark:bg-tabiji-dark/90 text-tabiji-charcoal dark:text-tabiji-paper shadow-md"
+                            : "bg-tabiji-paper/90 dark:bg-tabiji-dark/90 text-tabiji-forest dark:text-tabiji-paper shadow-[0_8px_32px_rgba(11,48,38,0.12),inset_0_1px_1px_rgba(255,255,255,0.8)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.1)]",
                         isIdle && !isOpen && !isDragging ? "opacity-40 hover:opacity-100" : "opacity-100",
                         isDragging && "scale-110 shadow-2xl"
                     )}
@@ -1243,17 +1243,17 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                     onTouchStart={handleTouchStart}
                 >
                     {isOpen ? (
-                        <X className="w-6 h-6 text-slate-700 dark:text-slate-300" />
+                        <X className="w-6 h-6 text-tabiji-charcoal dark:text-tabiji-paper" />
                     ) : (
                         <div className="relative w-full h-full flex items-center justify-center">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                                 src="/images/ryan-bot-avatar.webp"
                                 alt="Ryan AI"
-                                className="w-9 h-9 object-contain drop-shadow-[0_2px_8px_rgba(6,182,212,0.35)] transition-transform hover:scale-110"
+                                className="w-9 h-9 object-contain drop-shadow-[0_2px_8px_rgba(11,48,38,0.3)] transition-transform hover:scale-110"
                             />
                             {isLoading && (
-                                <span className="absolute inset-0 rounded-full border-2 border-cyan-400/80 animate-ping pointer-events-none" />
+                                <span className="absolute inset-0 rounded-full border-2 border-emerald-500/80 animate-ping pointer-events-none" />
                             )}
                         </div>
                     )}

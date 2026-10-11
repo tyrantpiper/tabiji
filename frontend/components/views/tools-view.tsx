@@ -5,11 +5,10 @@ import { motion } from "framer-motion"
 import {
     Plus, Trash2, Edit2, ChevronRight, FileText, Loader2,
     Wallet, CreditCard, Train, Utensils, ShoppingBag, Bed, Ticket, Receipt,
-    Sparkles, Image as ImageIcon, ChevronLeft, PieChart, List, Users, User,
-    Key, Share2, FolderInput, Check, Inbox
+    Image as ImageIcon, ChevronLeft, PieChart, List, Users, User,
+    Share2, Inbox
 } from "lucide-react"
-import { AiGrillMeWizard } from "@/components/itinerary/AiGrillMeWizard"
-import { AiImportTripWizard } from "@/components/itinerary/AiImportTripWizard"
+import { GlobalTaxActuary } from "@/components/tools/GlobalTaxActuary"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
@@ -26,7 +25,7 @@ import { toast } from "sonner"
 import { useLanguage } from "@/lib/LanguageContext"
 import { ExpenseChart, CATEGORY_COLORS } from "@/components/expense-chart"
 import { useTripContext } from "@/lib/trip-context"
-import { encryptData, decryptData, getSecureApiKey } from "@/lib/security"
+import { encryptData, decryptData } from "@/lib/security"
 import { TripSwitcher } from "@/components/trip-switcher"
 import { ZenRenew } from "@/components/ui/zen-renew"
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso"
@@ -34,7 +33,7 @@ import { useExpenses, useHaptic, useTripDetail } from "@/lib/hooks"
 import { useTargetExpenseId, useTripStore } from "@/lib/stores/tripStore"
 import { debugLog } from "@/lib/debug"
 import { ExpenseDialog } from "@/components/expense-dialog"
-import { expensesApi, tripsApi, aiApi, API_HOST } from "@/lib/api"
+import { expensesApi, API_HOST } from "@/lib/api"
 import { ActuaryDialogCard } from "@/components/ActuaryDialogCard"
 import { useOfflineMutation } from "@/lib/sync-hooks"
 import { SyncStatusBadge } from "@/components/ui/SyncStatusBadge"
@@ -52,6 +51,7 @@ interface Trip {
     days?: unknown[]
     share_code?: string
     credit_cards?: CreditCard[]
+    currency?: string
     flight_info?: Record<string, unknown>
     hotel_info?: Record<string, unknown>
     start_date?: string
@@ -135,27 +135,9 @@ const CURRENCIES = [
 
 import { getExchangeRate } from "@/lib/currency"
 import { CountingNumber } from "@/components/ui/counting-number"
-import { type ParsedItinerary } from "@/lib/itinerary-types"
-import { type TranslationKey } from "@/lib/LanguageContext"
-
-// 🆕 v22.1: JSON 行程偵測工具
-function tryParseItinerary(text: string): ParsedItinerary | null {
-    if (!text || !text.includes('{"')) return null
-    try {
-        const cleanJson = text.replace(/```json|```/g, "").trim()
-        const data = JSON.parse(cleanJson)
-        if (data.items && Array.isArray(data.items)) return data as ParsedItinerary
-        if (data.data && data.data.items) return data.data as ParsedItinerary
-    } catch (error) { 
-        console.error("Failed to parse itinerary from text:", error)
-        return null 
-    }
-    return null
-}
-
 export function ToolsView() {
     const { t } = useLanguage()
-    const { activeTrip, activeTripId, trips, mutate: tripMutate, userId, handleTripNotFound } = useTripContext()
+    const { activeTrip, activeTripId, mutate: tripMutate, userId, handleTripNotFound } = useTripContext()
     // 🔧 v7 FIX: 載入完整行程資料（含 members），解決成員列表為空的問題
     const { trip: tripDetail } = useTripDetail(activeTripId, userId, 0, handleTripNotFound)
     const tripMembers = tripDetail?.members || activeTrip?.members || []
@@ -187,24 +169,6 @@ export function ToolsView() {
     }, [reloadExpenses, tripMutate])
 
     const [rate, setRate] = useState(0.22)
-
-    // 🆕 v22.1: Listen for cross-module import events (from ChatWidget)
-    useEffect(() => {
-        const handleAiImport = (e: Event) => {
-            const customEvent = e as CustomEvent<{ content: string }>
-            const { content } = customEvent.detail
-            if (content) {
-                const itinerary = tryParseItinerary(content)
-                if (itinerary) {
-                    setToolsAiResult(itinerary)
-                }
-                setActiveSection('ai')
-                toast.info(t('ai_ready_to_import' as TranslationKey))
-            }
-        }
-        window.addEventListener('ai-import-itinerary', handleAiImport)
-        return () => window.removeEventListener('ai-import-itinerary', handleAiImport)
-    }, [t])
 
 
     // 🆕 Currency State
@@ -287,24 +251,6 @@ export function ToolsView() {
     const [editItem, setEditItem] = useState<Expense | null>(null)
     const haptic = useHaptic()
 
-    // 🤖 Modern AI Tools state
-    const [toolsAiMode, setToolsAiMode] = useState<'wizard' | 'import' | 'freeform'>('wizard')
-    const [aiPrompt, setAiPrompt] = useState("")
-    const [aiLoading, setAiLoading] = useState(false)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [toolsAiResult, setToolsAiResult] = useState<any | null>(null)
-    const [isSaving, setIsSaving] = useState(false)
-    const [hasApiKey, setHasApiKey] = useState(false)
-    const [generateProgress, setGenerateProgress] = useState<string | null>(null)
-    const [saveTarget, setSaveTarget] = useState<'new' | 'existing'>('new')
-    const [selectedTripId, setSelectedTripId] = useState<string>(() => trips?.[0]?.id || "")
-
-    useEffect(() => {
-        if (trips && trips.length > 0 && !selectedTripId) {
-            setSelectedTripId(trips[0].id)
-        }
-    }, [trips, selectedTripId])
-
     // 🆕 v3.8: 信用卡回饋彙整
     const [localCards, setLocalCards] = useState<CreditCard[]>([])
     const [sharedCards, setSharedCards] = useState<CreditCard[]>([])
@@ -363,10 +309,6 @@ export function ToolsView() {
             setIsSharing(false)
         }
     }
-
-    useEffect(() => {
-        setHasApiKey(!!getSecureApiKey())
-    }, [])
 
     // 🆕 v3.8: 載入信用卡資料 (Local)
     useEffect(() => {
@@ -634,132 +576,6 @@ export function ToolsView() {
     // But verify on mount if needed
     // ...
 
-    const handleAiGenerate = async (customPrompt?: string) => {
-        const p = customPrompt || aiPrompt
-        if (!p?.trim()) return
-        haptic.tap()
-        setAiLoading(true)
-        setGenerateProgress(t('tv_ai_generating'))
-        const activeUserId = localStorage.getItem("user_uuid") || userId || ""
-
-        try {
-            let response: unknown
-            try {
-                response = await aiApi.generateTripStream({
-                    prompt: p,
-                    user_id: activeUserId,
-                    onProgress: (prog) => {
-                        setGenerateProgress(`${prog.message} (${prog.percent}%)`)
-                    }
-                })
-            } catch (streamErr) {
-                console.warn("⚠️ [tools-view] Stream failed, falling back to sync:", streamErr)
-                response = await aiApi.generateTrip({
-                    prompt: p,
-                    user_id: activeUserId
-                })
-            }
-            setGenerateProgress(t('tv_ai_geocoding'))
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const itineraryData = (response as any).data || response
-            if (!itineraryData.items || itineraryData.items.length === 0) {
-                setToolsAiResult(null)
-                toast.error("AI 未能生成有效的景點列表，請再試一次")
-                return
-            }
-            haptic.success()
-            setToolsAiResult(itineraryData)
-            toast.success(t('tv_ai_generated', { count: String(itineraryData.items?.length || 0) }))
-        } catch (error) {
-            haptic.error()
-            const msg = error instanceof Error ? error.message : "Generate failed"
-            toast.error(`生成失敗: ${msg}`)
-            setToolsAiResult(null)
-        } finally {
-            setAiLoading(false)
-            setGenerateProgress(null)
-        }
-    }
-
-    const handleSaveTrip = async () => {
-        if (isSaving) return
-        const result = toolsAiResult
-        if (!result?.items) {
-            toast.error("No items to save")
-            return
-        }
-
-        haptic.tap()
-        setIsSaving(true)
-        const activeUserId = localStorage.getItem("user_uuid") || userId
-        const userName = localStorage.getItem("user_nickname")
-
-        if (!activeUserId || !userName) {
-            toast.error("Please login first")
-            setIsSaving(false)
-            return
-        }
-
-        try {
-            if (saveTarget === 'existing' && (selectedTripId || trips?.[0]?.id)) {
-                const targetId = selectedTripId || trips[0].id
-                const data = await tripsApi.importToTrip(targetId, {
-                    items: result.items,
-                    daily_locations: result.daily_locations || {},
-                    day_notes: result.day_notes || {},
-                    day_costs: result.day_costs || {},
-                    day_tickets: result.day_tickets || {},
-                    day_checklists: result.day_checklists || {},
-                    ai_review: result.ai_review,
-                    user_id: activeUserId
-                })
-
-                haptic.success()
-                toast.success(data.message || t('trip_merged_success'))
-                setToolsAiResult(null)
-                setAiPrompt("")
-                setSaveTarget('new')
-                await Promise.all([tripMutate(), reloadExpenses()])
-            } else {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const maxDay = result.items?.length > 0 ? Math.max(...result.items.map((it: any) => it.day_number || it.day || 1)) : 1
-                const startDateStr = result.start_date || new Date().toISOString().split('T')[0]
-                const startDateObj = new Date(startDateStr)
-                const calculatedEndDateObj = new Date(startDateObj)
-                calculatedEndDateObj.setDate(calculatedEndDateObj.getDate() + (maxDay - 1))
-                const endDateStr = result.end_date || calculatedEndDateObj.toISOString().split('T')[0]
-
-                const data = await tripsApi.saveItinerary({
-                    title: result.title || "New AI Trip",
-                    start_date: startDateStr,
-                    end_date: endDateStr,
-                    currency: result.currency || "TWD",
-                    items: result.items,
-                    user_id: activeUserId,
-                    creator_name: userName || "Traveler",
-                    daily_locations: result.daily_locations || {},
-                    day_notes: result.day_notes || {},
-                    day_costs: result.day_costs || {},
-                    day_tickets: result.day_tickets || {},
-                    day_checklists: result.day_checklists || {},
-                    ai_review: result.ai_review
-                })
-
-                haptic.success()
-                toast.success(t('tv_trip_created', { code: data.share_code }))
-                setToolsAiResult(null)
-                setAiPrompt("")
-                setSaveTarget('new')
-                await Promise.all([tripMutate(), reloadExpenses()])
-            }
-        } catch (error) {
-            haptic.error()
-            toast.error(error instanceof Error ? error.message : "Save failed")
-        } finally {
-            setIsSaving(false)
-        }
-    }
-
     // 🆕 v3.8: 信用卡管理函數
     const saveCardsToLocalStorage = (cards: CreditCard[]) => {
         // 🛡️ Security Hardened: Encrypt card data before storage
@@ -919,7 +735,7 @@ export function ToolsView() {
                                 {[
                                     { value: 'cards', label: t('tv_cards') },
                                     { value: 'expense', label: t('expense') },
-                                    { value: 'ai', label: t('ai_tools') }
+                                    { value: 'actuary', label: t('tv_actuary') || "精算器" }
                                 ].map((tab) => (
                                     <button
                                         key={tab.value}
@@ -1199,234 +1015,27 @@ export function ToolsView() {
                                 )}
                             </TabsContent>
 
-                            {/* 🤖 現代化 AI 工具箱 (Grill-Me ✕ 多模態匯入 ✕ 自由輸入) */}
-                            <TabsContent value="ai" className="mt-4 space-y-4">
-                                {!hasApiKey && (
-                                    <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-2xl p-4 space-y-2">
-                                        <div className="flex items-center gap-2">
-                                            <Key className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                                            <h3 className="font-semibold text-amber-800 dark:text-amber-200">{t('tv_setup_ai')}</h3>
-                                        </div>
-                                        <p className="text-xs text-amber-700 dark:text-amber-300">
-                                            {t('tv_setup_ai_desc')}
-                                        </p>
-                                        <div className="flex items-center justify-between pt-1">
-                                            <span className="text-xs text-amber-600 dark:text-amber-400">{t('tv_setup_ai_hint')}</span>
-                                            <Button
-                                                size="sm"
-                                                className="bg-amber-500 hover:bg-amber-600 text-white rounded-xl cursor-pointer"
-                                                onClick={() => {
-                                                    const event = new CustomEvent('navigate-to-profile')
-                                                    window.dispatchEvent(event)
-                                                    toast.info(t('tv_go_profile'))
-                                                }}
-                                            >
-                                                {t('tv_go_profile')}
-                                            </Button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 生成/解析結果預覽與儲存卡片 */}
-                                {toolsAiResult && !aiLoading && (
-                                    <div className="p-4 rounded-2xl bg-white dark:bg-slate-800 shadow-md border border-stone-200 dark:border-slate-700 space-y-3">
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
-                                                <Sparkles className="w-4 h-4 text-indigo-500" />
-                                                <span className="font-bold text-sm text-slate-900 dark:text-slate-100">{toolsAiResult.title || "AI 規劃結果"}</span>
-                                            </div>
-                                            <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-300 font-semibold">
-                                                {toolsAiResult.items?.length || 0} {t('trip_preview_spots')}
-                                            </span>
-                                        </div>
-                                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                                            📅 {toolsAiResult.start_date || "2026-10-01"} ~ {toolsAiResult.end_date || "2026-10-05"}
-                                        </p>
-
-                                        {/* 📥 儲存目標選擇 (新建 vs 合併) */}
-                                        <div className="space-y-2 pt-2 border-t border-stone-200/80 dark:border-slate-700/80">
-                                            <div className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between">
-                                                <span>{t('save_target_label')}</span>
-                                                <span className="text-[11px] font-normal text-slate-400">{t('save_target_desc')}</span>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        haptic.selection()
-                                                        setSaveTarget('new')
-                                                    }}
-                                                    className={cn(
-                                                        "p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer select-none active:scale-98",
-                                                        saveTarget === 'new'
-                                                            ? "bg-indigo-500/10 dark:bg-indigo-400/15 border-indigo-500 dark:border-indigo-400 text-indigo-700 dark:text-indigo-300 font-bold shadow-2xs"
-                                                            : "bg-stone-50 dark:bg-slate-900 border-stone-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
-                                                    )}
-                                                >
-                                                    <Plus className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
-                                                    <span className="text-xs">{t('save_as_new_trip')}</span>
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    disabled={!trips || trips.length === 0}
-                                                    onClick={() => {
-                                                        haptic.selection()
-                                                        setSaveTarget('existing')
-                                                        if (!selectedTripId && trips && trips.length > 0) {
-                                                            setSelectedTripId(trips[0].id)
-                                                        }
-                                                    }}
-                                                    className={cn(
-                                                        "p-2.5 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer select-none active:scale-98 disabled:opacity-40",
-                                                        saveTarget === 'existing'
-                                                            ? "bg-indigo-500/10 dark:bg-indigo-400/15 border-indigo-500 dark:border-indigo-400 text-indigo-700 dark:text-indigo-300 font-bold shadow-2xs"
-                                                            : "bg-stone-50 dark:bg-slate-900 border-stone-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
-                                                    )}
-                                                >
-                                                    <FolderInput className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
-                                                    <span className="text-xs">{t('merge_into_existing_trip')}</span>
-                                                </button>
-                                            </div>
-
-                                            {saveTarget === 'existing' && trips && trips.length > 0 && (
-                                                <div className="pt-1">
-                                                    <select
-                                                        value={selectedTripId || trips[0]?.id}
-                                                        onChange={e => setSelectedTripId(e.target.value)}
-                                                        className="w-full h-10 px-3 rounded-xl bg-white dark:bg-slate-900 border border-stone-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200 cursor-pointer outline-hidden focus:border-indigo-500"
-                                                    >
-                                                        {trips.map(tr => (
-                                                            <option key={tr.id} value={tr.id}>
-                                                                {tr.title} ({tr.start_date || ""} ~ {tr.end_date || ""})
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="flex items-center gap-2 pt-1">
-                                            <Button
-                                                type="button"
-                                                variant="outline"
-                                                onClick={() => {
-                                                    haptic.tap()
-                                                    setToolsAiResult(null)
-                                                }}
-                                                className="h-10 px-3 text-xs rounded-xl cursor-pointer"
-                                            >
-                                                {t('replan_btn')}
-                                            </Button>
-                                            <Button
-                                                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl h-10 shadow-sm cursor-pointer"
-                                                onClick={handleSaveTrip}
-                                                disabled={isSaving}
-                                            >
-                                                {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-1.5" />}
-                                                {saveTarget === 'existing' ? t('save_and_merge') : t('save_as_trip')}
-                                            </Button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* AI 子功能切換 (三合一分段選擇器) */}
-                                {!toolsAiResult && (
-                                    <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-sm border border-stone-200/80 dark:border-slate-700 space-y-4">
-                                        <div className="flex bg-stone-100 dark:bg-slate-900 p-0.5 rounded-xl border border-stone-200/80 dark:border-slate-800 text-xs font-semibold select-none">
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    haptic.selection()
-                                                    setToolsAiMode('wizard')
-                                                }}
-                                                className={cn(
-                                                    "flex-1 py-1.5 px-2 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1",
-                                                    toolsAiMode === 'wizard'
-                                                        ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-2xs font-bold"
-                                                        : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                                                )}
-                                            >
-                                                <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-                                                <span>{t('mode_grill_me')}</span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    haptic.selection()
-                                                    setToolsAiMode('import')
-                                                }}
-                                                className={cn(
-                                                    "flex-1 py-1.5 px-2 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1",
-                                                    toolsAiMode === 'import'
-                                                        ? "bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-300 shadow-2xs font-bold"
-                                                        : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                                                )}
-                                            >
-                                                <FileText className="w-3.5 h-3.5 text-emerald-500" />
-                                                <span>多模態匯入</span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    haptic.selection()
-                                                    setToolsAiMode('freeform')
-                                                }}
-                                                className={cn(
-                                                    "flex-1 py-1.5 px-2 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1",
-                                                    toolsAiMode === 'freeform'
-                                                        ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-2xs font-bold"
-                                                        : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                                                )}
-                                            >
-                                                <span>{t('mode_freeform')}</span>
-                                            </button>
-                                        </div>
-
-                                        {/* 1. 🧙‍♂️ Grill-Me 5 步智能引導 */}
-                                        {toolsAiMode === 'wizard' && (
-                                            <AiGrillMeWizard
-                                                onComplete={(xmlPrompt) => handleAiGenerate(xmlPrompt)}
-                                            />
-                                        )}
-
-                                        {/* 2. 📝 多模態筆記/圖片解析 */}
-                                        {toolsAiMode === 'import' && (
-                                            <AiImportTripWizard
-                                                userId={userId || ""}
-                                                onComplete={(data) => setToolsAiResult(data)}
-                                            />
-                                        )}
-
-                                        {/* 3. ✍️ 自由提示詞輸入 */}
-                                        {toolsAiMode === 'freeform' && (
-                                            <div className="space-y-4 pt-1">
-                                                <div className="space-y-2">
-                                                    <Label>{t('ai_prompt_label')}</Label>
-                                                    <Textarea
-                                                        value={aiPrompt}
-                                                        onChange={e => setAiPrompt(e.target.value)}
-                                                        placeholder={t('ai_prompt_placeholder')}
-                                                        rows={4}
-                                                        className="resize-none font-sans rounded-xl bg-stone-50 dark:bg-slate-900"
-                                                    />
-                                                    <p className="text-xs text-slate-400">{t('ai_prompt_hint')}</p>
-                                                </div>
-
-                                                <Button
-                                                    className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md cursor-pointer transition-all active:scale-[0.99]"
-                                                    onClick={() => handleAiGenerate()}
-                                                    disabled={aiLoading || !aiPrompt.trim()}
-                                                >
-                                                    {aiLoading ? (
-                                                        <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{generateProgress || t('generating')}</>
-                                                    ) : (
-                                                        <><Sparkles className="w-4 h-4 mr-2" />{t('ai_generate_btn')}</>
-                                                    )}
-                                                </Button>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
+                            {/* 🧮 全球多國免稅 ✕ 匯率 ✕ 信用卡海外淨支出精算器 */}
+                            <TabsContent value="actuary" className="mt-4 space-y-4">
+                                <GlobalTaxActuary
+                                    cards={creditCards}
+                                    defaultCurrency={selectedCurrency || (activeTrip as Trip)?.currency || undefined}
+                                    onAddExpense={(data) => {
+                                        setEditItem({
+                                            id: "",
+                                            title: data.title,
+                                            amount: data.amount,
+                                            currency: data.currency,
+                                            category: "shopping",
+                                            payment_method: data.payment_method || "card",
+                                            card_name: data.card_name,
+                                            cashback_rate: data.cashback_rate,
+                                            is_public: true,
+                                            incurred_at: new Date().toISOString().split("T")[0]
+                                        })
+                                        setIsDialogOpen(true)
+                                    }}
+                                />
                             </TabsContent>
                         </Tabs>
                     </div>

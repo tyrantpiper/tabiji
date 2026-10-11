@@ -15,7 +15,7 @@ import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
 import { Plus, Hash, Loader2, Calendar, Sparkles, FileText, Compass, Check, FolderInput } from "lucide-react"
 import { tripsApi, aiApi } from "@/lib/api"
-import { type Trip } from "@/lib/itinerary-types"
+import { type Trip, tryParseItinerary } from "@/lib/itinerary-types"
 import { PushPermissionPrompt } from "@/components/notifications/push-permission-prompt"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
@@ -110,6 +110,25 @@ export function CreateTripModal({
             setAiPrompt(initialPrompt.trim())
         }
     }, [isOpen, initialPrompt])
+
+    // 🆕 跨模組監聽：接收 ChatWidget 傳送之 AI 行程結構
+    useEffect(() => {
+        const handleGlobalAiImport = (e: Event) => {
+            const customEvent = e as CustomEvent<{ content: string }>
+            const { content } = customEvent.detail
+            if (content) {
+                const parsed = tryParseItinerary(content)
+                if (parsed) {
+                    setAiResult(parsed)
+                    setActiveTab('ai_generate')
+                    onOpenChange(true)
+                    toast.success(t('ai_ready_to_import') || "已將 AI 行程載入匯入器")
+                }
+            }
+        }
+        window.addEventListener('ai-import-itinerary', handleGlobalAiImport)
+        return () => window.removeEventListener('ai-import-itinerary', handleGlobalAiImport)
+    }, [onOpenChange, t])
 
     // 手動建立提交
     const handleCreate = async () => {
