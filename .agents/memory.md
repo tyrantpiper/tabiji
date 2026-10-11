@@ -437,4 +437,12 @@
 - **原生最高優先級紋理預載入與解碼停頓根治 (AD-076)**: 針對開機首幀涉及大型向量遮罩（2048×2048）或關鍵圖騰之資產，嚴禁等待 React 元件水合後才發起下載；必須在 HTML `<head>` 靜態配置 `<link rel="preload" as="image" fetchPriority="high">`，由瀏覽器管線在 HTML 解析前 0 毫秒提前解碼完畢，保證進場動畫 60FPS 絲滑展開。
 - **帳號引繼原子四清與 5 秒過渡靜音鎖架構 (AD-077)**: 跨使用者身分切換時，必須同步抹除 Zustand 本機持久化快照（`tabidachi-trip-storage` 中的 `activeTripId` 與 `activeTripTitle`）；並透過 `sessionStorage` 宣告 5 秒時間窗口鎖（`tabiji_identity_transition_lock`），阻斷 SWR 非同步載入期間因快取錯位觸發的破壞性誤判警告。
 - **引繼金鑰極致容錯與拒絕過度工程化原則 (AD-078)**: 在純複製貼上 UUID 的操作場景中，格式錯誤已被前端正則嚴密攔截，且雲端資料具備完全可逆性；堅決拒絕為了理論上的極端輸入錯誤而盲目增加後端跨表驗證往返與延遲。
-- **引繼情境下老使用者 Sample Trip 逆向污染陷阱 (FP-020)**: 在全新設備還原時，若只重設了 `user_uuid`，本地 `sample_trip_seeded` 為空會導致 `trip-context.tsx` 的種子守門器將老使用者誤判為新使用者，背景發起 `sampleTripApi.seed` 塞入示範行程。教訓：引繼流程必須同時覆蓋新人引導相關的所有本機旗標。
+- **引繼情境下老使用者 Sample Trip 逆向污染陷阱 (FP-020)**: 在全新設備還原時，若只重設了 `user_uuid`，本地 `sample_trip_seeded` 為空會導致 `trip-context.tsx` 的種子守門器將老使用者誤判為新使用者，背景發起 `sampleTripApi.seed` 塞入示範行程。教訓：引繼流程必須同時覆蓋新人引導相關的所有本機旗標。
+
+### 23. 全球免稅法規精算、信用卡雙卡拆單神策與跨模組事件總線領域 (Global Tax Actuary, Split Card Strategy & Cross-Module Event Mesh)
+- **Zero-Eval 四則運算 AST 詞法解析求值器 (AD-079)**: 購物計算機嚴禁使用 `eval()` 或 `new Function()`。透過 Tokenizer 將字串拆解為數值與運算子，採兩階段掃描（第一階段處理乘除、第二階段處理加減），支援小數點與連續算式；內建懸空運算子自動裁切（如 `"1500+"` 自動評估為 1500）與除以零安全防禦（返回 `null`），杜絕 XSS 與注入漏洞。
+- **信用卡現金回饋上限正規化與最大可刷額度推導 (AD-080)**: 台灣信用卡回饋上限為「回饋金總額上限（如每月上限 NT$1,000）」而非「消費本金」。精算引擎必須嚴格以 $MaxSpend = Limit / (Rate\%)$ 換算最大可刷額度，並精確扣除 1.5% 海外交易手續費結算真實淨利差，杜絕回饋虛胖。
+- **雙卡最佳拆單神策與收銀台摩擦力防衛 (AD-081)**: 當消費總額超出頂級神卡上限時，候選卡 A 必須是「費率最高且已封頂的卡」，卡 B 為「次佳無上限卡」進行接力拆單；同時實裝收銀台摩擦力守衛——次卡消費必須 $\ge 100$ TWD 且拆單額外利差必須 $\ge 30$ TWD 才主動輸出拆單神策，避免使用者為極微小金額增加實體收銀台刷卡複雜度。
+- **跨視圖行程研究結構化直通匯入架構 (AD-082)**: AI 旅伴對話產生的行程結構，不再強迫使用者切換工具箱複製貼上。透過 `CustomEvent("ai-import-itinerary")` 與 `CustomEvent("navigate-to-trips")` 雙向事件總線，直通 `app-shell.tsx` 切換至行程視圖，並由 `TripDialogs.tsx` 透過 `tryParseItinerary` 解析直接喚醒 `CreateTripModal`，達成對話至建程零摩擦閉環。
+- **Turbopack 開發模式 Service Worker 快取劫持陷阱 (FP-021)**: 在執行過 PWA 生產預覽 (`npm run build && npm start`) 後回到 `npm run dev`，瀏覽器若殘留已註冊之 Service Worker，其 `CacheFirst` 會持續吐出快取中的歷史 JS Chunks（如引用已棄用之 `TripList.tsx`），引發 `Module factory is not available` 白屏報錯。教訓：開發環境切換須執行硬性重新整理（Ctrl+Shift+R）或於 DevTools Unregister Service Worker。
+- **種子規則國碼重複與 React List Key 碰撞陷阱 (FP-022)**: 在擴充多國免稅規則時，未檢查頂部既有清單而重複追加 `countryCode: "VN"`，導致國別搜尋清單遍歷時產生重複的 `key="VN"` 觸發 React 警告。處方：資料層物理合併去重，表現層元件透過 `new Map()` 依據 `countryCode` 進行確定性動態去重，達成雙重免疫。
