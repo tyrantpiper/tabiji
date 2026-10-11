@@ -1,11 +1,11 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-10T15:20:00Z",
+  "last_audit_date": "2026-10-11T18:05:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 65,
-    "audited_targets": 65,
-    "verified_vulnerabilities": 12,
+    "total_targets": 67,
+    "audited_targets": 67,
+    "verified_vulnerabilities": 14,
     "dismissed_hypotheses": 62
   },
   "targets": [
@@ -611,6 +611,24 @@
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "validator_details": "Physical Sentinel verified: Offline tool using hardcoded local constants; cap.release() cleanly closes video handle without leaks."
+    },
+    {
+      "id": "backend/services/geocode_service.py:LOCATION_KEYWORDS",
+      "target_type": "backend_service",
+      "trust_boundary": "backend_to_external_api",
+      "vectors_checked": ["currency_misattribution_and_geocoding_drift"],
+      "status": "PENDING_PATCH",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Confirmed vulnerability: LOCATION_KEYWORDS omits FR and US, causing detect_country_from_keywords to return None and infer_currency_from_destination to incorrectly fallback to TWD instead of EUR/USD. In-memory PoC passed."
+    },
+    {
+      "id": "frontend/components/itinerary/AiImportTripWizard.tsx:TEMPLATE_PILLS",
+      "target_type": "client_ui_wizard",
+      "trust_boundary": "browser_state_and_dom",
+      "vectors_checked": ["ui_data_inconsistency_and_i18n_leak"],
+      "status": "PENDING_PATCH",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Confirmed vulnerability: TEMPLATE_PILLS states 3-5 days but only provides 2-3 days in markdown, and lacks globalization and i18n support. Vitest sentinel test verified."
     }
   ]
 }

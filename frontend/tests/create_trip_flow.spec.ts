@@ -113,8 +113,8 @@ test.describe('Create Trip Segmented Modal & CalendarRangeSheet E2E Flow', () =>
         const importTextarea = dialog.locator('textarea').first();
         await expect(importTextarea).toBeVisible();
 
-        // Click a template pill (e.g. 東京 5 日自由行)
-        const tmplPill = dialog.locator('button').filter({ hasText: /(東京|京都|沖繩)/i }).first();
+        // Click a template pill (e.g. 東京 5 日自由行 / 巴黎 / 紐約)
+        const tmplPill = dialog.locator('button').filter({ hasText: /(東京|巴黎|紐約|Tokyo|Paris|New York)/i }).first();
         if (await tmplPill.isVisible()) {
             await tmplPill.click();
             await page.waitForTimeout(200);
