@@ -131,11 +131,14 @@ export function AppShell() {
     useEffect(() => {
         const handleNavigateToProfile = () => handleTabChange("profile")
         const handleNavigateToTools = () => handleTabChange("tools")
+        const handleNavigateToTrips = () => handleTabChange("itinerary")
         window.addEventListener('navigate-to-profile', handleNavigateToProfile)
         window.addEventListener('navigate-to-tools', handleNavigateToTools)
+        window.addEventListener('navigate-to-trips', handleNavigateToTrips)
         return () => {
             window.removeEventListener('navigate-to-profile', handleNavigateToProfile)
             window.removeEventListener('navigate-to-tools', handleNavigateToTools)
+            window.removeEventListener('navigate-to-trips', handleNavigateToTrips)
         }
     }, [handleTabChange])
 

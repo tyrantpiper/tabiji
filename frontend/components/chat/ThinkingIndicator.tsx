@@ -29,29 +29,29 @@ export default function ThinkingIndicator({
     return (
         <div
             className={cn(
-                "flex items-center gap-3 p-3 rounded-2xl rounded-tl-none border shadow-sm cursor-pointer transition-all",
+                "flex items-center gap-3 p-3 rounded-2xl rounded-tl-none border shadow-xs cursor-pointer transition-all",
                 isThinking
-                    ? "bg-gradient-to-r from-purple-50 to-indigo-50 border-purple-200"
-                    : "bg-gradient-to-r from-blue-50 to-cyan-50 border-blue-200"
+                    ? "bg-tabiji-mist/60 dark:bg-white/5 border-tabiji-forest/15 dark:border-white/10 text-tabiji-forest dark:text-tabiji-paper"
+                    : "bg-tabiji-mist/40 dark:bg-white/5 border-tabiji-forest/15 dark:border-white/10 text-tabiji-forest dark:text-emerald-400"
             )}
             onClick={onToggle}
         >
             {/* Icon with pulse animation */}
             <div className={cn(
                 "relative flex items-center justify-center w-8 h-8 rounded-full",
-                isThinking ? "bg-purple-100" : "bg-blue-100"
+                isThinking ? "bg-tabiji-forest/10 dark:bg-white/10" : "bg-emerald-500/10 dark:bg-emerald-500/20"
             )}>
                 {/* Pulse ring */}
                 <div className={cn(
                     "absolute inset-0 rounded-full animate-ping opacity-30",
-                    isThinking ? "bg-purple-400" : "bg-blue-400"
+                    isThinking ? "bg-tabiji-forest/40 dark:bg-white/30" : "bg-emerald-500/40"
                 )} />
 
                 {/* Icon */}
                 {isThinking ? (
-                    <Loader2 className="w-4 h-4 animate-spin text-purple-600" />
+                    <Loader2 className="w-4 h-4 animate-spin text-tabiji-forest dark:text-tabiji-paper" />
                 ) : (
-                    <Globe className="w-4 h-4 animate-pulse text-blue-600" />
+                    <Globe className="w-4 h-4 animate-pulse text-emerald-600 dark:text-emerald-400" />
                 )}
             </div>
 
@@ -59,11 +59,11 @@ export default function ThinkingIndicator({
             <div className="flex-1">
                 <p className={cn(
                     "text-sm font-medium",
-                    isThinking ? "text-purple-700" : "text-blue-700"
+                    isThinking ? "text-tabiji-charcoal dark:text-tabiji-paper" : "text-tabiji-forest dark:text-emerald-400"
                 )}>
                     {isThinking
                         ? (zh ? "🧠 AI 正在進行深度規劃..." : "🧠 AI is planning...")
-                        : (zh ? "🌏 正在連線 Google 確認最新資訊..." : "🌏 Verifying with Google...")
+                        : (zh ? "🌏 正在連網查證即時旅遊資訊..." : "🌏 Verifying real-time travel info online...")
                     }
                 </p>
 
@@ -71,11 +71,11 @@ export default function ThinkingIndicator({
                 {isExpanded && (
                     <p className={cn(
                         "text-xs mt-1 opacity-70",
-                        isThinking ? "text-purple-600" : "text-blue-600"
+                        isThinking ? "text-tabiji-slate dark:text-tabiji-paper/70" : "text-emerald-600 dark:text-emerald-400"
                     )}>
                         {isThinking
-                            ? (zh ? "使用 Gemini 3 Flash Preview 進行推理中" : "Reasoning with Gemini 3 Flash Preview")
-                            : (zh ? "透過 Google Search Grounding 驗證資訊時效性" : "Verifying with Google Search Grounding")
+                            ? (zh ? "AI 隨行旅伴正在縝密推理行程..." : "AI Companion is carefully planning your trip...")
+                            : (zh ? "連網即時查證官方最新資訊..." : "Verifying real-time information online...")
                         }
                     </p>
                 )}

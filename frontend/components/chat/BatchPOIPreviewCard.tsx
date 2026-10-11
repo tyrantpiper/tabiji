@@ -149,14 +149,14 @@ export default function BatchPOIPreviewCard({
     }
 
     return (
-        <div className="relative my-2.5 max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden transition-all">
-            {/* 頂部裝飾條 (靛藍轉綠漸層) */}
-            <div className="absolute top-0 left-0 right-0 h-1.5 bg-linear-to-r from-blue-500 via-indigo-500 to-emerald-500" />
+        <div className="relative my-2.5 max-w-sm rounded-2xl bg-white dark:bg-[#182320] border border-tabiji-forest/15 dark:border-white/10 shadow-md overflow-hidden transition-all">
+            {/* 頂部裝飾條 (日式紙膠帶自然漸層) */}
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-linear-to-r from-tabiji-forest via-emerald-700 to-tabiji-amber" />
 
             {/* 標頭 */}
-            <div className="p-3.5 pb-2.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <div className="p-3.5 pb-2.5 border-b border-tabiji-forest/8 dark:border-white/10 flex items-center justify-between">
                 <div>
-                    <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
+                    <span className="text-[11px] font-bold text-tabiji-forest dark:text-emerald-400 flex items-center gap-1">
                         <Sparkles className="w-3.5 h-3.5" />
                         {zh ? `批次行程規劃 (${itemsState.length} 個地點)` : `Batch Plan (${itemsState.length} Places)`}
                     </span>
@@ -233,17 +233,17 @@ export default function BatchPOIPreviewCard({
             </div>
 
             {/* 底部按鈕 */}
-            <div className="p-3 pt-2 bg-slate-50/70 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800">
+            <div className="p-3 pt-2 bg-tabiji-paper/50 dark:bg-white/5 border-t border-tabiji-forest/8 dark:border-white/10">
                 <Button
                     type="button"
                     size="sm"
                     disabled={allAdded || isAddingAll || !activeTripId}
                     onClick={handleAddAll}
                     className={cn(
-                        "w-full h-8 text-xs font-bold transition-all shadow-xs",
+                        "w-full h-8 text-xs font-bold transition-all shadow-xs cursor-pointer",
                         allAdded
                             ? "bg-emerald-600 hover:bg-emerald-600 cursor-default text-white"
-                            : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                            : "bg-tabiji-forest hover:bg-tabiji-forest/90 text-tabiji-paper"
                     )}
                 >
                     {isAddingAll ? (

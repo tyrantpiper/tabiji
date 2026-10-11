@@ -86,7 +86,8 @@ const TEMPLATE_PILLS = [
 ]
 
 export function AiImportTripWizard({ userId, onComplete }: AiImportTripWizardProps) {
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
+    const zh = lang === "zh"
     const haptic = useHaptic()
 
     const [importText, setImportText] = useState("")
@@ -174,7 +175,7 @@ export function AiImportTripWizard({ userId, onComplete }: AiImportTripWizardPro
 
         haptic.tap()
         setIsLoading(true)
-        setProgressText(imagePreview ? "Gemini 正在辨識圖片與文字內容..." : t('ai_importing_step'))
+        setProgressText(imagePreview ? (zh ? "AI 旅伴正在辨識圖片與文字內容..." : "AI Companion is analyzing image and text...") : t('ai_importing_step'))
         const activeUserId = localStorage.getItem("user_uuid") || userId
 
         try {

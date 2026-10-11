@@ -67,8 +67,8 @@ export default function DeepResearchCard({
                             <span className="text-xs font-bold tracking-wide uppercase text-indigo-950 dark:text-indigo-200">
                                 {zh ? "AI 深度研究員副官" : "AI Deep Researcher"}
                             </span>
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-200/70 dark:bg-indigo-900/70 text-indigo-800 dark:text-indigo-300">
-                                {data.engine?.includes("antigravity") ? "Linux Sandbox" : "Gemini 3.7 Flash"}
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-tabiji-forest/10 dark:bg-white/10 text-tabiji-forest dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15">
+                                {data.engine?.includes("antigravity") ? (zh ? "深度沙盒" : "Deep Sandbox") : (zh ? "智慧深度推理" : "Deep Reasoning")}
                             </span>
                         </div>
                         <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate max-w-60 sm:max-w-md">

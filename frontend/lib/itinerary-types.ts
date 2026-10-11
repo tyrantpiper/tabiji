@@ -235,3 +235,19 @@ export interface ParsedItinerary {
     end_date?: string
     items: ParsedItineraryItem[]
 }
+
+/**
+ * Parses JSON itinerary string safely.
+ */
+export function tryParseItinerary(text: string): ParsedItinerary | null {
+    if (!text || !text.includes('{"')) return null
+    try {
+        const cleanJson = text.replace(/```json|```/g, "").trim()
+        const data = JSON.parse(cleanJson)
+        if (data.items && Array.isArray(data.items)) return data as ParsedItinerary
+        if (data.data && data.data.items) return data.data as ParsedItinerary
+    } catch {
+        // Not a JSON itinerary
+    }
+    return null
+}
