@@ -1,0 +1,120 @@
+diff --git a/frontend/components/itinerary/ItineraryHeader.tsx b/frontend/components/itinerary/ItineraryHeader.tsx
+--- a/frontend/components/itinerary/ItineraryHeader.tsx
++++ b/frontend/components/itinerary/ItineraryHeader.tsx
+@@ -134,3 +134,3 @@ export function ItineraryHeader({
+                                 >
+-                                    <Calendar className="w-3.5 h-3.5 text-emerald-500 group-hover:scale-110 transition-transform" />
++                                    <Calendar className="w-3.5 h-3.5 text-[#1E2927] dark:text-[#E5EBEA] group-hover:scale-110 transition-transform" />
+                                     <span>{dateCapsuleText}</span>
+diff --git a/frontend/components/itinerary/TripMasterOverview.tsx b/frontend/components/itinerary/TripMasterOverview.tsx
+--- a/frontend/components/itinerary/TripMasterOverview.tsx
++++ b/frontend/components/itinerary/TripMasterOverview.tsx
+@@ -219,3 +219,3 @@ export function TripMasterOverview({
+                                     >
+-                                        <MapPin className="w-3 h-3 text-emerald-400" />
++                                        <MapPin className="w-3 h-3 text-slate-300 dark:text-slate-400" />
+                                         {city}
+@@ -308,3 +308,3 @@ export function TripMasterOverview({
+                                             {dailyLocation && (
+-                                                <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200/60 dark:border-emerald-800 flex items-center gap-1 shrink-0">
+-                                                    <MapPin className="w-3 h-3" />
++                                                <span className="text-[11px] font-medium text-[#1E2927] dark:text-[#E5EBEA] bg-black/5 dark:bg-white/10 px-2 py-0.5 rounded-full border border-black/10 dark:border-white/10 flex items-center gap-1 shrink-0">
++                                                    <MapPin className="w-3 h-3 text-[#1E2927] dark:text-[#E5EBEA]" />
+                                                     {dailyLocation.split(",")[0].trim()}
+diff --git a/frontend/components/itinerary/TripSettingsView.tsx b/frontend/components/itinerary/TripSettingsView.tsx
+--- a/frontend/components/itinerary/TripSettingsView.tsx
++++ b/frontend/components/itinerary/TripSettingsView.tsx
+@@ -480,3 +480,3 @@ export function TripSettingsView({
+                             <div className="flex items-center gap-3">
+-                                <Calendar className="w-4 h-4 text-emerald-500" />
++                                <Calendar className="w-4 h-4 text-[#1E2927] dark:text-[#E5EBEA]" />
+                                 <div>
+diff --git a/frontend/components/itinerary/CalendarRangeSheet.tsx b/frontend/components/itinerary/CalendarRangeSheet.tsx
+--- a/frontend/components/itinerary/CalendarRangeSheet.tsx
++++ b/frontend/components/itinerary/CalendarRangeSheet.tsx
+@@ -212,3 +212,3 @@ export function CalendarRangeSheet({
+                             <div className="flex items-center gap-2">
+-                                <CalendarIcon className="w-4 h-4 text-emerald-500" />
++                                <CalendarIcon className="w-4 h-4 text-[#1E2927] dark:text-[#E5EBEA]" />
+                                 <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
+diff --git a/frontend/components/views/tools-view.tsx b/frontend/components/views/tools-view.tsx
+--- a/frontend/components/views/tools-view.tsx
++++ b/frontend/components/views/tools-view.tsx
+@@ -5,4 +5,4 @@ import {
+-    Plus, Trash2, Edit2, ChevronRight, FileText, Loader2,
++    Plus, Trash2, Edit2, ChevronRight, FileText, Loader2, Calculator, Coins,
+     Wallet, CreditCard, Train, Utensils, ShoppingBag, Bed, Ticket, Receipt,
+@@ -948,3 +948,6 @@ export function ToolsView() {
+-    {totalCashback > 0 && (
+-        <p className="text-sm text-green-600 font-medium mt-1">💰 {t('tv_cashback_return', { amount: totalCashback.toLocaleString() })}</p>
+-    )}
++    {totalCashback > 0 && (
++        <p className="text-sm font-medium mt-1 flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
++            <Coins className="w-3.5 h-3.5 text-amber-500 shrink-0" />
++            <span>{t('tv_cashback_return', { amount: totalCashback.toLocaleString() })}</span>
++        </p>
++    )}
+@@ -957,13 +960,16 @@ export function ToolsView() {
+     {/* Features Group: Add & AI Actuary */}
+     <div className="space-y-2">
+-        <Button disabled={!activeTripId} onClick={openAddDialog} className="w-full bg-slate-900 text-white dark:bg-white dark:text-slate-900 h-10">
+-            <Plus className="w-4 h-4 mr-2" /> {activeTripId ? t('add') : "Please Select a Trip First"}
++        <Button 
++            disabled={!activeTripId} 
++            onClick={openAddDialog} 
++            className="w-full gap-2 bg-[#0B3026] hover:bg-[#0B3026]/90 text-white dark:bg-[#E5EBEA] dark:hover:bg-white dark:text-[#0B3026] font-semibold h-11 rounded-xl shadow-xs transition-all active:scale-[0.98] cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
++        >
++            <Plus className="w-4 h-4 shrink-0" /> 
++            <span>{activeTripId ? t('add') : (t('exp_select_trip_first') || (lang === 'zh' ? '請先選擇行程' : 'Please select a trip first'))}</span>
+         </Button>
+ 
+         <Button
+             onClick={() => setActuaryOpen(true)}
+             disabled={!activeTripId}
+-            className="w-full gap-2 bg-linear-to-r from-violet-500 hover:from-violet-600 to-indigo-500 hover:to-indigo-600 text-white font-bold h-11 rounded-xl shadow-lg border-0 transition-all active:scale-[0.98]"
++            className="w-full gap-2 bg-white/90 dark:bg-[#1E2927]/90 hover:bg-black/5 dark:hover:bg-white/5 text-[#0B3026] dark:text-[#E5EBEA] border border-[#0B3026]/15 dark:border-white/15 font-semibold h-11 rounded-xl shadow-xs transition-all active:scale-[0.98] cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+             variant="outline"
+         >
+-            🤖 {t('actuary_btn') || "AI 一鍵精算"}
++            <Calculator className="w-4 h-4 text-[#E56E25] shrink-0" />
++            <span>{t('actuary_btn') || "AI 一鍵精算"}</span>
+         </Button>
+     </div>
+diff --git a/frontend/components/ActuaryDialogCard.tsx b/frontend/components/ActuaryDialogCard.tsx
+--- a/frontend/components/ActuaryDialogCard.tsx
++++ b/frontend/components/ActuaryDialogCard.tsx
+@@ -4,3 +4,3 @@ import { useState, useEffect, useRef } from "react"
+-import { Loader2, Send } from "lucide-react"
++import { Loader2, Send, Calculator } from "lucide-react"
+@@ -173,3 +173,4 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
+-                        <DialogTitle className="flex items-center gap-2 text-lg">
+-                            🤖 {t('actuary_title') || "Travel Actuary"}
+-                        </DialogTitle>
++                        <DialogTitle className="flex items-center gap-2 text-lg font-bold text-[#1E2927] dark:text-[#E5EBEA]">
++                            <Calculator className="w-5 h-5 text-[#E56E25] shrink-0" />
++                            <span>{t('actuary_title') || "Travel Actuary"}</span>
++                        </DialogTitle>
+diff --git a/frontend/lib/translations.ts b/frontend/lib/translations.ts
+--- a/frontend/lib/translations.ts
++++ b/frontend/lib/translations.ts
+@@ -176,3 +176,3 @@ export const translations = {
+-        exp_split_bill: "🤖 1-Click Split",
++        exp_split_bill: "1-Click Split",
+@@ -485,3 +485,3 @@ export const translations = {
+-        exp_select_trip_first: "⚠️ 請先選擇行程",
++        exp_select_trip_first: "請先選擇行程",
+@@ -506,3 +506,3 @@ export const translations = {
+-        exp_split_bill: "🤖 一鍵精算",
++        exp_split_bill: "一鍵精算",
+diff --git a/frontend/lib/i18n/expense.ts b/frontend/lib/i18n/expense.ts
+--- a/frontend/lib/i18n/expense.ts
++++ b/frontend/lib/i18n/expense.ts
+@@ -29,3 +29,3 @@ export const expenseTranslations = {
+-        exp_split_bill: "🤖 1-Click Split",
++        exp_split_bill: "1-Click Split",
+@@ -121,3 +121,3 @@ export const expenseTranslations = {
+-        exp_split_bill: "🤖 一鍵精算",
++        exp_split_bill: "一鍵精算",
+@@ -163,3 +163,3 @@ export const expenseTranslations = {
+-        exp_select_trip_first: "⚠️ 請先選擇行程",
++        exp_select_trip_first: "請先選擇行程",

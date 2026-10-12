@@ -1,0 +1,42 @@
+[
+  {
+    "id": "frontend/lib/i18n/remaining.ts:tv_list_clipboard_emoji",
+    "file_path": "frontend/lib/i18n/remaining.ts",
+    "attack_vector": "i18n_dictionary_pollution_and_duplicate_icon",
+    "hypothesis": "tv_list contains hardcoded clipboard emoji 📋, which collides with adjacent Lucide List vector icon in ToolsView.",
+    "status": "CONFIRMED",
+    "proof": "frontend/__tests__/expense-toggle-sentinel.test.ts:TC-1"
+  },
+  {
+    "id": "frontend/lib/i18n:exp_shared_ledger_link_emoji",
+    "file_path": "frontend/lib/i18n/expense.ts",
+    "attack_vector": "i18n_dictionary_pollution_and_duplicate_icon",
+    "hypothesis": "exp_shared_ledger contains hardcoded link emoji 🔗 in both expense.ts and translations.ts, colliding with Lucide Share2 vector icon.",
+    "status": "CONFIRMED",
+    "proof": "frontend/__tests__/expense-toggle-sentinel.test.ts:TC-2"
+  },
+  {
+    "id": "frontend/components/views/tools-view.tsx:expense_view_toggle_color",
+    "file_path": "frontend/components/views/tools-view.tsx",
+    "attack_vector": "ui_brand_palette_deviation",
+    "hypothesis": "Expense view mode toggle buttons use generic slate-900 instead of Tabiji canonical #0B3026 dark forest palette.",
+    "status": "CONFIRMED",
+    "proof": "frontend/__tests__/expense-toggle-sentinel.test.ts:TC-3"
+  },
+  {
+    "id": "frontend/components/views/tools-view.tsx:share_button_indigo_color",
+    "file_path": "frontend/components/views/tools-view.tsx",
+    "attack_vector": "ui_color_clash_and_foreign_token",
+    "hypothesis": "Share public ledger button utilizes text-indigo-600 alien token, clashing with Tabiji unified color scheme.",
+    "status": "CONFIRMED",
+    "proof": "frontend/__tests__/expense-toggle-sentinel.test.ts:TC-4"
+  },
+  {
+    "id": "frontend/components/views/tools-view.tsx:icon_margin_double_spacing",
+    "file_path": "frontend/components/views/tools-view.tsx",
+    "attack_vector": "layout_spacing_stacking_bug",
+    "hypothesis": "Icons in toggle and share buttons use mr-2 / mr-1.5, which stacks with Button size='sm' internal gap-1.5 creating 14px excessive gap.",
+    "status": "CONFIRMED",
+    "proof": "frontend/__tests__/expense-toggle-sentinel.test.ts:TC-5"
+  }
+]

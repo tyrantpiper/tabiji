@@ -478,7 +478,7 @@ export function TripSettingsView({
                             className="w-full flex items-center justify-between p-4 text-left hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer border-none bg-transparent outline-hidden"
                         >
                             <div className="flex items-center gap-3">
-                                <Calendar className="w-4 h-4 text-emerald-500" />
+                                <Calendar className="w-4 h-4 text-[#1E2927] dark:text-[#E5EBEA]" />
                                 <div>
                                     <div className="text-sm font-medium text-[#1E2927] dark:text-[#E5EBEA]">
                                         {zh ? "旅行日期區間" : "Trip Date Range"}

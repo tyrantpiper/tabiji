@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, memo, ComponentType, useRef } from "react"
 import { motion } from "framer-motion"
 import {
-    Plus, Trash2, Edit2, ChevronRight, FileText, Loader2,
+    Plus, Trash2, Edit2, ChevronRight, FileText, Loader2, Calculator, Coins,
     Wallet, CreditCard, Train, Utensils, ShoppingBag, Bed, Ticket, Receipt,
     Image as ImageIcon, ChevronLeft, PieChart, List, Users, User,
     Share2, Inbox
@@ -136,7 +136,7 @@ const CURRENCIES = [
 import { getExchangeRate } from "@/lib/currency"
 import { CountingNumber } from "@/components/ui/counting-number"
 export function ToolsView() {
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
     const { activeTrip, activeTripId, mutate: tripMutate, userId, handleTripNotFound } = useTripContext()
     // 🔧 v7 FIX: 載入完整行程資料（含 members），解決成員列表為空的問題
     const { trip: tripDetail } = useTripDetail(activeTripId, userId, 0, handleTripNotFound)
@@ -733,9 +733,9 @@ export function ToolsView() {
                             {/* Segmented Sliding Tab Strip */}
                             <div className="grid grid-cols-3 bg-white/70 dark:bg-[#1E2927]/60 backdrop-blur-md shadow-sm rounded-2xl p-1.5 mb-6 border border-[#0B3026]/10 dark:border-white/10">
                                 {[
-                                    { value: 'cards', label: t('tv_cards') },
-                                    { value: 'expense', label: t('expense') },
-                                    { value: 'actuary', label: t('tv_actuary') || "精算器" }
+                                    { value: 'cards', label: t('tv_cards'), icon: CreditCard },
+                                    { value: 'expense', label: t('expense'), icon: Receipt },
+                                    { value: 'actuary', label: t('tv_actuary') || "精算器", icon: Calculator }
                                 ].map((tab) => (
                                     <button
                                         key={tab.value}
@@ -745,7 +745,7 @@ export function ToolsView() {
                                             }
                                         }}
                                         className={cn(
-                                            "relative z-10 py-3 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300",
+                                            "relative z-10 py-3 px-1.5 sm:px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center justify-center",
                                             activeSection === tab.value
                                                 ? "text-white"
                                                 : "text-[#1E2927]/60 hover:text-[#1E2927] dark:text-[#88A29A] dark:hover:text-[#E5EBEA]"
@@ -758,7 +758,10 @@ export function ToolsView() {
                                                 transition={{ type: "spring", stiffness: 400, damping: 30 }}
                                             />
                                         )}
-                                        {tab.label}
+                                        <div className="relative z-10 flex items-center justify-center gap-1.5 min-w-0">
+                                            <tab.icon className="w-4 h-4 shrink-0" />
+                                            <span className="truncate">{tab.label}</span>
+                                        </div>
                                     </button>
                                 ))}
                             </div>
@@ -840,18 +843,30 @@ export function ToolsView() {
                                         <Button
                                             variant={expenseView === 'summary' ? 'default' : 'outline'}
                                             size="sm"
-                                            className={cn("flex-1 h-11", expenseView === 'summary' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'dark:text-white dark:border-slate-700')}
+                                            className={cn(
+                                                "flex-1 h-11 rounded-xl font-semibold transition-all active:scale-[0.98] cursor-pointer",
+                                                expenseView === 'summary'
+                                                    ? "bg-[#0B3026] hover:bg-[#0B3026]/90 text-white dark:bg-[#E5EBEA] dark:hover:bg-white dark:text-[#0B3026] shadow-xs"
+                                                    : "bg-white/80 dark:bg-[#1E2927]/60 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/15 dark:border-white/15 hover:bg-black/5 dark:hover:bg-white/5"
+                                            )}
                                             onClick={() => setExpenseView('summary')}
                                         >
-                                            <PieChart className="w-4 h-4 mr-2" /> {t('total')}
+                                            <PieChart className="w-4 h-4 shrink-0" />
+                                            <span>{t('total')}</span>
                                         </Button>
                                         <Button
                                             variant={expenseView === 'daily' ? 'default' : 'outline'}
                                             size="sm"
-                                            className={cn("flex-1 h-11", expenseView === 'daily' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'dark:text-white dark:border-slate-700')}
+                                            className={cn(
+                                                "flex-1 h-11 rounded-xl font-semibold transition-all active:scale-[0.98] cursor-pointer",
+                                                expenseView === 'daily'
+                                                    ? "bg-[#0B3026] hover:bg-[#0B3026]/90 text-white dark:bg-[#E5EBEA] dark:hover:bg-white dark:text-[#0B3026] shadow-xs"
+                                                    : "bg-white/80 dark:bg-[#1E2927]/60 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/15 dark:border-white/15 hover:bg-black/5 dark:hover:bg-white/5"
+                                            )}
                                             onClick={() => setExpenseView('daily')}
                                         >
-                                            <List className="w-4 h-4 mr-2" /> {t('tv_list')}
+                                            <List className="w-4 h-4 shrink-0" />
+                                            <span>{t('tv_list')}</span>
                                         </Button>
                                     </div>
 
@@ -861,13 +876,13 @@ export function ToolsView() {
                                         size="sm"
                                         onClick={handleShareLedger}
                                         disabled={isSharing || !activeTripId}
-                                        className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 border border-transparent hover:border-indigo-100"
+                                        className="text-[#0B3026] dark:text-[#E5EBEA] hover:bg-[#0B3026]/10 dark:hover:bg-white/10 border border-transparent font-medium rounded-xl h-11 transition-colors cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
                                     >
                                         {isSharing
-                                            ? <Loader2 className="w-4 h-4 animate-spin" />
-                                            : <Share2 className="w-4 h-4" />
+                                            ? <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                                            : <Share2 className="w-4 h-4 shrink-0" />
                                         }
-                                        <span className="ml-1 font-semibold">{t('share_ledger_btn') || "分享公帳"}</span>
+                                        <span>{t('share_ledger_btn') || "分享公帳"}</span>
                                     </Button>
                                 </div>
 
@@ -945,7 +960,10 @@ export function ToolsView() {
                                                         />
                                                     </div>
                                                     {totalCashback > 0 && (
-                                                        <p className="text-sm text-green-600 font-medium mt-1">💰 {t('tv_cashback_return', { amount: totalCashback.toLocaleString() })}</p>
+                                                        <p className="text-sm font-medium mt-1 flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                                                            <Coins className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                                            <span>{t('tv_cashback_return', { amount: totalCashback.toLocaleString() })}</span>
+                                                        </p>
                                                     )}
                                                 </div>
                                             </div>
@@ -955,17 +973,23 @@ export function ToolsView() {
 
                                 {/* Features Group: Add & AI Actuary */}
                                 <div className="space-y-2">
-                                    <Button disabled={!activeTripId} onClick={openAddDialog} className="w-full bg-slate-900 text-white dark:bg-white dark:text-slate-900 h-10">
-                                        <Plus className="w-4 h-4 mr-2" /> {activeTripId ? t('add') : "Please Select a Trip First"}
+                                    <Button 
+                                        disabled={!activeTripId} 
+                                        onClick={openAddDialog} 
+                                        className="w-full gap-2 bg-[#0B3026] hover:bg-[#0B3026]/90 text-white dark:bg-[#E5EBEA] dark:hover:bg-white dark:text-[#0B3026] font-semibold h-11 rounded-xl shadow-xs transition-all active:scale-[0.98] cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                                    >
+                                        <Plus className="w-4 h-4 shrink-0" /> 
+                                        <span>{activeTripId ? t('add') : (t('exp_select_trip_first') || (lang === 'zh' ? '請先選擇行程' : 'Please select a trip first'))}</span>
                                     </Button>
 
                                     <Button
                                         onClick={() => setActuaryOpen(true)}
                                         disabled={!activeTripId}
-                                        className="w-full gap-2 bg-linear-to-r from-violet-500 hover:from-violet-600 to-indigo-500 hover:to-indigo-600 text-white font-bold h-11 rounded-xl shadow-lg border-0 transition-all active:scale-[0.98]"
+                                        className="w-full gap-2 bg-white/90 dark:bg-[#1E2927]/90 hover:bg-black/5 dark:hover:bg-white/5 text-[#0B3026] dark:text-[#E5EBEA] border border-[#0B3026]/15 dark:border-white/15 font-semibold h-11 rounded-xl shadow-xs transition-all active:scale-[0.98] cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
                                         variant="outline"
                                     >
-                                        🤖 {t('actuary_btn') || "AI 一鍵精算"}
+                                        <Calculator className="w-4 h-4 text-[#E56E25] shrink-0" />
+                                        <span>{t('actuary_btn') || "AI 一鍵精算"}</span>
                                     </Button>
                                 </div>
 

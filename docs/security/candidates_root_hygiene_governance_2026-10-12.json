@@ -1,0 +1,26 @@
+[
+  {
+    "id": "runner.py:root_directory_argument_pollution",
+    "file_path": ".agents/skills/security-sentinel/scripts/runner.py",
+    "attack_vector": "filesystem_namespace_pollution",
+    "hypothesis": "runner.py consumes --candidates and --output without checking if the destination directory is the project root, allowing intermediate scan artifacts to pollute the repository root.",
+    "status": "CANDIDATE",
+    "proof": "backend/tests/test_root_hygiene_sentinel.py:test_runner_blocks_root_path"
+  },
+  {
+    "id": "runner.py:windows_path_normcase_bypass",
+    "file_path": ".agents/skills/security-sentinel/scripts/runner.py",
+    "attack_vector": "path_comparison_bypass_on_windows",
+    "hypothesis": "Path equality checks that omit os.path.normcase can fail on Windows when drive letter casing differs, allowing bypass of root directory protection.",
+    "status": "CANDIDATE",
+    "proof": "backend/tests/test_root_hygiene_sentinel.py:test_runner_normalizes_drive_casing"
+  },
+  {
+    "id": "push.md:missing_root_hygiene_gate",
+    "file_path": ".agents/workflows/push.md",
+    "attack_vector": "workflow_quality_gate_omission",
+    "hypothesis": "push.md pre-flight harness lacks an automated root hygiene check, allowing ignored and untracked intermediate files to persist across commits and releases.",
+    "status": "CANDIDATE",
+    "proof": "backend/tests/test_root_hygiene_sentinel.py:test_push_gate_detects_root_offenders"
+  }
+]

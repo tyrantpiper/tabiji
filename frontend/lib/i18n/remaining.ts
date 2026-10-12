@@ -236,9 +236,9 @@ export const remainingTranslations = {
         weekday_wed: "Wed", weekday_thu: "Thu", weekday_fri: "Fri", weekday_sat: "Sat",
 
         // Tools extras
-        tv_cards: "💳 Cards",
-        tv_actuary: "🧮 Actuary",
-        tv_list: "📋 List",
+        tv_cards: "Cards",
+        tv_actuary: "Actuary",
+        tv_list: "List",
         tv_my_cards: "My Credit Cards",
         tv_add_card: "Add",
         tv_no_cards: "No cards yet",
@@ -967,9 +967,9 @@ export const remainingTranslations = {
         weekday_wed: "三", weekday_thu: "四", weekday_fri: "五", weekday_sat: "六",
 
         // Tools extras
-        tv_cards: "💳 卡片",
-        tv_actuary: "🧮 精算器",
-        tv_list: "📋 列表",
+        tv_cards: "卡片",
+        tv_actuary: "精算器",
+        tv_list: "列表",
         tv_my_cards: "我的信用卡",
         tv_add_card: "新增",
         tv_no_cards: "尚無卡片",
