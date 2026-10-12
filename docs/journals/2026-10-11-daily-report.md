@@ -1,16 +1,17 @@
 # 📅 Daily Report - 2026-10-11 (Master Full-Day Consolidation)
 
-> **系統狀態**：🟢 Production Deployed & Verified, Global Tax Actuary Live, Double-Card Split Strategy Operational, In-Memory Tally Tape Verified, Cross-Module AI Import Linked, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 57/57 Suites Passing, 405/405 Tests Passing; Backend 121/121 Passing), GitHub main branch synced (`4ca4819`).  
+> **系統狀態**：🟢 Production Deployed & Verified, Global Tax Actuary Live, Double-Card Split Strategy Operational, Globalized 5-Day Import Templates Live (Tokyo/Paris/NYC), In-Memory Tally Tape Verified, Cross-Module AI Import Linked, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 57/57 Suites Passing, 406/406 Tests Passing; Backend 122/122 Passing), GitHub main branch synced (`14cfcd3`).  
 > **今日關鍵提交串列 (Full Day Commit Stream)**：
-> - [`4ca4819`](https://github.com/tyrantpiper/tabiji/commit/4ca4819) `feat(tools): add global tax actuary and smart credit card split strategy`
+> - [`14cfcd3`](https://github.com/tyrantpiper/tabiji/commit/14cfcd3) `feat(itinerary): globalize import templates and enforce 5-day currency alignment` (20:07:10 +0800)
+> - [`4ca4819`](https://github.com/tyrantpiper/tabiji/commit/4ca4819) `feat(tools): add global tax actuary and smart credit card split strategy` (16:50:18 +0800)
 > - [`50ba989`](https://github.com/tyrantpiper/tabiji/commit/50ba989) `fix(auth): atomic cache reset and splash preload to eliminate recovery race and stutter`
 > - [`0cfe4f8`](https://github.com/tyrantpiper/tabiji/commit/0cfe4f8) `fix(pwa): restore golden statusBarStyle default and #fafaf9 theme to eliminate viewport upward offset`
 
 ---
 
-## 🏆 深度專案復盤：五大核心工程里程碑 (Five Engineering Milestones)
+## 🏆 深度專案復盤：六大核心工程里程碑 (Six Engineering Milestones)
 
-本日完成全端視口穩定性、開機繪製管線、身分引繼防線，以及工具箱全新「全球免稅精算器 ✕ 雙卡拆單神策 ✕ 購物計算機」的全面交付：
+本日完成全端視口穩定性、開機繪製管線、身分引繼防線、全球化多國 5 日行程範本與地理貨幣自動對齊，以及工具箱全新「全球免稅精算器 ✕ 雙卡拆單神策 ✕ 購物計算機」的全面交付：
 
 ---
 
@@ -76,9 +77,29 @@
 
 ---
 
+### 里程碑六：全球化示範行程範本匯入 ✕ 5日多幣別對齊 ✕ 地理編碼關鍵字防線 (Global Import Templates & 5-Day Currency Alignment)
+1. **業務痛點與多國擴展需求**：
+   - 原 `AiImportTripWizard.tsx` 僅內建短天數單一範本，且範本文字多限於亞洲單一貨幣情境。使用者需要快速體驗歐洲與北美跨洲際長程規劃，同時測試貨幣對齊（EUR, USD）與 5 整天完整景點排程。
+2. **核心架構升級**：
+   - **亞洲、歐洲、美洲三大經典 5 日範本落地**：
+     - 🇯🇵 東京 5 天深度慢活（Tokyo, JPY）
+     - 🇫🇷 巴黎 5 天藝文漫步（Paris, EUR）
+     - 🇺🇸 紐約 5 天都會探險（New York City, USD）
+   - **雙語國際化對齊 (Bilingual i18n Guard)**：完整支援繁體中文 (`zh-TW`) 與英文 (`en`) 範本名稱、描述、佔位符與動態提示，杜絕硬編碼字串。
+   - **地理編碼歐美母體關鍵字防線 (Geocode Mother Region Keywords Expansion)**：
+     - 在後端 `backend/services/geocode_service.py` 擴充 `LOCATION_KEYWORDS`，新增法國 (`FR`: `paris`, `france`, `lyon`, `marseille`, `versailles`, `eiffel`) 與美國 (`US`: `new york`, `nyc`, `manhattan`, `brooklyn`, `united states`, `usa`) 關鍵字。
+     - 確保匯入巴黎與紐約行程時，`detect_country_from_keywords` 能精準識別國家代碼與對應主權貨幣（EUR / USD），消滅開源 Photon 地理編碼缺漏 `country` 欄位造成的空間錯位。
+   - **Security Sentinel 雙端記憶體沙盒測試守門**：
+     - 前端 `ai-import-templates-sentinel.test.ts` 驗證三大範本 5 日結構完整性、景點天數連續性與經緯度格式。
+     - 後端 `test_sentinel_global_templates.py` 驗證地理編碼關鍵字解析、貨幣推斷與空間邊界。
+
+---
+
 ## 4. 多維度知識提煉 (Multi-Dimensional Synthesis)
 
 ### 🟢 Features & Fixes
+- **Globalized 5-Day Import Templates**: `AiImportTripWizard.tsx` 內建東京、巴黎、紐約三大跨洲 5 整天完整範本，支援雙語 i18n 切換。
+- **Geocode Country & Currency Auto-Inference**: 後端地理編碼關鍵字擴充 FR 與 US，精準對應 EUR 與 USD 主權法幣。
 - **GlobalTaxActuary 落地**: 工具箱全新掛載全球免稅精算器，支援 18 國法規、自訂國別、匯率原地編輯與一鍵轉入記帳。
 - **In-Memory Calculator & Tally Tape**: 大鍵盤四則運算、算式紙帶清單與門檻進度條，無痕記憶體管理。
 - **Smart Double-Card Split Strategy**: 1.5% 海外手續費折抵、上限正規化與雙卡接力拆單神策，帶有 30 元利差摩擦力防護。
@@ -90,6 +111,8 @@
 - **Atomic Recovery Reset**: `landing-page.tsx` 實裝 Zustand 快取原子清理與 5 秒過渡靜音鎖。
 
 ### 🏛️ Architecture Decisions
+- **全球示範範本 5 日完整閉環與雙語國際化對齊 (AD-083)**: 範本必須提供滿 5 天、每天至少 3 個具備正確經緯度的真實景點結構，並嚴格透過 `locale` 分流雙語字串，保障示範資料隨選即用。
+- **地理編碼關鍵字歐美擴充與貨幣自動推斷防線 (AD-084)**: 針對 Photon 不帶 `country` 欄位的缺陷，後端必須持續維護並擴充 `LOCATION_KEYWORDS` 字典，使全球主流目的地（法、美、日、台等）能自動推導 ISO 國碼與正確記帳法定貨幣。
 - **Zero-Eval 四則運算 AST 詞法解析求值器 (AD-079)**: 購物計算機嚴禁使用 `eval()` 或 `new Function()`。透過 Tokenizer 採兩階段掃描（先乘除後加減），支援懸空符號修補與除以零安全防禦，杜絕 XSS。
 - **信用卡現金回饋上限正規化與最大可刷額度推導 (AD-080)**: 台灣信用卡回饋上限為回饋金上限，引擎必須以 $MaxSpend = Limit / (Rate\%)$ 換算最大可刷額度，並精確扣除 1.5% 手續費結算真實淨利差。
 - **雙卡最佳拆單神策與收銀台摩擦力防衛 (AD-081)**: 超出頂級神卡上限時，以費率最高滿額卡 A 搭配次佳無上限卡 B；次卡 $\ge 100$ TWD 且額外利差 $\ge 30$ TWD 才主動輸出拆單神策，避免瑣碎操作。
@@ -113,15 +136,18 @@
 ## 5. 品質閘門驗證清單 (Quality Gates Checklist)
 - [x] **TypeScript**: `npx tsc --noEmit` (0 Errors)
 - [x] **ESLint**: `npm run lint` (0 Errors, 0 Warnings)
-- [x] **Vitest (Frontend)**: 57 Suites, 405 Tests Passed (100% Green, 含 13 項沙盒精算器測試)
-- [x] **Pytest (Backend)**: 121 Tests Passed, 5 Skipped (100% Green)
+- [x] **Vitest (Frontend)**: 57 Suites, 406 Tests Passed (100% Green, 含 13 項沙盒精算器測試 + 1 項 AI 範本沙盒測試)
+- [x] **Pytest (Backend)**: 122 Tests Passed, 5 Skipped (100% Green, 含 全球地理關鍵字沙盒測試)
 - [x] **Account Recovery Sentinel**: `account-recovery-atomic-sentinel.test.tsx` (2/2 Passed)
 - [x] **Actuary Engine Sandbox**: `actuary-engine-sandbox.test.ts` (13/13 Passed)
-- [x] **Git Cleanliness**: `Working tree clean`，已完全同步至遠端 `origin/main` (`4ca4819`)
+- [x] **Global Template Sentinel**: `ai-import-templates-sentinel.test.ts` (1/1 Passed) & `test_sentinel_global_templates.py` (2/2 Passed)
+- [x] **Git Cleanliness**: `Working tree clean`，已完全同步至遠端 `origin/main` (`14cfcd3`)
 
 ---
 
 ## 6. 下一步規劃 (Next Steps)
-1. **真機免稅精算器手感體驗**：驗證在 iPhone / Android 實機上點擊計算機大鍵盤與紙帶累加之觸控回饋 (`haptic`) 與絲滑度。
-2. **雙卡拆單實戰微調**：依據使用者實際反饋，持續擴充常用海外高回饋神卡（如永豐幣倍、聯邦幸福 M 卡、國泰 CUBE 等）的標籤備忘。
-3. **Dependabot #105 安全性依賴升級評估**。
+1. **行程設定面板 (Trip Settings View) 專屬獨立視圖實作**：將行程封面管理、行程基本資料與危險操作收攏於獨立設定視圖，支援平滑滑入滑出動效。
+2. **目的地封面照片自動解析管線 (Destination Cover Photo Pipeline)**：建程時依據目的地關鍵字自動匹配優質高解析度封面，提供 0 成本高美感首頁視覺。
+3. **雙卡拆單實戰微調**：依據使用者實際反饋，持續擴充常用海外高回饋神卡（如永豐幣倍、聯邦幸福 M 卡、國泰 CUBE 等）的標籤備忘。
+4. **Dependabot #105 安全性依賴升級評估**。
+

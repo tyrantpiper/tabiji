@@ -445,4 +445,16 @@
 - **雙卡最佳拆單神策與收銀台摩擦力防衛 (AD-081)**: 當消費總額超出頂級神卡上限時，候選卡 A 必須是「費率最高且已封頂的卡」，卡 B 為「次佳無上限卡」進行接力拆單；同時實裝收銀台摩擦力守衛——次卡消費必須 $\ge 100$ TWD 且拆單額外利差必須 $\ge 30$ TWD 才主動輸出拆單神策，避免使用者為極微小金額增加實體收銀台刷卡複雜度。
 - **跨視圖行程研究結構化直通匯入架構 (AD-082)**: AI 旅伴對話產生的行程結構，不再強迫使用者切換工具箱複製貼上。透過 `CustomEvent("ai-import-itinerary")` 與 `CustomEvent("navigate-to-trips")` 雙向事件總線，直通 `app-shell.tsx` 切換至行程視圖，並由 `TripDialogs.tsx` 透過 `tryParseItinerary` 解析直接喚醒 `CreateTripModal`，達成對話至建程零摩擦閉環。
 - **Turbopack 開發模式 Service Worker 快取劫持陷阱 (FP-021)**: 在執行過 PWA 生產預覽 (`npm run build && npm start`) 後回到 `npm run dev`，瀏覽器若殘留已註冊之 Service Worker，其 `CacheFirst` 會持續吐出快取中的歷史 JS Chunks（如引用已棄用之 `TripList.tsx`），引發 `Module factory is not available` 白屏報錯。教訓：開發環境切換須執行硬性重新整理（Ctrl+Shift+R）或於 DevTools Unregister Service Worker。
-- **種子規則國碼重複與 React List Key 碰撞陷阱 (FP-022)**: 在擴充多國免稅規則時，未檢查頂部既有清單而重複追加 `countryCode: "VN"`，導致國別搜尋清單遍歷時產生重複的 `key="VN"` 觸發 React 警告。處方：資料層物理合併去重，表現層元件透過 `new Map()` 依據 `countryCode` 進行確定性動態去重，達成雙重免疫。
+- **種子規則國碼重複與 React List Key 碰撞陷阱 (FP-022)**: 在擴充多國免稅規則時，未檢查頂部既有清單而重複追加 `countryCode: "VN"`，導致國別搜尋清單遍歷時產生重複的 `key="VN"` 觸發 React 警告。處方：資料層物理合併去重，表現層元件透過 `new Map()` 依據 `countryCode` 進行確定性動態去重，達成雙重免疫。
+
+### 24. 全球化示範行程範本匯入與歐美地理貨幣推斷領域 (Global Import Templates & Geocode Currency Inference) [2026-10-11 Commit 14cfcd3]
+- **全球示範範本 5 日完整閉環與雙語國際化對齊 (AD-083)**: 範本必須提供滿 5 天、每天至少 3 個具備正確經緯度的真實景點結構，涵蓋亞洲（東京 JPY）、歐洲（巴黎 EUR）與美洲（紐約 USD），並嚴格透過 `locale` 分流中英雙語字串，保障示範資料隨選即用。
+- **地理編碼關鍵字歐美擴充與貨幣自動推斷防線 (AD-084)**: 針對開源 Photon 不帶 `country` 欄位的缺陷，後端必須持續維護並擴充 `LOCATION_KEYWORDS` 字典，使全球主流目的地（法、美、日、台等）能由目的地關鍵字自動推導 ISO 國碼與正確記帳法定貨幣（如 EUR, USD），消滅手動與匯入行程的空間與幣別錯位。
+
+### 25. 行程設定視圖、雙軸逆向動態轉場與目的地封面自動解析領域 (Trip Settings View, Dual-Axis Inverse Motion & Destination Cover Pipeline) [2026-10-12 Commit 7b2bb7c]
+- **獨立行程設定分組視圖與頂部對稱齒輪導航 (AD-085)**: 行程次級管理操作（封面、資訊修改、危險刪除、權限設定）嚴禁分散堆疊於單一長頁面或巢狀彈窗中；確立收攏於專屬 `TripSettingsView` 視圖，並以頂部導航列右側對稱齒輪圖示作為單一入口，為未來協同與設定擴充預留清晰架構容器。
+- **雙軸逆向動態轉場與疊層常駐渲染架構 (AD-086)**: 次級視圖切換嚴禁完全銷毀母體視圖（避免地圖 WebGL 與 SWR 快取重繪掉幀）；架構上採用絕對定位疊層（Absolute Overlay），進場向左滑入（$x: 100\% \to 0$），退場向右滑出（$x: 0 \to 100\%$），達成物理對稱的空間深度感知，並整合 `popstate` 監聽協同硬體返回鍵。
+- **零成本預選封面自動解析管線 (AD-087)**: 新建行程時若未指定封面，前端與後端協同依據目的地名稱執行模糊關鍵字解析（`resolveDestinationCover`），自動匹配預載之優質風景封面，達成 0 外部 API 成本、0 延遲且 100% 視覺完整度。
+- **客戶端零技術行話與消費者級語意修飾原則 (AD-088)**: 使用者面向的介面文案嚴禁暴露具體雲端基礎設施商標（如 Cloudinary）、圖片編碼格式（如 WebP）或內部伺服器架構細節；所有文案必須經過消費者視角潤飾，杜絕資訊洩漏並降低使用認知摩擦力。
+- **`AnimatePresence mode="wait"` 同級視圖替換之位移衝突與運動向量脫節陷阱 (FP-023)**: 初版嘗試在主視圖層級以 `AnimatePresence mode="wait"` 切換 `activeView === "settings"`，導致底層 `TripDetailView` 被完全卸載，地圖 Canvas 與 SWR 狀態重置；且設定頁退場時因視圖已切換，退場動畫無法反向播放。處方：改採 Overlay 絕對疊層模式，底層行程常駐，設定頁掛載獨立 `AnimatePresence` 並嚴格定義進場與退場之逆向位移向量。
+- **設定面板外層容器 `overflow-hidden` 滾動鎖定陷阱 (FP-024)**: 在包裝全屏 Overlay 時習慣性加上 `h-full overflow-hidden`，導致當內容卡片超出螢幕高度時，瀏覽器原生捲軸被強制切斷，造成真機無法滑至底部的致命假死現象。處方：外層容器必須為 `overflow-y-auto overscroll-contain`，內層容器宣告 `min-h-full pb-32` 保障足夠觸控滑動邊距。
