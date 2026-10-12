@@ -15,6 +15,17 @@ triggers:
 在推送前，必須循序執行並通過四大品質檢驗關卡。任何一項失敗，必須**立即終止**並向開發者回報，絕對禁止推進提交：
 
 ```powershell
+# 0. 專案根目錄衛生檢查 (Root Hygiene Gate)
+$whitelist = @("package.json", "package-lock.json", "tsconfig.json", "components.json", "NOTICE.md", "README.md", "next.config.ts")
+$offenders = Get-ChildItem -Path . -File | Where-Object { 
+    ($_.Extension -match '^\.(diff|tmp|bak|log)$') -or 
+    ($_.Extension -eq '.json' -and $whitelist -notcontains $_.Name)
+}
+if ($offenders) {
+    Write-Error "🚨 [Root Hygiene Gate] 偵測到專案根目錄存在未歸位檔案: $($offenders.Name -join ', ')。請歸位後再執行 push！"
+    exit 1
+}
+
 # 1. 前端 TypeScript 靜態檢查 (0 錯誤)
 cd frontend; npx tsc --noEmit; if ($LASTEXITCODE -ne 0) { Write-Error "TypeScript Check Failed"; exit 1 }
 

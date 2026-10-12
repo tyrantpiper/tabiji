@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
-    Plane, Bed, Save, Edit3, Clock, MapPin,
+    Plane, Hotel as HotelIcon, ShoppingBag, Bed, Save, Edit3, Clock, MapPin,
     ExternalLink, Phone, Wifi, Link as LinkIcon, Plus, Trash2, Info, Navigation2, Search, Loader2, ChevronRight
 } from "lucide-react"
 import Image from "next/image"
@@ -412,15 +412,15 @@ export function InfoView() {
                             {/* Segmented Sliding Tab Menu */}
                             <div className="grid grid-cols-3 bg-white/70 dark:bg-[#1E2927]/60 backdrop-blur-md shadow-sm rounded-2xl p-1.5 mb-6 border border-[#0B3026]/10 dark:border-white/10">
                                 {[
-                                    { value: 'flights', label: '✈️ ' + t('flight_details') },
-                                    { value: 'hotels', label: '🏨 ' + t('accommodation') },
-                                    { value: 'booking', label: '🛒 ' + t('booking_center') }
+                                    { value: 'flights', label: t('flight_details'), icon: Plane },
+                                    { value: 'hotels', label: t('accommodation'), icon: HotelIcon },
+                                    { value: 'booking', label: t('booking_center'), icon: ShoppingBag }
                                 ].map((tab) => (
                                     <button
                                         key={tab.value}
                                         onClick={() => setActiveSection(tab.value)}
                                         className={cn(
-                                            "relative z-10 py-3 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300",
+                                            "relative z-10 py-3 px-1.5 sm:px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center justify-center",
                                             activeSection === tab.value
                                                 ? "text-white"
                                                 : "text-[#1E2927]/60 hover:text-[#1E2927] dark:text-[#88A29A] dark:hover:text-[#E5EBEA]"
@@ -433,7 +433,10 @@ export function InfoView() {
                                                 transition={{ type: "spring", stiffness: 400, damping: 30 }}
                                             />
                                         )}
-                                        {tab.label}
+                                        <div className="relative z-10 flex items-center justify-center gap-1.5 min-w-0">
+                                            <tab.icon className="w-4 h-4 shrink-0" />
+                                            <span className="truncate">{tab.label}</span>
+                                        </div>
                                     </button>
                                 ))}
                             </div>

@@ -1,0 +1,98 @@
+diff --git a/frontend/components/views/info-view.tsx b/frontend/components/views/info-view.tsx
+--- a/frontend/components/views/info-view.tsx
++++ b/frontend/components/views/info-view.tsx
+@@ -5,3 +5,3 @@
+ import {
+-    Plane, Bed, Save, Edit3, Clock, MapPin,
++    Plane, Hotel as HotelIcon, ShoppingBag, Bed, Save, Edit3, Clock, MapPin,
+     ExternalLink, Phone, Wifi, Link as LinkIcon, Plus, Trash2, Info, Navigation2, Search, Loader2, ChevronRight
+@@ -414,19 +414,22 @@
+                                 {[
+-                                    { value: 'flights', label: '✈️ ' + t('flight_details') },
+-                                    { value: 'hotels', label: '🏨 ' + t('accommodation') },
+-                                    { value: 'booking', label: '🛒 ' + t('booking_center') }
++                                    { value: 'flights', label: t('flight_details'), icon: Plane },
++                                    { value: 'hotels', label: t('accommodation'), icon: HotelIcon },
++                                    { value: 'booking', label: t('booking_center'), icon: ShoppingBag }
+                                 ].map((tab) => (
+                                     <button
+                                         key={tab.value}
+                                         onClick={() => setActiveSection(tab.value)}
+                                         className={cn(
+-                                            "relative z-10 py-3 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300",
++                                            "relative z-10 py-3 px-1.5 sm:px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center justify-center",
+                                             activeSection === tab.value
+                                                 ? "text-white"
+                                                 : "text-[#1E2927]/60 hover:text-[#1E2927] dark:text-[#88A29A] dark:hover:text-[#E5EBEA]"
+                                         )}
+                                     >
+                                         {activeSection === tab.value && (
+                                             <motion.div
+                                                 layoutId="info-tab-indicator"
+                                                 className="absolute inset-0 bg-[#0B3026] dark:bg-[#164E40] shadow-sm rounded-xl -z-10"
+                                                 transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                                             />
+                                         )}
+-                                        {tab.label}
++                                        <div className="relative z-10 flex items-center justify-center gap-1.5 min-w-0">
++                                            <tab.icon className="w-4 h-4 shrink-0" />
++                                            <span className="truncate">{tab.label}</span>
++                                        </div>
+                                     </button>
+                                 ))}
+
+diff --git a/frontend/components/views/tools-view.tsx b/frontend/components/views/tools-view.tsx
+--- a/frontend/components/views/tools-view.tsx
++++ b/frontend/components/views/tools-view.tsx
+@@ -735,21 +735,24 @@
+                                 {[
+-                                    { value: 'cards', label: t('tv_cards') },
+-                                    { value: 'expense', label: t('expense') },
+-                                    { value: 'actuary', label: t('tv_actuary') || "精算器" }
++                                    { value: 'cards', label: t('tv_cards'), icon: CreditCard },
++                                    { value: 'expense', label: t('expense'), icon: Receipt },
++                                    { value: 'actuary', label: t('tv_actuary') || "精算器", icon: Calculator }
+                                 ].map((tab) => (
+                                     <button
+                                         key={tab.value}
+                                         onClick={() => {
+                                             if (activeSection !== tab.value) {
+                                                 setActiveSection(tab.value)
+                                             }
+                                         }}
+                                         className={cn(
+-                                            "relative z-10 py-3 px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300",
++                                            "relative z-10 py-3 px-1.5 sm:px-3 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center justify-center",
+                                             activeSection === tab.value
+                                                 ? "text-white"
+                                                 : "text-[#1E2927]/60 hover:text-[#1E2927] dark:text-[#88A29A] dark:hover:text-[#E5EBEA]"
+                                         )}
+                                     >
+                                         {activeSection === tab.value && (
+                                             <motion.div
+                                                 layoutId="tools-tab-indicator"
+                                                 className="absolute inset-0 bg-[#0B3026] dark:bg-[#164E40] shadow-sm rounded-xl -z-10"
+                                                 transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                                             />
+                                         )}
+-                                        {tab.label}
++                                        <div className="relative z-10 flex items-center justify-center gap-1.5 min-w-0">
++                                            <tab.icon className="w-4 h-4 shrink-0" />
++                                            <span className="truncate">{tab.label}</span>
++                                        </div>
+                                     </button>
+                                 ))}
+
+diff --git a/frontend/lib/i18n/remaining.ts b/frontend/lib/i18n/remaining.ts
+--- a/frontend/lib/i18n/remaining.ts
++++ b/frontend/lib/i18n/remaining.ts
+@@ -239,2 +239,2 @@
+-        tv_cards: "💳 Cards",
+-        tv_actuary: "🧮 Actuary",
++        tv_cards: "Cards",
++        tv_actuary: "Actuary",
+@@ -970,2 +970,2 @@
+-        tv_cards: "💳 卡片",
+-        tv_actuary: "🧮 精算器",
++        tv_cards: "卡片",
++        tv_actuary: "精算器",

@@ -132,7 +132,7 @@ export function ItineraryHeader({
                                     className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100/80 dark:bg-slate-700/60 hover:bg-slate-200/80 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-full border border-slate-200/80 dark:border-slate-600/60 shadow-xs transition-all active:scale-95 group"
                                     title={t('cal_title') || '調整旅行日期'}
                                 >
-                                    <Calendar className="w-3.5 h-3.5 text-emerald-500 group-hover:scale-110 transition-transform" />
+                                    <Calendar className="w-3.5 h-3.5 text-[#1E2927] dark:text-[#E5EBEA] group-hover:scale-110 transition-transform" />
                                     <span>{dateCapsuleText}</span>
                                     <ChevronDown className="w-3 h-3 opacity-60 ml-0.5" />
                                 </button>

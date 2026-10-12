@@ -1,0 +1,77 @@
+diff --git a/frontend/components/views/tools-view.tsx b/frontend/components/views/tools-view.tsx
+--- a/frontend/components/views/tools-view.tsx
++++ b/frontend/components/views/tools-view.tsx
+@@ -843,16 +843,26 @@
+                                         <Button
+                                             variant={expenseView === 'summary' ? 'default' : 'outline'}
+                                             size="sm"
+-                                            className={cn("flex-1 h-11", expenseView === 'summary' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'dark:text-white dark:border-slate-700')}
++                                            className={cn(
++                                                "flex-1 h-11 rounded-xl font-semibold transition-all active:scale-[0.98] cursor-pointer",
++                                                expenseView === 'summary'
++                                                    ? "bg-[#0B3026] hover:bg-[#0B3026]/90 text-white dark:bg-[#E5EBEA] dark:hover:bg-white dark:text-[#0B3026] shadow-xs"
++                                                    : "bg-white/80 dark:bg-[#1E2927]/60 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/15 dark:border-white/15 hover:bg-black/5 dark:hover:bg-white/5"
++                                            )}
+                                             onClick={() => setExpenseView('summary')}
+                                         >
+-                                            <PieChart className="w-4 h-4 mr-2" /> {t('total')}
++                                            <PieChart className="w-4 h-4 shrink-0" /> <span>{t('total')}</span>
+                                         </Button>
+                                         <Button
+                                             variant={expenseView === 'daily' ? 'default' : 'outline'}
+                                             size="sm"
+-                                            className={cn("flex-1 h-11", expenseView === 'daily' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'dark:text-white dark:border-slate-700')}
++                                            className={cn(
++                                                "flex-1 h-11 rounded-xl font-semibold transition-all active:scale-[0.98] cursor-pointer",
++                                                expenseView === 'daily'
++                                                    ? "bg-[#0B3026] hover:bg-[#0B3026]/90 text-white dark:bg-[#E5EBEA] dark:hover:bg-white dark:text-[#0B3026] shadow-xs"
++                                                    : "bg-white/80 dark:bg-[#1E2927]/60 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/15 dark:border-white/15 hover:bg-black/5 dark:hover:bg-white/5"
++                                            )}
+                                             onClick={() => setExpenseView('daily')}
+                                         >
+-                                            <List className="w-4 h-4 mr-2" /> {t('tv_list')}
++                                            <List className="w-4 h-4 shrink-0" /> <span>{t('tv_list')}</span>
+                                         </Button>
+@@ -866,9 +876,9 @@
+                                         disabled={isSharing || !activeTripId}
+-                                        className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 border border-transparent hover:border-indigo-100"
++                                        className="text-[#0B3026] dark:text-[#E5EBEA] hover:bg-[#0B3026]/10 dark:hover:bg-white/10 border border-transparent font-medium rounded-xl h-11 transition-colors cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                                     >
+                                         {isSharing
+                                             ? <Loader2 className="w-4 h-4 animate-spin" />
+-                                            : <Share2 className="w-4 h-4 mr-1.5" />
++                                            : <Share2 className="w-4 h-4 shrink-0" />
+                                         }
+-                                        <span>{t('exp_shared_ledger') || "分享公帳"}</span>
++                                        <span>{t('share_ledger_btn') || "分享公帳"}</span>
+                                     </Button>
+
+diff --git a/frontend/lib/i18n/remaining.ts b/frontend/lib/i18n/remaining.ts
+--- a/frontend/lib/i18n/remaining.ts
++++ b/frontend/lib/i18n/remaining.ts
+@@ -241,1 +241,1 @@
+-        tv_list: "📋 List",
++        tv_list: "List",
+@@ -972,1 +972,1 @@
+-        tv_list: "📋 列表",
++        tv_list: "列表",
+
+diff --git a/frontend/lib/i18n/expense.ts b/frontend/lib/i18n/expense.ts
+--- a/frontend/lib/i18n/expense.ts
++++ b/frontend/lib/i18n/expense.ts
+@@ -30,1 +30,1 @@
+-        exp_shared_ledger: "🔗 Share Ledger",
++        exp_shared_ledger: "Share Ledger",
+@@ -122,1 +122,1 @@
+-        exp_shared_ledger: "🔗 分享公帳",
++        exp_shared_ledger: "分享公帳",
+
+diff --git a/frontend/lib/translations.ts b/frontend/lib/translations.ts
+--- a/frontend/lib/translations.ts
++++ b/frontend/lib/translations.ts
+@@ -177,1 +177,1 @@
+-        exp_shared_ledger: "🔗 Share Ledger",
++        exp_shared_ledger: "Share Ledger",
+@@ -507,1 +507,1 @@
+-        exp_shared_ledger: "🔗 分享公帳",
++        exp_shared_ledger: "分享公帳",

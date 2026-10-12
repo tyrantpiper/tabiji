@@ -39,7 +39,7 @@ triggers:
   - **Logic & Access Control**: IDOR, Role Escalation, RLS policy bypass, Token leakage.
   - **Edge & Proxies**: SSRF, Request smuggling, Header injection, Unchecked CORS.
   - **Input Sanitization**: ReDoS, Deserialization, Prompt Injection in AI routers.
-- Output candidate hypotheses to `candidates.json`:
+- Output candidate hypotheses to `docs/security/candidates_<topic>_<YYYY-MM-DD>.json`:
   ```json
   [
     {
@@ -54,7 +54,7 @@ triggers:
 ### Phase 3: Physical Validator Confrontation (`runner.py`)
 - Execute the harness runner with unbounded parallelism:
   ```bash
-  python .agents/skills/security-sentinel/scripts/runner.py --candidates candidates.json --output docs/security/findings.json --timeout 120
+  python .agents/skills/security-sentinel/scripts/runner.py --candidates docs/security/candidates_{topic}_{date}.json --output docs/security/findings_{topic}.json --timeout 120
   ```
 - Each target is evaluated by an independent background `agy.exe` subprocess in `--sandbox` mode.
 - Results are recorded as `CONFIRMED`, `DISMISSED`, or `INCONCLUSIVE`.

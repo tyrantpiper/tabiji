@@ -26,8 +26,8 @@ export const expenseTranslations = {
         exp_update_success: "Updated!",
         exp_save_success: "Saved!",
         exp_custom_btn: "Custom",
-        exp_split_bill: "🤖 1-Click Split",
-        exp_shared_ledger: "🔗 Share Ledger",
+        exp_split_bill: "1-Click Split",
+        exp_shared_ledger: "Share Ledger",
         exp_guest_payer: "Guest",
         exp_no_members: "No members found",
         exp_no_matches: "No matches",
@@ -68,7 +68,7 @@ export const expenseTranslations = {
         // Form placeholders & messages
         exp_name_placeholder: "Expense name",
         exp_select_currency: "Select currency",
-        exp_select_trip_first: "⚠️ Please select a trip first",
+        exp_select_trip_first: "Please select a trip first",
         exp_card_name: "Card name",
         exp_cashback: "Cashback %",
         exp_dialog_desc:
@@ -118,8 +118,8 @@ export const expenseTranslations = {
         exp_update_success: "已更新！",
         exp_save_success: "已儲存！",
         exp_custom_btn: "自訂",
-        exp_split_bill: "🤖 一鍵精算",
-        exp_shared_ledger: "🔗 分享公帳",
+        exp_split_bill: "一鍵精算",
+        exp_shared_ledger: "分享公帳",
         exp_guest_payer: "訪客付款人",
         exp_no_members: "找不到成員",
         exp_no_matches: "無符合結果",
@@ -160,7 +160,7 @@ export const expenseTranslations = {
         // Form placeholders & messages
         exp_name_placeholder: "消費名稱",
         exp_select_currency: "選擇幣別",
-        exp_select_trip_first: "⚠️ 請先選擇行程",
+        exp_select_trip_first: "請先選擇行程",
         exp_card_name: "卡片名稱",
         exp_cashback: "回饋%",
         exp_dialog_desc:

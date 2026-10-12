@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Loader2, Send } from "lucide-react"
+import { Loader2, Send, Calculator } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -165,13 +165,14 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[600px] h-[85vh] sm:h-[80vh] flex flex-col p-0 gap-0 overflow-hidden bg-slate-50 dark:bg-slate-950">
+            <DialogContent className="sm:max-w-150 h-[85vh] sm:h-[80vh] flex flex-col p-0 gap-0 overflow-hidden bg-slate-50 dark:bg-slate-950">
 
                 {/* 標頭 */}
-                <DialogHeader className="p-4 border-b bg-white dark:bg-slate-900 flex-shrink-0 flex flex-row items-center justify-between">
+                <DialogHeader className="p-4 border-b bg-white dark:bg-slate-900 shrink-0 flex flex-row items-center justify-between">
                     <div>
-                        <DialogTitle className="flex items-center gap-2 text-lg">
-                            🤖 {t('actuary_title') || "Travel Actuary"}
+                        <DialogTitle className="flex items-center gap-2 text-lg font-bold text-[#1E2927] dark:text-[#E5EBEA]">
+                            <Calculator className="w-5 h-5 text-[#E56E25] shrink-0" />
+                            <span>{t('actuary_title') || "Travel Actuary"}</span>
                         </DialogTitle>
                         <DialogDescription className="text-xs mt-1">
                             {members.length} members · {expenses.length} public records
@@ -195,7 +196,7 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
                                 {msg.role === "user" ? (
                                     <span className="whitespace-pre-wrap">{msg.content}</span>
                                 ) : (
-                                    <div className="break-words w-full">
+                                    <div className="wrap-break-word w-full">
                                         <ReactMarkdown
                                             remarkPlugins={[remarkGfm]}
                                         >

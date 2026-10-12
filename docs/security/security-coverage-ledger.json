@@ -1,11 +1,11 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-11T18:05:00Z",
+  "last_audit_date": "2026-10-12T16:56:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 69,
-    "audited_targets": 69,
-    "verified_vulnerabilities": 14,
+    "total_targets": 71,
+    "audited_targets": 71,
+    "verified_vulnerabilities": 16,
     "dismissed_hypotheses": 66
   },
   "targets": [
@@ -674,6 +674,24 @@
       "status": "VERIFIED_SAFE",
       "last_checked_commit": "HEAD",
       "validator_details": "Verified via test_trip_settings_sentinel.py: Creator ownership strictly enforced on DELETE (403), Owner prohibited from /leave (400) to prevent orphaned records."
+    },
+    {
+      "id": ".agents/skills/security-sentinel/scripts/runner.py:path_guardrail",
+      "target_type": "harness_script",
+      "trust_boundary": "developer_to_filesystem",
+      "vectors_checked": ["filesystem_namespace_pollution", "path_comparison_bypass_on_windows"],
+      "status": "PENDING_PATCH",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Confirmed vulnerability: runner.py lacks fail-fast guardrails on --candidates and --output, allowing root directory pollution. In-memory PoC verified via backend/tests/test_root_hygiene_sentinel.py."
+    },
+    {
+      "id": ".agents/workflows/push.md:root_hygiene_gate",
+      "target_type": "release_workflow",
+      "trust_boundary": "git_stage_to_remote",
+      "vectors_checked": ["workflow_quality_gate_omission"],
+      "status": "PENDING_PATCH",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Confirmed vulnerability: push.md pre-flight harness lacks automated root hygiene scanning. In-memory PoC verified via backend/tests/test_root_hygiene_sentinel.py."
     }
   ]
 }

@@ -217,7 +217,7 @@ export function TripMasterOverview({
                                         key={idx}
                                         className="text-[11px] font-medium bg-white/15 px-2.5 py-1 rounded-full backdrop-blur-md flex items-center gap-1 text-slate-200 border border-white/10"
                                     >
-                                        <MapPin className="w-3 h-3 text-emerald-400" />
+                                        <MapPin className="w-3 h-3 text-slate-300 dark:text-slate-400" />
                                         {city}
                                     </span>
                                 ))}
@@ -305,8 +305,8 @@ export function TripMasterOverview({
                                                 Day {d} · {date}
                                             </h3>
                                             {dailyLocation && (
-                                                <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200/60 dark:border-emerald-800 flex items-center gap-1 shrink-0">
-                                                    <MapPin className="w-3 h-3" />
+                                                <span className="text-[11px] font-medium text-[#1E2927] dark:text-[#E5EBEA] bg-black/5 dark:bg-white/10 px-2 py-0.5 rounded-full border border-black/10 dark:border-white/10 flex items-center gap-1 shrink-0">
+                                                    <MapPin className="w-3 h-3 text-[#1E2927] dark:text-[#E5EBEA]" />
                                                     {dailyLocation.split(",")[0].trim()}
                                                 </span>
                                             )}

@@ -16,9 +16,25 @@ from typing import Any, Dict, List, Optional
 
 # Self-resolving sys.path to locate scripts.lib.safe_subprocess across arbitrary CWDs
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _SCRIPT_DIR.parents[3]  # .agents/skills/security-sentinel/scripts -> repo root
+_REPO_ROOT = Path(__file__).resolve().parents[4]  # .agents/skills/security-sentinel/scripts/runner.py -> repo root
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+
+def assert_security_path_hygiene(file_path: Optional[str], param_name: str, repo_root: Path = _REPO_ROOT) -> None:
+    """🛡️ 根目錄衛生強制防呆：禁止任何中繼檔案落在專案根目錄"""
+    if not file_path:
+        return
+    resolved_path = Path(file_path).resolve()
+    norm_parent = os.path.normcase(str(resolved_path.parent))
+    norm_root = os.path.normcase(str(repo_root))
+
+    if norm_parent == norm_root:
+        sys.stderr.write(
+            f"\n🚨 [Root Hygiene Violation] 參數 '{param_name}' 路徑 ({file_path}) 嚴禁直接置於專案根目錄！\n"
+            f"👉 請依規範存放於 docs/security/ 目錄（例如: docs/security/candidates_<topic>_<date>.json）。\n\n"
+        )
+        sys.exit(1)
 
 try:
     from scripts.lib.safe_subprocess import run_streaming_process
@@ -237,7 +253,12 @@ def main():
     parser.add_argument("--timeout", type=int, default=45, help="Per-agent timeout in seconds")
     args = parser.parse_args()
 
-    workspace_root = Path(__file__).resolve().parents[4]
+    workspace_root = _REPO_ROOT
+
+    if args.candidates:
+        assert_security_path_hygiene(args.candidates, "--candidates", repo_root=workspace_root)
+    if args.output:
+        assert_security_path_hygiene(args.output, "--output", repo_root=workspace_root)
 
     candidates = []
     if args.candidates:

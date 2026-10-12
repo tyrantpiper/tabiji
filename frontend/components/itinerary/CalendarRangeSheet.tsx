@@ -210,7 +210,7 @@ export function CalendarRangeSheet({
                     <div>
                         <DialogTitle className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                             <span className="p-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-slate-700 dark:text-slate-300">
-                                <CalendarIcon className="w-4 h-4 text-emerald-500" />
+                                <CalendarIcon className="w-4 h-4 text-[#1E2927] dark:text-[#E5EBEA]" />
                             </span>
                             {t('cal_title') || '調整旅行日期'}
                         </DialogTitle>
