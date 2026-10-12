@@ -138,6 +138,12 @@
 ### 11. 次世代 Agent 演化、開源地理拓撲與提示詞防護裝甲 (Next-Gen Agent, Hybrid Geocoding & Prompt Shield)
 - **Sovereign Agentic Loops (SAL) 與 ReAct 意圖控制平面架構 (Sovereign Agentic Loops & Intent Control Plane)**: 解決 AI 助理從「單向文本預測生成器」向「真實世界感知—決策—行動閉環」演進時的額度失控與幻覺問題。確立在模型輸出 Tool Calls 與實際底層執行之間，必須建立後端控制平面 (Control Plane)：實施預算配額閥門 (Budget Gate)、參數型別嚴格白名單與防抖動機制；交替產生 Thought 與 Action，當外部 API 顯示景點休館或天候不佳時，由 Agent 主動發起修正，達成自癒閉環。
 - **開源地理編碼雙引擎分流拓撲 (Photon OpenSearch Typo-Tolerance vs Nominatim 5.0 Precision Hierarchy)**: 針對開源地理資訊難以媲美 Google Maps 商業模糊搜尋的痛點，確立「前台即時輸入 vs 後端精確定位」雙軌分流：前台採用 95GB 輕量 Photon (OpenSearch) 提供極速 Autocomplete 與 Typo-Tolerance（容錯拼字模糊比對）；後端深層批次計算則掛載 Nominatim 5.0 (Python 重寫)，提取建築物微觀 Entrance 座標；複雜自然語言查詢（如「東京車站附近的壽司」）由 Gemini Query Parser 提煉結構化關鍵字後再行檢索。
+
+### 12. 商業化確權、商標護城河與巴黎公約國際優先權架構 (Commercialization, IP & Paris Convention Moat)
+- **雙案互補性確權架構 (Complementary Dual-Mark Moat: Word + App Icon)**: 在數位軟體與 PWA 領域，單純文字無法壟斷手機桌面第一眼之視覺門面，而單純圖形無法阻擋競品以同音/文字擦邊。架構上確立 Phase 1「純文字墨色標樣（Tabiji 旅路）＋ 彩色具象圖形（旭日旅人 t 字路 App Icon）」雙案並行，分別涵蓋尼斯分類第 09 類（電腦軟體/App）、第 42 類（SaaS 雲端平台）與第 39 類（旅遊行程導航）。文字案取得全色系最廣排他權，彩色圖形案直接鎖定 App Store 與手機桌面侵權檢舉之絕對防禦。
+- **法定在先申請日鎖定與巴黎公約 6 個月時鐘 (Filing Date Anchor & Paris Convention Priority Clock)**: 創辦人以本國自然人名義於 2026-10-13 正式完成經濟部智慧財產局（TIPO）電子送件並繳費，鎖定台灣法定在先申請日。此動作正式啟動《保護工業產權巴黎公約》第 4 條之 6 個月國際優先權期間（至 2027-04-13 止），日後拓展日本專利商標局（JPO）或美國（USPTO）時，得依法主張以台灣送件日為其國際申請日。
+- **標準商品詞零補正與手寫留存簽章機制 (Standard Taxonomy Zero-Office-Action & Signature Anchor)**: 全量採用 TIPO 官方公告之標準尼斯分類詞彙（每類 5~7 項，杜絕超額加徵與人工補正公文）。電子送件採系統留存手寫簽名影像檔驗證身分，正式商標註冊證與公文將以實體掛號郵寄至通訊地址，電子規費收據則無紙化直接寄送 Email。
+
 - **母體區域繼承與國碼獨立解析防線 (Mother Region Proximity Bias & Explicit Country Code Resolution)**: 行程批次地理編碼中，單一景點常有簡稱或重名（如「朝市」、「水族館」）。確立必須提取母體目的地（如「北海道」）並藉由 `detect_country_from_keywords` 獨立確定 ISO 國碼（`dest_country`），解決開源 Geocoder 結果字典不含 `country` 欄位引發的國碼穿透失效；母體中心點座標僅作為 Proximity Bias 排序加權，嚴禁作為 Hard Lock 過濾器，兼顧周邊優先與跨國彈性。
 - **神經三明治與動態隨機鹽漬標籤防禦 (Dynamic Salted Tags & Neural Sandwich Defense)**: 針對 LLM Agent 工具呼叫遭受提示詞注入（Prompt Injection）與標籤欺騙（Tag Spoofing）的防護標準化。每次 API 請求動態生成 8 碼隨機字串（`user_input_{salt}`）封裝使用者輸入；系統指令透過原生 `system_instruction` 通道傳遞直達神經中樞；並於提示詞序列的最末端強制附加 `[SYSTEM_SHIELD]` 神經三明治提醒（Reminder Defense），利用注意力機制在上下文最後一刻壓制越獄指令。
 
