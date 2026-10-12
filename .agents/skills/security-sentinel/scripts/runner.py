@@ -25,11 +25,21 @@ def assert_security_path_hygiene(file_path: Optional[str], param_name: str, repo
     """🛡️ 根目錄衛生強制防呆：禁止任何中繼檔案落在專案根目錄"""
     if not file_path:
         return
+
+    # 1. 裸檔名檢查（無目錄前綴，如 candidates.json 或 ./candidates.json）
+    given_parent = Path(file_path).parent
+    is_bare = str(given_parent) in ("", ".") or not given_parent.name
+
+    # 2. 根目錄解析檢查（無論由何處解析，父目錄不得為 repo_root）
     resolved_path = Path(file_path).resolve()
     norm_parent = os.path.normcase(str(resolved_path.parent))
     norm_root = os.path.normcase(str(repo_root))
 
-    if norm_parent == norm_root:
+    # 3. 相對於 repo_root 的解析檢查
+    root_resolved_path = (repo_root / file_path).resolve()
+    norm_root_resolved_parent = os.path.normcase(str(root_resolved_path.parent))
+
+    if is_bare or norm_parent == norm_root or norm_root_resolved_parent == norm_root:
         sys.stderr.write(
             f"\n🚨 [Root Hygiene Violation] 參數 '{param_name}' 路徑 ({file_path}) 嚴禁直接置於專案根目錄！\n"
             f"👉 請依規範存放於 docs/security/ 目錄（例如: docs/security/candidates_<topic>_<date>.json）。\n\n"
