@@ -457,4 +457,16 @@
 - **零成本預選封面自動解析管線 (AD-087)**: 新建行程時若未指定封面，前端與後端協同依據目的地名稱執行模糊關鍵字解析（`resolveDestinationCover`），自動匹配預載之優質風景封面，達成 0 外部 API 成本、0 延遲且 100% 視覺完整度。
 - **客戶端零技術行話與消費者級語意修飾原則 (AD-088)**: 使用者面向的介面文案嚴禁暴露具體雲端基礎設施商標（如 Cloudinary）、圖片編碼格式（如 WebP）或內部伺服器架構細節；所有文案必須經過消費者視角潤飾，杜絕資訊洩漏並降低使用認知摩擦力。
 - **`AnimatePresence mode="wait"` 同級視圖替換之位移衝突與運動向量脫節陷阱 (FP-023)**: 初版嘗試在主視圖層級以 `AnimatePresence mode="wait"` 切換 `activeView === "settings"`，導致底層 `TripDetailView` 被完全卸載，地圖 Canvas 與 SWR 狀態重置；且設定頁退場時因視圖已切換，退場動畫無法反向播放。處方：改採 Overlay 絕對疊層模式，底層行程常駐，設定頁掛載獨立 `AnimatePresence` 並嚴格定義進場與退場之逆向位移向量。
-- **設定面板外層容器 `overflow-hidden` 滾動鎖定陷阱 (FP-024)**: 在包裝全屏 Overlay 時習慣性加上 `h-full overflow-hidden`，導致當內容卡片超出螢幕高度時，瀏覽器原生捲軸被強制切斷，造成真機無法滑至底部的致命假死現象。處方：外層容器必須為 `overflow-y-auto overscroll-contain`，內層容器宣告 `min-h-full pb-32` 保障足夠觸控滑動邊距。
+- **設定面板外層容器 `overflow-hidden` 滾動鎖定陷阱 (FP-024)**: 在包裝全屏 Overlay 時習慣性加上 `h-full overflow-hidden`，導致當內容卡片超出螢幕高度時，瀏覽器原生捲軸被強制切斷，造成真機無法滑至底部的致命假死現象。處方：外層容器必須為 `overflow-y-auto overscroll-contain`，內層容器宣告 `min-h-full pb-32` 保障足夠觸控滑動邊距。
+
+### 26. 品牌色系全面收斂、向量圖標抽換與語系字典純淨化領域 (Brand Palette Harmony, Vector Icons & Emoji Purification) [2026-10-12 Commit 1cf2704]
+- **Tabiji 經典墨綠/月白/琥珀三色收斂準則 (AD-089)**: 全站主要操作按鈕、選中態指示器與圖標色彩一律收斂至品牌經典墨綠 `#0B3026`（暗色模式月白 `#E5EBEA`）與精算師琥珀橘 `#E56E25`；嚴禁在主要功能元件中散落通用的冷黑 `slate-900`、外來的亮靛藍 `text-indigo-600` 或過度鮮豔的刺眼綠 `text-green-600`，確保跨頁面調性統一。
+- **語系字典純淨化與 Emoji 徹底剝除準則 (AD-090)**: i18n 翻譯檔（`expense.ts`、`remaining.ts`、`translations.ts`）嚴禁嵌入裝飾性 Emoji（如 `📋`、`🔗`、`🤖`、`⚠️`、`💳`、`🧮`）；所有視覺圖意必須由表現層的 Lucide 向量圖標（`Calculator`、`PieChart`、`List`、`Share2`、`Coins`）全權接管，徹底根除「向量圖標 + Emoji 文本」雙重重疊渲染的視覺瑕疵。
+- **Tailwind v4 標準規範化微創升級 (AD-091)**: 類別全面對齊 Tailwind v4 現代語法，例如將任意值 `sm:max-w-[600px]` 升級為標準寬度 `sm:max-w-150`，以標準縮寫 `shrink-0` 取代 `flex-shrink-0`，以 `wrap-break-word` 取代 `break-words`，杜絕任意值方括號方言。
+
+### 27. 專案根目錄衛生治理、Security Sentinel 候選存證與 CWD 無關硬防禦領域 (Root Hygiene Governance, Sentinel Lifecycle & CWD-Agnostic Fail-Fast) [2026-10-12 Commits 1cf2704, a44da00]
+- **候選假設審計存證生命週期制 (AD-092)**: Security Sentinel 中繼假設檔案嚴禁散落於專案根目錄；一律強制命名為 `docs/security/candidates_<topic>_<YYYY-MM-DD>.json` 並納入 Git 追蹤，作為具備歷史可追溯性的安全審計存證（Audit Trail）。
+- **CWD 無關之三重路徑防禦 (AD-093)**: `assert_security_path_hygiene` 實作「裸檔名檢查（`is_bare`，如 `candidates.json` 或 `./candidates.json`）」+「絕對路徑正規化解析（`os.path.normcase` 防禦 Windows 磁碟代號大小寫差異）」+「相對於根目錄路徑解析（`repo_root / file_path`）」三重比對。無論 CLI 工具是由專案根目錄、`backend/` 或是外部腳本呼叫，均能 100% 準確攔截根目錄污染並拋出 Fail-Fast Exit Code 1。
+- **發布管線 Step 0 根目錄衛生守門員 (AD-094)**: 在 `/push` 發布工作流中，於 TypeScript 與測試前置插入 Step 0「根目錄衛生守門員」，透過嚴格的配置檔案白名單（`package.json`, `tsconfig.json`, `components.json`, `NOTICE.md`, `README.md`, `next.config.ts` 等）自動掃描攔截未授權的 `*.json`、`*.diff`、`*.tmp`、`*.bak`，杜絕任何 Agent 遺留孤兒產物。
+- **CI 執行目錄 `working-directory: backend` 造成相對路徑解析偏離之測試偽陰性陷阱 (FP-025)**: 當 GitHub Actions CI 在 `backend/` 下執行 pytest 時，`Path("candidates.json").resolve()` 會解析為 `backend/candidates.json`，使其父目錄被判定為 `backend/` 而非 `repo_root`，導致單純的 `norm_parent == norm_root` 檢查被繞過。處方：增加 `is_bare` 檢查（直接判斷傳入字串是否缺少父目錄前綴）與相對於 `repo_root` 的雙重解析比對，使安全閘門徹底脫鉤進程當前工作目錄。
+
