@@ -1,14 +1,17 @@
-# 📅 Daily Report - 2026-10-12 (Trip Settings View & Destination Cover Photo Pipeline)
+# 📅 Daily Report - 2026-10-12 (Trip Settings, Brand Harmony & Root Hygiene Governance)
 
-> **系統狀態**：🟢 Production Deployed & Verified, Trip Settings View Live, Symmetrical Top Gear Header Deployed, Dual-Axis Inverse Motion Transitions Active, Zero-Cost Destination Cover Pipeline Operational, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 58/58 Suites Passing, 414/414 Tests Passing; Backend 130/130 Passing), GitHub main branch synced (`7b2bb7c`).  
+> **系統狀態**：🟢 Production Deployed & Verified, Trip Settings View Live, Tabiji Canonical Palette Unified (`#0B3026` / `#E5EBEA` / `#E56E25`), Vector Icon Modernization Complete, Root Hygiene Fail-Fast Guardrail Active, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 65/65 Suites Passing, 437/437 Tests Passing; Backend 135/135 Tests Passing), GitHub main branch synced (`a44da00`).  
 > **今日關鍵提交串列 (Full Day Commit Stream)**：
+> - [`a44da00`](https://github.com/tyrantpiper/tabiji/commit/a44da00) `fix(ci): harden root hygiene guardrail for cwd agnostic bare path execution` (2026-10-12 17:16:22 +0800)
+> - [`1cf2704`](https://github.com/tyrantpiper/tabiji/commit/1cf2704) `feat(ui,security): harmonize tabiji brand palette and enforce root hygiene guardrails` (2026-10-12 17:03:10 +0800)
+> - [`eb96977`](https://github.com/tyrantpiper/tabiji/commit/eb96977) `docs(daily-report,memory): publish 2026-10-12 daily report and consolidate Sections 24-25 neural memory` (2026-10-12 00:03:00 +0800)
 > - [`7b2bb7c`](https://github.com/tyrantpiper/tabiji/commit/7b2bb7c) `feat(itinerary): add trip settings view and destination cover photo pipeline` (2026-10-12 00:00:45 +0800)
 
 ---
 
-## 🏆 深度專案復盤：五大核心工程里程碑 (Five Engineering Milestones)
+## 🏆 深度專案復盤：七大核心工程里程碑 (Seven Engineering Milestones)
 
-本日完成行程設定全新專屬獨立視圖、頂部導航列對稱齒輪入口、雙軸逆向動畫轉場、目的地封面照片自動解析管線，以及 Security Sentinel 雙沙盒對抗證偽與端到端迴歸驗收的全面交付：
+本日完成行程設定專屬獨立視圖、頂部導航列對稱齒輪、雙軸逆向動畫轉場、目的地封面照片自動解析管線、全棧品牌色彩與向量圖標純淨化，以及專案根目錄衛生治理與 Security Sentinel CWD 無關硬阻斷防線的全面交付：
 
 ---
 
@@ -58,35 +61,57 @@
      - 實作智慧關鍵字模糊解析 `resolveDestinationCover(destination)`，依據中英日關鍵字自動匹配最高相關度之高品質封面。
    - **全流程無縫直通 (Universal Creation Integration)**：
      - **手動建程 (`CreateTripModal`)**：使用者輸入目的地或選擇預設時，自動即時匹配並帶入 `cover_image_url`。
-     - **AI 匯入建程 (`AiImportTripWizard`)**：解析匯入行程之目的地時自動補齊封面 URL。
-     - **AI 旅伴直通建程 (`app-shell.tsx` / `TripDialogs.tsx`)**：對話生成的行程結構自動掛載匹配封面。
-   - **後端安全防衛 (`backend/services/cover_service.py` & `trips.py`)**：
-     - 後端在行程儲存與更新時提供保底解析，若傳入之 `cover_image_url` 為空，依據行程地點自動補全，保證資料庫層持久化完整性。
+     - **AI 匯入行程精靈 (`AiImportTripWizard`)**：解析使用者文字行程時，自動推導目的地並補全精選封面。
+     - **後端防禦與相容性 (`backend/services/cover_service.py`)**：在行程建立 API 補齊封面自動解析兜底，保障第三方或腳本建立行程亦具備精美封面。
 
 ---
 
-### 里程碑四：使用者視角去工程術語化 ✕ 零資訊外洩 (Zero-Jargon Consumer-Grade Polishing)
-1. **介面純淨化與資訊安全底線**：
-   - 原介面在更換封面對話框與說明中，存在「Cloudinary 雲端儲存」、「WebP 現代格式最佳化」、「傳送至後端伺服器」等高度工程化術語。
-2. **重構規範**：
-   - 徹底移除所有雲端服務商名稱與技術底層名詞。
-   - 統一轉化為使用者導向的親切文案：
-     - 「上傳自訂照片」（支援 JPG、PNG，系統將自動調整為最佳瀏覽品質）。
-     - 「選擇精選相片」、「自訂圖片網址」。
-   - 既消除消費端理解摩擦力，又杜絕內部雲端架構資訊外洩，達成企業級安全標準。
+### 里程碑四：客戶端消費者級零技術行話潤飾 (Consumer-Grade Zero-Jargon Polishing)
+- **技術行話剝除**：
+  - 清理所有面向使用者的對話框、選單與錯誤提示，徹底移除 `Cloudinary`、`WebP`、`Vercel Blob`、`HTTP 500` 等基礎設施名詞。
+  - 更換封面選單重構為直覺親切的「從相簿上傳照片」、「更換推薦城市風景」、「移除目前封面」。
+  - 錯誤提示統一收斂為消費者語義，如「無法讀取照片，請確認檔案格式後重試」，消除技術認知負擔。
 
 ---
 
-### 里程碑五：Security Sentinel 雙沙盒對抗證偽與端到端迴歸驗收 (Adversarial Security Sandboxes & Quality Gates)
-1. **Security Sentinel 物理隔離沙盒審計**：
-   - 調度 `backend/tests/test_cover_pipeline_sentinel.py`：針對自訂封面 URL 進行 SSRF 探測防衛、惡意 scheme（如 `javascript:`, `file:`）過濾、超長網址阻斷驗證。
-   - 調度 `backend/tests/test_trip_settings_sentinel.py`：驗證設定面板更新 API 之行程歸屬權限隔離、非法欄位注入防護與原子更新。
-   - 前端同步掛載 `cover-pipeline-sentinel.test.ts` 與 `trip-settings-sentinel.test.ts` 進行純函式斷言。
-2. **全端品質閘門一次性全綠**：
-   - TypeScript：`npx tsc --noEmit` 0 錯誤。
-   - ESLint：`npm run lint` 0 警告 0 錯誤。
-   - Vitest：58 套件、414 測試全數綠燈。
-   - Pytest：130 項後端測試全數通過。
+### 里程碑五：Security Sentinel 雙沙盒對抗證偽與端到端迴歸驗收 (Adversarial Security Sandboxes)
+- **Security Sentinel 物理隔離沙盒審計**：
+  - 調度 `backend/tests/test_cover_pipeline_sentinel.py`：針對自訂封面 URL 進行 SSRF 探測防衛、惡意 scheme（如 `javascript:`, `file:`）過濾、超長網址阻斷驗證。
+  - 調度 `backend/tests/test_trip_settings_sentinel.py`：驗證設定面板更新 API 之行程歸屬權限隔離、非法欄位注入防護與原子更新。
+  - 前端同步掛載 `cover-pipeline-sentinel.test.ts` 與 `trip-settings-sentinel.test.ts` 進行純函式斷言。
+
+---
+
+### 里程碑六：Tabiji 品牌色全面收斂 ✕ 向量圖標升級 ✕ 語系字典 Emoji 徹底純淨化 (Brand Palette Harmony & Vector Icon Purification)
+1. **痛點診斷**：
+   - 工具箱 (`tools-view.tsx`)、精算師對話框 (`ActuaryDialogCard.tsx`)、行程標頭等處散落異質色彩（如通用的 `slate-900`、外來的 `text-indigo-600`、過度鮮豔的 `text-green-600`），破壞 Tabiji 典雅日系調性。
+   - 語系字典 (`expense.ts`, `remaining.ts`, `translations.ts`) 中硬編碼 Emoji 字符（`📋`, `🔗`, `🤖`, `⚠️`, `💳`, `🧮`），與相鄰的 Lucide 向量圖標重疊渲染（如出現 `≡ 📋 列表`、`Share2 🔗 分享公帳`）。
+2. **重構落地**：
+   - **色彩收斂**：
+     - 主要操作與選中態全數對齊 Tabiji 經典墨綠 `#0B3026`（暗色模式月白 `#E5EBEA`）。
+     - 精算師標識升級為 Tabiji 經典琥珀金 `#E56E25`。
+     - 分享公帳按鈕重構為深墨透底幽靈按鈕 (`hover:bg-[#0B3026]/10`)，移除外來靛藍樣式。
+   - **向量圖標全面接管**：
+     - 語系字典徹底剔除所有硬編碼 Emoji，純粹化為乾淨語意字串。
+     - 圖標全數由 Lucide 向量元件渲染（`Calculator`, `PieChart`, `List`, `Share2`, `Coins`），徹底消滅符號雙重重疊。
+   - **Tailwind v4 標準規範化**：
+     - `ActuaryDialogCard` 升級為 Tailwind v4 標準類別（`sm:max-w-150`, `shrink-0`, `wrap-break-word`），消除任意值方括號樣式。
+
+---
+
+### 里程碑七：專案根目錄衛生治理 ✕ Security Sentinel 中繼檔案生命週期存證 ✕ CWD 無關硬阻斷 (Root Hygiene Governance & CI Fail-Fast Hardening)
+1. **根本原因剖析與檔案歸位**：
+   - 歷史遺留之 `candidates.json` 肇因於 `security-sentinel/SKILL.md` 範例命令缺少目錄前綴，且 `.gitignore` 的 `*.json` 規則導致根目錄檔案在 `git status` 中隱形。
+   - 即刻物理搬遷歸位至 [`docs/security/candidates_expense_toggle_icon_harmony.json`](file:///d:/Project/Tabidachi/travel-pwa/docs/security/candidates_expense_toggle_icon_harmony.json)，納入版本庫審計存證體系。
+2. **生命週期標準化與 Runner Fail-Fast 防呆**：
+   - 確立「審計存證生命週期制」：未來所有 Sentinel 候選假設強制命名為 `docs/security/candidates_<topic>_<date>.json`。
+   - 更新 `.agents/skills/security-sentinel/scripts/runner.py`：注入 `assert_security_path_hygiene` 函式，傳入根目錄路徑直接報錯退出（Exit Code 1）。
+3. **發布守門員整合**：
+   - 在 `.agents/workflows/push.md` 加入 Step 0「根目錄衛生守門員 (Root Hygiene Gate)」，以嚴格白名單掃描攔截未歸位之中繼檔案。
+4. **CI CWD 盲區排查與修復 (Commit `a44da00`)**：
+   - **現象**：GitHub Actions CI #162 在後端測試步驟失敗。
+   - **根因**：`ci.yml` 宣告 `working-directory: backend`，當在子目錄執行 pytest 時，`Path("candidates.json").resolve()` 解析為 `backend/candidates.json`，導致單純比對 `norm_parent == norm_root` 產生漏洞。
+   - **處方**：升級為 **CWD 無關之三重路徑防禦**（`is_bare` 裸檔名直接阻斷 + 絕對解析父目錄比對 + 相對於根目錄雙重解析），使路徑防呆徹底脫鉤執行目錄，CI 與本地測試 100% 綠燈復原。
 
 ---
 
@@ -96,39 +121,48 @@
 - **TripSettingsView 落地**: 行程專屬獨立設定視圖，支援 iOS 分組卡片佈局、封面管理、標題與日期編輯，以及危險區域刪除行程。
 - **Symmetrical Itinerary Header**: 行程頂部導航列右側對稱配置設定齒輪按鈕，美學平衡且點擊反饋明確。
 - **Dual-Axis Inverse Motion Transitions**: 齒輪進入向左滑入（$x: 100\% \to 0$），返回向右滑出（$x: 0 \to 100\%$），物理對稱且無縫支援瀏覽器/實體 `popstate` 返回。
-- **Scroll Unblocking**: 修復外層 Overlay `overflow-hidden` 造成的捲軸鎖死，升級為 `overflow-y-auto overscroll-contain` 與內層 `min-h-full pb-32`。
-- **Destination Cover Photo Pipeline**: 打造前端 `destination-covers.ts` 與後端 `cover_service.py` 雙層解析管線，全端建程自動對齊高品質封面。
-- **Zero-Jargon Consumer-Grade Polishing**: 清除 UI 所有 Cloudinary、WebP 與伺服器路徑等技術行話，提供優雅自然的消費者級文案。
+- **Destination Cover Photo Pipeline**: 前端 `destination-covers.ts` 與後端 `cover_service.py` 雙層解析管線，全端建程自動對齊高品質風景封面。
+- **Tabiji Canonical Brand Palette**: 工具箱、日曆開關、精算師對話框統一收斂至經典墨綠 `#0B3026`、月白 `#E5EBEA`、琥珀 `#E56E25`。
+- **Vector Icon Modernization & Emoji Purge**: 語系字典 100% 剝離 Emoji 雜訊，統一交由 Lucide 向量圖標渲染。
+- **Root Hygiene Fail-Fast Guardrail**: `runner.py`、`push.md` 與專屬測試套件共同構築專案根目錄防污染硬防線。
+- **CWD-Agnostic Bare Path Fix**: 解決 GitHub Actions CI 在子目錄執行 pytest 時的解析偏離漏洞。
 
 ### 🏛️ Architecture Decisions
-- **獨立行程設定分組視圖與頂部對稱齒輪導航 (AD-085)**: 行程次級管理操作（封面、資訊修改、危險刪除、權限設定）嚴禁分散堆疊於單一長頁面或巢狀彈窗中；確立收攏於專屬 `TripSettingsView` 視圖，並以頂部導航列右側對稱齒輪圖示作為單一入口，為未來協同與設定擴充預留清晰架構容器。
-- **雙軸逆向動態轉場與疊層常駐渲染架構 (AD-086)**: 次級視圖切換嚴禁完全銷毀母體視圖（避免地圖 WebGL 與 SWR 快取重繪掉幀）；架構上採用絕對定位疊層（Absolute Overlay），進場向左滑入（$x: 100\% \to 0$），退場向右滑出（$x: 0 \to 100\%$），達成物理對稱的空間深度感知，並整合 `popstate` 監聽協同硬體返回鍵。
-- **零成本預選封面自動解析管線 (AD-087)**: 新建行程時若未指定封面，前端與後端協同依據目的地名稱執行模糊關鍵字解析（`resolveDestinationCover`），自動匹配預載之優質風景封面，達成 0 外部 API 成本、0 延遲且 100% 視覺完整度。
-- **客戶端零技術行話與消費者級語意修飾原則 (AD-088)**: 使用者面向的介面文案嚴禁暴露具體雲端基礎設施商標（如 Cloudinary）、圖片編碼格式（如 WebP）或內部伺服器架構細節；所有文案必須經過消費者視角潤飾，杜絕資訊洩漏並降低使用認知摩擦力。
+- **獨立行程設定分組視圖與頂部對稱齒輪導航 (AD-085)**: 行程次級管理操作收攏於專屬 `TripSettingsView`，頂部對稱齒輪為單一入口。
+- **雙軸逆向動態轉場與疊層常駐渲染架構 (AD-086)**: 次級視圖以絕對定位疊層承載，進退場向量嚴格逆向對稱，保持母視圖常駐。
+- **零成本預選封面自動解析管線 (AD-087)**: 建程依據目的地關鍵字模糊匹配高畫質風景封面，0 外部 API 成本、0 延遲。
+- **客戶端零技術行話與消費者級語意修飾原則 (AD-088)**: 介面文案嚴禁暴露雲端商標與底層編碼格式，純以消費者視角潤飾。
+- **Tabiji 經典墨綠/月白/琥珀三色收斂準則 (AD-089)**: UI 主要操作與高亮選中態統一錨定為 `#0B3026`、`#E5EBEA` 與 `#E56E25`，禁絕未授權之雜色。
+- **語系字典純淨化與 Emoji 徹底剝除準則 (AD-090)**: i18n 翻譯檔嚴禁嵌入裝飾性 Emoji，圖標一律交由表現層 Lucide 向量元件渲染。
+- **Tailwind v4 標準規範化微創升級 (AD-091)**: 類別全面對齊 Tailwind v4 現代語法（`sm:max-w-150`, `shrink-0`, `wrap-break-word`）。
+- **候選假設審計存證生命週期制 (AD-092)**: Security Sentinel 中繼假設強制命名為 `docs/security/candidates_<topic>_<date>.json` 永久存證。
+- **CWD 無關之三重路徑防禦 (AD-093)**: `assert_security_path_hygiene` 包含裸檔名檢查（`is_bare`）、絕對解析比對與相對於根目錄解析比對，防呆徹底脫鉤當前執行目錄。
+- **發布管線 Step 0 根目錄衛生守門員 (AD-094)**: `/push` 預檢加入白名單掃描，阻斷非配置類中繼檔案進入 Git 暫存。
 
 ### 🔴 Technical Debt
 - **Dependabot #105 待評估**: GitHub 遠端高風險依賴安全性警告待安排專責升級。
-- **PWA 離線環境封面快取預熱**: 預選封面照片目前依賴 Service Worker 之運行時 CacheFirst 快取；未來可考慮在行程建立當下主動透過 Cache API 預先預熱快取，確保完全離線時首次開啟亦立即可見。
+- **PWA 離線環境封面快取預熱**: 預選封面照片目前依賴 Service Worker 之運行時 CacheFirst 快取；未來可考慮在行程建立當下主動透過 Cache API 預先預熱快取。
 
 ### 🛡️ Failed Paths
-- **`AnimatePresence mode="wait"` 同級視圖替換之位移衝突與運動向量脫節陷阱 (FP-023)**: 初版嘗試在主視圖層級以 `AnimatePresence mode="wait"` 切換 `activeView === "settings"`，導致底層 `TripDetailView` 被完全卸載，地圖 Canvas 與 SWR 狀態重置；且設定頁退場時因視圖已切換，退場動畫無法反向播放。處方：改採 Overlay 絕對疊層模式，底層行程常駐，設定頁掛載獨立 `AnimatePresence` 並嚴格定義進場與退場之逆向位移向量。
-- **設定面板外層容器 `overflow-hidden` 滾動鎖定陷阱 (FP-024)**: 在包裝全屏 Overlay 時習慣性加上 `h-full overflow-hidden`，導致當內容卡片超出螢幕高度時，瀏覽器原生捲軸被強制切斷，造成真機無法滑至底部的致命假死現象。處方：外層容器必須為 `overflow-y-auto overscroll-contain`，內層容器宣告 `min-h-full pb-32` 保障足夠觸控滑動邊距。
+- **`AnimatePresence mode="wait"` 同級視圖替換之位移衝突與運動向量脫節陷阱 (FP-023)**: 主視圖層級切換卸載底層 `TripDetailView` 導致地圖狀態重置。處方：改採 Overlay 絕對疊層。
+- **設定面板外層容器 `overflow-hidden` 滾動鎖定陷阱 (FP-024)**: 外層 Overlay 宣告 `h-full overflow-hidden` 切斷原生捲軸。處方：調整為 `overflow-y-auto overscroll-contain`。
+- **CI 執行目錄 `working-directory: backend` 造成相對路徑解析偏離之測試偽陰性陷阱 (FP-025)**: 當測試在 `backend/` 下執行，`Path("candidates.json").resolve()` 解析為 `backend/candidates.json` 逃避了大門口比對。處方：加入 `is_bare` 裸檔名直接攔截防線。
 
 ---
 
 ## 5. 品質閘門驗證清單 (Quality Gates Checklist)
-- [x] **TypeScript**: `npx tsc --noEmit` (0 Errors)
-- [x] **ESLint**: `npm run lint` (0 Errors, 0 Warnings)
-- [x] **Vitest (Frontend)**: 58 Suites, 414 Tests Passed (100% Green, 含 2 項行程設定沙盒測試 + 1 項封面管線測試)
-- [x] **Pytest (Backend)**: 130 Tests Passed, 5 Skipped (100% Green, 含 封面管線與設定 API 安全沙盒)
-- [x] **Security Sentinel Sandboxes**:
-  - `docs/security/security_sentinel_report_2026-10-11_cover_pipeline.md` (CONFIRMED & MITIGATED)
-  - `docs/security/security_sentinel_report_2026-10-11_trip_settings.md` (CONFIRMED & MITIGATED)
-- [x] **Git Cleanliness**: `Working tree clean`，已完全同步至遠端 `origin/main` (`7b2bb7c`)
+
+- [x] **Step 0: Root Hygiene Gate**: 0 違規孤兒檔案（白名單嚴格過濾）
+- [x] **Step 1: TypeScript**: `npx tsc --noEmit` (0 錯誤)
+- [x] **Step 2: ESLint**: `npm run lint` (0 警告、0 錯誤)
+- [x] **Step 3: Vitest (Frontend)**: 65 Suites, 437 Tests Passed (100% Green, 含 6 項全新 Sentinel 測試)
+- [x] **Step 4: Pytest (Backend)**: 135 Tests Passed, 5 Skipped (100% Green, 含 根目錄衛生測試與全量後端 API 測試)
+- [x] **Git Cleanliness**: `origin/main` 同步完畢 (`a44da00`)，`docs/legal/` (9 個商標專利檔案) 完整安全排除保留
 
 ---
 
 ## 6. 下一步規劃 (Next Steps)
+
 1. **真機 iOS / Android 設定視圖滑動手感驗收**：驗證在實體手機上點擊齒輪滑入、長頁面垂直滾動，以及邊緣側滑返回的手勢跟手度。
 2. **封面快取離線預熱優化**：評估在建立行程完成瞬間，以背景非同步排程將封面圖片預先寫入 Cache Storage。
-3. **Dependabot #105 安全性依賴升級評估**。
+3. **商標申請專案排程**：待人類指示後，對 `docs/legal/trademark/` 內之 9 份正式公文檔進行獨立追蹤與推進。
