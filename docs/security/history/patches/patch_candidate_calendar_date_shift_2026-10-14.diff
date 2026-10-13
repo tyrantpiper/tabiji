@@ -1,0 +1,120 @@
+--- a/backend/routers/trips.py
++++ b/backend/routers/trips.py
+@@ -1383,82 +1383,16 @@ async def update_trip_dates(
+         old_days = max(1, (old_end - old_start).days + 1)
+         new_days = max(1, (new_end - new_start).days + 1)
+-        start_shift = (old_start - new_start).days  # 正數 = 提前出發 (如原本 3/10 改 3/08 -> shift=+2)
+-
+-        # 4. 取得最大 content key 與 items 中的最大天數
+-        all_content_keys = []
+-        for field in DAY_MAP_FIELDS:
+-            if field in content and isinstance(content[field], dict):
+-                all_content_keys.extend(content[field].keys())
+-        valid_day_nums = [int(k) for k in all_content_keys if k.isdigit()]
+-        content_max_day = max(valid_day_nums) if valid_day_nums else 0
+-        shift_limit_day = max(old_days, content_max_day)
+-
+-        # 5. 處理出發日平移
+-        if start_shift != 0:
+-            if start_shift > 0:
+-                # A. 提前出發：舊活動與 content 往後移 +start_shift
+-                items_res = supabase.table("itinerary_items")\
+-                    .select("id, day_number")\
+-                    .eq("itinerary_id", trip_id)\
+-                    .order("day_number", desc=True)\
+-                    .execute()
+-                for item in (items_res.data or []):
+-                    supabase.table("itinerary_items")\
+-                        .update({"day_number": item["day_number"] + start_shift})\
+-                        .eq("id", item["id"])\
+-                        .execute()
+-
+-                # Content 欄位 (逆序迭代):
+-                for field in DAY_MAP_FIELDS:
+-                    if field in content and isinstance(content[field], dict):
+-                        for i in range(shift_limit_day, 0, -1):
+-                            old_k = str(i)
+-                            new_k = str(i + start_shift)
+-                            if old_k in content[field]:
+-                                content[field][new_k] = content[field][old_k]
+-                                del content[field][old_k]
+-
+-            else:
+-                # B. 延後出發 (start_shift < 0)
+-                shift_abs = abs(start_shift)
+-                if request.on_shorten == "merge":
+-                    early_items = supabase.table("itinerary_items")\
+-                        .select("id, day_number")\
+-                        .eq("itinerary_id", trip_id)\
+-                        .lte("day_number", shift_abs)\
+-                        .execute()
+-                    for item in (early_items.data or []):
+-                        supabase.table("itinerary_items")\
+-                            .update({"day_number": shift_abs + 1})\
+-                            .eq("id", item["id"])\
+-                            .execute()
+-                else:
+-                    supabase.table("itinerary_items")\
+-                        .delete()\
+-                        .eq("itinerary_id", trip_id)\
+-                        .lte("day_number", shift_abs)\
+-                        .execute()
+-
+-                rem_items = supabase.table("itinerary_items")\
+-                    .select("id, day_number")\
+-                    .eq("itinerary_id", trip_id)\
+-                    .gt("day_number", shift_abs)\
+-                    .order("day_number", desc=False)\
+-                    .execute()
+-                for item in (rem_items.data or []):
+-                    supabase.table("itinerary_items")\
+-                        .update({"day_number": item["day_number"] - shift_abs})\
+-                        .eq("id", item["id"])\
+-                        .execute()
+-
+-                # Content 欄位 (正序迭代):
+-                for field in DAY_MAP_FIELDS:
+-                    if field in content and isinstance(content[field], dict):
+-                        for i in range(shift_abs + 1, shift_limit_day + 1):
+-                            old_k = str(i)
+-                            new_k = str(i - shift_abs)
+-                            if old_k in content[field]:
+-                                content[field][new_k] = content[field][old_k]
+-                                del content[field][old_k]
+-                        for i in range(1, shift_abs + 1):
+-                            if str(i) in content[field]:
+-                                del content[field][str(i)]
++        # 🛡️ 4. 解耦出發日與天數序號 (Zero-Shift Duration Preservation Engine)
++        # 當行程改期時，既有 Day 1~N 的活動序號 100% 原位保留。
++        # 僅當天數縮短 (new_days < old_days) 時，才處理超出天數 (day_number > new_days) 之合併或截斷。
+ 
+         # 6. 處理結束日截斷 (如果有效總天數比新天數大)
++        if new_days < old_days:
+             excess_items = supabase.table("itinerary_items")\
+                 .select("id, day_number")\
+                 .eq("itinerary_id", trip_id)\
+                 .gt("day_number", new_days)\
+                 .execute()
+             
+             if excess_items.data:
+                 if request.on_shorten == "merge":
+                     for item in excess_items.data:
+                         supabase.table("itinerary_items")\
+                             .update({"day_number": new_days})\
+                             .eq("id", item["id"])\
+                             .execute()
+                     for field in DAY_MAP_FIELDS:
+                         if field in content and isinstance(content[field], dict):
+                             for k in list(content[field].keys()):
+                                 if k.isdigit() and int(k) > new_days:
+                                     if isinstance(content[field].get(str(new_days)), list) and isinstance(content[field][k], list):
+                                         content[field][str(new_days)].extend(content[field][k])
+                                     del content[field][k]
+                 else:
+                     for item in excess_items.data:
+                         supabase.table("itinerary_items").delete().eq("id", item["id"]).execute()
+                     for field in DAY_MAP_FIELDS:
+                         if field in content and isinstance(content[field], dict):
+                             for k in list(content[field].keys()):
+                                 if k.isdigit() and int(k) > new_days:
+                                     del content[field][k]

@@ -60,8 +60,9 @@ describe("WeatherPanel - iOS Bento Grid System", () => {
       />
     )
 
-    // Check location
+    // Check location name is present, but coordinates are NOT displayed
     expect(screen.getByText("京都車站")).toBeDefined()
+    expect(screen.queryByText("34.99, 135.76")).toBeNull()
 
     // Check Hero current temp (Math.round(22) = 22°)
     expect(screen.getAllByText("22°").length).toBeGreaterThan(0)
@@ -70,16 +71,8 @@ describe("WeatherPanel - iOS Bento Grid System", () => {
     expect(screen.getByText("H:26°")).toBeDefined()
     expect(screen.getByText("L:19°")).toBeDefined()
 
-    // Check AI attire capsule
-    expect(screen.getByText("穿衣指南：", { exact: false })).toBeDefined()
-
-    // Check 24h scrubber conditional precipitation (35% and 80% should appear, 10% and 15% should be hidden)
-    expect(screen.getByText("35%")).toBeDefined()
-    expect(screen.getByText("80%")).toBeDefined()
-    expect(screen.queryByText("10%")).toBeNull()
-    expect(screen.queryByText("15%")).toBeNull()
-
-    // Bento 2x2 should NOT be visible initially (collapsed state)
+    // AI attire capsule and Bento cards should NOT be visible initially (collapsed state)
+    expect(screen.queryByText("穿衣指南：", { exact: false })).toBeNull()
     expect(screen.queryByText("體感溫度")).toBeNull()
   })
 
@@ -101,7 +94,8 @@ describe("WeatherPanel - iOS Bento Grid System", () => {
     const expandButton = screen.getByText("查看詳細氣象")
     fireEvent.click(expandButton)
 
-    // Verify 4 Bento cards exist in expanded mode
+    // Verify Attire Guide banner and 4 Bento cards exist in expanded mode
+    expect(screen.getByText("穿衣指南：", { exact: false })).toBeDefined()
     expect(screen.getByText("體感溫度")).toBeDefined()
     expect(screen.getByText("降雨與濕度")).toBeDefined()
     expect(screen.getByText("紫外線指數")).toBeDefined()

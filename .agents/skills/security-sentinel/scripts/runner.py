@@ -163,13 +163,15 @@ async def run_single_validator(
         f"Analyze the code above and return ONLY the JSON result object."
     )
 
-    # Bypass Windows CreateProcessW 32,767 limit (WinError 206) via stdin streaming
+    # Pass prompt via -p flag with --sandbox and json output format
     cmd = [
         "agy.exe",
+        "--sandbox",
         "--print-timeout",
         f"{timeout_seconds}s",
         "--output-format",
         "json",
+        f"-p={prompt}",
     ]
 
     target_cwd = workspace_root if workspace_root else Path.cwd()
@@ -177,7 +179,7 @@ async def run_single_validator(
         if run_streaming_process:
             res = await run_streaming_process(
                 cmd=cmd,
-                payload=prompt,
+                payload=None,
                 timeout_seconds=float(timeout_seconds + 5),
                 cwd=target_cwd,
             )

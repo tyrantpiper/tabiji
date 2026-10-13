@@ -1,14 +1,24 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-13T23:25:00Z",
+  "last_audit_date": "2026-10-14T01:55:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 75,
-    "audited_targets": 75,
-    "verified_vulnerabilities": 17,
-    "dismissed_hypotheses": 68
+    "total_targets": 76,
+    "audited_targets": 76,
+    "verified_vulnerabilities": 18,
+    "dismissed_hypotheses": 70
   },
   "targets": [
+    {
+      "id": "backend/routers/trips.py:update_trip_dates",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": ["data_corruption_and_item_scrambling", "idor_authorization_bypass"],
+      "status": "VULNERABLE",
+      "patch_status": "PATCH_CANDIDATE_READY",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_calendar_date_shifting.md",
+      "validator_details": "Confirmed start_shift causes all activities to collapse into Day 1 on reschedule. Mantis patch candidate prepared."
+    },
     {
       "id": "backend/main.py",
       "target_type": "backend_gateway",

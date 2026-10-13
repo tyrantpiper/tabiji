@@ -31,7 +31,8 @@ export function LocationEditDialog({
     currentTrip,
     biasLoc,    // 🆕 Smart Geocoding Bias
 }: LocationEditDialogProps) {
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
+    const zh = lang === 'zh'
     const [searchCountry, setSearchCountry] = useState("")
     const [dailyLocSearchRegion, setDailyLocSearchRegion] = useState("")
     const [newLocName, setNewLocName] = useState("")
@@ -167,73 +168,86 @@ export function LocationEditDialog({
 
                     {/* 搜尋區域 */}
                     <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-500">{t('loc_search')}</label>
-                        <div className="flex gap-2">
-                            <div className="w-1/3 space-y-2">
-                                <select
-                                    className="w-full h-9 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-slate-950 dark:focus:ring-slate-400 dark:text-white"
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                            {t('loc_search')}
+                        </label>
+
+                        {/* 1. 國家與區域微型篩選條 (Country / Region Filter Header) */}
+                        <div className="grid grid-cols-2 gap-2">
+                            <div className="relative">
+                                <Input
+                                    list="loc-edit-country-options"
+                                    placeholder={zh ? "🌍 國家 (可手打或自選)" : "🌍 Country (Type/select)"}
+                                    className="text-[16px] sm:text-xs h-10 bg-slate-50/50 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-700 px-3 rounded-xl"
                                     value={searchCountry}
-                                    onChange={e => {
+                                    onChange={(e) => {
                                         setSearchCountry(e.target.value)
                                         setDailyLocSearchRegion("")
                                     }}
-                                >
-                                    <option value="">🌍 Country</option>
-                                    <option value="Japan">🇯🇵 Japan</option>
-                                    <option value="Taiwan">🇹🇼 Taiwan</option>
-                                    <option value="South Korea">🇰🇷 Korea</option>
-                                    <option value="Thailand">🇹🇭 Thailand</option>
-                                    <option value="Vietnam">🇻🇳 Vietnam</option>
-                                    <option value="Hong Kong">🇭🇰 Hong Kong</option>
-                                    <option value="Singapore">🇸🇬 Singapore</option>
-                                    <option value="Malaysia">🇲🇾 Malaysia</option>
-                                    <option value="Philippines">🇵🇭 Philippines</option>
-                                    <option value="Indonesia">🇮🇩 Indonesia</option>
-                                    <option value="China">🇨🇳 China</option>
-                                    <option value="USA">🇺🇸 USA</option>
-                                    <option value="Canada">🇨🇦 Canada</option>
-                                    <option value="UK">🇬🇧 UK</option>
-                                    <option value="France">🇫🇷 France</option>
-                                    <option value="Italy">🇮🇹 Italy</option>
-                                    <option value="Germany">🇩🇪 Germany</option>
-                                    <option value="Spain">🇪🇸 Spain</option>
-                                    <option value="Australia">🇦🇺 Australia</option>
-                                    <option value="New Zealand">🇳🇿 New Zealand</option>
-                                </select>
-
-                                {searchCountry && COUNTRY_REGIONS[searchCountry] ? (
-                                    <select
-                                        className="w-full h-9 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-slate-950 dark:focus:ring-slate-400 dark:text-white"
-                                        value={dailyLocSearchRegion}
-                                        onChange={e => setDailyLocSearchRegion(e.target.value)}
-                                    >
-                                        <option value="">🏙️ Region (All)</option>
-                                        {COUNTRY_REGIONS[searchCountry].map(region => (
-                                            <option key={region} value={region}>{region}</option>
-                                        ))}
-                                    </select>
-                                ) : (
-                                    <Input
-                                        placeholder="🏙️ Region"
-                                        className="h-9 text-xs"
-                                        value={dailyLocSearchRegion}
-                                        onChange={e => setDailyLocSearchRegion(e.target.value)}
-                                    />
-                                )}
-                            </div>
-
-                            <div className="flex-1 flex gap-2">
-                                <Input
-                                    placeholder={t('loc_search_placeholder')}
-                                    value={newLocName}
-                                    onChange={e => setNewLocName(e.target.value)}
-                                    onKeyDown={e => e.key === 'Enter' && handleSearchLocation()}
-                                    className="flex-1 h-auto"
                                 />
-                                <Button onClick={handleSearchLocation} disabled={isLocSearching}>
-                                    {isLocSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                                </Button>
+                                <datalist id="loc-edit-country-options">
+                                    <option value="Japan">🇯🇵 Japan / 日本</option>
+                                    <option value="Taiwan">🇹🇼 Taiwan / 台灣</option>
+                                    <option value="South Korea">🇰🇷 South Korea / 韓國</option>
+                                    <option value="Thailand">🇹🇭 Thailand / 泰國</option>
+                                    <option value="Vietnam">🇻🇳 Vietnam / 越南</option>
+                                    <option value="Hong Kong">🇭🇰 Hong Kong / 香港</option>
+                                    <option value="Singapore">🇸🇬 Singapore / 新加坡</option>
+                                    <option value="Malaysia">🇲🇾 Malaysia / 馬來西亞</option>
+                                    <option value="Philippines">🇵🇭 Philippines / 菲律賓</option>
+                                    <option value="Indonesia">🇮🇩 Indonesia / 印尼</option>
+                                    <option value="China">🇨🇳 China / 中國</option>
+                                    <option value="USA">🇺🇸 USA / 美國</option>
+                                    <option value="UK">🇬🇧 UK / 英國</option>
+                                    <option value="France">🇫🇷 France / 法國</option>
+                                    <option value="Italy">🇮🇹 Italy / 義大利</option>
+                                    <option value="Germany">🇩🇪 Germany / 德國</option>
+                                    <option value="Switzerland">🇨🇭 Switzerland / 瑞士</option>
+                                    <option value="Iceland">🇮🇸 Iceland / 冰島</option>
+                                    <option value="Australia">🇦🇺 Australia / 澳洲</option>
+                                    <option value="New Zealand">🇳🇿 New Zealand / 紐西蘭</option>
+                                    <option value="Canada">🇨🇦 Canada / 加拿大</option>
+                                    <option value="Spain">🇪🇸 Spain / 西班牙</option>
+                                </datalist>
                             </div>
+
+                            {searchCountry && COUNTRY_REGIONS[searchCountry] ? (
+                                <select
+                                    className="w-full h-10 rounded-xl border border-slate-200/80 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 text-foreground px-3 py-1 text-xs shadow-2xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                                    value={dailyLocSearchRegion}
+                                    onChange={(e) => setDailyLocSearchRegion(e.target.value)}
+                                >
+                                    <option value="">🏙️ {zh ? "地區 (全部)" : "Region (All)"}</option>
+                                    {COUNTRY_REGIONS[searchCountry].map(region => (
+                                        <option key={region} value={region}>{region}</option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <Input
+                                    placeholder={zh ? "🏙️ 地區 (可選)" : "🏙️ Region (opt)"}
+                                    className="text-[16px] sm:text-xs h-10 bg-slate-50/50 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-700 px-3 rounded-xl"
+                                    value={dailyLocSearchRegion}
+                                    onChange={(e) => setDailyLocSearchRegion(e.target.value)}
+                                />
+                            )}
+                        </div>
+
+                        {/* 2. 地點名稱輸入與搜尋按鈕 */}
+                        <div className="flex gap-2">
+                            <Input
+                                placeholder={t('loc_search_placeholder')}
+                                value={newLocName}
+                                onChange={e => setNewLocName(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleSearchLocation()}
+                                className="flex-1 h-10 text-[16px] sm:text-sm bg-slate-50/50 dark:bg-slate-800/40 border-slate-200/80 dark:border-slate-700 rounded-xl px-3"
+                            />
+                            <Button
+                                onClick={handleSearchLocation}
+                                disabled={isLocSearching}
+                                className="h-10 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shrink-0"
+                            >
+                                {isLocSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                            </Button>
                         </div>
                     </div>
 

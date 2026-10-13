@@ -475,4 +475,15 @@
 - **CWD 無關之三重路徑防禦 (AD-093)**: `assert_security_path_hygiene` 實作「裸檔名檢查（`is_bare`，如 `candidates.json` 或 `./candidates.json`）」+「絕對路徑正規化解析（`os.path.normcase` 防禦 Windows 磁碟代號大小寫差異）」+「相對於根目錄路徑解析（`repo_root / file_path`）」三重比對。無論 CLI 工具是由專案根目錄、`backend/` 或是外部腳本呼叫，均能 100% 準確攔截根目錄污染並拋出 Fail-Fast Exit Code 1。
 - **發布管線 Step 0 根目錄衛生守門員 (AD-094)**: 在 `/push` 發布工作流中，於 TypeScript 與測試前置插入 Step 0「根目錄衛生守門員」，透過嚴格的配置檔案白名單（`package.json`, `tsconfig.json`, `components.json`, `NOTICE.md`, `README.md`, `next.config.ts` 等）自動掃描攔截未授權的 `*.json`、`*.diff`、`*.tmp`、`*.bak`，杜絕任何 Agent 遺留孤兒產物。
 - **CI 執行目錄 `working-directory: backend` 造成相對路徑解析偏離之測試偽陰性陷阱 (FP-025)**: 當 GitHub Actions CI 在 `backend/` 下執行 pytest 時，`Path("candidates.json").resolve()` 會解析為 `backend/candidates.json`，使其父目錄被判定為 `backend/` 而非 `repo_root`，導致單純的 `norm_parent == norm_root` 檢查被繞過。處方：增加 `is_bare` 檢查（直接判斷傳入字串是否缺少父目錄前綴）與相對於 `repo_root` 的雙重解析比對，使安全閘門徹底脫鉤進程當前工作目錄。
+
+### 28. 全端行程封面統一自動解析、全球靈感快選精簡與時區安全日期運算領域 (Universal Trip Cover Pipeline, Global Inspiration Pills & Timezone Safety) [2026-10-14 Commit 2734f12]
+- **全端行程封面單一真理與三層防禦模型 (AD-095)**: 行程封面展示徹底摒棄各組件分散的 `trip.cover_image ? ... : <無圖色塊>` 判斷，全端（儀表板卡片、清單、分享頁、設定頁、PDF）統一套用 `getTripCoverUrl(coverImage, title, destination)`：
+  1. *第 1 層 (Explicit User Will)*：使用者自訂上傳封面絕對優先。
+  2. *第 2 層 (Sanitization Defense)*：嚴格過濾並攔截資料庫或外部傳入之 `"null"`、`"undefined"`、全空白偽字串，防止惡意字串穿透至 `<Image src>`。
+  3. *第 3 層 (Deterministic Dynamic Resolution)*：無圖或壞字串時，由標題與目的地別名即時映射高畫質代表風景照片；全未匹配時由 `DEFAULT_COVER_IMAGE` 托底。
+- **寫入期與讀取期雙重閉環 (AD-096)**: 後端手動建立行程路由（`create_manual_trip`）在存入資料庫前直接執行 `resolve_destination_cover_url(title)` 寫入實體圖片，前端讀取層亦全面以 `getTripCoverUrl` 渲染，徹底根絕歷史 NULL 行程引起的「清單無圖但設定頁有圖」之感官隨機性缺陷。
+- **全球三大代表都會靈感快選模型 (AD-097)**: 手動建立行程靈感膠囊精簡為東京（亞洲）、巴黎（歐洲）、紐約（美洲），統一為經典 5 日行程，支援 `i18n` 雙語切換標籤與預設標題，大幅降低使用者認知負荷。
+- **本地時區安全純函數原則 (AD-098)**: 計算預設結束日期時嚴禁使用 `new Date().toISOString().split('T')[0]`（在 UTC 西半球時區會引發跨日回退錯位）。全面採用基於本地年/月/日解構與構造之 `addDaysToLocalYMD` 純函數，確保在任何時區、跨月跨年與閏年環境下，結束日期天數恆等於 5 天。
+- **點擊靈感膠囊強制重設自訂封面之破壞性資料遺失陷阱 (FP-026)**: 初版構想認為「切換靈感城市膠囊時應同步將 `coverImage` 重設為空字串，以讓新標題自動對應封面」。Security Sentinel 對抗審查指出，若使用者已手動上傳自訂照片，點擊建議膠囊會非預期抹除使用者已上傳的照片。教訓：自訂照片始終保持最高優先級，切換標題時絕不破壞既有已上傳之 `coverImage`。
+- **`toISOString()` 之時區跨日滑移陷阱 (FP-027)**: 在 UTC 西半球時區（如紐約 UTC-5），使用 `toISOString()` 轉字串會因 UTC 時間提前或延後產生日期回退 1 天的錯位。教訓：日期運算與格式化必須完全立足於客戶端本地時區解析，透過 `addDaysToLocalYMD` 純數學運算杜絕時差滑移。
 
