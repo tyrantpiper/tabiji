@@ -22,6 +22,7 @@ import { tripsApi } from "@/lib/api"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
 import { ZenRenew } from "@/components/ui/zen-renew"
+import { getTripCoverUrl } from "@/lib/destination-covers"
 
 interface TabijiHomeDashboardProps {
     trips: Trip[]
@@ -61,7 +62,7 @@ export function TabijiHomeDashboard({
                 title: fullTrip.title || trip.title,
                 startDate: new Date(fullTrip.start_date || trip.start_date).toLocaleDateString(),
                 endDate: new Date(fullTrip.end_date || trip.end_date || trip.start_date).toLocaleDateString(),
-                coverImage: fullTrip.cover_image,
+                coverImage: getTripCoverUrl(fullTrip.cover_image, fullTrip.title || trip.title),
                 days: (fullTrip.days || []).map((d: { day: number; activities?: Activity[] }) => ({
                     day: d.day,
                     date: (() => {
@@ -223,20 +224,16 @@ export function TabijiHomeDashboard({
                                     }}
                                 >
                                     <div className="h-36 sm:h-44 bg-[#121A18] relative rounded-t-2xl overflow-hidden">
-                                        {trip.cover_image ? (
-                                            <div className="relative w-full h-full">
-                                                <Image 
-                                                    src={trip.cover_image} 
-                                                    alt="cover" 
-                                                    fill 
-                                                    className="object-cover opacity-85 group-hover:scale-105 transition-transform duration-500" 
-                                                    unoptimized 
-                                                    priority={index === 0}
-                                                />
-                                            </div>
-                                        ) : (
-                                            <div className="absolute inset-0 bg-linear-to-br from-[#0B3026] to-[#121A18]" />
-                                        )}
+                                        <div className="relative w-full h-full">
+                                            <Image 
+                                                src={getTripCoverUrl(trip.cover_image, trip.title)} 
+                                                alt="cover" 
+                                                fill 
+                                                className="object-cover opacity-85 group-hover:scale-105 transition-transform duration-500" 
+                                                unoptimized 
+                                                priority={index === 0}
+                                            />
+                                        </div>
 
                                         {/* 漸變層遮罩 */}
                                         <div className="absolute inset-0 bg-linear-to-t from-black/75 via-black/25 to-transparent" />

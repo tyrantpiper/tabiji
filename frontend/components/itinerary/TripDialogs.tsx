@@ -32,13 +32,57 @@ interface CreateTripModalProps {
     hideTrigger?: boolean
 }
 
-const INSPIRATION_PILLS = [
-    { label: "🇯🇵 東京 5 日遊", title: "東京 5 日遊", days: 5 },
-    { label: "🌸 京都漫步 4 日", title: "京都古都漫步", days: 4 },
-    { label: "🏖️ 沖繩度假 4 日", title: "沖繩海灘度假", days: 4 },
-    { label: "🏔️ 北海道 6 日", title: "北海道雪國之旅", days: 6 },
-    { label: "🇭🇰 香港美食 3 日", title: "香港美食探索", days: 3 },
-]
+export interface InspirationPill {
+    id: string
+    emoji: string
+    days: number
+    titleZh: string
+    titleEn: string
+    labelZh: string
+    labelEn: string
+}
+
+export const GLOBAL_INSPIRATION_PILLS: readonly InspirationPill[] = [
+    {
+        id: "tokyo",
+        emoji: "🇯🇵",
+        days: 5,
+        titleZh: "東京 5 日自由行",
+        titleEn: "Tokyo 5-Day Explorer",
+        labelZh: "🇯🇵 東京 5 日自由行",
+        labelEn: "🇯🇵 Tokyo 5-Day"
+    },
+    {
+        id: "paris",
+        emoji: "🇫🇷",
+        days: 5,
+        titleZh: "巴黎 5 日藝文慢步",
+        titleEn: "Paris 5-Day Cultural Stroll",
+        labelZh: "🇫🇷 巴黎 5 日藝文慢步",
+        labelEn: "🇫🇷 Paris 5-Day"
+    },
+    {
+        id: "nyc",
+        emoji: "🇺🇸",
+        days: 5,
+        titleZh: "紐約 5 日都會探索",
+        titleEn: "NYC 5-Day Urban Discovery",
+        labelZh: "🇺🇸 紐約 5 日都會探索",
+        labelEn: "🇺🇸 NYC 5-Day"
+    }
+] as const
+
+export function addDaysToLocalYMD(ymdStr: string, addDays: number): string {
+    const parts = ymdStr.split('-').map(Number)
+    if (parts.length !== 3 || parts.some(isNaN)) return ymdStr
+    const [year, month, day] = parts
+    const d = new Date(year, month - 1, day)
+    d.setDate(d.getDate() + addDays)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const date = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${date}`
+}
 
 function calculateDays(start: string, end: string): number {
     try {
@@ -61,7 +105,8 @@ export function CreateTripModal({
     initialPrompt,
     hideTrigger = false,
 }: CreateTripModalProps) {
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
+    const isZh = lang !== 'en'
     const haptic = useHaptic()
 
     // 1. 導航分段狀態
@@ -417,21 +462,18 @@ export function CreateTripModal({
                                         <span>{t('inspire_pills_label')}</span>
                                     </div>
                                     <div className="flex flex-wrap gap-1.5">
-                                        {INSPIRATION_PILLS.map((pill) => (
+                                        {GLOBAL_INSPIRATION_PILLS.map((pill) => (
                                             <button
-                                                key={pill.label}
+                                                key={pill.id}
                                                 type="button"
                                                 onClick={() => {
                                                     haptic.selection()
-                                                    setTitle(pill.title)
-                                                    const startObj = new Date(startDate)
-                                                    const endObj = new Date(startObj)
-                                                    endObj.setDate(endObj.getDate() + (pill.days - 1))
-                                                    setEndDate(endObj.toISOString().split('T')[0])
+                                                    setTitle(isZh ? pill.titleZh : pill.titleEn)
+                                                    setEndDate(addDaysToLocalYMD(startDate, pill.days - 1))
                                                 }}
                                                 className="px-2.5 py-1 text-xs rounded-full bg-stone-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-slate-700 hover:text-amber-700 dark:hover:text-amber-300 border border-stone-200/60 dark:border-slate-700/60 transition-colors cursor-pointer select-none active:scale-95"
                                             >
-                                                {pill.label}
+                                                {isZh ? pill.labelZh : pill.labelEn}
                                             </button>
                                         ))}
                                     </div>

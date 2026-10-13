@@ -61,3 +61,25 @@ export function resolveDestinationCover(title?: string, destination?: string): s
 
     return DEFAULT_COVER_IMAGE
 }
+
+/**
+ * 🛡️ 全端封面統一解析助手 (Universal Trip Cover Resolver)
+ * 1. 優先回傳乾淨的自訂封面 URL (若存在)。
+ * 2. 防禦資料庫遺留字串化偽值 ("null", "undefined", 全空白)。
+ * 3. 空值時以 100% 確定性動態解析目的地預設風景照。
+ */
+export function getTripCoverUrl(
+    coverImage?: string | null, 
+    title?: string, 
+    destination?: string
+): string {
+    if (
+        typeof coverImage === "string" && 
+        coverImage.trim() && 
+        coverImage.trim() !== "null" && 
+        coverImage.trim() !== "undefined"
+    ) {
+        return coverImage.trim()
+    }
+    return resolveDestinationCover(title, destination)
+}
