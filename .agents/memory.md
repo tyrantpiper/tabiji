@@ -486,4 +486,14 @@
 - **本地時區安全純函數原則 (AD-098)**: 計算預設結束日期時嚴禁使用 `new Date().toISOString().split('T')[0]`（在 UTC 西半球時區會引發跨日回退錯位）。全面採用基於本地年/月/日解構與構造之 `addDaysToLocalYMD` 純函數，確保在任何時區、跨月跨年與閏年環境下，結束日期天數恆等於 5 天。
 - **點擊靈感膠囊強制重設自訂封面之破壞性資料遺失陷阱 (FP-026)**: 初版構想認為「切換靈感城市膠囊時應同步將 `coverImage` 重設為空字串，以讓新標題自動對應封面」。Security Sentinel 對抗審查指出，若使用者已手動上傳自訂照片，點擊建議膠囊會非預期抹除使用者已上傳的照片。教訓：自訂照片始終保持最高優先級，切換標題時絕不破壞既有已上傳之 `coverImage`。
 - **`toISOString()` 之時區跨日滑移陷阱 (FP-027)**: 在 UTC 西半球時區（如紐約 UTC-5），使用 `toISOString()` 轉字串會因 UTC 時間提前或延後產生日期回退 1 天的錯位。教訓：日期運算與格式化必須完全立足於客戶端本地時區解析，透過 `addDaysToLocalYMD` 純數學運算杜絕時差滑移。
+
+### 29. 日曆改期骨牌位移算法根除、零位移天數保持引擎與 0ms 樂觀快照回滾領域 (Calendar Reschedule Zero-Shift Duration Engine, 0ms Optimistic UI & Day Lifecycle) [2026-10-14 Commit 043b538]
+- **日曆改期天數序號絕對保持律 (AD-099)**: 行程活動的核心資產是天數序號（Day 1~N），而非公曆物理日期。改期時徹底廢止舊有的 `start_shift = (old_start - new_start).days` 滑動平移代碼；天數相等或增加時 Day 1~N 活動 100% 原位保留、零位移寫入；僅在天數縮短（`new_days < old_days`）時由使用者指定的 `on_shorten` 批次執行合併（`merge`）或刪除（`delete`），並由後端補齊 `created_by` 擁有者權限攔截。
+- **SWR 樂觀更新之 days 陣列預修剪與快照回滾防衛 (AD-100)**: 縮短行程時若前端僅更新 `start_date` 與 `end_date`，計算函式中的 `maxDayFromItems` 會因殘留舊天數活動而抵消縮短效果。樂觀更新必須在客戶端預先修剪/合併 `optimisticTrip.days` 陣列並夾止當前 `focusedDay`；同時在呼叫 API 前深拷貝 `backupTrip` 快照寫入 IndexedDB，於網路異常或 API 報錯時觸發 0ms 硬核回滾，保證前端無狀態脫鉤。
+- **天數生命週期操作收攏至行程設定視圖 (AD-101)**: 移除常駐於日期按鈕下方懸掛之紅色「刪除這一天」按鈕，消除垂直佈局失衡與誤觸風險；將天數增刪結構操作全數收攏至 `TripSettingsView` 的「天數結構管理」專屬分組，並實裝 `totalDays <= 1` 自動禁用與不可逆二級安全確認對話框。
+- **行程看板 2x2 Bento 右欄資訊層級對調與 Sheet Tabs 心智模型對齊 (AD-102)**: 行程資訊看板 2x2 Bento Grid 右欄位置重構：右上角設為高頻檢視之「✅ 行前清單」，右下角設為「💰 預估花費」；底層抽屜 (`IOSBottomSheet`) Segmented Control Tabs 同步調整為 `[AI 審核] ➜ [重點提醒] ➜ [行前清單] ➜ [交通票券] ➜ [預估花費]`，達成視覺與操作心智模型 100% 同構。
+- **天氣卡牌極簡去雜訊與地理搜尋雙層對齊 (AD-103)**: 天氣卡牌左上角徹底隱藏 GPS 經緯度微標籤，還原 `📍 [地點名稱] ✏️` 極簡質感；修改當日地點對話框 (`LocationEditDialog`) 搜尋模組全面對齊 `ActivityEditModal` 標準雙層佈局（雙欄國家 Datalist 可手打搜尋 + 地區動態下拉；全寬地點輸入框 + 搜尋按鈕），並統一消除 `p-2` 內縮框，達成像素級垂直邊界對齊。
+- **出發日位移 `start_shift < 0` 骨牌平移算法雙重輾壓活動擠壓至 Day 1 陷阱 (FP-028)**: 舊改期邏輯中，當 `start_shift < 0` 時，第一階段將 `day_number <= shift_abs` 更名為 `shift_abs + 1`；緊接的第二階段 `day_number > shift_abs` 又重新抓出這批剛更名的活動並扣除 `shift_abs`，直接將所有活動二次輾壓變成 `day_number = 1`，並物理刪除每日筆記。教訓：改期絕不可做骨牌式位移算術，必須直接解耦出發日與天數序號。
+- **前端 `maxDayFromItems` 夾角遮蔽天數縮短樂觀更新陷阱 (FP-029)**: `totalDays` 依賴 `Math.max(daysFromDates, maxDayFromItems)`。在縮短天數樂觀更新時，若僅修改起訖日期而未同步裁剪 `optimisticTrip.days` 陣列，`maxDayFromItems` 仍返回舊總天數，導致頂部天數膠囊在 0ms 樂觀期間無法即刻縮短。教訓：前端樂觀構建時必須對資料載體執行深層同步修剪。
+- **外層包裹容器 `p-2` 造成次級篩選條與搜尋框邊界錯位陷阱 (FP-030)**: 在彈出視窗中，為第一層篩選條添加帶 `p-2` 的卡片外框背景，而第二層搜尋框為裸組件，導致第一層內部輸入框左右各縮進 8px，與第二層搜尋框在視覺上產生嚴重的邊界鋸齒與未對齊感。教訓：同組件內部輸入元素應統一寬度維度與圓角規格，避免局部嵌套單獨 padding 容器。
 
