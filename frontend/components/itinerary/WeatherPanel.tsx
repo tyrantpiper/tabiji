@@ -260,12 +260,6 @@ export function WeatherPanel({
                                 <span className="inline-block w-16 h-3 bg-foreground/10 animate-pulse rounded" />
                             )}
                         </span>
-                        {/* 🌐 GPS 經緯度座標微標籤 */}
-                        {resolvedLocation && (
-                            <span className="text-[9px] font-mono font-normal text-muted-foreground border border-border/40 px-1 rounded hidden sm:inline-block shrink-0">
-                                {resolvedLocation.lat.toFixed(2)}, {resolvedLocation.lng.toFixed(2)}
-                            </span>
-                        )}
                         <Edit3 className="w-2.5 h-2.5 text-muted-foreground opacity-60 group-hover:opacity-100 transition-opacity shrink-0" />
                     </button>
 
@@ -370,32 +364,7 @@ export function WeatherPanel({
                     </div>
                 </div>
 
-                {/* 3. AI 智能行前氣象叮嚀膠囊 (iOS Dynamic Glass Pill) */}
-                {aiAdvice && (
-                    <div
-                        className={cn(
-                            "w-full mb-3 px-3 py-2 rounded-2xl border flex items-start gap-2.5 transition-colors select-none",
-                            aiAdvice.isAlert
-                                ? "bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200"
-                                : "bg-white/60 dark:bg-zinc-800/60 border-white/40 dark:border-white/10 text-foreground"
-                        )}
-                    >
-                        <Sparkles
-                            className={cn(
-                                "w-4 h-4 mt-0.5 shrink-0",
-                                aiAdvice.isAlert ? "text-amber-500 animate-pulse" : "text-primary"
-                            )}
-                        />
-                        <div className="text-[11px] leading-relaxed flex-1">
-                            <span className="font-semibold text-primary dark:text-primary-foreground mr-1.5">
-                                {zh ? "穿衣指南：" : "Attire: "}{aiAdvice.clothText}
-                            </span>
-                            <span className="opacity-90">{aiAdvice.adviceText}</span>
-                        </div>
-                    </div>
-                )}
-
-                {/* 4. 24 小時橫向時間軸滾動帶 (Hourly Scrubber Strip) */}
+                {/* 3. 24 小時橫向時間軸滾動帶 (Hourly Scrubber Strip) */}
                 <div className="relative w-full mb-2">
                     <div
                         className="flex gap-2 overflow-x-auto no-scrollbar pb-1.5 pt-0.5 touch-pan-x overscroll-x-contain"
@@ -508,6 +477,31 @@ export function WeatherPanel({
                             transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
                             className="overflow-hidden pt-3 border-t border-white/40 dark:border-white/10 mt-2"
                         >
+                            {/* 頂部全寬穿衣指南 Bento 橫條 */}
+                            {aiAdvice && (
+                                <div
+                                    className={cn(
+                                        "w-full mb-2.5 p-3 rounded-2xl border shadow-xs flex items-start gap-2.5 transition-colors select-none",
+                                        aiAdvice.isAlert
+                                            ? "bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200"
+                                            : "bg-white/70 dark:bg-zinc-800/70 border-white/60 dark:border-white/10 text-foreground"
+                                    )}
+                                >
+                                    <Sparkles
+                                        className={cn(
+                                            "w-4 h-4 mt-0.5 shrink-0",
+                                            aiAdvice.isAlert ? "text-amber-500 animate-pulse" : "text-primary"
+                                        )}
+                                    />
+                                    <div className="text-[11px] leading-relaxed flex-1">
+                                        <span className="font-bold text-primary dark:text-primary-foreground mr-1.5">
+                                            {zh ? "穿衣指南：" : "Attire: "}{aiAdvice.clothText}
+                                        </span>
+                                        <span className="opacity-90">{aiAdvice.adviceText}</span>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-2 gap-2.5">
                                 {/* Bento 卡片 1: 體感與中暑防護 */}
                                 <div className="p-3 rounded-2xl bg-white/70 dark:bg-zinc-800/70 border border-white/60 dark:border-white/10 shadow-xs flex flex-col justify-between">

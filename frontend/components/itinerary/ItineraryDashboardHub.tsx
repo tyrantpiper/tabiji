@@ -261,71 +261,7 @@ export default function ItineraryDashboardHub({
           </div>
         </motion.button>
 
-        {/* 卡片 2: 💰 預估花費 */}
-        <motion.button
-          type="button"
-          whileTap={{ scale: 0.98 }}
-          onClick={() => handleCardClick("costs")}
-          className={cn(
-            "text-left p-3 rounded-2xl transition-all duration-200",
-            "bg-white/70 dark:bg-card/60 backdrop-blur-xl",
-            "border border-white/50 dark:border-white/10 shadow-sm hover:shadow-md",
-            "flex flex-col justify-between min-h-20.5 group"
-          )}
-        >
-          <div className="flex items-center justify-between w-full">
-            <div className="w-7 h-7 rounded-lg bg-emerald-500/10 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-              <Wallet className="w-4 h-4" />
-            </div>
-            {costSummary.hasMultipleCurrencies && (
-              <span className="text-[9px] font-medium px-1.5 py-0.2 rounded-full bg-primary/10 text-primary">
-                {zh ? "多幣別" : "Multi"}
-              </span>
-            )}
-          </div>
-
-          <div className="mt-2 min-w-0 w-full">
-            <div className="text-[11px] font-semibold text-foreground truncate">
-              {zh ? "預估花費" : "Estimated Cost"}
-            </div>
-            <div className="text-xs font-bold text-foreground tabular-nums truncate mt-0.5">
-              {costSummary.primaryCurrency} {costSummary.primaryTotal.toLocaleString()}
-            </div>
-          </div>
-        </motion.button>
-
-        {/* 卡片 3: 🎫 交通票券 */}
-        <motion.button
-          type="button"
-          whileTap={{ scale: 0.98 }}
-          onClick={() => handleCardClick("tickets")}
-          className={cn(
-            "text-left p-3 rounded-2xl transition-all duration-200",
-            "bg-white/70 dark:bg-card/60 backdrop-blur-xl",
-            "border border-white/50 dark:border-white/10 shadow-sm hover:shadow-md",
-            "flex flex-col justify-between min-h-20.5 group"
-          )}
-        >
-          <div className="flex items-center justify-between w-full">
-            <div className="w-7 h-7 rounded-lg bg-blue-500/10 dark:bg-blue-400/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-              <Ticket className="w-4 h-4" />
-            </div>
-            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground tabular-nums">
-              {tickets.length} {zh ? "張" : ""}
-            </span>
-          </div>
-
-          <div className="mt-2 min-w-0 w-full">
-            <div className="text-[11px] font-semibold text-foreground truncate">
-              {zh ? "交通票券" : "Transit Tickets"}
-            </div>
-            <p className="text-[10px] text-muted-foreground truncate mt-0.5">
-              {tickets.length > 0 ? tickets[0].name : (zh ? "尚無票券憑證" : "No tickets")}
-            </p>
-          </div>
-        </motion.button>
-
-        {/* 卡片 4: ✅ 行前清單 */}
+        {/* 卡片 2: ✅ 行前清單 */}
         <motion.button
           type="button"
           whileTap={{ scale: 0.98 }}
@@ -369,6 +305,70 @@ export default function ItineraryDashboardHub({
               <span className="text-[9px] text-muted-foreground font-mono tabular-nums">
                 {checklistPercentage}%
               </span>
+            </div>
+          </div>
+        </motion.button>
+
+        {/* 卡片 3: 🎫 交通票券 */}
+        <motion.button
+          type="button"
+          whileTap={{ scale: 0.98 }}
+          onClick={() => handleCardClick("tickets")}
+          className={cn(
+            "text-left p-3 rounded-2xl transition-all duration-200",
+            "bg-white/70 dark:bg-card/60 backdrop-blur-xl",
+            "border border-white/50 dark:border-white/10 shadow-sm hover:shadow-md",
+            "flex flex-col justify-between min-h-20.5 group"
+          )}
+        >
+          <div className="flex items-center justify-between w-full">
+            <div className="w-7 h-7 rounded-lg bg-blue-500/10 dark:bg-blue-400/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+              <Ticket className="w-4 h-4" />
+            </div>
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground tabular-nums">
+              {tickets.length} {zh ? "張" : ""}
+            </span>
+          </div>
+
+          <div className="mt-2 min-w-0 w-full">
+            <div className="text-[11px] font-semibold text-foreground truncate">
+              {zh ? "交通票券" : "Transit Tickets"}
+            </div>
+            <p className="text-[10px] text-muted-foreground truncate mt-0.5">
+              {tickets.length > 0 ? tickets[0].name : (zh ? "尚無票券憑證" : "No tickets")}
+            </p>
+          </div>
+        </motion.button>
+
+        {/* 卡片 4: 💰 預估花費 */}
+        <motion.button
+          type="button"
+          whileTap={{ scale: 0.98 }}
+          onClick={() => handleCardClick("costs")}
+          className={cn(
+            "text-left p-3 rounded-2xl transition-all duration-200",
+            "bg-white/70 dark:bg-card/60 backdrop-blur-xl",
+            "border border-white/50 dark:border-white/10 shadow-sm hover:shadow-md",
+            "flex flex-col justify-between min-h-20.5 group"
+          )}
+        >
+          <div className="flex items-center justify-between w-full">
+            <div className="w-7 h-7 rounded-lg bg-emerald-500/10 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+              <Wallet className="w-4 h-4" />
+            </div>
+            {costSummary.hasMultipleCurrencies && (
+              <span className="text-[9px] font-medium px-1.5 py-0.2 rounded-full bg-primary/10 text-primary">
+                {zh ? "多幣別" : "Multi"}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-2 min-w-0 w-full">
+            <div className="text-[11px] font-semibold text-foreground truncate">
+              {zh ? "預估花費" : "Estimated Cost"}
+            </div>
+            <div className="text-xs font-bold text-foreground tabular-nums truncate mt-0.5">
+              {costSummary.primaryCurrency} {costSummary.primaryTotal.toLocaleString()}
             </div>
           </div>
         </motion.button>

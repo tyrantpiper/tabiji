@@ -44,10 +44,12 @@ interface TripSettingsViewProps {
     trip?: Trip
     currentTrip?: Trip
     userId?: string | null
+    totalDays?: number
     onBack: () => void
     onUpdate?: () => Promise<void>
     onTripUpdated?: () => Promise<void>
     onOpenDatePicker?: () => void
+    onDeleteDay?: (dayNum: number) => Promise<void> | void
     onDeleteOrLeave?: () => void
     onTripDeleted?: () => void
 }
@@ -56,10 +58,12 @@ export function TripSettingsView({
     trip: tripProp,
     currentTrip: currentTripProp,
     userId,
+    totalDays: totalDaysProp,
     onBack,
     onUpdate,
     onTripUpdated,
     onOpenDatePicker,
+    onDeleteDay,
     onDeleteOrLeave,
     onTripDeleted
 }: TripSettingsViewProps) {
@@ -86,6 +90,60 @@ export function TripSettingsView({
     // 🚨 刪除/退出對話框狀態
     const [dangerDialogOpen, setDangerDialogOpen] = useState(false)
     const [isDangerActionLoading, setIsDangerActionLoading] = useState(false)
+
+    // 🗓️ 天數管理狀態
+    const [deletingDayNum, setDeletingDayNum] = useState<number | null>(null)
+    const [isDeletingDay, setIsDeletingDay] = useState(false)
+
+    // 計算實際天數
+    const calculatedTotalDays = totalDaysProp || (() => {
+        if (!trip?.start_date) return 1
+        const startStr = trip.start_date.split('T')[0]
+        const endStr = trip.end_date ? trip.end_date.split('T')[0] : startStr
+        const [sy, sm, sd] = startStr.split('-').map(Number)
+        const [ey, em, ed] = endStr.split('-').map(Number)
+        const d = Math.max(1, Math.round((new Date(ey, em - 1, ed).getTime() - new Date(sy, sm - 1, sd).getTime()) / (1000 * 60 * 60 * 24)) + 1)
+        const maxDayFromItems = (Array.isArray(trip?.days) && trip.days.length > 0)
+            ? Math.max(...trip.days.map((x) => x.day || 1))
+            : 1
+        return Math.max(d, maxDayFromItems)
+    })()
+
+    const dayNumbers = Array.from({ length: calculatedTotalDays }, (_, i) => i + 1)
+
+    const getDayInfo = (dayNum: number) => {
+        if (trip?.start_date) {
+            const [y, m, d] = trip.start_date.split('T')[0].split('-').map(Number)
+            const dt = new Date(y, m - 1, d + (dayNum - 1))
+            const weekNames = zh 
+                ? ["週日", "週一", "週二", "週三", "週四", "週五", "週六"]
+                : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            return `${dt.getMonth() + 1}/${dt.getDate()} (${weekNames[dt.getDay()]})`
+        }
+        return `Day ${dayNum}`
+    }
+
+    const getDayActivityCount = (dayNum: number) => {
+        if (!trip?.days || !Array.isArray(trip.days)) return 0
+        const found = trip.days.find(d => d.day === dayNum)
+        return found?.activities?.length || 0
+    }
+
+    const handleConfirmDeleteDay = async () => {
+        if (!deletingDayNum || !onDeleteDay) return
+        setIsDeletingDay(true)
+        haptic.tap()
+        try {
+            await onDeleteDay(deletingDayNum)
+            await handleUpdate()
+            toast.success(zh ? `已成功刪除第 ${deletingDayNum} 天` : `Day ${deletingDayNum} deleted successfully`)
+            setDeletingDayNum(null)
+        } catch {
+            toast.error(zh ? "刪除天數失敗" : "Failed to delete day")
+        } finally {
+            setIsDeletingDay(false)
+        }
+    }
 
     if (!trip) return null
 
@@ -518,7 +576,63 @@ export function TripSettingsView({
                     </div>
                 </div>
 
-                {/* 4. Group 3: 危險操作區 (Danger Zone) */}
+                {/* 3. Group: 天數結構與日程管理 (Day Structure Management) */}
+                <div className="mb-6">
+                    <div className="flex items-center justify-between px-1 mb-2">
+                        <div className="text-xs font-bold text-[#0B3026]/60 dark:text-[#88A29A] uppercase tracking-wider">
+                            {zh ? "天數結構管理" : "Day Structure Management"}
+                        </div>
+                        <div className="text-xs text-[#0B3026]/50 dark:text-[#88A29A]/60 font-medium">
+                            {zh ? `共 ${calculatedTotalDays} 天` : `${calculatedTotalDays} Days Total`}
+                        </div>
+                    </div>
+                    <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl overflow-hidden shadow-xs border border-[#0B3026]/10 dark:border-white/10 divide-y divide-[#0B3026]/5 dark:divide-white/5">
+                        {dayNumbers.map((d) => {
+                            const dateLabel = getDayInfo(d)
+                            const actCount = getDayActivityCount(d)
+                            return (
+                                <div
+                                    key={d}
+                                    className="flex items-center justify-between p-4 hover:bg-black/2 dark:hover:bg-white/2 transition-colors"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-full bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs flex items-center justify-center select-none">
+                                            D{d}
+                                        </div>
+                                        <div>
+                                            <div className="text-sm font-semibold text-[#1E2927] dark:text-[#E5EBEA]">
+                                                {zh ? `第 ${d} 天` : `Day ${d}`} · <span className="text-xs font-normal opacity-80">{dateLabel}</span>
+                                            </div>
+                                            <div className="text-xs text-[#0B3026]/50 dark:text-[#88A29A]/60">
+                                                {actCount > 0 
+                                                    ? (zh ? `${actCount} 個景點活動` : `${actCount} activities`)
+                                                    : (zh ? "尚無安排活動 (空白日)" : "No activities")}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {onDeleteDay && (
+                                        <button
+                                            type="button"
+                                            disabled={calculatedTotalDays <= 1 || isDeletingDay}
+                                            onClick={() => {
+                                                haptic.selection()
+                                                setDeletingDayNum(d)
+                                            }}
+                                            className="px-2.5 py-1 text-xs font-medium rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1 cursor-pointer border-none bg-transparent"
+                                            title={calculatedTotalDays <= 1 ? (zh ? "單日行程無法刪除" : "Cannot delete single day") : (zh ? `刪除第 ${d} 天` : `Delete Day ${d}`)}
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                            <span className="hidden sm:inline">{zh ? "刪除此天" : "Delete"}</span>
+                                        </button>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+
+                {/* 4. Group 4: 危險操作區 (Danger Zone) */}
                 <div className="mb-6">
                     <div className="px-1 mb-2 text-xs font-bold text-rose-500 uppercase tracking-wider">
                         {zh ? "危險操作" : "Danger Zone"}
@@ -644,6 +758,50 @@ export function TripSettingsView({
                         >
                             {isDangerActionLoading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
                             {isOwner ? (zh ? "確認刪除" : "Delete Permanently") : (zh ? "確認退出" : "Leave Trip")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* 🗓️ 刪除天數安全確認對話框 */}
+            <Dialog open={deletingDayNum !== null} onOpenChange={(open) => !open && setDeletingDayNum(null)}>
+                <DialogContent className="sm:max-w-md bg-white dark:bg-[#1E2927] border border-[#0B3026]/10 dark:border-white/10 rounded-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                            <AlertTriangle className="w-5 h-5" />
+                            {zh ? `確定要刪除第 ${deletingDayNum} 天？` : `Delete Day ${deletingDayNum}?`}
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mt-2">
+                            {zh 
+                                ? "刪除後，當天的所有景點與活動將被移除，後續天數將自動往前遞補，行程結束日期亦會相應縮短 1 天。此操作不可復原。"
+                                : "All activities in this day will be removed, subsequent days will shift forward, and the trip duration will decrease by 1 day. This cannot be undone."}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="mt-4 flex gap-2 justify-end">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setDeletingDayNum(null)}
+                            disabled={isDeletingDay}
+                            className="rounded-xl"
+                        >
+                            {zh ? "取消" : "Cancel"}
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={handleConfirmDeleteDay}
+                            disabled={isDeletingDay}
+                            className="rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold"
+                        >
+                            {isDeletingDay ? (
+                                <span className="flex items-center gap-1.5">
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    {zh ? "刪除中..." : "Deleting..."}
+                                </span>
+                            ) : (
+                                zh ? "確認刪除" : "Confirm Delete"
+                            )}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

@@ -102,9 +102,9 @@ export default function IOSBottomSheet({
   const tabs: Array<{ id: DashboardSectionTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: "ai_review", label: zh ? "AI 審核" : "AI Review", icon: Sparkles },
     { id: "tips", label: zh ? "重點提醒" : "Tips", icon: AlertCircle },
-    { id: "costs", label: zh ? "預估花費" : "Costs", icon: Wallet },
-    { id: "tickets", label: zh ? "交通票券" : "Tickets", icon: Ticket },
     { id: "checklist", label: zh ? "行前清單" : "Checklist", icon: CheckSquare },
+    { id: "tickets", label: zh ? "交通票券" : "Tickets", icon: Ticket },
+    { id: "costs", label: zh ? "預估花費" : "Costs", icon: Wallet },
   ]
 
   if (!isMounted) return null

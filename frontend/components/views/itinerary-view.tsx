@@ -46,6 +46,7 @@ import { TripMasterOverview } from "@/components/itinerary/TripMasterOverview"
 import { CalendarRangeSheet } from "@/components/itinerary/CalendarRangeSheet"
 import { FloatingMapCapsule } from "@/components/itinerary/FloatingMapCapsule"
 import { TripSettingsView } from "@/components/itinerary/TripSettingsView"
+import { saveTripSnapshot } from "@/lib/idb-storage"
 
 /**
  * 🔧 Helper to access day data with number/string key fallback
@@ -1263,11 +1264,47 @@ export function ItineraryView() {
     // 🧠 Add Day Loading State
 
 
-    // 📅 實際執行日期更新 API
+    // 📅 實際執行日期更新 API (With 0ms Optimistic UI & Rollback Defense)
     const executeDateRangeUpdate = async (startDate: string, endDate: string, onShorten: "merge" | "delete" = "merge") => {
         if (!currentTrip) return
         setIsUpdatingDates(true)
         haptic.tap()
+
+        // 🛡️ 1. 保存原始快照以備失敗回滾
+        const backupTrip = { ...currentTrip }
+        const [sy, sm, sd] = startDate.split('-').map(Number)
+        const [ey, em, ed] = endDate.split('-').map(Number)
+        const newDaysCount = Math.max(1, Math.round((new Date(ey, em - 1, ed).getTime() - new Date(sy, sm - 1, sd).getTime()) / (1000 * 60 * 60 * 24)) + 1)
+
+        // 🛡️ 2. 樂觀構建 days 陣列，破除 maxDayFromItems 夾角陷阱
+        let optimisticDays = Array.isArray(currentTrip.days) ? [...currentTrip.days] : []
+        if (newDaysCount < optimisticDays.length) {
+            if (onShorten === "merge") {
+                const preserved = optimisticDays.filter(d => d.day < newDaysCount)
+                const targetDay = optimisticDays.find(d => d.day === newDaysCount) || { day: newDaysCount, activities: [] }
+                const excessActivities = optimisticDays.filter(d => d.day > newDaysCount).flatMap(d => d.activities || [])
+                preserved.push({ ...targetDay, activities: [...(targetDay.activities || []), ...excessActivities] })
+                optimisticDays = preserved
+            } else {
+                optimisticDays = optimisticDays.filter(d => d.day <= newDaysCount)
+            }
+        }
+
+        const optimisticTrip: Trip = {
+            ...currentTrip,
+            start_date: startDate,
+            end_date: endDate,
+            days: optimisticDays
+        }
+
+        // ⚡ 3. 0ms SWR 樂觀注入 + IndexedDB 快取同步寫入
+        await reloadTripDetail(optimisticTrip, false)
+        saveTripSnapshot(currentTrip.id, optimisticTrip)
+
+        // 🛡️ 4. 夾止當前聚焦天數，防止越界
+        if (day > newDaysCount) {
+            setDay(newDaysCount)
+        }
 
         try {
             await tripsApi.updateDates(currentTrip.id, {
@@ -1276,13 +1313,16 @@ export function ItineraryView() {
                 on_shorten: onShorten
             }, userId || "")
 
-            // Invalidate weather cache
             setWeatherData([])
-            await reloadTripDetail()
+            await reloadTrips()       // 全域 TripContext 同步
+            await reloadTripDetail()  // 背景核實最新權威資料
             toast.success(t('cal_updated_success') || "行程日期已成功更新！")
         } catch (e) {
             console.error("🔥 Failed to update trip dates:", e)
-            toast.error(t('iv_update_failed_short') || "更新日期失敗")
+            // 🔄 失敗硬核回滾
+            await reloadTripDetail(backupTrip, false)
+            saveTripSnapshot(currentTrip.id, backupTrip)
+            toast.error(t('iv_update_failed_short') || "更新日期失敗，已恢復原行程")
         } finally {
             setIsUpdatingDates(false)
             setIsDatePickerOpen(false)
@@ -1474,6 +1514,7 @@ export function ItineraryView() {
                         <TripSettingsView
                             currentTrip={currentTrip}
                             userId={userId}
+                            totalDays={totalDays}
                             onBack={() => {
                                 haptic.selection()
                                 setItinerarySubView('main')
@@ -1482,6 +1523,8 @@ export function ItineraryView() {
                                 await reloadTripDetail()
                                 await reloadTrips()
                             }}
+                            onOpenDatePicker={() => setIsDatePickerOpen(true)}
+                            onDeleteDay={handleDeleteDay}
                             onTripDeleted={() => {
                                 setItinerarySubView('main')
                                 setViewMode('list')

@@ -21,7 +21,7 @@ interface ItineraryHeaderProps {
     onBack: () => void
     onOpenDatePicker?: () => void
     onOpenSettings?: () => void
-    onDeleteDay: (dayNum: number) => void
+    onDeleteDay?: (dayNum: number) => void
     getDateInfo: (dayNum: number) => { date: string; week: string }
     userId: string | null
     onRefresh: () => Promise<void>
@@ -37,7 +37,6 @@ export function ItineraryHeader({
     onBack,
     onOpenDatePicker,
     onOpenSettings,
-    onDeleteDay,
     getDateInfo,
     userId,
     onRefresh,
@@ -226,18 +225,6 @@ export function ItineraryHeader({
                                             <span className="text-[10px] opacity-70">{week}</span>
                                             <span className="font-bold">{date}</span>
                                         </button>
-                                        {totalDays > 1 && day === d && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); onDeleteDay(d) }}
-                                                className="mt-1.5 px-2.5 py-1 text-[10px] font-medium 
-                                                        text-red-400 bg-red-50/80 backdrop-blur-sm
-                                                        border border-red-200/60 rounded-full shadow-sm 
-                                                        active:scale-95 active:bg-red-100
-                                                        transition-transform duration-100"
-                                            >
-                                                {t('iv_delete_this_day')}
-                                            </button>
-                                        )}
                                     </div>
                                 )
                             })}

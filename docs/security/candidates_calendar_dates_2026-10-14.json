@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/routers/trips.py:update_trip_dates",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 1341,
+    "end_line": 1515,
+    "attack_vector": "data_corruption_and_item_scrambling",
+    "hypothesis": "update_trip_dates recalculates and shifts day_number based on start_shift = (old_start - new_start).days. When rescheduling an itinerary (e.g. from 10/10-10/12 to 10/15-10/17), all activities with day_number <= shift_abs are modified to shift_abs + 1, and then compressed to new_days. This scrambles existing activities and causes multi-day activities to all be merged into Day 1 or truncated."
+  },
+  {
+    "id": "backend/routers/trips.py:update_trip_dates_auth",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 1345,
+    "end_line": 1365,
+    "attack_vector": "idor_authorization_bypass",
+    "hypothesis": "update_trip_dates only queries trip_members to check permission, but fails to check if user_id == trip['created_by']. Legacy trips or sample trips where creator is not explicitly in trip_members may either be rejected (403) or lack strict creator privilege verification."
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx:executeDateRangeUpdate",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "start_line": 1265,
+    "end_line": 1342,
+    "attack_vector": "client_state_corruption_and_masking",
+    "hypothesis": "executeDateRangeUpdate in itinerary-view.tsx does not clamp focusedDay when duration is shortened, and totalDays uses Math.max(daysFromDates, maxDayFromItems) which causes optimistic updates to fail to reduce totalDays if optimisticTrip.days is not pruned."
+  }
+]
