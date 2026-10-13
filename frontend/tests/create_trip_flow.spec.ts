@@ -40,7 +40,7 @@ test.describe('Create Trip Segmented Modal & CalendarRangeSheet E2E Flow', () =>
         await expect(aiImportTab).toBeVisible();
 
         // 6. Test Inspiration Pills in Manual Tab
-        const inspirationPill = dialog.locator('button').filter({ hasText: /(東京|京都|沖繩|北海道|香港)/i }).first();
+        const inspirationPill = dialog.locator('button').filter({ hasText: /(東京|巴黎|紐約|Tokyo|Paris|NYC)/i }).first();
         if (await inspirationPill.isVisible()) {
             await inspirationPill.click();
             await page.waitForTimeout(300);

@@ -534,6 +534,9 @@ async def create_manual_trip(
         room_code = generate_room_code()
         pub_id = generate_public_id()
         
+        # 🛡️ 封面保底：若無自訂封面，自動依行程標題解析高畫質風景封面
+        clean_cover = request.cover_image.strip() if (request.cover_image and request.cover_image.strip()) else resolve_destination_cover_url(request.title)
+
         trip_data = {
             "title": request.title,
             "creator_name": request.creator_name,
@@ -546,7 +549,7 @@ async def create_manual_trip(
             "content": {},  # 👈 新增：給個空物件，不要讓它是 NULL
             "flight_info": {},
             "hotel_info": {},
-            "cover_image": request.cover_image
+            "cover_image": clean_cover
         }
         
         

@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-12T16:56:00Z",
+  "last_audit_date": "2026-10-13T23:25:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 71,
-    "audited_targets": 71,
-    "verified_vulnerabilities": 16,
-    "dismissed_hypotheses": 66
+    "total_targets": 75,
+    "audited_targets": 75,
+    "verified_vulnerabilities": 17,
+    "dismissed_hypotheses": 68
   },
   "targets": [
     {
@@ -692,6 +692,43 @@
       "status": "PENDING_PATCH",
       "last_checked_commit": "HEAD",
       "validator_details": "Confirmed vulnerability: push.md pre-flight harness lacks automated root hygiene scanning. In-memory PoC verified via backend/tests/test_root_hygiene_sentinel.py."
+    },
+    {
+      "id": "frontend/lib/destination-covers.ts:falsy_string_injection",
+      "target_type": "frontend_helper",
+      "trust_boundary": "data_to_presentation",
+      "vectors_checked": ["falsy_string_injection", "broken_image_url_leak"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Dismissed by Sentinel: getTripCoverUrl explicitly guards against typeof string, .trim(), 'null', and 'undefined' literals before fallback."
+    },
+    {
+      "id": "frontend/components/itinerary/TripDialogs.tsx:timezone_drift",
+      "target_type": "frontend_component",
+      "trust_boundary": "client_runtime",
+      "vectors_checked": ["temporal_timezone_drift", "cross_month_year_rollover"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Verified via cover-pills-sentinel.test.ts: addDaysToLocalYMD avoids toISOString() UTC skew and preserves 5-day duration across all timezones."
+    },
+    {
+      "id": "frontend/components/itinerary/TripDialogs.tsx:sticky_cover_collision",
+      "target_type": "frontend_component",
+      "trust_boundary": "ui_state",
+      "vectors_checked": ["state_collision_ui_desync", "destructive_data_loss"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Dismissed by Sentinel: Explicit user uploads in coverImage must preserve precedence over title suggestions to prevent destructive data loss."
+    },
+    {
+      "id": "backend/routers/trips.py:create_manual_null_cover",
+      "target_type": "backend_router_endpoint",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": ["database_null_cover_leak", "unhandled_fallback_omission"],
+      "status": "CONFIRMED_PENDING_DEV",
+      "last_checked_commit": "HEAD",
+      "validator_details": "Confirmed vulnerability: create_manual_trip fails to invoke resolve_destination_cover_url on null/empty covers. In-memory PoC verified via test_cover_pills_sentinel.py."
     }
   ]
 }
+

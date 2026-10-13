@@ -4,6 +4,7 @@ import { Trip, Activity } from '@/lib/itinerary-types'
 import { useState } from 'react'
 import { Calendar, MapPin, Clock, ChevronDown, ChevronUp } from 'lucide-react'
 import Image from 'next/image'
+import { getTripCoverUrl } from '@/lib/destination-covers'
 
 interface PublicTripViewProps {
     trip: Trip
@@ -25,15 +26,17 @@ export default function PublicTripView({ trip }: PublicTripViewProps) {
         })
     }
 
+    const coverUrl = getTripCoverUrl(trip.cover_image, trip.title)
+
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+        <div className="min-h-screen bg-linear-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
             {/* Header */}
             <header className="bg-white dark:bg-slate-800 shadow-sm border-b border-slate-200 dark:border-slate-700">
                 <div className="max-w-4xl mx-auto px-4 py-6">
-                    {trip.cover_image && (
+                    {coverUrl && (
                         <div className="mb-4 rounded-xl overflow-hidden h-48 relative">
                             <Image
-                                src={trip.cover_image}
+                                src={coverUrl}
                                 alt={trip.title}
                                 fill
                                 className="object-cover"
@@ -93,7 +96,7 @@ export default function PublicTripView({ trip }: PublicTripViewProps) {
                                         {day.activities.map((activity: Activity) => (
                                             <li key={activity.id} className="px-4 py-3">
                                                 <div className="flex items-start gap-3">
-                                                    <div className="flex-shrink-0 text-slate-400 dark:text-slate-500">
+                                                    <div className="shrink-0 text-slate-400 dark:text-slate-500">
                                                         <Clock className="w-4 h-4 mt-0.5" />
                                                     </div>
                                                     <div className="flex-1 min-w-0">

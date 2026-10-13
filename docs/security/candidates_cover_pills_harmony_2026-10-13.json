@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/lib/destination-covers.ts:falsy_string_injection",
+    "file_path": "frontend/lib/destination-covers.ts",
+    "attack_vector": "falsy_string_injection",
+    "hypothesis": "getTripCoverUrl fails to reject falsy literal strings like 'null', 'undefined', or whitespace-only strings, passing invalid image URLs to Next.js Image component."
+  },
+  {
+    "id": "frontend/components/itinerary/TripDialogs.tsx:timezone_drift",
+    "file_path": "frontend/components/itinerary/TripDialogs.tsx",
+    "attack_vector": "temporal_timezone_drift",
+    "hypothesis": "Inspiration pill date calculation using toISOString() shifts calculated end_date by -1 day in negative timezones, breaking the 5-day trip duration invariant."
+  },
+  {
+    "id": "frontend/components/itinerary/TripDialogs.tsx:sticky_cover_collision",
+    "file_path": "frontend/components/itinerary/TripDialogs.tsx",
+    "attack_vector": "state_collision_ui_desync",
+    "hypothesis": "Clicking an inspiration pill without resetting coverImage preserves stale uploaded cover images, preventing the destination's pre-curated cover from resolving."
+  },
+  {
+    "id": "backend/routers/trips.py:create_manual_null_cover",
+    "file_path": "backend/routers/trips.py",
+    "attack_vector": "database_null_cover_leak",
+    "hypothesis": "create_manual_trip endpoint does not fallback to resolve_destination_cover_url when cover_image is missing or whitespace, causing NULL values to be persisted in itineraries table."
+  }
+]

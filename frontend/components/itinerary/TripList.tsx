@@ -10,6 +10,7 @@ import { generateTripPDF, downloadPDF, TripPDFData } from "@/lib/pdf-generator"
 import { tripsApi } from "@/lib/api"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
+import { getTripCoverUrl } from "@/lib/destination-covers"
 
 interface TripListProps {
     trips: Trip[]
@@ -44,7 +45,7 @@ export function TripList({
                 title: fullTrip.title || trip.title,
                 startDate: new Date(fullTrip.start_date || trip.start_date).toLocaleDateString(),
                 endDate: new Date(fullTrip.end_date || trip.end_date || trip.start_date).toLocaleDateString(),
-                coverImage: fullTrip.cover_image,
+                coverImage: getTripCoverUrl(fullTrip.cover_image, fullTrip.title || trip.title),
                 days: (fullTrip.days || []).map((d: { day: number; activities?: Activity[] }) => ({
                     day: d.day,
                     date: (() => {
@@ -132,20 +133,16 @@ export function TripList({
                         }}
                     >
                         <div className="h-24 bg-slate-800 relative rounded-t-lg overflow-hidden">
-                            {trip.cover_image ? (
-                                <div className="relative w-full h-full">
-                                    <Image 
-                                        src={trip.cover_image} 
-                                        alt="cover" 
-                                        fill 
-                                        className="object-cover opacity-80" 
-                                        unoptimized 
-                                        priority={index === 0}
-                                    />
-                                </div>
-                            ) : (
-                                <div className="absolute inset-0 bg-linear-to-br from-slate-700 to-slate-900" />
-                            )}
+                            <div className="relative w-full h-full">
+                                <Image 
+                                    src={getTripCoverUrl(trip.cover_image, trip.title)} 
+                                    alt="cover" 
+                                    fill 
+                                    className="object-cover opacity-80" 
+                                    unoptimized 
+                                    priority={index === 0}
+                                />
+                            </div>
                             <div className="absolute inset-0 bg-linear-to-t from-black/60 to-transparent" />
                             <div className="absolute bottom-4 left-4 right-4 text-white">
                                 <h3 className="font-bold text-lg truncate">{trip.title}</h3>
