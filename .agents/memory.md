@@ -496,4 +496,16 @@
 - **出發日位移 `start_shift < 0` 骨牌平移算法雙重輾壓活動擠壓至 Day 1 陷阱 (FP-028)**: 舊改期邏輯中，當 `start_shift < 0` 時，第一階段將 `day_number <= shift_abs` 更名為 `shift_abs + 1`；緊接的第二階段 `day_number > shift_abs` 又重新抓出這批剛更名的活動並扣除 `shift_abs`，直接將所有活動二次輾壓變成 `day_number = 1`，並物理刪除每日筆記。教訓：改期絕不可做骨牌式位移算術，必須直接解耦出發日與天數序號。
 - **前端 `maxDayFromItems` 夾角遮蔽天數縮短樂觀更新陷阱 (FP-029)**: `totalDays` 依賴 `Math.max(daysFromDates, maxDayFromItems)`。在縮短天數樂觀更新時，若僅修改起訖日期而未同步裁剪 `optimisticTrip.days` 陣列，`maxDayFromItems` 仍返回舊總天數，導致頂部天數膠囊在 0ms 樂觀期間無法即刻縮短。教訓：前端樂觀構建時必須對資料載體執行深層同步修剪。
 - **外層包裹容器 `p-2` 造成次級篩選條與搜尋框邊界錯位陷阱 (FP-030)**: 在彈出視窗中，為第一層篩選條添加帶 `p-2` 的卡片外框背景，而第二層搜尋框為裸組件，導致第一層內部輸入框左右各縮進 8px，與第二層搜尋框在視覺上產生嚴重的邊界鋸齒與未對齊感。教訓：同組件內部輸入元素應統一寬度維度與圓角規格，避免局部嵌套單獨 padding 容器。
+
+### 30. 旅伴時光膠囊破印盛典、BOLA 防窺脫敏、React 19 Portal 隔離與 Tabiji 品牌推播雙軌相容領域 (Trip Time Capsule, BOLA Defense, Portal Unveiling Ceremony & Tabiji Push Dual-Track Compatibility) [2026-10-15 Commit 9ba8073]
+- **旅伴時光膠囊複合唯一約束與行排他鎖 UPSERT (AD-104)**: 時光膠囊資料表建立 `CONSTRAINT uq_trip_capsule_user_day UNIQUE (trip_id, day_number, author_id)`。寫入操作一律採用原生 PostgREST `upsert(..., on_conflict="trip_id,day_number,author_id")`，在 PostgreSQL 內部獲取 `RowExclusiveLock`，達成單次操作原子性、零死鎖與完全冪等性。
+- **伺服端實體脫敏取代純表現層模糊遮罩 (AD-105)**: 時光膠囊在行程進行期間，非本人條目由 FastAPI 後端直接將 `mood_emoji`、`content`、`photo_url` 設為 `None`，只回傳完成狀態指標。堅決杜絕僅靠前端 CSS `blur` 的偽防窺，自根源物理阻斷 BOLA 漏洞。
+- **雙軌相容推播訊息路由協議 (AD-106)**: 品牌更名為 `Tabiji 旅路` 時，PWA Service Worker 通訊協議嚴禁單方面硬升級。`useDeepLinkRouter` 同時相容 `TABIJI_PUSH_NAVIGATE` 與 `TABIDACHI_PUSH_NAVIGATE` 雙重事件，保障已安裝桌面 PWA 離線老用戶零斷裂。
+- **React Portal 頂層逃逸與動態視窗高度安全預算 (AD-107)**: 全屏回顧或破印彈窗一律透過 `createPortal(..., document.body)` 逃離 Framer Motion 的 Stacking Context 囚禁；視窗高度鎖定 `h-dvh max-h-dvh`，中央卡片預算壓制於 `max-h-[40vh]` 搭配 `overflow-y-auto`，確保 667px (iPhone SE) 設備底部旅伴 Pills 與控制列 100% 不截斷。
+- **`useSyncExternalStore` 客戶端渲染守衛原則 (AD-108)**: 需要判斷客戶端掛載以渲染 Portal 的情境，全面廢止 `useEffect + setState` 模式，改採 React 官方標準 `useSyncExternalStore(emptySubscribe, () => true, () => false)`，達成 0 次二次渲染，全面通過 React 19 與 React Compiler 純粹性檢查。
+- **跨平台滾動條重設單一來源原則 (AD-109)**: 在暗色沉浸式彈窗中，任何標註 `scrollbar-none` 的可滾動容器必須在全域 `globals.css` 具備 `scrollbar-width: none` 與 `::-webkit-scrollbar { display: none }` 雙重定義，杜絕 Windows 原生白色 Stepper 箭頭破功露餡。
+- **Framer Motion Stacking Context 囚禁彈窗層級陷阱 (FP-031)**: 在 `itinerary-view.tsx` 內部直接渲染全屏 Overlay，儘管配置了 `z-[120]`，但因外層 `<motion.div>` 具備 `transform` 動畫屬性，建立了新的 Stacking Context，導致彈窗永遠被外層 `BottomNav` (`z-100`) 遮蔽。教訓：全屏 Modal 必須透過 `createPortal` 脫離一切父層 Transform 容器直掛 `document.body`。
+- **固定比例卡片擠壓底部按鈕截斷陷阱 (FP-032)**: 初版拍立得卡片採用固定 `w-72 aspect-[3/4.2]`（高度約 403px），加上 Header (72px)、天數橫條 (44px) 與 Footer (44px)，在 iPhone SE (667px) 上直接超出視窗 61px，導致旅伴切換箭頭被推入虛無。教訓：卡片必須設置 `max-h-[40vh]` 自適應收縮，且外層容器必須為 `min-h-0 flex-1 overflow-y-auto` 保底。
+- **`useEffect` 同步 `setMounted(true)` 引發 Cascading Render 報錯陷阱 (FP-033)**: 為防止 SSR 渲染 Portal 拋出 `document is not defined`，在組件內撰寫 `useEffect(() => setMounted(true), [])`，遭 React Compiler 判定為觸發 cascading render 違反純粹性。教訓：判斷客戶端環境應採用 `useSyncExternalStore`。
+- **Tailwind v4 未定義 `@utility scrollbar-none` 導致 Windows 原生滾動條暴露陷阱 (FP-034)**: 誤以為 Tailwind 內建 `scrollbar-none`，在 macOS 上因系統預設隱藏捲軸而未察覺，在 Windows Chrome/Edge 上卡片高度稍有溢出即浮現白底灰色 `▲ / ▼` 原生按鈕。教訓：跨平台捲軸隱藏必須在全域 CSS 明確宣告標準 `@utility scrollbar-none`。
 
