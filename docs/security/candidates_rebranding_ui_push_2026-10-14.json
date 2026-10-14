@@ -1,0 +1,32 @@
+[
+  {
+    "id": "frontend/app/sw.ts:push_navigation",
+    "file_path": "frontend/app/sw.ts",
+    "attack_vector": "postmessage_origin_spoofing_and_payload_tampering",
+    "hypothesis": "Notification click handler dispatches TABIJI_PUSH_NAVIGATE with arbitrary link without validating URL origin or protocol, potentially allowing open redirect or javascript: execution if push payload is tampered."
+  },
+  {
+    "id": "frontend/lib/hooks/useDeepLinkRouter.ts:handleSwMessage",
+    "file_path": "frontend/lib/hooks/useDeepLinkRouter.ts",
+    "attack_vector": "open_redirect_and_xss_in_deeplink",
+    "hypothesis": "useDeepLinkRouter processes postMessage url without verifying event origin or protocol, allowing malicious third-party iframes to spoof TABIJI_PUSH_NAVIGATE or dispatch untrusted URLs."
+  },
+  {
+    "id": "frontend/lib/hooks/usePushNotifications.ts:event_sync",
+    "file_path": "frontend/lib/hooks/usePushNotifications.ts",
+    "attack_vector": "state_desync_and_event_spoofing",
+    "hypothesis": "Listening to custom DOM events tabiji-push-status-change and tabidachi-push-status-change allows untrusted in-page scripts to forge subscription state without valid Service Worker registration."
+  },
+  {
+    "id": "frontend/app/share/[shareCode]/page.tsx:metadata_xss",
+    "file_path": "frontend/app/share/[shareCode]/page.tsx",
+    "attack_vector": "xss_in_title_interpolation",
+    "hypothesis": "Template literal interpolation of trip.title in document title (${trip.title} | Tabiji 旅路) could cause metadata injection or HTML tag breakout if title contains unescaped characters."
+  },
+  {
+    "id": "scripts/broadcast.ps1:payload_injection",
+    "file_path": "scripts/broadcast.ps1",
+    "attack_vector": "command_injection_and_secret_leakage",
+    "hypothesis": "PowerShell broadcast script directly serializes unvalidated input into UTF-8 JSON and communicates with Supabase edge function, risking payload injection or secret leakage in console history."
+  }
+]

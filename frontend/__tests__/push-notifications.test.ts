@@ -73,12 +73,13 @@ describe("usePushNotifications Hook", () => {
         expect(result.current.isSubscribed).toBe(false)
     })
 
-    it("should sync state when tabidachi-push-status-change event is dispatched", async () => {
+    it("should sync state when tabiji-push-status-change or legacy tabidachi-push-status-change event is dispatched", async () => {
         const { result } = renderHook(() => usePushNotifications())
 
+        // 1. 驗證新事件 tabiji-push-status-change
         await act(async () => {
             window.dispatchEvent(
-                new CustomEvent("tabidachi-push-status-change", {
+                new CustomEvent("tabiji-push-status-change", {
                     detail: { isSubscribed: true, permission: "granted" }
                 })
             )
@@ -89,13 +90,25 @@ describe("usePushNotifications Hook", () => {
 
         await act(async () => {
             window.dispatchEvent(
-                new CustomEvent("tabidachi-push-status-change", {
+                new CustomEvent("tabiji-push-status-change", {
                     detail: { isSubscribed: false }
                 })
             )
         })
 
         expect(result.current.isSubscribed).toBe(false)
+
+        // 2. 驗證舊事件 tabidachi-push-status-change 雙軌相容性
+        await act(async () => {
+            window.dispatchEvent(
+                new CustomEvent("tabidachi-push-status-change", {
+                    detail: { isSubscribed: true, permission: "granted" }
+                })
+            )
+        })
+
+        expect(result.current.isSubscribed).toBe(true)
+        expect(result.current.permissionState).toBe("granted")
     })
 
     it("should not hang indefinitely and should reset isLoading to false if navigator.serviceWorker.ready hangs", async () => {

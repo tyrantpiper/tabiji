@@ -114,8 +114,11 @@ export function useDeepLinkRouter({ onTabChange }: UseDeepLinkRouterOptions) {
 
         // 🔔 E5: Listen for Service Worker postMessage (Smart Tab Focus & Push Navigation)
         const handleSwMessage = (event: MessageEvent) => {
-            if (event.data?.type === "TABIDACHI_PUSH_NAVIGATE" && event.data?.url) {
-                const targetUrl = event.data.url
+            const isPushNavigate =
+                (event.data?.type === "TABIJI_PUSH_NAVIGATE" || event.data?.type === "TABIDACHI_PUSH_NAVIGATE") &&
+                typeof event.data?.url === "string"
+            if (isPushNavigate) {
+                const targetUrl = event.data.url as string
                 debugLog("🔔 [DeepLinkRouter] SW Push message received:", targetUrl)
                 const searchPart = targetUrl.includes("?") ? targetUrl.split("?")[1] : ""
                 if (searchPart) {

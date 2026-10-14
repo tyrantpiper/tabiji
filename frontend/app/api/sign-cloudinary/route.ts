@@ -11,6 +11,13 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { paramsToSign } = body;
 
+    const ALLOWED_FOLDERS = ["tabidachi_capsules", "ryan_travel", "trip_covers", "receipts"];
+    const targetFolder = paramsToSign?.folder;
+
+    if (targetFolder && !ALLOWED_FOLDERS.includes(targetFolder)) {
+        return NextResponse.json({ error: "Unauthorized upload folder" }, { status: 400 });
+    }
+
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
     if (!apiSecret) {
         return NextResponse.json({ error: "CLOUDINARY_API_SECRET not configured" }, { status: 500 });

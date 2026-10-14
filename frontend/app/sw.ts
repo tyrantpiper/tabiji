@@ -5,7 +5,7 @@ import { Serwist, CacheFirst, NetworkFirst, NetworkOnly, StaleWhileRevalidate, E
 
 declare const self: ServiceWorkerGlobalScope & SerwistGlobalConfig;
 
-// 📨 離線寫入自動重送插件 (W3C Background Synchronization API)
+// 📨 離線寫入自動重送插件 (W3C Background Synchronization API，維持既有隊列名以防老用戶離線資料遺失)
 const bgSyncPlugin = new BackgroundSyncPlugin("tabidachi-offline-mutations", {
   maxRetentionTime: 24 * 60, // 最長保留重試 24 小時
 });
@@ -252,7 +252,7 @@ serwist.addEventListeners();
 // === Web Push Notification Handler (Ported from legacy sw.js) ===
 self.addEventListener("push", (event) => {
   const data = event.data ? event.data.json() : {};
-  const title = data.title || "Tabiji";
+  const title = data.title || "Tabiji 旅路";
   const options = {
     body: data.body || "",
     icon: "/icon.png",
@@ -267,19 +267,21 @@ self.addEventListener("push", (event) => {
 // === E5: Notification Click Handler (Smart Tab Focus via postMessage) ===
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const link = event.notification.data?.link || "/";
+  const rawLink = event.notification.data?.link || "/";
+  // 🛡️ 嚴格約束為同源相對路徑，防止外鏈跳轉
+  const safeLink = typeof rawLink === "string" && rawLink.startsWith("/") && !rawLink.startsWith("//") ? rawLink : "/";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if (client.url.includes(self.location.origin) && "focus" in client) {
           client.focus();
           // 🔔 E5: 零重新整理 SPA 平滑導航，派發深層連結訊息
-          client.postMessage({ type: "TABIDACHI_PUSH_NAVIGATE", url: link });
+          client.postMessage({ type: "TABIJI_PUSH_NAVIGATE", url: safeLink });
           return;
         }
       }
       if (self.clients.openWindow) {
-        return self.clients.openWindow(link);
+        return self.clients.openWindow(safeLink);
       }
     })
   );

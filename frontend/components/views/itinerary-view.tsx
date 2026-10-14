@@ -6,7 +6,7 @@ import { AlertCircle, Loader2 } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { useTripDetail, useOnlineStatus, useHaptic } from "@/lib/hooks"
+import { useTripDetail, useOnlineStatus, useHaptic, useTripCapsules } from "@/lib/hooks"
 import { useLanguage } from "@/lib/LanguageContext"
 import { ItineraryItemState, Trip, Activity, DailyLocation, DayWeather, ChecklistItem } from "@/lib/itinerary-types"
 import { ActivityEditModal } from "@/components/itinerary/ActivityEditModal"
@@ -15,6 +15,8 @@ import EditableDailyTips from "@/components/itinerary/EditableDailyTips"
 import EditableDailyChecklist from "@/components/itinerary/EditableDailyChecklist"
 import EditableDailyAIReview from "@/components/itinerary/EditableDailyAIReview"
 import ItineraryDashboardHub from "@/components/itinerary/ItineraryDashboardHub"
+import { PolaroidCapsuleModal } from "@/components/itinerary/PolaroidCapsuleModal"
+import { CapsuleUnveilingCeremony } from "@/components/itinerary/CapsuleUnveilingCeremony"
 import IOSBottomSheet, { DashboardSectionTab } from "@/components/itinerary/IOSBottomSheet"
 import { tripsApi, itemsApi, geocodeApi } from "@/lib/api"
 import { UndoDeleteManager } from "@/lib/undo-delete-manager"
@@ -95,6 +97,12 @@ export function ItineraryView() {
 
     // Use activeTripId from context, pass userId for privacy filtering
     const { trip: currentTrip, mutate: reloadTripDetail, isValidating } = useTripDetail(activeTripId, userId, refreshInterval, handleTripNotFound) as { trip: Trip, mutate: (data?: unknown, shouldRevalidate?: boolean) => Promise<void>, isValidating: boolean }
+    
+    // 📮 旅伴時光膠囊 (Trip Time Capsule Hook & State)
+    const { capsules, summary: capsuleSummary, mutate: reloadCapsules } = useTripCapsules(activeTripId, userId)
+    const [isCapsuleModalOpen, setIsCapsuleModalOpen] = useState(false)
+    const [isCapsuleCeremonyOpen, setIsCapsuleCeremonyOpen] = useState(false)
+
     const [deletingTripId, setDeletingTripId] = useState<string | null>(null)
     const [isDeleting, setIsDeleting] = useState(false)
 
@@ -215,10 +223,11 @@ export function ItineraryView() {
             debugLog("🔄 ItineraryView: Global refresh triggered via Tab Hub")
             reloadTripDetail()
             reloadTrips()
+            reloadCapsules()
         }
         window.addEventListener('refresh-active-view', handleRefresh)
         return () => window.removeEventListener('refresh-active-view', handleRefresh)
-    }, [reloadTripDetail, reloadTrips])
+    }, [reloadTripDetail, reloadTrips, reloadCapsules])
 
     // 🧭 監聽 Deep Link 喚起特定行程詳情事件 (定向導航)
     useEffect(() => {
@@ -1640,6 +1649,23 @@ export function ItineraryView() {
                             tickets={getDayData(currentTrip?.day_tickets, day) || []}
                             dayChecklists={currentTrip?.day_checklists}
                             defaultCurrency={currentTrip?.currency}
+                            isSample={Boolean(currentTrip?.is_sample || currentTrip?.created_by === "SYSTEM")}
+                            capsuleSummary={capsuleSummary}
+                            onCapsuleClick={() => {
+                                if (currentTrip?.is_sample || currentTrip?.created_by === "SYSTEM") {
+                                    toast.info(
+                                        zh
+                                            ? "💡 此為單人範本行程，無法進行多人協作。請在「行程」分頁點擊「+ 新增行程」並分享邀請碼，即可解鎖與旅伴共同封存時光膠囊！"
+                                            : "💡 This is an onboarding sample trip. Create a custom trip and invite companions to seal time capsules together!"
+                                    )
+                                    return
+                                }
+                                if (capsuleSummary?.is_unlocked) {
+                                    setIsCapsuleCeremonyOpen(true)
+                                } else {
+                                    setIsCapsuleModalOpen(true)
+                                }
+                            }}
                             onSelectTab={(tab) => {
                                 setActiveDashboardTab(tab)
                                 setIsDashboardSheetOpen(true)
@@ -1936,6 +1962,29 @@ export function ItineraryView() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {/* 📮 旅伴時光膠囊輸入視窗 (Polaroid Capsule Modal) */}
+            <PolaroidCapsuleModal
+                isOpen={isCapsuleModalOpen}
+                onOpenChange={setIsCapsuleModalOpen}
+                tripId={activeTripId || ""}
+                day={day > 0 ? day : 1}
+                userId={userId || undefined}
+                existingEntry={capsules.find((c) => (c.author_id === userId || c.user_id === userId) && (c.day_number === (day > 0 ? day : 1) || c.day_number === 0))}
+                onSuccess={async () => {
+                    await reloadCapsules()
+                }}
+            />
+
+            {/* 🎆 旅伴時光膠囊破印盛典 (3D Unveiling Ceremony) */}
+            <CapsuleUnveilingCeremony
+                isOpen={isCapsuleCeremonyOpen}
+                onClose={() => setIsCapsuleCeremonyOpen(false)}
+                entries={capsuleSummary?.revealed_entries?.length ? capsuleSummary.revealed_entries : capsules}
+                totalDays={totalDays}
+                initialDay={day > 0 ? day : 1}
+                tripTitle={currentTrip?.title || ""}
+            />
                     </motion.div>
                 )}
             </AnimatePresence>

@@ -139,7 +139,7 @@ export default function PublicTripView({ trip }: PublicTripViewProps) {
 
             {/* Footer */}
             <footer className="py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
-                <p>由 Tabidachi 旅立ち 提供技術支援</p>
+                <p>由 Tabiji 旅路 提供技術支援</p>
             </footer>
         </div>
     )

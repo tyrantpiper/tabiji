@@ -1,0 +1,34 @@
+[
+  {
+    "id": "backend/routers/capsules.py:realname_hydration_and_identity_spoofing",
+    "file_path": "backend/routers/capsules.py",
+    "target_type": "api_router",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "identity_spoofing_and_user_profile_leak",
+    "hypothesis": "When batch-hydrating author profiles, querying public.users without scoping author_ids strictly to valid trip collaborators allows probing arbitrary user identities via forged capsule author_ids."
+  },
+  {
+    "id": "backend/routers/capsules.py:time_lock_race_condition",
+    "file_path": "backend/routers/capsules.py",
+    "target_type": "api_router",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "concurrency_race_condition_and_freeze_bypass",
+    "hypothesis": "Concurrent capsule submissions during time-lock transition may lead to TOCTOU race conditions where post-deadline mutations bypass the frozen status check."
+  },
+  {
+    "id": "supabase/migrations/20261014_trip_capsules.sql:foreign_key_and_dirty_data_migration",
+    "file_path": "supabase/migrations/20261014_trip_capsules.sql",
+    "target_type": "database_migration",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "foreign_key_constraint_violation_and_ddl_lockout",
+    "hypothesis": "Directly applying ALTER TABLE author_id TYPE UUID and foreign key constraint without deterministic regex pre-cleaning will crash on non-UUID legacy mock data and abort transaction."
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:profile_sync_race_condition",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "target_type": "frontend_auth_flow",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "client_side_race_condition_leading_to_orphan_records",
+    "hypothesis": "Non-blocking profile synchronization during login allows rapid capsule submission before public.users row creation, triggering foreign key violation on subsequent capsule insert."
+  }
+]

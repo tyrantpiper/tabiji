@@ -29,7 +29,7 @@ export function ShareButton({ publicId, tripTitle, className }: ShareButtonProps
             if (navigator.share) {
                 try {
                     await navigator.share({
-                        title: `${tripTitle} | Tabidachi`,
+                        title: `${tripTitle} | Tabiji 旅路`,
                         text: t('share_trip_text', { title: tripTitle }),
                         url: shareUrl,
                     })

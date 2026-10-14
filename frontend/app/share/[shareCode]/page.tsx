@@ -29,12 +29,12 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
     if (!trip) {
         return {
-            title: '行程不存在 | Tabidachi 旅立ち',
+            title: '行程不存在 | Tabiji 旅路',
         }
     }
 
     return {
-        title: `${trip.title} | Tabidachi 旅立ち`,
+        title: `${trip.title} | Tabiji 旅路`,
         description: `探索 ${trip.title} 的完整行程規劃`,
         openGraph: {
             title: trip.title,

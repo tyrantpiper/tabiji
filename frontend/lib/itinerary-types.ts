@@ -164,6 +164,7 @@ export interface Trip {
     title: string
     start_date?: string
     end_date?: string
+    total_days?: number
     days: TripDay[]
     cover_image?: string
     share_code?: string
@@ -180,6 +181,35 @@ export interface Trip {
     ai_review?: string
     day_ai_reviews?: Record<number, string>  // 🆕 每日 AI 審核
     is_sample?: boolean  // 🎓 Sample/demo trip flag
+    end_date_utc?: string // 🆕 絕對目的地結束時刻 (UTC)
+    is_capsule_unlocked?: boolean // 🆕 時光膠囊是否破印解鎖
+}
+
+// 🆕 旅伴時光膠囊 (Trip Time Capsule)
+export interface TripCapsuleEntry {
+    id: string
+    trip_id: string
+    day_number: number
+    author_id: string
+    user_id?: string
+    author_name?: string
+    author_avatar?: string | null
+    mood_emoji?: string
+    content?: string | null
+    photo_url?: string | null
+    is_sealed: boolean
+    created_at?: string
+    updated_at?: string
+}
+
+export interface CapsuleProgressSummary {
+    trip_id: string
+    is_unlocked: boolean
+    total_members: number
+    submitted_members_count: number
+    has_current_user_submitted: boolean
+    my_entries: TripCapsuleEntry[]
+    revealed_entries: TripCapsuleEntry[]
 }
 
 export interface GeocodeResult {

@@ -127,9 +127,14 @@ export function usePushNotifications() {
             }
         }
 
-        window.addEventListener("tabidachi-push-status-change", handlePushStatusChange)
+        const PUSH_STATUS_EVENT_NEW = "tabiji-push-status-change"
+        const PUSH_STATUS_EVENT_OLD = "tabidachi-push-status-change"
+
+        window.addEventListener(PUSH_STATUS_EVENT_NEW, handlePushStatusChange)
+        window.addEventListener(PUSH_STATUS_EVENT_OLD, handlePushStatusChange)
         return () => {
-            window.removeEventListener("tabidachi-push-status-change", handlePushStatusChange)
+            window.removeEventListener(PUSH_STATUS_EVENT_NEW, handlePushStatusChange)
+            window.removeEventListener(PUSH_STATUS_EVENT_OLD, handlePushStatusChange)
         }
     }, [])
 
@@ -206,7 +211,7 @@ export function usePushNotifications() {
 
             // 跨組件同步廣播
             if (typeof window !== "undefined") {
-                window.dispatchEvent(new CustomEvent("tabidachi-push-status-change", {
+                window.dispatchEvent(new CustomEvent("tabiji-push-status-change", {
                     detail: { isSubscribed: true, permission: "granted" }
                 }))
             }
@@ -254,7 +259,7 @@ export function usePushNotifications() {
 
             // 跨組件同步廣播
             if (typeof window !== "undefined") {
-                window.dispatchEvent(new CustomEvent("tabidachi-push-status-change", {
+                window.dispatchEvent(new CustomEvent("tabiji-push-status-change", {
                     detail: { isSubscribed: false }
                 }))
             }

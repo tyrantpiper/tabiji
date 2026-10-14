@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Tabidachi 全站廣播推播腳本
+    Tabiji 旅路 全站廣播推播腳本
 .DESCRIPTION
     透過 notify-broadcast Edge Function 將通知推送到所有使用者的裝置。
     同時觸發站內鈴鐺 (Realtime) 和系統層級推播 (Web Push)。
@@ -48,7 +48,7 @@ $jsonBody = $payload | ConvertTo-Json -Compress
 $utf8Body = [System.Text.Encoding]::UTF8.GetBytes($jsonBody)
 
 Write-Host ""
-Write-Host "📡 Broadcasting to all Tabidachi users..." -ForegroundColor Cyan
+Write-Host "📡 Broadcasting to all Tabiji users..." -ForegroundColor Cyan
 Write-Host "   Title: $Title" -ForegroundColor White
 Write-Host "   Body:  $Body" -ForegroundColor White
 Write-Host "   Link:  $Link" -ForegroundColor Gray

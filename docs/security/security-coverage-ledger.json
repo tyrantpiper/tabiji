@@ -1,14 +1,78 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-14T01:55:00Z",
+  "last_audit_date": "2026-10-14T03:21:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 76,
-    "audited_targets": 76,
-    "verified_vulnerabilities": 18,
-    "dismissed_hypotheses": 70
+    "total_targets": 83,
+    "audited_targets": 83,
+    "verified_vulnerabilities": 19,
+    "dismissed_hypotheses": 78
   },
   "targets": [
+    {
+      "id": "frontend/app/sw.ts:push_navigation",
+      "target_type": "service_worker",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": ["postmessage_origin_spoofing_and_payload_tampering"],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "validator_details": "Same-origin relative link constraint enforced to prevent open redirects on push notification click."
+    },
+    {
+      "id": "frontend/lib/hooks/useDeepLinkRouter.ts:handleSwMessage",
+      "target_type": "frontend_hook",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": ["open_redirect_and_xss_in_deeplink"],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "validator_details": "Strict SW MessageEvent type validation and query-only store dispatching confirmed secure."
+    },
+    {
+      "id": "frontend/lib/hooks/usePushNotifications.ts:event_sync",
+      "target_type": "frontend_hook",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": ["state_desync_and_event_spoofing"],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "validator_details": "Browser SOP isolation confirmed; transient UI state decoupled from native PushManager authorization."
+    },
+    {
+      "id": "frontend/app/share/[shareCode]/page.tsx:metadata_xss",
+      "target_type": "page_metadata",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": ["xss_in_title_interpolation"],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "validator_details": "Next.js App Router automated HTML entity escaping confirmed."
+    },
+    {
+      "id": "scripts/broadcast.ps1:payload_injection",
+      "target_type": "ops_script",
+      "trust_boundary": "internal_ops",
+      "vectors_checked": ["command_injection_and_secret_leakage"],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "validator_details": "Structured JSON serialization and interactive credential isolation verified."
+    },
+    {
+      "id": "frontend/app/api/sign-cloudinary/route.ts",
+      "target_type": "edge_proxy",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": ["arbitrary_folder_injection"],
+      "status": "VULNERABLE",
+      "patch_status": "PATCH_CANDIDATE_READY",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_trip_capsules.md",
+      "validator_details": "Sign API lacks folder whitelist; Mantis patch candidate prepared to enforce whitelist."
+    },
+    {
+      "id": "backend/routers/capsules.py",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": ["bola_idor_leakage", "time_lock_bypass", "ssrf_malicious_url"],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_trip_capsules.md",
+      "validator_details": "Verified via In-Memory Sentinel PoC suite: BOLA redaction, dual-guard time-lock, and Cloudinary HTTPS validation passed 100%."
+    },
     {
       "id": "backend/routers/trips.py:update_trip_dates",
       "target_type": "backend_router",
@@ -738,6 +802,26 @@
       "status": "CONFIRMED_PENDING_DEV",
       "last_checked_commit": "HEAD",
       "validator_details": "Confirmed vulnerability: create_manual_trip fails to invoke resolve_destination_cover_url on null/empty covers. In-memory PoC verified via test_cover_pills_sentinel.py."
+    },
+    {
+      "id": "backend/routers/capsules.py:realname_hydration",
+      "target_type": "backend_router_endpoint",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": ["identity_spoofing_and_user_profile_leak", "n_plus_one_exhaustion"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_capsule_realname_hydration.md",
+      "validator_details": "Batch hydration strictly scoped to trip collaborators and protected against N+1 network degradation."
+    },
+    {
+      "id": "supabase/migrations/20261014_trip_capsules.sql:foreign_key_integrity",
+      "target_type": "database_migration",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": ["foreign_key_constraint_violation_and_ddl_lockout"],
+      "status": "CONFIRMED_PENDING_DEV",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_capsule_realname_hydration.md",
+      "validator_details": "Confirmed risk: Direct ALTER TYPE UUID crashes on non-UUID data. Resolved via regex pre-cleaning pipeline."
     }
   ]
 }
