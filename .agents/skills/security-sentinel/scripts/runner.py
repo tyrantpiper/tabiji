@@ -46,9 +46,12 @@ def assert_security_path_hygiene(file_path: Optional[str], param_name: str, repo
         )
         sys.exit(1)
 
+run_streaming_process = None
 try:
-    from scripts.lib.safe_subprocess import run_streaming_process
-except ImportError:
+    import importlib
+    _safe_subproc = importlib.import_module("scripts.lib.safe_subprocess")
+    run_streaming_process = getattr(_safe_subproc, "run_streaming_process", None)
+except Exception:
     run_streaming_process = None
 
 VALIDATOR_SYSTEM_PROMPT = """
