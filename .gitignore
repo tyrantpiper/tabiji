@@ -82,3 +82,6 @@ e2e_evidence.py
 reproduce_links.py
 tmp_*.py
 
+# Confidential Research & Investment Due Diligence (機密商業盡職調查保護)
+docs/research/investment_due_diligence_*.md
+

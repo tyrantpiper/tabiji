@@ -32,7 +32,7 @@ import {
     AiGenerateResponseSchema,
     ReceiptDiagnostics // Added
 } from './schemas';
-import { SubItem, PreviewMetadata } from './itinerary-types';
+import { SubItem, PreviewMetadata, TripCapsuleEntry, CapsuleProgressSummary } from './itinerary-types';
 import { z } from "zod";
 import { getSecureApiKey } from "@/lib/security";
 
@@ -1428,3 +1428,43 @@ export const sampleTripApi = {
         return res.json()
     },
 }
+
+/**
+ * 📮 Trip Time Capsule API Functions
+ */
+export const capsulesApi = {
+    /** 取得行程時光膠囊摘要與進度 */
+    get: async (tripId: string, day?: number, userId?: string): Promise<CapsuleProgressSummary> => {
+        const headers: Record<string, string> = {}
+        if (userId) headers["X-User-ID"] = userId
+        const baseUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
+        const url = new URL(`${API_HOST}/api/trips/${tripId}/capsules`, baseUrl)
+        if (day !== undefined) url.searchParams.set("day", day.toString())
+
+        const res = await fetch(url.toString(), { headers })
+        if (!res.ok) throw new Error(`Failed to fetch capsules: ${res.status}`)
+        return res.json()
+    },
+
+    /** 提交或更新膠囊 */
+    submit: async (
+        tripId: string,
+        payload: { day_number: number; mood_emoji: string; content: string; photo_url?: string | null },
+        userId?: string
+    ): Promise<TripCapsuleEntry> => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        if (userId) headers["X-User-ID"] = userId
+
+        const res = await fetch(`${API_HOST}/api/trips/${tripId}/capsules`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(payload)
+        })
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            throw new Error(err.detail || `Failed to submit capsule: ${res.status}`)
+        }
+        return res.json()
+    }
+}
+

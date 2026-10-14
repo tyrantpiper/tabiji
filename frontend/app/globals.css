@@ -337,4 +337,21 @@ button:not(:disabled):active,
   scroll-snap-align: start;
   flex-shrink: 0;
 }
+
+/* 🍃 Universal Invisible Scrollbar Utility (Cross-Platform) */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
 

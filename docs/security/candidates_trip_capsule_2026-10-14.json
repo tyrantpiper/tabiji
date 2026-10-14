@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/app/api/sign-cloudinary/route.ts:folder_validation",
+    "file_path": "frontend/app/api/sign-cloudinary/route.ts",
+    "attack_vector": "arbitrary_folder_injection",
+    "hypothesis": "The sign-cloudinary endpoint accepts paramsToSign from the client body without validating folder whitelists, potentially allowing an attacker to generate signatures for arbitrary folders outside tabidachi_capsules or ryan_travel."
+  },
+  {
+    "id": "backend/routers/capsules.py:time_lock_timezone_bypass",
+    "file_path": "backend/routers/capsules.py",
+    "attack_vector": "time_lock_bypass",
+    "hypothesis": "If the unlock determination relies on client-provided timestamps or local date strings without strictly converting destination end_date to UTC midnight, users in earlier timezones or with manipulated clock headers could prematurely unlock trip capsules."
+  },
+  {
+    "id": "backend/routers/capsules.py:bola_unauthorized_capsule_read",
+    "file_path": "backend/routers/capsules.py",
+    "attack_vector": "bola_idor_leakage",
+    "hypothesis": "When a trip collaborator queries capsule entries prior to trip completion, if the serialization layer or database query fails to redact content and photo_url for non-authors, confidential entries will leak to collaborators via DevTools."
+  },
+  {
+    "id": "backend/routers/capsules.py:ssrf_and_malicious_photo_url",
+    "file_path": "backend/routers/capsules.py",
+    "attack_vector": "ssrf_malicious_url_injection",
+    "hypothesis": "If the capsule submission schema accepts arbitrary photo_url strings without strictly asserting the https://res.cloudinary.com domain, attackers could inject internal IP addresses or javascript URI schemes leading to SSRF or XSS."
+  }
+]

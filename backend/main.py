@@ -203,6 +203,7 @@ from routers.sample_trip import router as sample_trip_router
 from routers.ledger import router as ledger_router
 from routers.travel_data import router as travel_data_router
 from routers.agents import router as agents_router
+from routers.capsules import router as capsules_router
 
 app.include_router(geocode_router)
 app.include_router(expenses_router)
@@ -217,6 +218,7 @@ app.include_router(sample_trip_router)
 app.include_router(ledger_router)
 app.include_router(travel_data_router)
 app.include_router(agents_router)
+app.include_router(capsules_router)
 print("[Routers] ✅ All systems registered")
 
 # 2. CORS 設定與主機白名單

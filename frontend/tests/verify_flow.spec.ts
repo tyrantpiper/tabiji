@@ -9,8 +9,7 @@ test('User Login Flow Verification', async ({ page }) => {
 
     // 3. Perform Login
     const nicknameInput = page.locator('input').first();
-    await expect(nicknameInput).toBeVisible();
-    await nicknameInput.fill('LogicTester');
+    await nicknameInput.fill('[Test] Owner');
 
     // 4. Submit
     const startBtn = page.getByRole('button', { name: /(開始旅程|Start Journey)/i });

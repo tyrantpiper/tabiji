@@ -2,7 +2,7 @@ import useSWR from "swr"
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { travelDataApi, API_HOST } from './api'
 import { getTripSnapshotSync, saveTripSnapshot, preloadTripSnapshot, getTripsListSnapshotSync, preloadTripsListSnapshot, saveTripsListSnapshot } from './idb-storage'
-import type { Trip } from './itinerary-types'
+import type { Trip, CapsuleProgressSummary } from './itinerary-types'
 
 
 import { toast } from "sonner"
@@ -312,4 +312,30 @@ export function useServiceWorker() {
                 })
         }
     }, [])
+}
+
+/**
+  * 📮 旅伴時光膠囊專用 SWR Hook (Trip Time Capsule Hook)
+  * 自動獲取進度摘要與已解鎖/自己之條目清單
+  */
+export function useTripCapsules(tripId: string | null | undefined, userId: string | null | undefined) {
+    const { data, error, mutate, isValidating } = useSWR<CapsuleProgressSummary>(
+        tripId && userId ? [`/api/trips/${tripId}/capsules`, userId] : null,
+        fetcherWithUserId,
+        {
+            revalidateOnFocus: false,
+            dedupingInterval: 10000,
+        }
+    )
+
+    // 🛡️ 智能解構：已解鎖時顯示所有人揭曉條目，旅程中則顯示當前使用者封存條目
+    const entries = data ? (data.is_unlocked ? (data.revealed_entries || []) : (data.my_entries || [])) : []
+
+    return {
+        capsules: entries,
+        summary: data || null,
+        isLoading: !error && !data,
+        isValidating,
+        mutate,
+    }
 }
