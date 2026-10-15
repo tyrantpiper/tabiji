@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/views/info/FlightCard.tsx:clipboard_and_xss_injection",
+    "file_path": "frontend/components/views/info/FlightCard.tsx",
+    "start_line": 69,
+    "end_line": 120,
+    "attack_vector": "clipboard_api_abuse_and_dom_xss",
+    "hypothesis": "handleCopy takes untrusted item string directly from data.pnrs and passes it to navigator.clipboard.writeText. If item contains malformed or unbounded payloads, or if data fields contain unsanitized input rendered directly, it may trigger unexpected DOM behavior or clipboard tampering without length capping."
+  },
+  {
+    "id": "frontend/components/views/info/FlightCard.tsx:unbounded_array_state_mutation",
+    "file_path": "frontend/components/views/info/FlightCard.tsx",
+    "start_line": 52,
+    "end_line": 81,
+    "attack_vector": "client_state_corruption_and_prototype_pollution",
+    "hypothesis": "handleUpdateList updates pnrs/terminals/seats by cloning array and assigning updated[idx] = value. If idx is out of bounds or negative, or if field receives prototype keys, array mutation could corrupt client state or cause undefined slot leakage in flight_info payload."
+  },
+  {
+    "id": "frontend/components/views/info/FlightCard.tsx:layout_collision_and_font_scale_dos",
+    "file_path": "frontend/components/views/info/FlightCard.tsx",
+    "start_line": 124,
+    "end_line": 172,
+    "attack_vector": "presentation_dos_and_text_node_overlap",
+    "hypothesis": "Date header uses grid-cols-[1fr_auto_1fr] with fixed w-12 px-4 divider and overflow-visible whitespace-nowrap. Under 130% font scaling, text length exceeds 1fr column width causing physical text collision and visual occlusion of critical departure/arrival flight timestamps, creating a presentation-level denial of service for visually impaired users."
+  }
+]

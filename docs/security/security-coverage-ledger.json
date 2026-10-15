@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-14T03:21:00Z",
+  "last_audit_date": "2026-10-16T03:12:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 83,
-    "audited_targets": 83,
+    "total_targets": 86,
+    "audited_targets": 86,
     "verified_vulnerabilities": 19,
-    "dismissed_hypotheses": 78
+    "dismissed_hypotheses": 81
   },
   "targets": [
     {
@@ -822,6 +822,36 @@
       "last_checked_commit": "HEAD",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_capsule_realname_hydration.md",
       "validator_details": "Confirmed risk: Direct ALTER TYPE UUID crashes on non-UUID data. Resolved via regex pre-cleaning pipeline."
+    },
+    {
+      "id": "frontend/components/views/info/FlightCard.tsx:clipboard_and_xss_injection",
+      "target_type": "frontend_component",
+      "trust_boundary": "ui_state",
+      "vectors_checked": ["clipboard_api_abuse_and_dom_xss"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-16_flight_card_adaptive.md",
+      "validator_details": "Dismissed by Sentinel: navigator.clipboard.writeText safely writes plain text without DOM evaluation; React auto-escapes string interpolations."
+    },
+    {
+      "id": "frontend/components/views/info/FlightCard.tsx:unbounded_array_state_mutation",
+      "target_type": "frontend_component",
+      "trust_boundary": "ui_state",
+      "vectors_checked": ["client_state_corruption_and_prototype_pollution"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-16_flight_card_adaptive.md",
+      "validator_details": "Dismissed by Sentinel: Prototype pollution impossible via explicit ternary branch selection; array indices are safely bounded by React list mapping."
+    },
+    {
+      "id": "frontend/components/views/info/FlightCard.tsx:layout_collision_and_font_scale_dos",
+      "target_type": "frontend_component",
+      "trust_boundary": "ui_state",
+      "vectors_checked": ["presentation_dos_and_text_node_overlap"],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-16_flight_card_adaptive.md",
+      "validator_details": "Dismissed by Sentinel as security defect; verified as ergonomic font-scale responsive bug, addressed via TDD Red-Green adaptive layout refactoring."
     }
   ]
 }
