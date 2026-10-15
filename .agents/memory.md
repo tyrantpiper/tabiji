@@ -259,6 +259,13 @@
 - **原畫漸層直接縮放疊加人物導致「重影」陷阱 (`Artwork Downscale Ghosting Trap`)**: 最初嘗試將帶有人物線條的原圖直接縮放作為背景並再次貼上白線人物，導致原圖縮小後的半透明線條在底層形成微小殘影。教訓：使用多級 Box 模糊降採樣（32×32）與 Bicubic 重建，完美消除所有細白線條，生成乾淨無雜質的純連續極光光場底圖（`tabiji-aurora-bg.png`），再精確合成高解析度居中人物。
 - **淺色模式下白線手寫字失真對比度陷阱 (`Light Mode White Line Contrast Trap`)**: 原畫手寫「tabiji」字體為白色線條，若直接以 PNG 貼於淺色米白畫布上，對比度將降至不可讀。教訓：提取高解析透明遮罩圖（`tabiji-cursive-logo.png`），以 CSS `mask-image` 配合 `bg-slate-900 dark:bg-white` 達成原生主題自適應，淺色墨黑、深色夜光白，零邊緣鋸齒。
 
+### 14. 效能調優與時間切片踩坑
+- **微秒級純 CPU 陣列計算盲目導入時間切片陷阱 (`Microsecond Computation Time-Slicing Trap`)**:
+  - **背景**: 試圖使用 Chrome 129+ 原生 `scheduler.yield()` 與 5ms 時間片將多天路網與大圓航線運算（`buildMultiDayFeatureCollection`）切片非同步化，試圖優化 INP 與主執行緒阻塞。
+  - **實測數據**: 經 100 次迭代高精基準測試證實，在現代 V8 JIT 編譯器下，3 天 9 景點僅需 **0.0086ms**，15 天 150 景點極限壓力下亦僅需 **0.0524ms**，距離 5ms 預算門檻相差近 100 倍，距離 50ms Long Task 相差近 1000 倍。
+  - **反模式代價**: 5ms 門檻在 99.99% 的情況下永遠不會被觸發；但非同步 Hook 封裝卻引發了 React 雙階段渲染（Initial Sync -> Async State Resolution），強制多產生了一次 Re-render 與 WebGL 重新上傳頂點，反而造成了負向效能稅與不必要的代碼複雜度。
+  - **架構準則**: 當純 CPU 陣列計算在基準測試下小於 1ms 時，堅決維持單行純同步 `useMemo`（一次性完成、零二次 Re-render）。時間切片技術僅適用於 >15ms 的超大型密集循環或巨型 Canvas 像素級陣列運算。
+
 ---
 
 ## [Technical Debt]
