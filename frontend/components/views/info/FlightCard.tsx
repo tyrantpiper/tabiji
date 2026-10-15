@@ -121,12 +121,12 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
             )}
 
             {/* Top Section: Flight Path & Airports */}
-            <div className="p-8 pt-10 bg-linear-to-br from-blue-50/30 via-transparent to-indigo-50/20 dark:from-blue-900/10 dark:to-transparent">
+            <div className="p-5 sm:p-8 pt-6 sm:pt-10 bg-linear-to-br from-blue-50/30 via-transparent to-indigo-50/20 dark:from-blue-900/10 dark:to-transparent">
 
                 {/* 📅 Date Header (Premium Symmetry & Typography) */}
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center mb-10 px-1">
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center mb-8 sm:mb-10 px-1">
                     <div className="space-y-1.5 min-w-0">
-                        <Label className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-[0.2em] sm:tracking-[0.25em] pl-1 drop-shadow-sm whitespace-nowrap">
+                        <Label className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-[0.2em] sm:tracking-[0.25em] pl-1 drop-shadow-sm truncate block">
                             {t('departure_date')}
                         </Label>
                         {isEditing ? (
@@ -134,38 +134,44 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
                                 type="date"
                                 value={data.dep_date || data.date || ""}
                                 onChange={e => onChange('dep_date', e.target.value)}
-                                className="h-7 p-0 border-0 bg-transparent text-sm font-black shadow-none focus-visible:ring-0"
+                                className="h-7 p-0 border-0 bg-transparent text-xs sm:text-sm font-black shadow-none focus-visible:ring-0 w-full min-w-0"
                             />
                         ) : (
-                            <div className="text-lg sm:text-base md:text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight pl-1 leading-tight whitespace-nowrap overflow-visible">
-                                {data.dep_date || data.date || t('no_date')}
+                            <div 
+                                className="text-sm sm:text-base md:text-lg font-black text-slate-800 dark:text-slate-100 tracking-tight pl-1 leading-tight truncate"
+                                title={data.dep_date || data.date || t('no_date')}
+                            >
+                                {data.dep_date || data.date || t('no_date_short') || t('no_date')}
                             </div>
                         )}
                     </div>
 
-                    <div className="flex flex-col items-center px-4">
-                        <div className="h-px w-12 sm:w-20 bg-linear-to-r from-blue-400/50 via-slate-300/30 to-indigo-400/50 relative">
+                    <div className="flex flex-col items-center justify-center px-1 sm:px-2 w-8 sm:w-14 shrink-0">
+                        <div className="h-px w-full bg-linear-to-r from-blue-400/50 via-slate-300/30 to-indigo-400/50 relative">
                             <div className="absolute left-0 -top-0.5 w-1 h-1 rounded-full bg-blue-500" />
                             <div className="absolute right-0 -top-0.5 w-1 h-1 rounded-full bg-indigo-500" />
                         </div>
                     </div>
 
                     <div className="space-y-1.5 text-right min-w-0">
-                        <Label className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-[0.2em] sm:tracking-[0.25em] pr-1 flex justify-end drop-shadow-sm whitespace-nowrap">
+                        <Label className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-[0.2em] sm:tracking-[0.25em] pr-1 flex justify-end drop-shadow-sm truncate">
                             {t('arrival_date')}
                         </Label>
                         {isEditing ? (
-                            <div className="flex justify-end">
+                            <div className="flex justify-end min-w-0">
                                 <Input
                                     type="date"
                                     value={data.arr_date || data.date || ""}
                                     onChange={e => onChange('arr_date', e.target.value)}
-                                    className="h-7 p-0 border-0 bg-transparent text-sm font-black shadow-none focus-visible:ring-0 text-right w-fit"
+                                    className="h-7 p-0 border-0 bg-transparent text-xs sm:text-sm font-black shadow-none focus-visible:ring-0 text-right w-full min-w-0"
                                 />
                             </div>
                         ) : (
-                            <div className="text-lg sm:text-base md:text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight pr-1 leading-tight text-right whitespace-nowrap overflow-visible">
-                                {data.arr_date || data.date || t('no_date')}
+                            <div 
+                                className="text-sm sm:text-base md:text-lg font-black text-slate-800 dark:text-slate-100 tracking-tight pr-1 leading-tight text-right truncate"
+                                title={data.arr_date || data.date || t('no_date')}
+                            >
+                                {data.arr_date || data.date || t('no_date_short') || t('no_date')}
                             </div>
                         )}
                     </div>
@@ -174,24 +180,24 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
                 {/* ✈️ Main Airport & Time Grid */}
                 <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-6 relative px-1">
                     {/* Departure Station */}
-                    <div className="relative group/dep">
+                    <div className="relative group/dep min-w-0">
                         <div className="absolute -inset-2 bg-blue-50/50 dark:bg-blue-900/10 rounded-2xl scale-95 opacity-0 group-hover/dep:opacity-100 group-hover/dep:scale-100 transition-all duration-300" />
                         <div className="relative">
                             {isEditing ? (
                                 <Input
                                     value={data.dep_airport}
                                     onChange={e => onChange('dep_airport', e.target.value.toUpperCase())}
-                                    className="border-0 p-0 shadow-none focus-visible:ring-0 font-black tracking-tighter leading-none bg-transparent text-4xl h-12 border-b-2 border-slate-100 dark:border-slate-700/50 rounded-none mb-1 text-center"
+                                    className="border-0 p-0 shadow-none focus-visible:ring-0 font-black tracking-tighter leading-none bg-transparent text-3xl sm:text-5xl md:text-6xl h-10 sm:h-14 border-b-2 border-slate-100 dark:border-slate-700/50 rounded-none mb-1 text-center"
                                     maxLength={3}
                                     placeholder="TPE"
                                 />
                             ) : (
-                                <div className="text-4xl sm:text-6xl font-black tracking-tighter leading-tight text-slate-900 dark:text-white h-fit overflow-visible">
+                                <div className="text-3xl sm:text-5xl md:text-6xl font-black tracking-tighter leading-tight text-slate-900 dark:text-white h-fit overflow-visible">
                                     {data.dep_airport || "TPE"}
                                 </div>
                             )}
-                            <div className="flex items-center gap-2 mt-3">
-                                <div className="p-1 rounded-md bg-blue-100/50 dark:bg-blue-900/30">
+                            <div className="flex items-center gap-1.5 sm:gap-2 mt-3">
+                                <div className="p-1 rounded-md bg-blue-100/50 dark:bg-blue-900/30 shrink-0">
                                     <Clock className="w-3 h-3 text-blue-600 dark:text-blue-400" />
                                 </div>
                                 {isEditing ? (
@@ -199,11 +205,11 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
                                         type="time"
                                         value={data.dep_time}
                                         onChange={e => onChange('dep_time', e.target.value)}
-                                        className="h-auto p-0 border-0 shadow-none focus-visible:ring-0 bg-transparent transition-all text-xs font-semibold border-b border-blue-100 dark:border-blue-800 rounded-none w-full"
+                                        className="h-auto p-0 border-0 shadow-none focus-visible:ring-0 bg-transparent transition-all text-xs font-semibold border-b border-blue-100 dark:border-blue-800 rounded-none w-full min-w-0"
                                         placeholder="00:00"
                                     />
                                 ) : (
-                                    <div className="text-xl sm:text-2xl font-black text-slate-700 dark:text-slate-300 leading-tight h-fit overflow-visible">
+                                    <div className="text-xl sm:text-2xl font-black text-slate-700 dark:text-slate-300 leading-tight h-fit overflow-visible truncate">
                                         {data.dep_time || "00:00"}
                                     </div>
                                 )}
@@ -212,29 +218,29 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
                     </div>
 
                     {/* Flight Path Visual */}
-                    <div className="flex flex-col items-center justify-center px-2">
-                        <div className="relative flex items-center justify-center w-16 sm:w-24">
+                    <div className="flex flex-col items-center justify-center px-1 sm:px-2 shrink-0">
+                        <div className="relative flex items-center justify-center w-12 sm:w-20">
                             <div className="absolute inset-0 flex items-center">
                                 <div className="w-full h-0.5 bg-linear-to-r from-blue-300/30 via-slate-200/50 to-indigo-300/30 dark:via-slate-700/50 rounded-full" />
                             </div>
                             <motion.div
                                 animate={{
-                                    x: [-32, 32],
+                                    x: [-18, 18],
                                     opacity: [0, 1, 1, 0]
                                 }}
                                 transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
                                 className="relative z-10"
                             >
-                                <Plane className="w-5 h-5 text-blue-500/60 rotate-90" />
+                                <Plane className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500/60 rotate-90" />
                             </motion.div>
                         </div>
-                        <div className="mt-4 text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.3em] font-mono whitespace-nowrap">
+                        <div className="mt-3 text-[8px] sm:text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.25em] sm:tracking-[0.3em] font-mono whitespace-nowrap">
                             Non-Stop
                         </div>
                     </div>
 
                     {/* Arrival Station */}
-                    <div className="relative group/arr text-right">
+                    <div className="relative group/arr text-right min-w-0">
                         <div className="absolute -inset-2 bg-indigo-50/50 dark:bg-indigo-900/10 rounded-2xl scale-95 opacity-0 group-hover/arr:opacity-100 group-hover/arr:scale-100 transition-all duration-300" />
                         <div className="relative">
                             {isEditing ? (
@@ -242,31 +248,31 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
                                     <Input
                                         value={data.arr_airport}
                                         onChange={e => onChange('arr_airport', e.target.value.toUpperCase())}
-                                        className="border-0 p-0 shadow-none focus-visible:ring-0 font-black tracking-tighter leading-none bg-transparent text-right text-4xl h-12 border-b-2 border-slate-100 dark:border-slate-700/50 rounded-none mb-1"
+                                        className="border-0 p-0 shadow-none focus-visible:ring-0 font-black tracking-tighter leading-none bg-transparent text-right text-3xl sm:text-5xl md:text-6xl h-10 sm:h-14 border-b-2 border-slate-100 dark:border-slate-700/50 rounded-none mb-1"
                                         maxLength={3}
                                         placeholder="NRT"
                                     />
                                 </div>
                             ) : (
-                                <div className="text-4xl sm:text-6xl font-black tracking-tighter leading-tight text-slate-900 dark:text-white h-fit overflow-visible text-right">
+                                <div className="text-3xl sm:text-5xl md:text-6xl font-black tracking-tighter leading-tight text-slate-900 dark:text-white h-fit overflow-visible text-right">
                                     {data.arr_airport || "NRT"}
                                 </div>
                             )}
-                            <div className="flex items-center justify-end gap-2 mt-3">
+                            <div className="flex items-center justify-end gap-1.5 sm:gap-2 mt-3 pr-0.5 sm:pr-1">
                                 {isEditing ? (
                                     <Input
                                         type="time"
                                         value={data.arr_time}
                                         onChange={e => onChange('arr_time', e.target.value)}
-                                        className="h-auto p-0 border-0 shadow-none focus-visible:ring-0 bg-transparent transition-all text-right text-xs font-semibold border-b border-indigo-100 dark:border-indigo-800 rounded-none w-full"
+                                        className="h-auto p-0 border-0 shadow-none focus-visible:ring-0 bg-transparent transition-all text-right text-xs font-semibold border-b border-indigo-100 dark:border-indigo-800 rounded-none w-full min-w-0"
                                         placeholder="00:00"
                                     />
                                 ) : (
-                                    <div className="text-xl sm:text-2xl font-black text-slate-700 dark:text-slate-300 leading-tight h-fit overflow-visible text-right">
+                                    <div className="text-xl sm:text-2xl font-black text-slate-700 dark:text-slate-300 leading-tight h-fit overflow-visible text-right truncate">
                                         {data.arr_time || "00:00"}
                                     </div>
                                 )}
-                                <div className="p-1 rounded-md bg-indigo-100/50 dark:bg-indigo-900/30">
+                                <div className="p-1 rounded-md bg-indigo-100/50 dark:bg-indigo-900/30 shrink-0">
                                     <Clock className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                                 </div>
                             </div>
@@ -281,11 +287,11 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
             </div>
 
             {/* Bottom Section: Airline & Traveler Info */}
-            <div className="p-8 space-y-8 bg-white/40 dark:bg-slate-800/20 relative">
+            <div className="p-5 sm:p-8 space-y-6 sm:space-y-8 bg-white/40 dark:bg-slate-800/20 relative">
                 {/* 🛡️ Airline & Flight Number (Boarding Pass Layout) */}
-                <div className="grid grid-cols-2 gap-8 relative z-10">
-                    <div className="space-y-2">
-                        <Label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] pl-1">
+                <div className="grid grid-cols-2 gap-4 sm:gap-8 relative z-10">
+                    <div className="space-y-2 min-w-0">
+                        <Label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] pl-1 truncate block">
                             {t('airline')}
                         </Label>
                         {isEditing ? (
@@ -293,18 +299,18 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
                                 value={data.airline}
                                 onChange={e => onChange('airline', e.target.value)}
                                 placeholder="Eg. JAL / ANA"
-                                className="h-10 border-0 bg-slate-100/50 dark:bg-slate-900/50 rounded-xl text-sm font-bold px-4 focus-visible:ring-blue-500/20"
+                                className="h-10 border-0 bg-slate-100/50 dark:bg-slate-900/50 rounded-xl text-sm font-bold px-4 focus-visible:ring-blue-500/20 w-full"
                             />
                         ) : (
-                            <div className="text-2xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                                <span className="w-1.5 h-6 bg-blue-500 rounded-full" />
-                                {data.airline || "-"}
+                            <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2 min-w-0">
+                                <span className="w-1.5 h-5 sm:h-6 bg-blue-500 rounded-full shrink-0" />
+                                <span className="truncate" title={data.airline}>{data.airline || "-"}</span>
                             </div>
                         )}
                     </div>
                     {/* 🎯 RIGHT ALIGNMENT SYMMETRY */}
-                    <div className="space-y-2 flex flex-col items-end">
-                        <Label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] pr-1 w-full text-right flex justify-end">
+                    <div className="space-y-2 flex flex-col items-end min-w-0">
+                        <Label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] pr-1 w-full text-right flex justify-end truncate">
                             {t('flight_number')}
                         </Label>
                         {isEditing ? (
@@ -315,7 +321,7 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
                                 className="h-10 border-0 bg-slate-100/50 dark:bg-slate-900/50 rounded-xl text-sm font-black font-mono text-right px-4 focus-visible:ring-blue-500/20 w-full"
                             />
                         ) : (
-                            <div className="text-2xl font-black text-blue-600 dark:text-blue-400 tracking-wider font-mono text-right">
+                            <div className="text-xl sm:text-2xl font-black text-blue-600 dark:text-blue-400 tracking-wider font-mono text-right truncate w-full" title={data.code}>
                                 {data.code || "-"}
                             </div>
                         )}
@@ -323,7 +329,7 @@ export function FlightCard({ data, isEditing, onChange, onClear }: FlightCardPro
                 </div>
 
                 {/* 🎒 Traveler Information Grid (PNR / Terminal / Seat) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 pt-8 border-t border-slate-200/50 dark:border-slate-700/30">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 pt-6 sm:pt-8 border-t border-slate-200/50 dark:border-slate-700/30">
                     {/* PNR Column - Orange Theme */}
                     <div className="space-y-4">
                         <div className="flex items-center justify-between px-1">
