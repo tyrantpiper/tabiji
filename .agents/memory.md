@@ -154,6 +154,12 @@
 - **開屏動畫 Track Matte 水墨漸次顯現原則 (Track Matte Bloom Reveal Invariance)**: 在高解析手繪開屏動效中，嚴禁在前景疊加生硬之人造貝茲向量軌跡線；主體顯現必須以原畫遮罩（Track Matte）結合多階水墨光斑（Trailing Bloom）展開，GPU 背景極光與前景手繪線條採 Stacking Context 物理隔離，穩鎖 60~120 FPS。
 - **PWA 桌面圖示與主標題純淨命名法則 (Streamlined PWA Brand Identity)**: PWA 應用程式名稱在 Manifest 與系統元數據中保持簡潔單一詞彙「Tabiji」，省略「App / 應用 / 行程」等修飾後綴，符合 iOS/Android 主畫面 App 名稱極簡化人體工學。
 
+### 13. 高字級適應性佈局、WebKit 匿名文字節點隔離與幾何防衛架構 (High-Font-Scale Adaptive Layout & WebKit Shield)
+- **CSS Grid auto 軌道確定性響應寬度原則 (Deterministic Grid Auto Tracks over Invalid Flex-1)**: 在 `grid-cols-[1fr_auto_1fr]` 等分佈局中，中央 `auto` 欄位禁止宣告無效的 `flex-1`（在 Grid 軌道中為無效宣告，無法阻止文字向內擠壓）。必須以明確的響應式幾何尺度（如 `w-8 sm:w-14`）接管，留出兩側 `1fr` 充足的字元渲染寬度。
+- **擬物化機票卡流式微創調諧準則 (Fluid Micro-Tuning over Premature Stack Degradation)**: 在卡片式擬物佈局中，維持橫向對稱美感比重優於輕易退化為垂直堆疊；透過外距收縮（`p-5 sm:p-8`）、字級階梯修正（平滑遞增 `text-sm sm:text-base md:text-lg`）、未設定精簡字串（「未設定」`no_date_short`）與 `truncate min-w-0` 防溢保護，兼顧登機證美感與超大字級（130%）可存取性。
+- **編輯與檢視態字級原子一致性 (Edit/View State Typographic Symmetry)**: 檢視態與編輯態輸入框必須使用相同的字級階梯（`text-3xl sm:text-5xl md:text-6xl`）與高度（`h-10 sm:h-14`），根除模式切換時的 CLS (Cumulative Layout Shift) 佈局跳動。
+- **iOS Safari 原生日期輸入框本質寬度防衛 (iOS Safari Date Picker Intrinsic Width Guard)**: iOS Safari 對 `<input type="date">` 的 Shadow DOM 內部元件具有最低本質寬度（約 120px~130px）。在 Grid/Flex 容器內必須顯式宣告 `min-w-0 w-full`，抵禦原生日期選擇器撐破格線邊界。
+
 ---
 
 ## [Failed Paths]
@@ -265,6 +271,10 @@
   - **實測數據**: 經 100 次迭代高精基準測試證實，在現代 V8 JIT 編譯器下，3 天 9 景點僅需 **0.0086ms**，15 天 150 景點極限壓力下亦僅需 **0.0524ms**，距離 5ms 預算門檻相差近 100 倍，距離 50ms Long Task 相差近 1000 倍。
   - **反模式代價**: 5ms 門檻在 99.99% 的情況下永遠不會被觸發；但非同步 Hook 封裝卻引發了 React 雙階段渲染（Initial Sync -> Async State Resolution），強制多產生了一次 Re-render 與 WebGL 重新上傳頂點，反而造成了負向效能稅與不必要的代碼複雜度。
   - **架構準則**: 當純 CPU 陣列計算在基準測試下小於 1ms 時，堅決維持單行純同步 `useMemo`（一次性完成、零二次 Re-render）。時間切片技術僅適用於 >15ms 的超大型密集循環或巨型 Canvas 像素級陣列運算。
+
+### 15. 高字級自適應佈局與動態視圖踩坑
+- **CSS Grid auto 欄位子節點誤用 `flex-1` 反模式 (`Grid Auto Cell flex-1 No-Op Trap`)**: 試圖在 CSS Grid 的 `grid-cols-[1fr_auto_1fr]` 的 `auto` 欄位子節點使用 `flex-1` 實現自動彈性收縮。CSS Grid 規範中 `flex-1` 僅在 `display: flex` 父容器內生效，在 Grid `auto` 軌道中是無效宣告，無法阻止 140px 文字與中央裝飾線重疊碰撞。教訓：Grid `auto` 欄位必須使用確定性的響應式寬度（如 `w-8 sm:w-14`）。
+- **Framer Motion 內使用 window.innerWidth 視窗偵測動效位移引發水合失效 (`Framer Motion SSR Hydration Mismatch Trap`)**: 試圖在 Framer Motion `animate={{ x: ... }}` 中使用 `window.innerWidth` 動態決定飛機位移。這會引發 SSR 水合首幀與客戶端不匹配的 Hydration Mismatch 警告。教訓：動效位移必須使用靜態幾何標稱位移 `x: [-18, 18]`，交由 GPU 合成層處理。
 
 ---
 
