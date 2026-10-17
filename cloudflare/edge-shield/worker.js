@@ -8,7 +8,7 @@ export default {
     const pathname = url.pathname;
 
     // 1. 放行 Vercel 本地處理的 API（如 Cloudinary 收據簽章與本地路由）
-    if (pathname.startsWith('/api/sign-cloudinary') || pathname.startsWith('/api/parse-receipt')) {
+    if (pathname.startsWith('/api/sign-cloudinary')) {
       return fetch(request);
     }
 

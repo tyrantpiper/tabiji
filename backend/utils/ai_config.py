@@ -42,6 +42,14 @@ HEAVY_ROUTING: List[str] = [
     "gemini-2.5-flash",                # 穩定版兜底
 ]
 
+# 🧾 收據解析與 OCR 專屬極速視覺路由 (優先 500 RPD Flash-Lite，杜絕 1M Context 逾時)
+EXTRACTION_ROUTING: List[str] = [
+    "gemini-3.1-flash-lite",           # 500 RPD, 首選極速視覺結構化提取 (次秒級)
+    "gemini-3.5-flash-lite",           # 500 RPD, 快速備援
+    "gemini-3.7-flash",                # 次世代 SOTA 旗艦備援
+    "gemini-2.5-flash",                # 穩定版兜底
+]
+
 # ═══════════════════════════════════════════════════════════════
 # 🐴 Workhorse Model (Gemma 系列, 14,400 RPD, 零成本)
 # ═══════════════════════════════════════════════════════════════

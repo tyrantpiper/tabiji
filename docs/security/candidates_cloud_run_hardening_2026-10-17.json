@@ -1,0 +1,42 @@
+[
+  {
+    "id": "backend/routers/ai.py:unbounded_base64_memory_dos",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 655,
+    "end_line": 670,
+    "attack_vector": "memory_exhaustion_and_dos",
+    "hypothesis": "In parse_receipt, when body.image is provided via Base64, the string is split and decoded via base64.b64decode without checking if len(image_bytes) > MAX_IMAGE_SIZE. An attacker can send an unbounded 50MB-100MB base64 payload that decodes directly into memory, bypassing the 20MB limit enforced on remote URLs and inducing an immediate OOM in a 512MB container."
+  },
+  {
+    "id": "backend/routers/ai.py:event_loop_cpu_starvation",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 96,
+    "end_line": 106,
+    "attack_vector": "event_loop_starvation",
+    "hypothesis": "convert_heic_to_jpeg and Pillow image operations execute synchronously inside an async def FastAPI route handler. Under high concurrency, CPU-intensive image decompression and re-encoding freeze the asyncio event loop for 100-300ms per request, starving concurrent SSE streams and health check probes."
+  },
+  {
+    "id": "backend/routers/ai.py:rgba_jpeg_mode_crash",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 96,
+    "end_line": 106,
+    "attack_vector": "unhandled_exception_crash",
+    "hypothesis": "When converting images to JPEG format using Pillow without alpha composite handling, passing RGBA or LA transparent images will trigger 'OSError: cannot write mode RGBA as JPEG', causing an unhandled 500 error instead of a sanitized response."
+  },
+  {
+    "id": ".github/workflows/deploy-backend.yml:cloud_run_oom_and_concurrency_hazard",
+    "file_path": ".github/workflows/deploy-backend.yml",
+    "start_line": 34,
+    "end_line": 46,
+    "attack_vector": "container_oom_hazard",
+    "hypothesis": "Cloud Run deployment specifies --memory 512Mi on 1 vCPU with default concurrency of 80. Decompressing 48MP smartphone photos generates 140MB+ uncompressed raw bitmap per request. 3-4 concurrent receipt parsing requests exceed the 512Mi container ceiling, triggering SIGKILL (OOMKilled 137) and cascading container restarts."
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js:dead_receipt_route_divergence",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "start_line": 10,
+    "end_line": 15,
+    "attack_vector": "routing_dead_code_divergence",
+    "hypothesis": "worker.js checks pathname.startsWith('/api/parse-receipt') to bypass to Vercel origin, but the frontend actually calls /api/ai/parse-receipt. This creates an unmaintained dead-code path and architectural confusion regarding which tier is responsible for receipt processing."
+  }
+]

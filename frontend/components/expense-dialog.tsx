@@ -545,13 +545,13 @@ export function ExpenseDialog({
                                             {(() => {
                                                 const curr = CURRENCIES.find(c => c.code === inputCurrency) || allCurrencies.find(c => c.code === inputCurrency);
                                                 return curr?.countryCode ? (
-                                                    <div className="w-5 h-3.5 bg-slate-100 rounded-[2px] overflow-hidden border border-slate-200/50 shadow-sm shrink-0">
+                                                    <div className="relative w-5 h-3.5 bg-slate-100 rounded-[2px] overflow-hidden border border-slate-200/50 shadow-sm shrink-0">
                                                         <Image 
                                                             src={`https://flagcdn.com/w40/${curr.countryCode}.png`} 
                                                             alt={curr.code}
-                                                            width={20}
-                                                            height={14}
-                                                            className="w-full h-full object-cover"
+                                                            fill
+                                                            sizes="20px"
+                                                            className="object-cover"
                                                             unoptimized
                                                         />
                                                     </div>
@@ -598,13 +598,13 @@ export function ExpenseDialog({
                                                                 onClick={() => handleSelectCurrency(c.code)}
                                                             >
                                                                 {c.countryCode ? (
-                                                                    <div className="w-5 h-3.5 bg-slate-100 rounded-[2px] overflow-hidden border border-slate-200/50 shadow-sm shrink-0 mr-3">
+                                                                    <div className="relative w-5 h-3.5 bg-slate-100 rounded-[2px] overflow-hidden border border-slate-200/50 shadow-sm shrink-0 mr-3">
                                                                         <Image 
                                                                             src={`https://flagcdn.com/w40/${c.countryCode}.png`} 
                                                                             alt={c.code}
-                                                                            width={20}
-                                                                            height={14}
-                                                                            className="w-full h-full object-cover"
+                                                                            fill
+                                                                            sizes="20px"
+                                                                            className="object-cover"
                                                                             unoptimized
                                                                         />
                                                                     </div>
@@ -632,13 +632,13 @@ export function ExpenseDialog({
                                                                 onClick={() => handleSelectCurrency(c.code)}
                                                             >
                                                                 {c.countryCode ? (
-                                                                    <div className="w-5 h-3.5 bg-slate-100 rounded-[2px] overflow-hidden border border-slate-200/50 shadow-sm shrink-0 mr-3">
+                                                                    <div className="relative w-5 h-3.5 bg-slate-100 rounded-[2px] overflow-hidden border border-slate-200/50 shadow-sm shrink-0 mr-3">
                                                                         <Image 
                                                                             src={`https://flagcdn.com/w40/${c.countryCode}.png`} 
                                                                             alt={c.code}
-                                                                            width={20}
-                                                                            height={14}
-                                                                            className="w-full h-full object-cover"
+                                                                            fill
+                                                                            sizes="20px"
+                                                                            className="object-cover"
                                                                             unoptimized
                                                                         />
                                                                     </div>

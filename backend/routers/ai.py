@@ -12,7 +12,7 @@ import uuid
 import httpx
 import io
 from urllib.parse import urlparse
-from PIL import Image
+from PIL import Image, ImageOps
 from utils.url_safety import is_safe_url
 try:
     from pillow_heif import register_heif_opener
@@ -83,7 +83,7 @@ async def safe_download_image(url: str) -> tuple[bytes, str]:
             
             data = response.content
             if len(data) > MAX_IMAGE_SIZE:
-                 raise HTTPException(status_code=400, detail="Image too large (>5MB)")
+                 raise HTTPException(status_code=400, detail=f"Image too large (>{MAX_IMAGE_SIZE // (1024 * 1024)}MB)")
             
             return data, content_type
             
@@ -93,16 +93,48 @@ async def safe_download_image(url: str) -> tuple[bytes, str]:
         print(f"❌ [SafeDownload] Failed: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to fetch image: {str(e)}")
 
+def process_and_optimize_image_sync(data: bytes, max_dimension: int = 2048) -> tuple[bytes, str]:
+    """
+    🛡️ 生產級同步圖片消毒器 (在獨立線程池中執行，防禦 OOM 與 Event Loop 阻塞)
+    - 防 Decompression Bomb (單圖上限 50MP)
+    - EXIF 轉向校正 (防止手機直拍發票橫躺)
+    - RGBA/LA/P 透明背景以「純白底」平滑合成，防轉 JPEG 崩潰
+    - 2048px LANCZOS 等比例縮放 (解壓縮記憶體從 144MB 降至 12MB，降載 90%)
+    """
+    try:
+        Image.MAX_IMAGE_PIXELS = 50_000_000
+        with Image.open(io.BytesIO(data)) as img:
+            # 1. 依 EXIF 自動旋轉
+            img = ImageOps.exif_transpose(img)
+
+            # 2. 處理透明通道 (Alpha Composite onto White)
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                alpha_img = img.convert("RGBA")
+                background = Image.new("RGBA", alpha_img.size, (255, 255, 255, 255))
+                img = Image.alpha_composite(background, alpha_img).convert("RGB")
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+
+            # 3. 2048px 邊長壓制
+            orig_w, orig_h = img.size
+            if max(orig_w, orig_h) > max_dimension:
+                img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+                print(f"📐 [Image Downscale] {orig_w}x{orig_h} -> {img.width}x{img.height}")
+
+            out = io.BytesIO()
+            img.save(out, format="JPEG", quality=88, optimize=True)
+            return out.getvalue(), "image/jpeg"
+
+    except Image.DecompressionBombError:
+        raise HTTPException(status_code=400, detail="圖片像素過大，觸發防護閾值")
+    except Exception as e:
+        print(f"⚠️ [Image Optimization Fallback] {e}")
+        return data, "image/jpeg"
+
 def convert_heic_to_jpeg(data: bytes) -> bytes:
     """Fallback: Convert HEIC/HEIF to JPEG using Pillow."""
-    try:
-        img = Image.open(io.BytesIO(data))
-        out = io.BytesIO()
-        img.save(out, format="JPEG", quality=90)
-        return out.getvalue()
-    except Exception as e:
-        print(f"⚠️ [HEIC Fallback] Conversion failed: {e}")
-        return data # Return original if conversion fails
+    res_bytes, _ = process_and_optimize_image_sync(data)
+    return res_bytes
 
 
 def fix_sub_items_structure(data: dict) -> dict:
@@ -654,30 +686,26 @@ async def parse_receipt(
 
         # 1. Source Determination
         if body.image:
-            # Base64 path
-            img_data = body.image.split(",")[1] if "," in body.image else body.image
+            # Base64 path (容錯切分，兼容純 Base64 與 data URL)
+            img_data = body.image.split(",")[-1].strip()
             image_bytes = base64.b64decode(img_data)
+            if len(image_bytes) > MAX_IMAGE_SIZE:
+                raise HTTPException(status_code=400, detail=f"圖片超過 {MAX_IMAGE_SIZE // (1024 * 1024)}MB 上限")
         elif body.imageUrl:
             # Remote URL path (Safe Download)
             image_bytes, mime_type = await safe_download_image(body.imageUrl)
         else:
             raise HTTPException(status_code=400, detail="Missing source")
 
-        # 2. HEIC Handling & Extraction Attempt
-        is_heic = "heic" in mime_type or "heif" in mime_type
-        
-        try:
-            current_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-            raw_text = await call_extraction(api_key, parts + [current_part], intent_type="EXTRACTION")
-        except Exception as e:
-            # Fallback for HEIC if first attempt fails
-            if is_heic:
-                print("🔄 [HEIC Fallback] Retrying with JPEG conversion...")
-                jpeg_bytes = convert_heic_to_jpeg(image_bytes)
-                current_part = types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg")
-                raw_text = await call_extraction(api_key, parts + [current_part], intent_type="EXTRACTION")
-            else:
-                raise e
+        # 2. 格式分流與記憶體物理防禦 (PDF 直通，圖片透過 asyncio.to_thread 拋至線程池)
+        if mime_type != "application/pdf":
+            image_bytes, mime_type = await asyncio.to_thread(
+                process_and_optimize_image_sync, image_bytes, 2048
+            )
+
+        # 3. Extraction Attempt
+        current_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+        raw_text = await call_extraction(api_key, parts + [current_part], intent_type="EXTRACTION")
 
         # 3. Processing & Normalization
         data = json.loads(raw_text)

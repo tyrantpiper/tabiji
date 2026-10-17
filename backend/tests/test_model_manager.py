@@ -22,7 +22,7 @@ from services.model_manager import (
     get_generation_config,
     build_effective_routing
 )
-from utils.ai_config import DAILY_ROUTING, HEAVY_ROUTING, WORKHORSE_MODEL
+from utils.ai_config import DAILY_ROUTING, HEAVY_ROUTING, WORKHORSE_MODEL, EXTRACTION_ROUTING
 from google.genai import types
 
 
@@ -159,6 +159,15 @@ async def test_call_with_fallback_total_collapse(mock_get_client):
     # 確認嘗試了所有候選模型 (含救援層)
     effective_routing = build_effective_routing("CHAT")
     assert mock_client.aio.chats.create.call_count == len(effective_routing)
+
+
+def test_build_effective_routing_extraction():
+    """
+    🧪 驗證收據解析 (EXTRACTION) 採用專屬的高速視覺路由，杜絕 1M 重型推論超時
+    """
+    routing = build_effective_routing("EXTRACTION")
+    assert routing == EXTRACTION_ROUTING
+    assert routing[0] == "gemini-3.1-flash-lite"
 
 
 # ═══════════════════════════════════════════════════════════════
