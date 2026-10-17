@@ -26,6 +26,7 @@ from typing import Optional, List, Dict, Any, Union, Tuple
 from utils.ai_config import (
     DAILY_ROUTING,
     HEAVY_ROUTING,
+    EXTRACTION_ROUTING,
     GEOCODE_ROUTING,
     WORKHORSE_MODEL,
     WORKHORSE_MOE,
@@ -808,6 +809,8 @@ def build_effective_routing(
         base_routing = list(WORKHORSE_ROUTING)
     elif intent_type == "POI_ENRICH":
         base_routing = list(DAILY_ROUTING)
+    elif intent_type == "EXTRACTION":
+        base_routing = list(EXTRACTION_ROUTING)
     else:
         base_routing = list(HEAVY_ROUTING)
 

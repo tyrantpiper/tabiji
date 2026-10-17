@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     const ALLOWED_FOLDERS = ["tabidachi_capsules", "ryan_travel", "trip_covers", "receipts"];
     const targetFolder = paramsToSign?.folder;
 
-    if (targetFolder && !ALLOWED_FOLDERS.includes(targetFolder)) {
+    if (targetFolder && !ALLOWED_FOLDERS.some(f => targetFolder === f || targetFolder.startsWith(f + "/"))) {
         return NextResponse.json({ error: "Unauthorized upload folder" }, { status: 400 });
     }
 

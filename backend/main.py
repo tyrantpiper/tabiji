@@ -1812,5 +1812,6 @@ if __name__ == "__main__":
     import uvicorn
     # PORT 8008 MIGRATION (Evades Windows CLOSE_WAIT ghost sockets)
     # Disabled reload=True to prevent Uvicorn from swallowing socket bind errors
-    print("🚀 [Bootstrap] Starting Uvicorn on resilient Port 8008 (Single Worker)...")
-    uvicorn.run(app, host="127.0.0.1", port=8008)
+    # timeout_keep_alive=65 prevents Node.js proxy socket hangup (ECONNRESET) on reused connections
+    print("🚀 [Bootstrap] Starting Uvicorn on resilient Port 8008 (Single Worker, keepalive=65s)...")
+    uvicorn.run(app, host="127.0.0.1", port=8008, timeout_keep_alive=65)
