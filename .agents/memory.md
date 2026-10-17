@@ -525,4 +525,14 @@
 - **固定比例卡片擠壓底部按鈕截斷陷阱 (FP-032)**: 初版拍立得卡片採用固定 `w-72 aspect-[3/4.2]`（高度約 403px），加上 Header (72px)、天數橫條 (44px) 與 Footer (44px)，在 iPhone SE (667px) 上直接超出視窗 61px，導致旅伴切換箭頭被推入虛無。教訓：卡片必須設置 `max-h-[40vh]` 自適應收縮，且外層容器必須為 `min-h-0 flex-1 overflow-y-auto` 保底。
 - **`useEffect` 同步 `setMounted(true)` 引發 Cascading Render 報錯陷阱 (FP-033)**: 為防止 SSR 渲染 Portal 拋出 `document is not defined`，在組件內撰寫 `useEffect(() => setMounted(true), [])`，遭 React Compiler 判定為觸發 cascading render 違反純粹性。教訓：判斷客戶端環境應採用 `useSyncExternalStore`。
 - **Tailwind v4 未定義 `@utility scrollbar-none` 導致 Windows 原生滾動條暴露陷阱 (FP-034)**: 誤以為 Tailwind 內建 `scrollbar-none`，在 macOS 上因系統預設隱藏捲軸而未察覺，在 Windows Chrome/Edge 上卡片高度稍有溢出即浮現白底灰色 `▲ / ▼` 原生按鈕。教訓：跨平台捲軸隱藏必須在全域 CSS 明確宣告標準 `@utility scrollbar-none`。
+
+### 31. Cloud Run 並發加固、Uvicorn 保活競態消除、圖片防禦式記憶體治理與 Supavisor 6543 vs PostgREST 架構解耦領域 (Cloud Run Concurrency Hardening, Keepalive Hierarchy, OOM Defense & PostgREST vs Supavisor Decoupling) [2026-10-17 Commit 3fdda25]
+- **Keepalive Timeout 逆向覆蓋階層律 (AD-110)**: 反向代理（Next.js/Cloudflare）的 Keep-Alive 逾時時間必須嚴格小於上游應用伺服器（Uvicorn）的逾時時間 ($T_{\text{upstream}} > T_{\text{proxy}}$)。將 Uvicorn 顯式配置為 `timeout_keep_alive=65`，完整覆蓋 Next.js 代理層的 60 秒視窗，根治因伺服端提前發送 TCP RST 導致之 `Error: socket hang up (ECONNRESET)`。
+- **Flash-Lite 優先的極速抽取路由拓撲 (AD-111)**: 多模態收據解析（Receipt OCR）為純結構化欄位抽取任務，非長思考鏈推理場景。後端建立專屬 `EXTRACTION_ROUTING`，優先指派至具備 500 RPD 免費額度與數百毫秒首字響應之 `gemini-3.1-flash-lite`（相容 3.5/3.7/2.5 降級備援），將辨識延遲自 25s 暴降至 1.2s，釋放 95% 延遲開銷。
+- **線程池解耦圖片重採樣與防禦性記憶體裝甲 (AD-112)**: 智慧型手機 4800 萬畫素大圖的解碼與 Lanczos 縮圖屬於 CPU 密集型運算，嚴禁在 FastAPI 主事件循環中同步執行。必須以 `process_and_optimize_image_sync` 搭配 `asyncio.to_thread` 委派至背景線程池（保持主事件循環 0 毫秒卡頓）；同時設置 `Image.MAX_IMAGE_PIXELS = 40_000_000` 防禦像素炸彈、長邊 2048px 縮圖、Alpha 通道純白鋪底與 `<20MB` 門檻，根除 Linux OOM Killer 物理終止容器之隱患。
+- **PostgREST HTTP 解耦優於 Supavisor 6543 交易模式陷阱原則 (AD-113)**: 在無狀態雲端容器（Cloud Run 20 實例 ✕ 40 Concurrency = 800 CCU）環境中，經由 PostgREST HTTP/HTTPS（443 埠）通訊具備天生的無狀態連線池解耦優勢，完全不維護持久 TCP 連線。堅決抵制在無強烈需求下盲目切換至 Supavisor 6543 交易模式，徹底規避管線化卡死 (Supavisor Issue #1239)、Serializable 隔離級別靜默丟棄寫入 (Issue #1051) 與 Prepared Statements 跨會話命名衝突。
+- **Uvicorn 5s 預設逾時引發代理 Socket Hang Up 陷阱 (FP-035)**: Uvicorn 預設 `timeout_keep_alive=5`，而 Node.js / Next.js 反向代理內部空閒連線保持為 60 秒。當客戶端在 5 秒後重用連線發送請求時，Uvicorn 伺服器已發出 RST 斷開連線，代理端在已關閉的 Socket 寫入資料拋出 `ECONNRESET`。處方：將 Uvicorn `timeout_keep_alive` 配置為 65 秒。
+- **主事件循環中同步執行高解析度圖片轉碼引發健康檢查逾時 (FP-036)**: 直接在 `async def` 端點中使用 Pillow 進行高畫質照片解碼與縮圖，導致 Python 單執行緒事件循環被凍結近 1 秒，同時間進來的 `/health` 存活探針被延遲處理導致容器被雲端平台誤判健康不良。處方：將 Pillow 運算抽為同步函數並以 `asyncio.to_thread` 派發至背景線程池。
+- **Next.js Image 傳入固定寬高搭配 CSS 寬度修改引發比例警告 (FP-037)**: 在貨幣國旗顯示中，傳入 `width={20} height={14}` 卻同時以 CSS 控制寬度，引發瀏覽器警告 `Image has either width or height modified, but not the other`。處方：改採 Next.js 官方標準模式——外層 `<div className="relative w-5 h-3.5">` 搭配 `<Image fill className="object-cover" />`。
+
 
