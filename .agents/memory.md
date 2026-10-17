@@ -535,6 +535,8 @@
 - **主事件循環中同步執行高解析度圖片轉碼引發健康檢查逾時 (FP-036)**: 直接在 `async def` 端點中使用 Pillow 進行高畫質照片解碼與縮圖，導致 Python 單執行緒事件循環被凍結近 1 秒，同時間進來的 `/health` 存活探針被延遲處理導致容器被雲端平台誤判健康不良。處方：將 Pillow 運算抽為同步函數並以 `asyncio.to_thread` 派發至背景線程池。
 - **Next.js Image 傳入固定寬高搭配 CSS 寬度修改引發比例警告 (FP-037)**: 在貨幣國旗顯示中，傳入 `width={20} height={14}` 卻同時以 CSS 控制寬度，引發瀏覽器警告 `Image has either width or height modified, but not the other`。處方：改採 Next.js 官方標準模式——外層 `<div className="relative w-5 h-3.5">` 搭配 `<Image fill className="object-cover" />`。
 - **Cloudflare Phase 1 零代碼邊緣防護與加速體系 (AD-114)**: 針對已取得頂級網域權威託管（Zone）環境，確立「零代碼、高槓桿」優先落地原則。啟用 Smart Tiered Cache 將源站穿透率降低 60%~80%；透過 Transform Rules 在邊緣動態注入 5 大安全標頭（HSTS, X-Content-Type, X-Frame-Options, Referrer, Permissions-Policy）使全站評級達 A+；透過 Email Routing 建立商務雙別名（contact/support@tabijiapp.com）免費轉寄個人 Gmail；並於全域強制停用免費版 Bot Fight Mode（防禦 API 403 誤殺）與 Rocket Loader（防禦 React 19 水合白屏崩潰）。
+- **免費版 Bot Fight Mode 誤殺合法 API 陷阱 (FP-038)**: 免費版 BFM 為全域黑箱機制，官方不支援透過 WAF Custom Rules 宣告 Skip 例外。啟用後會將行動端 PWA、原生 App 或 Webhook 的 `/api/*` 呼叫誤判為自動化爬蟲攔截並回傳 403 Forbidden。處方：提供 API 服務之網域必須保持免費版 BFM 關閉，改以 WAF Custom Rules (Rate Limiting) 與 Cloudflare Turnstile 實施精確防禦。
+
 
 
 
