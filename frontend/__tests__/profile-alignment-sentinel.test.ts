@@ -76,9 +76,10 @@ describe('🛡️ Profile View Alignment Security Sentinel Test', () => {
                 return emailRegex.test(trimmed) ? trimmed : null
             }
 
+            expect(sanitizeEmail('contact@tabijiapp.com')).toBe('contact@tabijiapp.com')
             expect(sanitizeEmail('ryanpig228@gmail.com')).toBe('ryanpig228@gmail.com')
             expect(sanitizeEmail('javascript:alert(1)')).toBeNull()
-            expect(sanitizeEmail('ryanpig228@gmail.com?subject=hack\r\nBcc:victim@test.com')).toBeNull()
+            expect(sanitizeEmail('contact@tabijiapp.com?subject=hack\r\nBcc:victim@test.com')).toBeNull()
         })
     })
 

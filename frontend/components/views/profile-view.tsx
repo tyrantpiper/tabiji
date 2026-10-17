@@ -342,10 +342,11 @@ export function ProfileView() {
         }
     }
 
+    const OFFICIAL_CONTACT_EMAIL = "contact@tabijiapp.com"
+
     const handleCopyEmail = async () => {
-        const email = "ryanpig228@gmail.com"
         try {
-            await navigator.clipboard.writeText(email)
+            await navigator.clipboard.writeText(OFFICIAL_CONTACT_EMAIL)
             setCopied(true)
             toast.success(zh ? "已複製信箱！" : "Email copied!")
             setTimeout(() => setCopied(false), 2000)
@@ -359,7 +360,7 @@ export function ProfileView() {
         e.stopPropagation()
         
         // 🚀 GMAIL DIRECT COMPOSE: Bypasses system-level mailto issues
-        const gmailUrl = "https://mail.google.com/mail/?view=cm&fs=1&to=ryanpig228@gmail.com"
+        const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${OFFICIAL_CONTACT_EMAIL}`
         openExternalLink(gmailUrl)
     }
 
@@ -1477,7 +1478,7 @@ export function ProfileView() {
             <div className="py-6 flex flex-col items-center gap-4">
                 <div className="p-4 bg-blue-50/50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-900/50 w-full flex flex-col items-center gap-1 group">
                     <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">{zh ? '官方信箱' : 'OFFICIAL EMAIL'}</span>
-                    <span className="text-lg font-mono font-medium text-slate-700 dark:text-slate-200">ryanpig228@gmail.com</span>
+                    <span className="text-lg font-mono font-medium text-slate-700 dark:text-slate-200">{OFFICIAL_CONTACT_EMAIL}</span>
                 </div>
 
                 <div className="flex gap-3 w-full">
