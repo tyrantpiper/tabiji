@@ -546,6 +546,13 @@
 - **Framer Motion 舊座標殘留導致逆向切換同向滑動陷阱 (FP-040)**: 在非作用中視圖上宣告 `animate={{ x: direction * 28 }}`，當分頁從 0 切換至 1 時，所有非作用中分頁被推至 `+28px`。當使用者由 1 切換回 0 時，雖然 `direction` 變為 `-1`，但 Tab 0 在 DOM 上的當前位移仍停在 `+28px`，Framer Motion 從 `+28px` 動畫至 `0px`，依然呈現右至左滑動。教訓：不能依賴全域單一 `direction` 控制所有分頁，必須以相對空間拓撲純函數決定各分頁的獨立絕對位置。
 - **React 19 JSX 內讀取 Ref 觸發 `react-hooks/refs` 致命編譯報錯 (FP-041)**: 為了避免額外狀態更新，在組件內維護 `prevTabRef = useRef(activeView)` 並在 `<motion.div initial={{ x: calculateTabOffset(..., prevTabRef.current, ...) }}>` 中傳入。React Compiler 檢測到 Render 期間讀取 Ref，判定為可能引發不可預測渲染的非純操作並報錯。教訓：所有參與 JSX 結構與屬性計算的變數，必須是 React State 或 Props，不可走 Ref 旁路。
 
+### 33. 全域神經縫隙拓撲矩陣、微退化三層感測與容器保活倒掛防衛領域 (Neural Seam Topology Matrix, Micro-Delta Sensing & Container Keepalive Invariance) [2026-10-18 Commit 883858b]
+- **全域神經縫隙拓撲矩陣架構 (AD-119)**: 確立全棧 6 大神經叢（感官運動、本機快取、地理畫布、AI 串流、業務精算、邊緣網關）解剖全景，將跨模組脆弱介面規格化為 10 大手術縫隙（Surgical Seams）。任何功能異動皆必須通過對應縫隙之核心不變量（Invariant Contracts）微感測，杜絕「0 編譯錯誤但存在隱性功能退化」的偽陽性盲區。
+- **雙容器 Keep-Alive 逆向覆蓋防線 (AD-120)**: 反向代理（Next.js/Cloudflare 60s 逾時）環境下，後端容器啟動必須嚴格維持 $T_{\text{upstream}} > T_{\text{proxy}}$。不僅本機 `main.py` 宣告 `timeout_keep_alive=65`，生產環境 `backend/Dockerfile`（Gunicorn `--keep-alive 65`）與 `Dockerfile.prod`（Uvicorn `--timeout-keep-alive 65`）亦必須顯式鎖定 65s，徹底消除 Gunicorn 預設 2 秒導致之 Socket Hang Up / `ECONNRESET`。
+- **跨棧確定性神經調度器與無損診斷管線 (AD-121)**: 在 Windows PowerShell 環境下，命令串接遇錯誤會被 `$LASTEXITCODE` 立即截斷。透過獨立 Python 調度器 (`scripts/neural_seam_harness.py`) 在記憶體中安全接管 Vitest 與 Pytest 進程，確保在檢測到 P0/P1 手術後遺症時，能完整收集雙端錯誤日誌並合成「手術後遺症臨床診斷書」，隨後再發起 Exit Code 1 熔斷，兼顧確定性守門與臨床可診斷性。
+- **Gunicorn 預設 Keep-Alive 倒掛陷阱 (FP-042)**: 以為在 `main.py` 宣告 `timeout_keep_alive=65` 便解決了全棧連線中斷問題，忽略了生產環境 Dockerfile 使用 Gunicorn 包裝 `uvicorn.workers.UvicornWorker`，Gunicorn 預設 `--keep-alive 2` 會覆蓋 Uvicorn 內部設定，造成雲端容器連線在 2 秒後被伺服端提前 RST。教訓：基礎設施參數必須在最外層進程管理器的 CMD 顯式宣告。
+- **Windows CP950 終端 Emoji 編碼中斷陷阱 (FP-043)**: 在 Windows 繁體中文終端下執行 Python 測試調度腳本時，若直接輸出 Unicode Emoji（如 `\U0001f9e0` 🧠），Python 預設 `cp950` 編碼器會拋出 `UnicodeEncodeError` 導致調度腳本自身崩潰。教訓：所有 CLI 調度與診斷腳本必須在開頭強制注入 `sys.stdout/stderr.reconfigure(encoding='utf-8')`。
+
 
 
 
