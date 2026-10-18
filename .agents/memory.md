@@ -537,6 +537,15 @@
 - **Cloudflare Phase 1 零代碼邊緣防護與加速體系 (AD-114)**: 針對已取得頂級網域權威託管（Zone）環境，確立「零代碼、高槓桿」優先落地原則。啟用 Smart Tiered Cache 將源站穿透率降低 60%~80%；透過 Transform Rules 在邊緣動態注入 5 大安全標頭（HSTS, X-Content-Type, X-Frame-Options, Referrer, Permissions-Policy）使全站評級達 A+；透過 Email Routing 建立商務雙別名（contact/support@tabijiapp.com）免費轉寄個人 Gmail；並於全域強制停用免費版 Bot Fight Mode（防禦 API 403 誤殺）與 Rocket Loader（防禦 React 19 水合白屏崩潰）。
 - **免費版 Bot Fight Mode 誤殺合法 API 陷阱 (FP-038)**: 免費版 BFM 為全域黑箱機制，官方不支援透過 WAF Custom Rules 宣告 Skip 例外。啟用後會將行動端 PWA、原生 App 或 Webhook 的 `/api/*` 呼叫誤判為自動化爬蟲攔截並回傳 403 Forbidden。處方：提供 API 服務之網域必須保持免費版 BFM 關閉，改以 WAF Custom Rules (Rate Limiting) 與 Cloudflare Turnstile 實施精確防禦。
 
+### 32. 空間感知導航拓撲、底欄意圖原子分流、React 19 渲染純粹性與零殘影轉場領域 (Spatial Topology Navigation, Atomic Intent Scoping, React 19 Render Purity & Zero-Artifact Motion) [2026-10-18 Commit 1c2f36f]
+- **相對空間索引拓撲純函數原則 (AD-115)**: 切換分頁的進場與停靠方位，嚴禁依賴易變狀態（mutable historical state）紀錄的 `direction`（`1 | -1`）。規範全面升級為無狀態純函數 `calculateTabOffset(targetTab, currentActiveTab, intent, isReducedMotion)`，由物理索引差值 `targetIdx > currentIdx ? +28px : -28px` 即時映射。任何分頁的待命位置由當前作用中分頁絕對鎖定，達成 100% 空間幾何自洽與零歷史狀態漂移。
+- **轉場意圖原子化分流與原生分頁規範對齊 (AD-116)**: 嚴格區隔使用者主動行為與系統程式調度。手動點擊 Dock 導航列派發 `intent: 'dock'`，執行 `±28px` 彈簧微動效；外部 Deep Link、推播跳轉、首屏冷啟動水合與內部事件派發 `intent: 'instant'`，強制作業為 `x: 0` 瞬移，避免非預期的視差干擾。轉場意圖在每次調度時以 Action 引數原子化傳遞，嚴禁將 `isInstant` 作為持久易死鎖的單向 React 布林狀態，守護狀態機冪等性。
+- **React 19 / React Compiler 渲染純函數規範 (AD-117)**: React 19 與 React Compiler（Babel Plugin React Compiler）嚴格約束組件評估（Render Phase）的純函數性。嚴禁在 JSX 屬性計算中直接讀取 `useRef.current`（如 `calculateTabOffset(..., prevTabRef.current, ...)`)，否則會觸發 `react-hooks/refs` 違規編譯報錯。所有決定 JSX 渲染輸出與 Initial 動畫座標的變量，必須升級為正規的 React State（`prevTab`），並在 `handleTabChange` 中透過函式型狀態更新（`setActiveView((current) => { setPrevTab(current); return nextTab })`）完成原子化配對。
+- **動態 Initial 座標注入消除冷啟動未預熱瞬跳 (AD-118)**: 當非核心視圖依賴 `shouldPreheat` 延遲預熱時，若外層 `<motion.div>` 盲目宣告 `initial={false}`，冷啟動前 2 秒內使用者的初次點擊將因生命週期首度掛載而直接跳過進場動畫，產生 0ms 突兀瞬彈（Pop-in）。架構規範必須宣告動態 `initial={{ opacity: 0.7, x: calculateTabOffset(...) }}`，使無論組件是否已預熱，首次登場皆精準自 `±28px` 滑入。
+- **BottomNav 直接傳遞 `setActiveView` 繞過協調器斷鏈陷阱 (FP-039)**: 在 `app-shell.tsx` 中定義了 `handleTabChange`，但傳入 `<BottomNav onTabChange={setActiveView} />`。使用者點擊導航欄直接修改視圖狀態，徹底繞過方向計算與歷史記錄，導致 `direction` 永久凍結在初始值 `+1`。教訓：底層導航控制元件的事件回呼必須精確綁定至包含業務與拓撲計算的統一協調器。
+- **Framer Motion 舊座標殘留導致逆向切換同向滑動陷阱 (FP-040)**: 在非作用中視圖上宣告 `animate={{ x: direction * 28 }}`，當分頁從 0 切換至 1 時，所有非作用中分頁被推至 `+28px`。當使用者由 1 切換回 0 時，雖然 `direction` 變為 `-1`，但 Tab 0 在 DOM 上的當前位移仍停在 `+28px`，Framer Motion 從 `+28px` 動畫至 `0px`，依然呈現右至左滑動。教訓：不能依賴全域單一 `direction` 控制所有分頁，必須以相對空間拓撲純函數決定各分頁的獨立絕對位置。
+- **React 19 JSX 內讀取 Ref 觸發 `react-hooks/refs` 致命編譯報錯 (FP-041)**: 為了避免額外狀態更新，在組件內維護 `prevTabRef = useRef(activeView)` 並在 `<motion.div initial={{ x: calculateTabOffset(..., prevTabRef.current, ...) }}>` 中傳入。React Compiler 檢測到 Render 期間讀取 Ref，判定為可能引發不可預測渲染的非純操作並報錯。教訓：所有參與 JSX 結構與屬性計算的變數，必須是 React State 或 Props，不可走 Ref 旁路。
+
 
 
 
