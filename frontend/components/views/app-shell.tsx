@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { PushPermissionPrompt } from "@/components/notifications/push-permission-prompt"
 import dynamic from "next/dynamic"
 import { BottomNav } from "@/components/bottom-nav"
@@ -15,17 +15,11 @@ import { SyncStatusCapsule } from "@/components/layout/SyncStatusCapsule"
 import { useTripRealtime } from "@/lib/hooks/useTripRealtime"
 import { useTripContext } from "@/lib/trip-context"
 
-import { motion } from "framer-motion"
+import { motion, useReducedMotion } from "framer-motion"
 
 import { SpotlightTour } from "@/components/onboarding/SpotlightTour"
 import { useOnboardingStore } from "@/lib/stores/onboardingStore"
-
-const TAB_INDICES: Record<string, number> = {
-    itinerary: 0,
-    info: 1,
-    tools: 2,
-    profile: 3,
-}
+import { calculateTabOffset, MOTION_CONFIG, TabTransitionIntent } from "@/lib/spatial-tab-topology"
 
 // 🚀 [Perf Audit 2026] 將最強大的核心視圖 (ItineraryView) 也改為動態載入
 // 配合 Stealth Preheat 機制，達成「啟動極速」與「切換即時」
@@ -89,19 +83,27 @@ export function AppShell() {
     useTripRealtime(activeTripId, userId)
 
     const [activeView, setActiveView] = useState("itinerary")
-    const [direction, setDirection] = useState<1 | -1>(1)
-    const prevViewRef = useRef(activeView)
+    const [prevTab, setPrevTab] = useState("itinerary")
+    const [transitionIntent, setTransitionIntent] = useState<TabTransitionIntent>("instant")
+    const isReducedMotion = useReducedMotion()
 
-    const handleTabChange = useCallback((nextTab: string) => {
-        const prevIdx = TAB_INDICES[prevViewRef.current] ?? 0
-        const nextIdx = TAB_INDICES[nextTab] ?? 0
-        setDirection(nextIdx >= prevIdx ? 1 : -1)
-        prevViewRef.current = nextTab
-        setActiveView(nextTab)
+    // 💡 首屏冷啟動水合 150ms 後解鎖為手動 Dock 轉場動態
+    useEffect(() => {
+        const timer = setTimeout(() => setTransitionIntent("dock"), 150)
+        return () => clearTimeout(timer)
     }, [])
 
-    // 🧭 全域深度連結監聽與路由調度器
-    useDeepLinkRouter({ onTabChange: handleTabChange })
+    const handleTabChange = useCallback((nextTab: string, intent: TabTransitionIntent = "dock") => {
+        setActiveView((current) => {
+            if (nextTab === current) return current
+            setPrevTab(current)
+            setTransitionIntent(intent)
+            return nextTab
+        })
+    }, [])
+
+    // 🧭 全域深度連結監聽與路由調度器（外部跳轉採 instant 瞬移）
+    useDeepLinkRouter({ onTabChange: (tab) => handleTabChange(tab, "instant") })
 
     // 💡 Preheat 旗標：決定是否在背景偷偷加載並渲染隱藏視圖
     const [shouldPreheat, setShouldPreheat] = useState(false)
@@ -129,9 +131,9 @@ export function AppShell() {
 
     // Listen for navigation events from other components
     useEffect(() => {
-        const handleNavigateToProfile = () => handleTabChange("profile")
-        const handleNavigateToTools = () => handleTabChange("tools")
-        const handleNavigateToTrips = () => handleTabChange("itinerary")
+        const handleNavigateToProfile = () => handleTabChange("profile", "dock")
+        const handleNavigateToTools = () => handleTabChange("tools", "dock")
+        const handleNavigateToTrips = () => handleTabChange("itinerary", "dock")
         window.addEventListener('navigate-to-profile', handleNavigateToProfile)
         window.addEventListener('navigate-to-tools', handleNavigateToTools)
         window.addEventListener('navigate-to-trips', handleNavigateToTrips)
@@ -183,14 +185,14 @@ export function AppShell() {
 
     useEffect(() => {
         const handleRestart = () => {
-            setActiveView("itinerary")
+            handleTabChange("itinerary", "instant")
             setTimeout(() => {
                 useOnboardingStore.getState().startTour()
             }, 100)
         }
         window.addEventListener("tabidachi-restart-tour", handleRestart)
         return () => window.removeEventListener("tabidachi-restart-tour", handleRestart)
-    }, [setActiveView])
+    }, [handleTabChange])
 
     return (
         <>
@@ -221,9 +223,18 @@ export function AppShell() {
                     <div className={activeView === "itinerary" ? "flex-1 h-full min-h-0 overflow-hidden" : "hidden"}>
                         {(activeView === "itinerary" || shouldPreheat) && (
                             <motion.div
-                                animate={activeView === "itinerary" ? { opacity: 1, x: 0 } : { opacity: 0.7, x: direction * 28 }}
-                                transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                                className="w-full h-full flex flex-col"
+                                initial={{
+                                    opacity: activeView === "itinerary" ? 1 : 0.7,
+                                    x: calculateTabOffset("itinerary", prevTab, transitionIntent, !!isReducedMotion)
+                                }}
+                                animate={{
+                                    opacity: activeView === "itinerary" ? 1 : 0.7,
+                                    x: activeView === "itinerary"
+                                        ? 0
+                                        : calculateTabOffset("itinerary", activeView, transitionIntent, !!isReducedMotion)
+                                }}
+                                transition={MOTION_CONFIG.spring}
+                                className="w-full h-full flex flex-col transform-gpu will-change-transform"
                             >
                                 <ItineraryView />
                             </motion.div>
@@ -234,9 +245,18 @@ export function AppShell() {
                     <div className={activeView === "info" ? "flex-1 h-full overflow-hidden" : "hidden"}>
                         {(activeView === "info" || shouldPreheat) && (
                             <motion.div
-                                animate={activeView === "info" ? { opacity: 1, x: 0 } : { opacity: 0.7, x: direction * 28 }}
-                                transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                                className="w-full h-full flex flex-col"
+                                initial={{
+                                    opacity: activeView === "info" ? 1 : 0.7,
+                                    x: calculateTabOffset("info", prevTab, transitionIntent, !!isReducedMotion)
+                                }}
+                                animate={{
+                                    opacity: activeView === "info" ? 1 : 0.7,
+                                    x: activeView === "info"
+                                        ? 0
+                                        : calculateTabOffset("info", activeView, transitionIntent, !!isReducedMotion)
+                                }}
+                                transition={MOTION_CONFIG.spring}
+                                className="w-full h-full flex flex-col transform-gpu will-change-transform"
                             >
                                 <InfoView />
                             </motion.div>
@@ -246,9 +266,18 @@ export function AppShell() {
                     <div className={activeView === "tools" ? "flex-1 h-full overflow-hidden" : "hidden"}>
                         {(activeView === "tools" || shouldPreheat) && (
                             <motion.div
-                                animate={activeView === "tools" ? { opacity: 1, x: 0 } : { opacity: 0.7, x: direction * 28 }}
-                                transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                                className="w-full h-full flex flex-col"
+                                initial={{
+                                    opacity: activeView === "tools" ? 1 : 0.7,
+                                    x: calculateTabOffset("tools", prevTab, transitionIntent, !!isReducedMotion)
+                                }}
+                                animate={{
+                                    opacity: activeView === "tools" ? 1 : 0.7,
+                                    x: activeView === "tools"
+                                        ? 0
+                                        : calculateTabOffset("tools", activeView, transitionIntent, !!isReducedMotion)
+                                }}
+                                transition={MOTION_CONFIG.spring}
+                                className="w-full h-full flex flex-col transform-gpu will-change-transform"
                             >
                                 <ToolsView />
                             </motion.div>
@@ -258,9 +287,18 @@ export function AppShell() {
                     <div className={activeView === "profile" ? "flex-1 h-full overflow-hidden" : "hidden"}>
                         {(activeView === "profile" || shouldPreheat) && (
                             <motion.div
-                                animate={activeView === "profile" ? { opacity: 1, x: 0 } : { opacity: 0.7, x: direction * 28 }}
-                                transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                                className="w-full h-full flex flex-col"
+                                initial={{
+                                    opacity: activeView === "profile" ? 1 : 0.7,
+                                    x: calculateTabOffset("profile", prevTab, transitionIntent, !!isReducedMotion)
+                                }}
+                                animate={{
+                                    opacity: activeView === "profile" ? 1 : 0.7,
+                                    x: activeView === "profile"
+                                        ? 0
+                                        : calculateTabOffset("profile", activeView, transitionIntent, !!isReducedMotion)
+                                }}
+                                transition={MOTION_CONFIG.spring}
+                                className="w-full h-full flex flex-col transform-gpu will-change-transform"
                             >
                                 <ProfileView />
                             </motion.div>
@@ -270,7 +308,7 @@ export function AppShell() {
                 </main>
                 <BottomNav 
                     activeTab={activeView} 
-                    onTabChange={setActiveView} 
+                    onTabChange={(tab) => handleTabChange(tab, "dock")} 
                     onActiveTabClick={() => {
                         if (!isAtTop) {
                             scrollToTop()

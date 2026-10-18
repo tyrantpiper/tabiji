@@ -1131,6 +1131,54 @@
       "last_checked_commit": "HEAD",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-17_cloud_run_hardening.md",
       "validator_details": "Confirmed by Sentinel: 512Mi with default concurrency 80 causes OOMKilled 137 under 4+ concurrent receipt decodes."
+    },
+    {
+      "id": "frontend/components/views/app-shell.tsx:bottom_nav_ontabchange_bypass",
+      "target_type": "frontend_component",
+      "trust_boundary": "ui_state_and_navigation",
+      "vectors_checked": [
+        "broken_access_and_state_desync"
+      ],
+      "status": "VULNERABLE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_dock_transitions.md",
+      "validator_details": "Confirmed by Sentinel: BottomNav passed onTabChange={setActiveView} bypassing direction state machine and freezing direction at +1."
+    },
+    {
+      "id": "frontend/components/views/app-shell.tsx:unpreheated_cold_mount_void",
+      "target_type": "frontend_component",
+      "trust_boundary": "ui_animation_lifecycle",
+      "vectors_checked": [
+        "animation_lifecycle_midair_clipping"
+      ],
+      "status": "VULNERABLE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_dock_transitions.md",
+      "validator_details": "Confirmed by Sentinel: initial={false} on conditionally mounted views suppresses entrance animation during first 2000ms cold boot clicks."
+    },
+    {
+      "id": "frontend/components/views/app-shell.tsx:transition_intent_latch_deadlock",
+      "target_type": "frontend_component",
+      "trust_boundary": "ui_state_machine",
+      "vectors_checked": [
+        "state_deadlock_and_ui_denial_of_service"
+      ],
+      "status": "VULNERABLE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_dock_transitions.md",
+      "validator_details": "Confirmed by Sentinel: Un-scoped instant transition state creates deadlock, permanently disabling directional sliding after deep links."
+    },
+    {
+      "id": "frontend/components/bottom-nav.tsx:custom_event_tab_changed_loop",
+      "target_type": "frontend_component",
+      "trust_boundary": "dom_event_bus",
+      "vectors_checked": [
+        "event_race_and_reentrant_call"
+      ],
+      "status": "VERIFIED_SAFE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_dock_transitions.md",
+      "validator_details": "Dismissed by Sentinel: tabidachi-tab-changed is strictly guarded by isActive branch and not subscribed within BottomNav."
     }
   ]
 }

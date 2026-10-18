@@ -1,0 +1,34 @@
+[
+  {
+    "id": "frontend/components/views/app-shell.tsx:bottom_nav_ontabchange_bypass",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "start_line": 95,
+    "end_line": 285,
+    "attack_vector": "broken_access_and_state_desync",
+    "hypothesis": "In app-shell.tsx line 273, BottomNav is passed onTabChange={setActiveView} instead of handleTabChange, which completely bypasses direction calculation and history tracking, freezing the transition direction at initial +1 and causing all tab transitions to slide in from right-to-left regardless of actual tab spatial relationship."
+  },
+  {
+    "id": "frontend/components/views/app-shell.tsx:unpreheated_cold_mount_void",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "start_line": 220,
+    "end_line": 270,
+    "attack_vector": "animation_lifecycle_midair_clipping",
+    "hypothesis": "If motion.div declares initial={false} while the outer view is conditionally mounted via (activeView === tab || shouldPreheat), an un-preheated tab clicked within 2000ms of app boot mounts for the first time with initial={false}, causing Framer Motion to suppress the entrance spring and render at x: 0 instantly without any spatial slide animation."
+  },
+  {
+    "id": "frontend/components/views/app-shell.tsx:transition_intent_latch_deadlock",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "start_line": 90,
+    "end_line": 120,
+    "attack_vector": "state_deadlock_and_ui_denial_of_service",
+    "hypothesis": "If instant transition mode (for deep links/push notifications) is implemented via a lingering boolean state without an atomic per-action dispatch, subsequent manual dock clicks will inherit the instant state and permanently lose direction-aware sliding animations."
+  },
+  {
+    "id": "frontend/components/bottom-nav.tsx:custom_event_tab_changed_loop",
+    "file_path": "frontend/components/bottom-nav.tsx",
+    "start_line": 45,
+    "end_line": 65,
+    "attack_vector": "event_race_and_reentrant_call",
+    "hypothesis": "BottomNav dispatches window tabidachi-tab-changed CustomEvent on every tab change, while SpotlightTour and DeepLinkRouter listen for tab events. Without origin guards or deduplication, cyclical events could cause tab state thrashing."
+  }
+]

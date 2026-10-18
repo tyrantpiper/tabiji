@@ -73,6 +73,7 @@ docs/specs/
 | [**`location-search-funnel-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ui-motion/location-search-funnel-spec.md) | 🟢 Active | 景點位置搜尋漏斗最佳化、防抖與錯誤提示處理。 | `frontend/components/itinerary/ActivityEditModal.tsx` |
 | [**`ios-liquid-glass-chat-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ui-motion/ios-liquid-glass-chat-spec.md) | 🟢 Active | iOS 26 液態玻璃材質、純 CSS Inset 陰影、觸控手勢 80ms 延遲釋放與無損 UI。 | `frontend/components/chat-widget.tsx`<br>`frontend/components/chat/*` |
 | [**`living-motion-and-idle-dimming-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/ui-motion/living-motion-and-idle-dimming-spec.md) | 🟢 Active | 地圖控制膠囊 (MapControlCapsule) 3 秒平滑降至 25% 晶透幽靈態、防手震狀態機。 | `frontend/components/map/MapControlCapsule.tsx`<br>`frontend/components/map/day-map.tsx` |
+| [**`dock-direction-aware-transition-spec.md`**](file:///d:/Project/tabiji/travel-pwa/docs/specs/ui-motion/dock-direction-aware-transition-spec.md) | 🟢 Active | 四大 Dock 視圖切換方向感知、相對空間拓撲純函數、iOS 原生無位移跳轉對齊。 | `frontend/components/views/app-shell.tsx`<br>`frontend/components/bottom-nav.tsx` |
 
 ---
 
