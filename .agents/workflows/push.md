@@ -26,6 +26,9 @@ if ($offenders) {
     exit 1
 }
 
+# 0.5 神經縫隙微退化與手術後遺症守門 (Neural Seams Invariant Gate)
+python scripts/neural_seam_harness.py; if ($LASTEXITCODE -ne 0) { Write-Error "Neural Seam Invariants Failed"; exit 1 }
+
 # 1. 前端 TypeScript 靜態檢查 (0 錯誤)
 cd frontend; npx tsc --noEmit; if ($LASTEXITCODE -ne 0) { Write-Error "TypeScript Check Failed"; exit 1 }
 

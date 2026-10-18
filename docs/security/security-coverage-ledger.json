@@ -3,10 +3,10 @@
   "last_audit_date": "2026-10-17T08:17:52Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 88,
-    "audited_targets": 88,
-    "verified_vulnerabilities": 21,
-    "dismissed_hypotheses": 81
+    "total_targets": 93,
+    "audited_targets": 93,
+    "verified_vulnerabilities": 22,
+    "dismissed_hypotheses": 85
   },
   "targets": [
     {
@@ -1179,6 +1179,66 @@
       "last_checked_commit": "HEAD",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_dock_transitions.md",
       "validator_details": "Dismissed by Sentinel: tabidachi-tab-changed is strictly guarded by isActive branch and not subscribed within BottomNav."
+    },
+    {
+      "id": "scripts/neural_seam_harness.py:subcommand_injection",
+      "target_type": "ops_script",
+      "trust_boundary": "internal_ops",
+      "vectors_checked": [
+        "subcommand_injection_and_path_traversal"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "validator_details": "Dismissed by Sentinel: Command execution uses safe fixed argv list and stdin streaming, zero shell=True."
+    },
+    {
+      "id": "frontend/lib/spatial-tab-topology.ts:array_oob_and_nan_injection",
+      "target_type": "pure_math_module",
+      "trust_boundary": "ui_animation_lifecycle",
+      "vectors_checked": [
+        "out_of_bounds_and_nan_drift"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "validator_details": "Dismissed by Sentinel: Nullish coalescing ?? 0 clamps unmapped tab strings, deterministically returning 28, -28 or 0."
+    },
+    {
+      "id": "frontend/components/views/app-shell.tsx:tab_transition_deadlock",
+      "target_type": "frontend_component",
+      "trust_boundary": "ui_state_machine",
+      "vectors_checked": [
+        "state_desync_and_render_deadlock"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "validator_details": "Dismissed by Sentinel: React 19 batched updates and declarative hidden styling prevent render deadlock; springs retarget mid-flight."
+    },
+    {
+      "id": "backend/main.py:keepalive_timeout_mismatch",
+      "target_type": "backend_infra",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "connection_rst_and_socket_hangup"
+      ],
+      "status": "VULNERABLE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "validator_details": "Confirmed by Sentinel: backend/main.py has timeout_keep_alive=65, but backend/Dockerfile and Dockerfile.prod lack explicit --keep-alive 65, risking 2s default Gunicorn keepalive mismatch."
+    },
+    {
+      "id": "frontend/lib/idb-storage.ts:deserialization_corruption",
+      "target_type": "storage_layer",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "offline_cache_poisoning"
+      ],
+      "status": "SECURE",
+      "last_checked_commit": "HEAD",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "validator_details": "Dismissed by Sentinel: Native structured clone and try/catch fallback with schema versioning protect against deserialization poisoning."
     }
   ]
 }

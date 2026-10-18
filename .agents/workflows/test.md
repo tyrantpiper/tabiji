@@ -68,6 +68,18 @@ Triggered when hunting when a specific bug was introduced:
 
 ---
 
+### Mode 4: Neural Seam & Micro-Delta Diagnostics (`/test --seam`)
+Triggered to detect subtle surgical sequelae and cross-module invariant drift:
+1. **Execute Neural Seam Diagnostic Harness**:
+   ```bash
+   python scripts/neural_seam_harness.py
+   ```
+2. **Review Clinical Complication Report**:
+   - Inspect `docs/security/reports/latest_neural_complication_report.md`.
+   - Any P1 complication immediately halts deployment.
+
+---
+
 ## [NEURAL] Neural Linkage
 Execute telemetry signal:
 ```bash

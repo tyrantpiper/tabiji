@@ -44,4 +44,5 @@ CMD exec gunicorn main:app \
     --worker-class uvicorn.workers.UvicornWorker \
     --threads 8 \
     --timeout 0 \
+    --keep-alive 65 \
     --bind 0.0.0.0:${PORT}

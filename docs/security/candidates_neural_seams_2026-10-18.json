@@ -1,0 +1,32 @@
+[
+  {
+    "id": "scripts/neural_seam_harness.py:subcommand_injection",
+    "file_path": "scripts/auto_dream.py",
+    "attack_vector": "subcommand_injection_and_path_traversal",
+    "hypothesis": "Harness scripts executing external commands (npx vitest, pytest) with shell=True or uncontrolled path arguments allow argument injection or arbitrary command execution on Windows."
+  },
+  {
+    "id": "frontend/lib/spatial-tab-topology.ts:array_oob_and_nan_injection",
+    "file_path": "frontend/lib/spatial-tab-topology.ts",
+    "attack_vector": "out_of_bounds_and_nan_drift",
+    "hypothesis": "calculateTabOffset fails to clamp unexpected tab strings, causing NaN coordinates or uncaught exceptions during transition rendering."
+  },
+  {
+    "id": "frontend/components/views/app-shell.tsx:tab_transition_deadlock",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "attack_vector": "state_desync_and_render_deadlock",
+    "hypothesis": "High-frequency rapid clicking between tabs during spring animation causes setPrevTab and setActiveView desynchronization, leading to an infinite render loop or permanent visual freeze."
+  },
+  {
+    "id": "backend/main.py:keepalive_timeout_mismatch",
+    "file_path": "backend/main.py",
+    "attack_vector": "connection_rst_and_socket_hangup",
+    "hypothesis": "Backend Uvicorn/Gunicorn keepalive configuration in containerized environments defaults below 60s, triggering ECONNRESET on Next.js/Cloudflare proxy reuse."
+  },
+  {
+    "id": "frontend/lib/idb-storage.ts:deserialization_corruption",
+    "file_path": "frontend/lib/idb-storage.ts",
+    "attack_vector": "offline_cache_poisoning",
+    "hypothesis": "IndexedDB cache snapshot restores malformed JSON or prototype pollution payloads without schema sanitization, crashing the client on cold boot."
+  }
+]

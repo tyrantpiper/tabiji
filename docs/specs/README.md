@@ -11,6 +11,7 @@
 ```
 docs/specs/
 ├── README.md                                 # [總中樞] 本全景導航矩陣與架構地圖
+├── core-architecture/                        # 🏛️ 核心架構、全域神經縫隙拓撲與不變量矩陣
 ├── ai/                                       # 🧠 AI 智能助手、人物態、時間感知與工具呼叫
 ├── search/                                   # 🔍 搜尋引擎、區域詞庫、邊緣代理與 Grounding
 ├── offline-pwa/                              # 📶 離線優先秒開、Service Worker 與 Web Push
@@ -23,6 +24,12 @@ docs/specs/
 ---
 
 ## 📋 規格矩陣總表 (Full Specification Matrix)
+
+### 0. 🏛️ 核心架構與神經拓撲 (`core-architecture/`)
+
+| 規格檔案 | 現行狀態 | 核心業務與架構摘要 | 主要對應代碼位置 |
+| :--- | :---: | :--- | :--- |
+| [**`neural-seam-topology-matrix.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/core-architecture/neural-seam-topology-matrix.md) | 🟢 Active | 全棧 6 大神經叢、所有目錄檔案相依與 10 大手術脆弱縫隙（Surgical Seams）核心不變量矩陣。 | 全專案目錄<br>`frontend/__tests__/neural-seams/`<br>`backend/tests/` |
 
 ### 1. 🧠 AI 智能與意圖模組 (`ai/`)
 
