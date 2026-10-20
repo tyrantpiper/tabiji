@@ -30,6 +30,8 @@
 - **長耗時外部網路請求全域狀態機解耦與 In-Flight 去重 (Decoupled Global Write & Deduplication)**: 在頻繁重繪架構下，非同步長耗時請求（如 Open-Meteo API）嚴禁寫入組件局部 state 或依賴 `isMounted` 閉包；必須由獨立模組寫入全域狀態機（Zustand store），並維護 In-Flight Promise 池避免相同座標重複請求。組件僅在渲染階段以響應式 selector 讀取，杜絕組件因父層 SWR 抖動卸載後誤殺回傳資料。
 - **本地時區安全日期鍵規範 (Local Timezone Date Safety)**: 使用 `new Date().toISOString().split("T")[0]` 在 UTC+8 深夜 00:00~08:00 會回傳前一天的 UTC 日期造成快取鍵與本地行程錯位。前端所有快取鍵與日期排程統一採用 `new Date().toLocaleDateString('en-CA')` 對齊客戶端本地時區。
 - **骨架屏硬逾時優雅降級 (Hard-Timeout Skeleton Fallback)**: 依賴非同步遠端資料的骨架屏（如 `DailyWeatherStrip`），嚴禁無限期 pulse 閃爍。必須內建 4 秒硬逾時定時器，連線中斷或逾時自動切換至「暫無氣象資料 · 重試」狀態並支援手動重新整理。
+- **全域通知連動重新整理與標頭極致瘦身 (Notification-Bound Refresh & Header Decluttering)**: 徹底自所有頁面標頭（`ItineraryHeader`, `TabijiHomeDashboard`, `tools-view`, `info-view`）移除 `ZenRenew` 按鈕釋放 44px 寬度，徹底根除行動端標頭按鈕擁擠問題。全域重新整理連動至右上角通知鈴鐺（`NotificationBell`），點擊展開時觸發 Framer Motion 序列微動（`ringCount`）、`haptic.selection()`、`fetchNotifications()`，並透過模組層級單例 `globalLastRefreshTimestamp` 施行 2000ms 物理節流後廣播 `tabidachi-trigger-refresh`。各 View 透過 `Promise.allSettled` 與 `try...catch` 包覆，消弭 Unhandled Rejection 崩潰鏈。
+- **全域景點口袋庫與 Cloudflare D1 邊緣服務拓撲 (Universal POI Pocket & Cloudflare D1 Edge Architecture)**: 引入 `GlobalPoiDrawer`、`PoiPoolView` 與 `PoiPoolMap`，支援沉浸式全螢幕地圖圖層拓撲。後端結合 Cloudflare D1 Serverless 微服務 (`cloudflare/poi-service`) 與 Next.js `/api/poi/*` 代理，支援社群連結安全解析與 SSRF 環回防護，解鎖「零成本隨手存景點、秒級拖曳排入行程」跨應用互通體驗。
 
 ### 3. iOS 原生體驗、微動效與 UI 元件架構 (iOS Ergonomics, Motion & Decoupled UI)
 - **WebKit 匿名文字節點隔離與 Flex 寬度守護 (Text-Node Isolation Architecture)**: 在 Flex 容器中，裸露文字搭配 `truncate` 會在 WebKit 引擎下產生匿名文字方塊（Anonymous Block Box），在 390px 窄螢幕下壓縮同級 `shrink-0` 標籤。架構上確立動態文本必須封裝於獨立 `<span className="truncate">` 節點中，與同級元素形成明確 DOM 邊界。
