@@ -553,6 +553,19 @@
 - **Gunicorn 預設 Keep-Alive 倒掛陷阱 (FP-042)**: 以為在 `main.py` 宣告 `timeout_keep_alive=65` 便解決了全棧連線中斷問題，忽略了生產環境 Dockerfile 使用 Gunicorn 包裝 `uvicorn.workers.UvicornWorker`，Gunicorn 預設 `--keep-alive 2` 會覆蓋 Uvicorn 內部設定，造成雲端容器連線在 2 秒後被伺服端提前 RST。教訓：基礎設施參數必須在最外層進程管理器的 CMD 顯式宣告。
 - **Windows CP950 終端 Emoji 編碼中斷陷阱 (FP-043)**: 在 Windows 繁體中文終端下執行 Python 測試調度腳本時，若直接輸出 Unicode Emoji（如 `\U0001f9e0` 🧠），Python 預設 `cp950` 編碼器會拋出 `UnicodeEncodeError` 導致調度腳本自身崩潰。教訓：所有 CLI 調度與診斷腳本必須在開頭強制注入 `sys.stdout/stderr.reconfigure(encoding='utf-8')`。
 
+### 34. 雙層混合意圖分流、動態工具門控與移動端 Prefill 延遲治理領域 (Hybrid Two-Stage Intent Routing, Dynamic Tool Gating & Mobile Prefill Latency Governance) [Stanford CS 329Z Field Note / Commit 4603b22]
+- **學術基準與生產落地的三大盲區 (AD-122)**:
+  1. *靜態工具全量綁定假說 (The Omnipresent Toolset Fallacy)*：課堂常假設 Agent 初始化時將所有可用工具（如 `ALL_CHAT_TOOLS` 8,727 字元）全部注入 Context。生產代價為 Prefill Token 消耗線性暴衝、TTFT 突破 2.1 秒，且引發「工具注意力稀釋」，造成詢價誤判為記帳等非預期狀態污染。
+  2. *單一決策循環的算力浪費 (System 2 Monopolism)*：ReAct 將每一則用戶輸入（包括純打招呼）皆送入昂貴思考循環，缺乏人類認知架構中的「System 1 (直覺快思)」防護層。
+  3. *超時無感知與缺乏優雅降級 (Lack of Graceful Degradation in Routing)*：前置路由器在網路波動或模型抖動時若無超時熔斷機制，將直接拖垮端到端對話管道。
+- **Kahneman System 1 + System 2 雙層混合分流律 (AD-123)**:
+  - *System 1 (<1ms 確定性正則快篩)*：0ms 攔截純問候語並物理卸載所有工具（落實 BFCL "Abstention by Design"），以 0 Token 開銷捕捉 43.8% 對話輪次；對記帳/刪除等顯式關鍵詞實施「啟發式工具曝光 (Heuristic Tool Exposure)」。
+  - *System 2 (31B 工作馬模型 + 1.0s 超時門檻)*：複雜語意交由 Google Hosted 端點上的開源 31B 稠密模型 (`gemma-4-31b-it`) 進行極速 JSON 分類，並以 1.0s `asyncio.wait_for` 取消超時安全降級為無工具的 `CHAT`，保障移動端預算。
+- **啟發式工具曝光與狀態變更授權之雙重安全解耦 (AD-124)**: 正則僅為工具曝光過濾器，無法識別語意否定（如「我不想記帳」）；真正的狀態變更安全由下游旗艦 LLM 語意理解，與前端 Human-in-the-Loop 卡片（`POIPreviewCard.tsx` / `ExpensePreviewCard.tsx`）雙重授權把關。
+- **正則啟發式曝光否定句穿透陷阱 (FP-044)**: 誤以為正則可作為狀態變更的授權邊界。`EXPENSE_PATTERN` 遇到「我不想記帳」時因無詢價標記而依然判定為 `EXPENSE`。教訓：正則快篩只能決定「是否將工具暴露給模型」，絕不能跳過下游旗艦模型的語意理解與前端用戶確認環節。
+- **`asyncio.wait_for` 非硬性即時 SLA 陷阱 (FP-045)**: 誤以為 `asyncio.wait_for(timeout=1.0)` 保證整個請求在 1000ms 內完成。在 asyncio 中超時僅觸發取消排程（Cancellation），下游旗艦推理和串流依然在分類後執行。教訓：分類超時僅為有界取消門檻（Bounded Cancellation Threshold），端到端延遲須由獨立的請求級超時守護。
+
+
 
 
 
