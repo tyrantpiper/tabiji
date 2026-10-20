@@ -567,6 +567,17 @@
 - **正則啟發式曝光否定句穿透陷阱 (FP-044)**: 誤以為正則可作為狀態變更的授權邊界。`EXPENSE_PATTERN` 遇到「我不想記帳」時因無詢價標記而依然判定為 `EXPENSE`。教訓：正則快篩只能決定「是否將工具暴露給模型」，絕不能跳過下游旗艦模型的語意理解與前端用戶確認環節。
 - **`asyncio.wait_for` 非硬性即時 SLA 陷阱 (FP-045)**: 誤以為 `asyncio.wait_for(timeout=1.0)` 保證整個請求在 1000ms 內完成。在 asyncio 中超時僅觸發取消排程（Cancellation），下游旗艦推理和串流依然在分類後執行。教訓：分類超時僅為有界取消門檻（Bounded Cancellation Threshold），端到端延遲須由獨立的請求級超時守護。
 
+### 35. 通知連動重新整理、Hook 時序與 Sentinel 驗證可信度 (Notification-Bound Refresh, Hook Ordering & Sentinel Validity) [Commit f69d668]
+- **節流狀態須置於模組層級 (AD-125)**: 跨元件生命週期的節流戳記（如 `globalLastRefreshTimestamp`）放在模組作用域，不放 `useRef`，否則元件重新掛載即歸零、節流失效。重新整理只在鈴鐺「展開」時觸發，收合靜默。
+- **一次性動畫以遞增 key 重播 (AD-126)**: Framer Motion 一次性 keyframe 動畫用 `key={counter}` 驅動，不用布林 + `onAnimationComplete`；布林在動畫未完成前重複設 `true` 不會觸發狀態轉移，動畫卡死。
+- **移除 UI 不移除 Prop 契約 (AD-127)**: 刪除按鈕前先 grep 該 prop 的所有下游消費者（如 `onRefresh` → `TripMembersSheet.onMemberKicked`），只刪 JSX。
+- **糾纏檔案以單一里程碑提交 (AD-128)**: 同一檔案承載多個功能變更時，不強拆提交，避免 `git bisect` 中間態編譯/測試不一致。
+- **Hook 宣告順序 TDZ (FP-047)**: `useEffect` 依賴陣列在 render 當下求值，引用尚未宣告的 `useState` 會拋 `ReferenceError` 並經 ChunkBoundary 讓 AppShell 白屏；`tsc`/ESLint 不會報錯。effect 一律放在所引用狀態宣告之後。
+- **React Compiler purity (FP-048)**: 元件本體內呼叫 `Date.now()` 或寫入 ref 觸發 `react-hooks/purity`；抽成模組層級函式並僅由事件處理器呼叫。
+- **Sentinel 驗證器被安全過濾器阻擋 (FP-050)**: 候選假說含「flood / attacker」等攻擊性措辭時，`agy.exe --sandbox` 可能被 Gemini filter 擋下而回 `INCONCLUSIVE`。改用中性品質審查措辭；`INCONCLUSIVE` 不得在報告中記為 `HARDENED`/已驗證。
+- **模擬 PoC 不等於元件測試 (FP-051)**: 在測試檔內重寫一份邏輯再斷言，無法偵測真實元件退化。Sentinel PoC 必須 import 並渲染/呼叫產品程式碼（RTL `render` + fake timers），或明確標註為「規格模擬」。
+- **靜默 `except: pass` 遮蔽缺表 (FP-052)**: `backend/routers/poi.py` 對 Supabase `poi_items`（表不存在，PostgREST 404）吞例外並退回 process 記憶體 dict，API 仍回 200，資料於容器重啟遺失。持久層失敗必須 `logger.warning` 並可觀測。
+
 
 
 

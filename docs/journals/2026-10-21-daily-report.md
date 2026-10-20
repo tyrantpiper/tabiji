@@ -122,3 +122,87 @@
    - 依據 `implementation_plan.md`，完成 `itinerary-view.tsx`、`app-shell.tsx` 與 `PoiPoolView.tsx` 的全螢幕覆蓋狀態廣播與地圖視野擴展。
 2. **Cloudflare D1 景點緩存微服務連線核驗**：
    - 推進 `cloudflare/edge-shield/worker.js` 與 `cloudflare/poi-service/` 的邊緣代理穿透與鑑權機制。
+
+---
+---
+
+# 🌙 Session 2 Addendum（02:00–03:30）：POI 口袋庫落地、D1 邊緣服務、通知連動重新整理
+
+> **系統狀態**：🟢 Synced (`ba67ad0`)，Working Tree Clean。TypeScript 0 錯誤、ESLint 0 錯誤/0 警告、Vitest 79 檔 / 521 測試通過、Pytest 171 通過 / 5 略過、Neural Seam 10/10 不變量完好、Root Hygiene 通過、`localhost:3000` HTTP 200。
+> **提交串列**：
+> - [`f69d668`](https://github.com/tyrantpiper/tabiji/commit/f69d668) `feat(poi): introduce universal poi stash hub, cloudflare d1 edge service and notification-bound refresh`（56 files, +6583 / −84）
+> - [`ba67ad0`](https://github.com/tyrantpiper/tabiji/commit/ba67ad0) `docs(memory): record decisions on notification-bound refresh and universal poi pool topology`
+
+上一節 Next Steps 的兩項（POI 沉浸式視圖、D1 邊緣服務）均已在本 Session 交付。
+
+---
+
+## 🟢 Features & Fixes
+
+| # | 交付項 | 關鍵檔案 |
+| :-- | :-- | :-- |
+| 1 | **全域景點口袋庫**：抽屜、全螢幕沉浸式清單、口袋地圖、資料 Hook、i18n | `components/poi/{GlobalPoiDrawer,PoiPoolView,PoiPoolMap}.tsx`、`lib/hooks/usePoiPool.ts`、`lib/i18n/poi.ts` |
+| 2 | **Cloudflare D1 POI 微服務** + edge-shield Service Binding；社群連結解析與 SSRF 防護 | `cloudflare/poi-service/*`、`cloudflare/edge-shield/*`、`app/api/poi/[...path]/route.ts`、`backend/routers/poi.py` |
+| 3 | **通知連動重新整理**：展開鈴鐺 → 搖擺動畫 + `haptic.selection()` + `fetchNotifications()` + 廣播 `tabidachi-trigger-refresh`（2000ms 節流） | `notifications/notification-bell.tsx` |
+| 4 | **標頭瘦身**：4 個標頭移除 `ZenRenew`（每處省 44px） | `ItineraryHeader.tsx`、`TabijiHomeDashboard.tsx`、`tools-view.tsx`、`info-view.tsx` |
+| 5 | **TDZ 白屏修復**：`tools-view.tsx` 的 refresh effect 原本在 `selectedCurrency` 宣告之前就引用它，導致 `ReferenceError` 讓整個 AppShell 掛掉 | `tools-view.tsx:L163-188` |
+| 6 | **Sentinel 補丁**：鈴鐺節流改為模組層級單例；動畫改用 `key={ringCount}` 序號重播 | `notification-bell.tsx:L51-88, L239-245` |
+| 7 | **線上驗證**：`scripts/verify_cloudflare_d1_poi.py` 對 `https://tabijiapp.com` 4/4 通過 | `scripts/verify_cloudflare_d1_poi.py` |
+
+---
+
+## 🏛️ Architecture Decisions
+
+- **AD-125：重新整理入口併入通知鈴鐺（只在展開時觸發）**
+  - *Context*：行動端標頭塞了 5 顆按鈕；PTR 下拉重新整理會跟 iOS 原生手勢、Virtuoso 捲動搶手勢（見 `docs/research/2026-10-21-pwa-pull-to-refresh-and-gesture-competition-master-research.md`）。
+  - *Decision*：移除所有 `ZenRenew`。鈴鐺**展開**時廣播 `tabidachi-trigger-refresh`，**收合**時什麼都不做。節流時間戳放在**模組層級**（`globalLastRefreshTimestamp`），元件卸載再掛載也不會被歸零。
+- **AD-126：Framer Motion 一次性動畫用遞增 `key` 重播，不用布林值**
+  - *Decision*：`isRinging` + `onAnimationComplete` 改成 `ringCount` + `key={ringCount}`。每次展開都會重新掛載節點、重跑 keyframes，也不再需要額外的狀態轉換。
+- **AD-127：移除 UI 時保留 Prop 契約**
+  - *Decision*：`ItineraryHeaderProps.onRefresh` 照樣保留，因為 `TripMembersSheet` 的 `onMemberKicked={onRefresh}`（`ItineraryHeader.tsx:L157`）還依賴它。拿掉的只有 JSX 按鈕。
+- **AD-128：跨功能檔案糾纏時用單一里程碑提交**
+  - *Decision*：`ItineraryHeader.tsx`、`itinerary-view.tsx`、`TabijiHomeDashboard.tsx` 同時帶有 POI 與 Refresh 兩個功能的變更，硬拆會讓中間的提交在 `git bisect` 時編譯失敗或測試不一致，所以 56 個檔案合成一個原子提交。
+
+---
+
+## 🛡️ Failed Paths
+
+- **FP-047：Hook 宣告順序造成 TDZ 白屏**
+  - *Symptom*：`ReferenceError: Cannot access 'selectedCurrency' before initialization`，`ChunkBoundary` 回報 AppShell 掛載失敗。
+  - *Lesson*：`useEffect` 的依賴陣列會在 render 當下求值。effect 必須放在它引用的所有 `useState` 宣告**之後**。這類錯誤 `tsc` 和 ESLint 都抓不到。
+- **FP-048：在元件本體呼叫 `Date.now()` / 改寫 ref，觸發 React Compiler `react-hooks/purity`**
+  - *Lesson*：時間相依的副作用抽成模組層級純函式（`dispatchGlobalRefreshThrottled`），只從事件處理器呼叫。
+- **FP-049：布林動畫狀態在快速重開時卡住（Sentinel 已確認）**
+  - *Symptom*：550ms 內「開 → 關 → 開」時，`isRinging` 還是 `true`，`setIsRinging(true)` 等於沒動作，鈴鐺不會再搖。
+  - *Lesson*：見 AD-126。
+- **FP-050：Sentinel 驗證器被 Gemini 安全過濾器擋下**
+  - *Symptom*：`throttle_bypass_on_remount` 假說用了「flood / attacker」這類字眼，`agy.exe --sandbox` 回傳 `This request was blocked by Gemini's filters`，結果是 `INCONCLUSIVE`。
+  - *Lesson*：候選假說要用中性的品質審查措辭（例如「狀態在重新掛載後被重設」），避免攻擊性詞彙，否則該項就沒有獨立驗證結果。
+
+---
+
+## 🔴 Technical Debt
+
+1. **Supabase `poi_items` 資料表不存在，POI 資料只放在 process 記憶體裡**（優先級：高）
+   - *證據*：後端日誌 `GET .../rest/v1/poi_items?... "HTTP/2 404 Not Found"`，但 `GET /api/poi/all` 仍回 `200 OK`；repo 裡也找不到 `poi_items` 的 SQL migration。
+   - *原因*：[poi.py:L491-522](file:///d:/Project/tabiji/travel-pwa/backend/routers/poi.py#L491-L522) 用 `except Exception: pass` 吞掉錯誤，悄悄退回 `POI_POOL_STORE`（模組層級 dict）。
+   - *影響*：走後端路徑的 POI 在 Cloud Run 容器重啟後會消失，多個實例之間也不共享。（有走 D1 邊緣路徑的不受影響。）
+   - *待辦*：二選一。(a) 新增 `poi_items` migration + RLS；(b) 後端 POI 路徑全部改走 D1。不論選哪個，都要把 `pass` 換成 `logger.warning`。**這是 Schema 變更，需要 Ryan 核准。**
+2. **Sentinel PoC 測的是模擬邏輯，不是真實元件**
+   - `notification-bound-refresh-sentinel.test.tsx` 裡的 PoC 1–4、6、7 都是測試檔內自己寫的邏輯，沒有 import `NotificationBell`。真實元件退化時這些測試照樣會過。只有 PoC 5（靜態掃描原始碼）會真正碰到產品程式碼。
+   - *待辦*：補一支 RTL `render(<NotificationBell />)` 測試，搭配 `vi.useFakeTimers()` 和 `window.dispatchEvent` spy。
+3. **資安帳本狀態過期**
+   - `notification-bell.tsx:animation_key_sequence` 在 `f69d668` 已經修好，帳本仍標 `VULNERABLE_CONFIRMED`。
+   - `throttle_bypass_on_remount` 的驗證結果是 `INCONCLUSIVE`（被過濾器擋下），報告卻寫成 `HARDENED`，實際上沒有經過獨立驗證。
+   - *待辦*：前者改為 `REMEDIATED`；後者改寫措辭後重跑 runner。
+4. **單一分頁內的請求突發**：一次廣播會讓所有已掛載的 View 同時發出約 6 個請求（行程、膠囊、匯率、費用、憑證、通知）。驗證器只駁回了「跨分頁」這個假說，同分頁內的突發問題還在。可考慮只讓目前可見的 View 回應。
+5. **`implementation_plan.md` 被提交到 repo 根目錄**：Root Hygiene Gate 只擋 `.json/.diff/.tmp/.bak/.log`，沒擋 `.md`。應該移到 `docs/plans/` 或刪除。
+
+---
+
+## 🎯 Next Steps
+
+1. 處理 `poi_items` 持久化（技術債 1），先決定要走 migration 還是 D1。
+2. 補 `NotificationBell` 的 RTL 渲染測試，取代模擬 PoC（技術債 2）。
+3. 修正資安帳本兩筆狀態，並用中性措辭重跑 `throttle_bypass` 驗證（技術債 3）。
+4. `implementation_plan.md` 歸位，並把 `.md` 加進 Root Hygiene 白名單規則。
