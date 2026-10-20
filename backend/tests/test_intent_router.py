@@ -29,7 +29,11 @@ def test_fast_path_remove_itinerary():
         "把晴空塔行程移除",
         "取消去東京鐵塔",
         "把 Day 2 的拉麵拿掉",
-        "不要去築地市場了"
+        "不要去築地市場了",
+        # 🆕 英文測試
+        "Please remove Senso-ji from Day 2",
+        "Delete Tokyo Tower from itinerary",
+        "Cancel Tokyo Skytree"
     ]:
         assert _fast_path_classify(text) == "REMOVE_ITINERARY"
 
@@ -39,7 +43,11 @@ def test_fast_path_expense():
         "中午吃壽司花了 2400 日幣",
         "記帳 1500 円",
         "伴手禮買了 3000 元",
-        "剛剛付了門票費 800 TWD"
+        "剛剛付了門票費 800 TWD",
+        # 🆕 英文測試
+        "Spent 1500 JPY on ramen",
+        "Bought coffee for 500 yen",
+        "Paid 2000 TWD for ticket"
     ]:
         assert _fast_path_classify(text) == "EXPENSE"
 
@@ -49,7 +57,11 @@ def test_fast_path_itinerary():
         "幫我把淺草寺排進 Day 2",
         "加到第 3 天下午",
         "排入東京鐵塔",
-        "推薦晴空塔附近景點並排進去"
+        "推薦晴空塔附近景點並排進去",
+        # 🆕 英文測試
+        "Add Tokyo Skytree to Day 1",
+        "Schedule Shibuya Sky on Day 3",
+        "Plan Senso-ji into itinerary"
     ]:
         assert _fast_path_classify(text) == "ITINERARY"
 
@@ -79,6 +91,10 @@ def test_fast_path_search():
         "東京淺草有什麼好吃的早午餐或咖啡廳？",
         "推薦大阪道頓堀在地人推薦的居酒屋",
         "這家店外國旅客的評分如何？",
+        # 🆕 英文搜尋測試
+        "Search opening hours for Tokyo Tower",
+        "Google ticket price for Shibuya Sky",
+        "Check weather in Kyoto tomorrow"
     ]:
         assert _fast_path_classify(text) == "SEARCH"
 
@@ -91,6 +107,11 @@ def test_fast_path_price_inquiry_not_expense():
         "這間居酒屋花費會很貴嗎？",
         "門票費要多少？",
         "請問兩人預算 3000 元夠嗎？",
+        # 🆕 英文詢價防誤觸測試
+        "How much is the ramen?",
+        "Is 1500 yen expensive for lunch?",
+        "What is the ticket price for Tokyo Tower?",
+        "What is the budget for 2 people?"
     ]:
         intent = _fast_path_classify(text)
         assert intent != "EXPENSE"

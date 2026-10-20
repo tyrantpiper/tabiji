@@ -32,24 +32,25 @@ GREETING_PATTERN = re.compile(
 )
 
 REMOVE_PATTERN = re.compile(
-    r"(刪除|移除|拿掉|取消|不要去|不要排|從行程.*(刪|拿|移除)|把.*(刪掉|移除|拿掉|取消))",
+    r"(\b(remove|delete|cancel|drop|take\s*off)\b|刪除|移除|拿掉|取消|不要去|不要排|從行程.*(刪|拿|移除)|把.*(刪掉|移除|拿掉|取消))",
     re.IGNORECASE
 )
 
-# 💰 全球法定貨幣與花費記帳正則 (支援 JPY, TWD, USD, EUR, GBP, KRW, THB, SGD, AUD, CAD, HKD, VND, RMB 等)
+# 💰 全球法定貨幣與花費記帳正則 (支援 JPY, TWD, USD, EUR, GBP, KRW, THB, SGD, AUD, CAD, HKD, VND, RMB 等，含中英動詞)
 EXPENSE_PATTERN = re.compile(
-    r"(\b\d+[\.,]?\d*\s*(日圓|日幣|円|twd|nt\$|台幣|塊|元|usd|dollars?|美金|美元|jpy|eur|euros?|歐元|歐幣|gbp|pounds?|英鎊|krw|won|韓元|韓幣|thb|baht|泰銖|泰幣|sgd|新幣|星幣|aud|澳幣|澳元|cad|加幣|加元|hkd|港幣|港元|vnd|越南盾|越盾|盾|rmb|cny|人民幣|€|£|₩|฿|\$)\b|(記帳|花了|買了|花費|消費|付了|餐費|門票費|車資|住宿費|機票費|船票))",
+    r"(\b\d+[\.,]?\d*\s*(日圓|日幣|円|twd|nt\$|台幣|塊|元|usd|dollars?|美金|美元|jpy|eur|euros?|歐元|歐幣|gbp|pounds?|英鎊|krw|won|韓元|韓幣|thb|baht|泰銖|泰幣|sgd|新幣|星幣|aud|澳幣|澳元|cad|加幣|加元|hkd|港幣|港元|vnd|越南盾|越盾|盾|rmb|cny|人民幣|€|£|₩|฿|\$)\b|(\b(spent|bought|paid|cost|expense|record)\b|記帳|花了|買了|花費|消費|付了|餐費|門票費|車資|住宿費|機票費|船票))",
     re.IGNORECASE
 )
 
 ITINERARY_PATTERN = re.compile(
-    r"(排進|加到|加進|排入|加入行程|安排到|排在|加一個|Day\s*\d+|第\s*\d+\s*天|幫我排|想去|推薦.*景點.*排)",
+    r"(\b(add|put|schedule|plan|include)\b.*(to|in|on)?\s*(day\s*\d+|itinerary)|Day\s*\d+|第\s*\d+\s*天|排進|加到|加進|排入|加入行程|安排到|排在|加一個|幫我排|想去|推薦.*景點.*排)",
     re.IGNORECASE
 )
 
-# 🌐 2026 即時聯網搜尋與網址解析快篩正則 (涵蓋主動搜尋動作詞、即時資訊、旅遊推薦與美食探索需求)
+# 🌐 2026 即時聯網搜尋與網址解析快篩正則 (涵蓋中英主動搜尋動作詞、即時資訊、旅遊推薦與美食探索需求)
 SEARCH_PATTERN = re.compile(
-    r"(搜索|搜尋|上網查|查一下|幫我查|查看看|查詢|找一下|找找|google|谷歌|聯網|網路搜索|網路搜尋|"
+    r"(\b(search|google|look\s*up|find|check|opening\s*hours?|ticket\s*price|weather)\b|"
+    r"搜索|搜尋|上網查|查一下|幫我查|查看看|查詢|找一下|找找|谷歌|聯網|網路搜索|網路搜尋|"
     r"最新|即時|新聞|今天|明天|這週|這週末|天氣|降雨|幾點開|幾點關|營業時間|公休|休館|門票|票價|官網|預約|排隊|交通|怎麼去|轉乘|https?://|"
     r"推薦|私房|隱藏版|必吃|必去|必買|必訪|必看|老饕|小吃|美食|在地人|當地人|在地美食|外國旅客|背包客|好不好吃|好玩嗎|好吃|好玩|好逛|熱門|評價|評分|看法|攻略|指南|夜市|伴手禮|名產|特產|拉麵|燒肉|壽司|居酒屋|咖啡廳|早午餐)",
     re.IGNORECASE
@@ -74,15 +75,15 @@ CHAT_INTENT_PROMPT = """分析使用者在旅遊 App 中的對話意圖，輸出
 
 
 def _fast_path_classify(message: str) -> Optional[str]:
-    """0ms 確定性正則快篩"""
-    trimmed = message.strip()
+    """0ms 確定性正則快篩 (帶 500 字元長度截斷防護)"""
+    trimmed = message.strip()[:500]
     if not trimmed:
         return "CHAT"
 
     # 🛡️ 解除上下文污染：若傳入字串帶有 <user_input_{salt}>...</user_input_{salt}>，優先提取真實輸入
     user_input_match = re.search(r"<user_input_[^>]+>\s*(.*?)\s*</user_input_[^>]+>", trimmed, re.DOTALL)
     if user_input_match:
-        trimmed = user_input_match.group(1).strip()
+        trimmed = user_input_match.group(1).strip()[:500]
         if not trimmed:
             return "CHAT"
 
@@ -100,7 +101,7 @@ def _fast_path_classify(message: str) -> Optional[str]:
 
     # 4. 主動搜尋動作詞檢測 (搜索、搜尋、上網查、查一下、google 等最優先攔截，避免「查這家好不好吃」被誤判為健檢)
     has_search_action = bool(re.search(
-        r"(搜索|搜尋|上網查|查一下|幫我查|查看看|查詢|找一下|找找|google|谷歌|聯網|網路搜索|網路搜尋)",
+        r"(\b(search|google|look\s*up|find|check)\b|搜索|搜尋|上網查|查一下|幫我查|查看看|查詢|找一下|找找|谷歌|聯網|網路搜索|網路搜尋)",
         trimmed, re.IGNORECASE
     ))
     if has_search_action:
@@ -111,8 +112,8 @@ def _fast_path_classify(message: str) -> Optional[str]:
         return "DIAGNOSIS"
 
     # 6. 檢查記帳與行程意圖
-    # 🛡️ 排除詢問價格之疑問句（如「多少錢」、「算貴嗎」、「預算」、「預估」），避免誤觸記帳
-    is_price_inquiry = bool(re.search(r"(多少|幾|嗎|？|\?|預算|預估|貴不貴|貴嗎|划算嗎)", trimmed))
+    # 🛡️ 排除詢問價格之疑問句（如「多少錢」、「算貴嗎」、「預算」、「預估」、「how much」），避免誤觸記帳
+    is_price_inquiry = bool(re.search(r"(多少|幾|嗎|？|\?|預算|預估|貴不貴|貴嗎|划算嗎|\b(how much|how many|budget|expensive|costly|price)\b)", trimmed, re.IGNORECASE))
     has_expense = bool(EXPENSE_PATTERN.search(trimmed)) and not is_price_inquiry
     has_itinerary = bool(ITINERARY_PATTERN.search(trimmed))
 
