@@ -13,23 +13,40 @@ export default {
     }
 
     // 1.5 轉發至 POI Service 景點微服務 (Cloudflare D1 儲存)
-    const POI_POOL_ENDPOINTS = ['/api/poi/all', '/api/poi/import-link', '/api/poi/add'];
+    const POI_POOL_ENDPOINTS = ['/api/poi/all', '/api/poi/import-link', '/api/poi/add', '/api/poi/batch-save'];
     const isPoiPoolRequest = (
       POI_POOL_ENDPOINTS.includes(pathname) ||
       (/^\/api\/poi\/[^/]+(\/(note|pin|category))?$/.test(pathname) && ['PATCH', 'DELETE', 'GET'].includes(request.method))
     );
     if (isPoiPoolRequest && env.POI_SERVICE) {
+      const CORS_HEADERS = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-User-ID, Authorization",
+      };
+
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: CORS_HEADERS });
+      }
+
       try {
         const serviceReq = request.clone();
         const resp = await env.POI_SERVICE.fetch(serviceReq);
         if (resp.ok || resp.status < 500) {
           return resp;
         }
-        console.warn(`[Edge-Shield] POI Service returned status ${resp.status}, failing over to Cloud Run...`);
+        console.warn(`[Edge-Shield] POI Service returned status ${resp.status}`);
       } catch (err) {
-        console.error('[Edge-Shield] POI Service unreachable, failing over to Cloud Run:', err);
+        console.error('[Edge-Shield] POI Service unreachable:', err);
       }
-      // 容錯降級：繼續執行後續 Cloud Run 原生轉發邏輯，業務永不中斷
+      // 🛡️ 邊緣閉環守護 (Fail-Closed)：杜絕轉發至 Cloud Run 導致記憶體丟失，回傳 503 激發 PWA 離線同步佇列
+      return new Response(JSON.stringify({ error: "POI_SERVICE_UNAVAILABLE", retry_after: 5 }), {
+        status: 503,
+        headers: {
+          ...CORS_HEADERS,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      });
     }
 
     // 2. 目標 Google Cloud Run 實例

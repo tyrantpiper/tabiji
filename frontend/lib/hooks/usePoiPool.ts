@@ -65,10 +65,14 @@ export function usePoiPool(userId: string | null) {
                 haptic.success()
                 await mutate((prev) => {
                     const current = prev || []
-                    const newItems = res.items.filter((item: POIItem) => !current.some((c) => c.id === item.id))
-                    const updated = [...newItems, ...current]
-                    set(`${IDB_POI_KEY_PREFIX}${userId}`, updated).catch(() => {})
-                    return updated
+                    const updated = current.map((c) => {
+                        const matched = res.items.find((item: POIItem) => item.id === c.id || (item.lat === c.lat && item.lng === c.lng))
+                        return matched || c
+                    })
+                    const brandNew = res.items.filter((item: POIItem) => !current.some((c) => c.id === item.id || (c.lat === item.lat && c.lng === item.lng)))
+                    const finalPool = [...brandNew, ...updated]
+                    set(`${IDB_POI_KEY_PREFIX}${userId}`, finalPool).catch(() => {})
+                    return finalPool
                 }, false)
 
                 toast.success(

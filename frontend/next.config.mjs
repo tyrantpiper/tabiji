@@ -44,12 +44,14 @@ const nextConfig = {
     async rewrites() {
         const rawTarget = process.env.INTERNAL_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008";
         const backendTarget = rawTarget.replace(/\/+$/, "");
-        return [
-            {
-                source: "/api/:path*",
-                destination: `${backendTarget}/api/:path*`,
-            },
-        ];
+        return {
+            fallback: [
+                {
+                    source: "/api/:path*",
+                    destination: `${backendTarget}/api/:path*`,
+                },
+            ],
+        };
     },
 };
 

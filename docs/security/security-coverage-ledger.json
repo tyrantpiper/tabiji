@@ -1,19 +1,66 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-21T03:16:00Z",
+  "last_audit_date": "2026-10-21T05:00:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 112,
-    "audited_targets": 112,
-    "verified_vulnerabilities": 27,
-    "dismissed_hypotheses": 99
+    "total_targets": 120,
+    "audited_targets": 120,
+    "verified_vulnerabilities": 30,
+    "dismissed_hypotheses": 104
   },
   "targets": [
+    {
+      "id": "cloudflare/poi-service/worker.js:d1_statement_quota_overflow",
+      "target_type": "cloudflare_worker",
+      "trust_boundary": "edge_to_storage",
+      "vectors_checked": [
+        "d1_statement_quota_overflow"
+      ],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
+      "validator_details": "Dismissed: 25-item chunking in batchInsertPois guarantees SQLite parameter bounds."
+    },
+    {
+      "id": "backend/services/link_resolver.py:placelist_rpc_deserialization",
+      "target_type": "backend_service",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "unsafe_deserialization_and_ssrf"
+      ],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
+      "validator_details": "Dismissed: Safe decloaking prefix check and is_safe_url guard verified by in-memory unit tests."
+    },
+    {
+      "id": "backend/services/link_resolver.py:missing_address_contract",
+      "target_type": "backend_service",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "contract_field_missing"
+      ],
+      "status": "VULNERABLE_CONFIRMED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
+      "validator_details": "Confirmed by Sentinel: resolve_google_maps_link lacked address key. Two-tier extraction (description + photon) synthesized."
+    },
+    {
+      "id": "frontend/app/api/poi/[...path]/route.ts:route_whitelist_deadlock",
+      "target_type": "nextjs_proxy",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "routing_bypass_and_auth_leak"
+      ],
+      "status": "VULNERABLE_CONFIRMED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
+      "validator_details": "Confirmed by Sentinel: batch-save missing from whitelist, causing 404 proxy deadlock. Candidate patch synthesized."
+    },
     {
       "id": "frontend/components/notifications/notification-bell.tsx:animation_key_sequence",
       "target_type": "frontend_component",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": ["animation_state_stagnation", "dos_flood_unauthenticated_refresh"],
+      "vectors_checked": [
+        "animation_state_stagnation",
+        "dos_flood_unauthenticated_refresh"
+      ],
       "status": "VULNERABLE_CONFIRMED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_refactor_sandbox.md",
       "validator_details": "Confirmed by agy CLI sandbox validator: rapid toggle (<550ms) causes isRinging state stagnation preventing keyframe restart. Module singleton throttle and key counter synthesized in candidate patch."
@@ -22,7 +69,9 @@
       "id": "frontend/components/views/itinerary-view.tsx:event_listener_asymmetry_and_visibility_guard",
       "target_type": "frontend_view",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": ["concurrent_multi_view_network_flood"],
+      "vectors_checked": [
+        "concurrent_multi_view_network_flood"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_refactor_sandbox.md",
       "validator_details": "Dismissed by agy CLI sandbox validator: DOM events do not cross tabs. Promise.allSettled shields rejections; visibility guard is unnecessary."
@@ -31,7 +80,10 @@
       "id": "frontend/components/notifications/notification-bell.tsx:notification_bound_refresh",
       "target_type": "frontend_component",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": ["dos_flood_unauthenticated_refresh", "animation_state_stagnation"],
+      "vectors_checked": [
+        "dos_flood_unauthenticated_refresh",
+        "animation_state_stagnation"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_notification_refresh.md",
       "validator_details": "Client-side 2000ms debounce throttle, onAnimationComplete reset, and silent collapse defense verified via Vitest PoC suite."
@@ -40,7 +92,9 @@
       "id": "frontend/components/views/itinerary-view.tsx:global_refresh_listener",
       "target_type": "frontend_view",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": ["unhandled_rejection_in_global_refresh"],
+      "vectors_checked": [
+        "unhandled_rejection_in_global_refresh"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_notification_refresh.md",
       "validator_details": "Safe exception boundary using Promise.allSettled and graceful warning logging prevents unhandled promise rejections."
@@ -49,7 +103,9 @@
       "id": "frontend/components/itinerary/ItineraryHeader.tsx:zen_renew_decluttering",
       "target_type": "frontend_component",
       "trust_boundary": "authenticated_to_internal",
-      "vectors_checked": ["broken_access_control_or_interface_regression"],
+      "vectors_checked": [
+        "broken_access_control_or_interface_regression"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_notification_refresh.md",
       "validator_details": "Preserved onRefresh prop contract forwarding to TripMembersSheet ensures member kick callback integrity while eliminating ZenRenew."
@@ -58,7 +114,9 @@
       "id": "frontend/components/views/tools-view.tsx:global_refresh_listener",
       "target_type": "frontend_view",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": ["exchange_rate_replay_dos"],
+      "vectors_checked": [
+        "exchange_rate_replay_dos"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_notification_refresh.md",
       "validator_details": "Global event listener bound with Promise.allSettled and proper useEffect cleanup verified against memory leaks."
@@ -67,7 +125,9 @@
       "id": "backend/routers/poi.py:import_link_safety",
       "target_type": "backend_router",
       "trust_boundary": "public_to_backend",
-      "vectors_checked": ["ssrf_and_dos_in_poi_import"],
+      "vectors_checked": [
+        "ssrf_and_dos_in_poi_import"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "Remediated and verified: is_safe_url check enforces loopback/cloud metadata rejection with unit test coverage."
@@ -76,7 +136,9 @@
       "id": "cloudflare/edge-shield/worker.js:service_binding_and_route_forwarding",
       "target_type": "edge_worker",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": ["ssrf_and_unauthorized_bypass"],
+      "vectors_checked": [
+        "ssrf_and_unauthorized_bypass"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "Standard WHATWG URL normalization and Fetch Headers prevent path traversal and header injection."
@@ -85,7 +147,9 @@
       "id": "frontend/components/trip-switcher.tsx:title_sanitization",
       "target_type": "frontend_component",
       "trust_boundary": "public_to_authenticated",
-      "vectors_checked": ["xss_in_title_edit"],
+      "vectors_checked": [
+        "xss_in_title_edit"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "React controlled input string escaping confirmed safe from DOM XSS."
@@ -94,7 +158,9 @@
       "id": "backend/routers/geocode.py:resolve_link_ssrf",
       "target_type": "backend_router",
       "trust_boundary": "edge_to_backend",
-      "vectors_checked": ["ssrf_in_link_unshortening"],
+      "vectors_checked": [
+        "ssrf_in_link_unshortening"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "Mobile share noise stripping and URL normalization verified via test_poi_link_security_sentinel.py."
@@ -103,7 +169,9 @@
       "id": "backend/utils/url_safety.py:dns_rebinding",
       "target_type": "backend_util",
       "trust_boundary": "backend_to_external",
-      "vectors_checked": ["dns_rebinding_bypass"],
+      "vectors_checked": [
+        "dns_rebinding_bypass"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "Confirmed blocking 127.0.0.1, localhost, 169.254.169.254, and private ranges via unit test."
@@ -1343,7 +1411,9 @@
       "id": "frontend/components/views/itinerary-view.tsx:immersive_overlay_cleanup",
       "target_type": "frontend_component",
       "trust_boundary": "ui_lifecycle_state_machine",
-      "vectors_checked": ["ui_lifecycle_state_leak"],
+      "vectors_checked": [
+        "ui_lifecycle_state_leak"
+      ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
@@ -1353,7 +1423,9 @@
       "id": "frontend/components/poi/PoiPoolView.tsx:map_container_inline_height_trap",
       "target_type": "frontend_component",
       "trust_boundary": "ui_animation_rendering",
-      "vectors_checked": ["inline_style_override_defect"],
+      "vectors_checked": [
+        "inline_style_override_defect"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
       "validator_details": "Remediated and verified: animate={{ opacity: 1 }} eliminates inline height override, allowing Tailwind responsive container classes to govern dimensions."
@@ -1362,7 +1434,9 @@
       "id": "frontend/components/views/app-shell.tsx:overlay_pointer_events_and_a11y",
       "target_type": "frontend_component",
       "trust_boundary": "browser_ui_state_isolation",
-      "vectors_checked": ["pointer_events_and_a11y_leak"],
+      "vectors_checked": [
+        "pointer_events_and_a11y_leak"
+      ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
@@ -1372,7 +1446,9 @@
       "id": "frontend/components/views/app-shell.tsx:custom_event_type_guard",
       "target_type": "frontend_component",
       "trust_boundary": "browser_ui_state_isolation",
-      "vectors_checked": ["event_payload_injection_and_race"],
+      "vectors_checked": [
+        "event_payload_injection_and_race"
+      ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
@@ -1382,7 +1458,9 @@
       "id": "cloudflare/poi-service/worker.js:d1_batch_limit_overflow",
       "target_type": "edge_worker",
       "trust_boundary": "edge_to_storage",
-      "vectors_checked": ["d1_statement_quota_dos"],
+      "vectors_checked": [
+        "d1_statement_quota_dos"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
       "validator_details": "Remediated and verified: Atomic batch statement chunking at CHUNK_SIZE = 90 guarantees D1 100 statement ceiling is never violated."
@@ -1391,7 +1469,9 @@
       "id": "cloudflare/poi-service/worker.js:unvalidated_user_identity_injection",
       "target_type": "edge_worker",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": ["identity_spoofing_and_shared_pool_collision"],
+      "vectors_checked": [
+        "identity_spoofing_and_shared_pool_collision"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
       "validator_details": "Remediated and verified: RFC 4122 UUIDv4 validation strictly enforced on X-User-ID and JWT sub with 401 Unauthorized rejection."
@@ -1400,7 +1480,9 @@
       "id": "cloudflare/edge-shield/worker.js:stream_consumed_failover_deadlock",
       "target_type": "edge_gateway",
       "trust_boundary": "edge_routing",
-      "vectors_checked": ["stream_consumed_failover_deadlock"],
+      "vectors_checked": [
+        "stream_consumed_failover_deadlock"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
       "validator_details": "Dismissed by Sentinel validator on pre-patch baseline. Candidate patch enforces request.clone() before POI_SERVICE call to enable safe failover to Cloud Run without Body used error."
@@ -1409,10 +1491,57 @@
       "id": "cloudflare/poi-service/schema.sql:d1_full_table_scan_burn",
       "target_type": "database_schema",
       "trust_boundary": "d1_database_schema",
-      "vectors_checked": ["d1_full_table_scan_quota_burn"],
+      "vectors_checked": [
+        "d1_full_table_scan_quota_burn"
+      ],
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
       "validator_details": "Validated by Sentinel: Composite index idx_poi_user_created (user_id, created_at DESC) eliminates table scan, achieving 100% index covering."
+    },
+    {
+      "id": "backend/routers/poi.py:obsolete_crud_memory_leak",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "broken_access_control_and_in_memory_persistence"
+      ],
+      "status": "VULNERABLE_CONFIRMED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
+      "validator_details": "Confirmed by agy CLI sandbox validator: bare except: pass swallows Supabase 404, dumping data into ephemeral POI_POOL_STORE leading to permanent silent data loss on container restart."
+    },
+    {
+      "id": "frontend/app/api/poi/[...path]/route.ts:transparent_proxy_robustness",
+      "target_type": "frontend_api_route",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "proxy_ssrf_and_header_smuggling",
+        "get_body_typeerror"
+      ],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
+      "validator_details": "Dismissed on baseline code. Candidate proxy patch mandates Host header override and GET/HEAD body exclusion before implementation."
+    },
+    {
+      "id": "cloudflare/edge-shield/worker.js:cors_fail_closed_boundary",
+      "target_type": "edge_gateway",
+      "trust_boundary": "edge_routing",
+      "vectors_checked": [
+        "cors_misconfiguration_and_fail_open_leak"
+      ],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
+      "validator_details": "Dismissed on baseline code. Candidate fail-closed patch pre-populates CORS headers on 503 response to trigger PWA offline queue."
+    },
+    {
+      "id": "backend/tests/test_poi_link_security_sentinel.py:import_breakage",
+      "target_type": "backend_test",
+      "trust_boundary": "ci_regression_boundary",
+      "vectors_checked": [
+        "test_regression_and_import_breakage"
+      ],
+      "status": "SECURE",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
+      "validator_details": "Dismissed by sandbox validator: standard regression detection. Remediation decouples test to directly assert on is_safe_url core."
     }
   ]
 }

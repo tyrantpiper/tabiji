@@ -57,25 +57,9 @@ def test_mobile_share_sanitization():
         assert clean == expected
 
 
-@pytest.mark.asyncio
-async def test_poi_import_link_ssrf_rejection():
-    from unittest.mock import MagicMock
-    from fastapi import Request, HTTPException
-    from routers.poi import import_poi_link, POIImportLinkRequest
-
-    mock_req = MagicMock(spec=Request)
-    
-    # 1. Test Loopback SSRF blocked
-    payload_loopback = POIImportLinkRequest(url="http://127.0.0.1:8008/api/trips")
-    with pytest.raises(HTTPException) as exc_info:
-        await import_poi_link(fastapi_req=mock_req, req=payload_loopback, user_id="test-user", supabase=None)
-    assert exc_info.value.status_code == 400
-    assert "SSRF" in exc_info.value.detail
-
-    # 2. Test Cloud Metadata SSRF blocked
-    payload_metadata = POIImportLinkRequest(url="http://169.254.169.254/latest/meta-data/")
-    with pytest.raises(HTTPException) as exc_info:
-        await import_poi_link(fastapi_req=mock_req, req=payload_metadata, user_id="test-user", supabase=None)
-    assert exc_info.value.status_code == 400
-    assert "SSRF" in exc_info.value.detail
+def test_poi_link_ssrf_security_guard():
+    # Direct validation of SSRF defense without reliance on obsolete router
+    assert not is_safe_url("http://127.0.0.1:8008/api/trips")
+    assert not is_safe_url("http://169.254.169.254/latest/meta-data/")
+    assert not is_safe_url("http://metadata.google.internal/computeMetadata/v1/")
 

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/services/link_resolver.py",
+    "file_path": "backend/services/link_resolver.py",
+    "attack_vector": "unsafe_deserialization_and_ssrf",
+    "hypothesis": "When parsing Google Maps Placelist RPC (entitylist/getlist), arbitrary JSON parsing without structural schema verification could trigger unhandled Index/Type errors or SSRF redirection loops on crafted short links."
+  },
+  {
+    "id": "backend/routers/poi.py",
+    "file_path": "backend/routers/poi.py",
+    "attack_vector": "input_validation_and_dos",
+    "hypothesis": "Endpoint /api/poi/resolve-link accepts unvalidated user input strings, potentially triggering ReDoS on URL regex or resource starvation via massive parallel external requests."
+  },
+  {
+    "id": "frontend/app/api/poi/[...path]/route.ts",
+    "file_path": "frontend/app/api/poi/[...path]/route.ts",
+    "attack_vector": "routing_bypass_and_auth_leak",
+    "hypothesis": "Subpath routing whitelist fails to properly isolate Cloudflare D1 actions from backend FastAPI actions, leading to 404 deadlocks or header forwarding leakage."
+  },
+  {
+    "id": "cloudflare/poi-service/worker.js",
+    "file_path": "cloudflare/poi-service/worker.js",
+    "attack_vector": "d1_statement_quota_overflow",
+    "hypothesis": "Batch saving large placelists (>30 items) without statement chunking exceeds D1 SQLite variable binding limits, failing atomicity and crashing edge worker."
+  }
+]

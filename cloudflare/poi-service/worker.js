@@ -60,6 +60,8 @@ async function batchInsertPois(db, userId, places, rawUrl) {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, lat, lng) DO UPDATE SET
           title = excluded.title,
+          address = COALESCE(excluded.address, user_poi_pool.address),
+          user_notes = COALESCE(excluded.user_notes, user_poi_pool.user_notes),
           source_url = excluded.source_url,
           updated_at = excluded.updated_at
         RETURNING *
@@ -295,6 +297,22 @@ export default {
 
         const insertedItems = await batchInsertPois(env.DB, userId, parsedPlaces, rawUrl);
 
+        return jsonResponse({
+          success: true,
+          count: insertedItems.length,
+          items: insertedItems,
+        });
+      }
+
+      // 2.5. POST /api/poi/batch-save - 接收已解析的標準 POI 清單並以 D1 batch 原子分塊寫入
+      if (pathname === "/api/poi/batch-save" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const items = body.items;
+        if (!Array.isArray(items) || items.length === 0) {
+          return jsonResponse({ success: false, error: "Empty or invalid items array" }, 400);
+        }
+
+        const insertedItems = await batchInsertPois(env.DB, userId, items, items[0]?.source_url || "");
         return jsonResponse({
           success: true,
           count: insertedItems.length,

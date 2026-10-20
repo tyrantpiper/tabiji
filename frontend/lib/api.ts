@@ -1479,21 +1479,47 @@ export const poiPoolApi = {
         return Array.isArray(data) ? data : (data.items || [])
     },
 
-    importLink: async (url: string, userId: string): Promise<ImportLinkResponse> => {
+    resolveLink: async (url: string, userId: string) => {
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             "X-User-ID": userId
         }
-        const res = await fetch(`${API.POI}/import-link`, {
+        const res = await fetch(`${API.POI}/resolve-link`, {
             method: "POST",
             headers,
             body: JSON.stringify({ url })
         })
         if (!res.ok) {
             const err = await res.json().catch(() => ({}))
-            throw new Error(err.detail || err.error || `Import failed: ${res.status}`)
+            throw new Error(err.detail || err.error || `Resolve failed: ${res.status}`)
         }
         return res.json()
+    },
+
+    batchSave: async (items: Partial<POIItem>[], userId: string): Promise<ImportLinkResponse> => {
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "X-User-ID": userId
+        }
+        const res = await fetch(`${API.POI}/batch-save`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ items })
+        })
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            throw new Error(err.detail || err.error || `Batch save failed: ${res.status}`)
+        }
+        return res.json()
+    },
+
+    importLink: async (url: string, userId: string): Promise<ImportLinkResponse> => {
+        // 🚀 雙階管線：後端成熟解析 (清洗地名 + 門牌地址 + 清單 RPC) ➔ D1 邊緣原子批次寫入
+        const resolved = await poiPoolApi.resolveLink(url, userId)
+        if (!resolved.success || !resolved.items || resolved.items.length === 0) {
+            throw new Error(resolved.error || "無法解析該連結地點")
+        }
+        return await poiPoolApi.batchSave(resolved.items, userId)
     },
 
     create: async (dto: CreatePOIDTO, userId: string): Promise<POIItem> => {

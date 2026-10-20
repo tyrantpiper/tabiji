@@ -1,56 +1,59 @@
-# 實施計畫：全域通知連動重新整理與標頭極致瘦身 (Notification-Bound Refresh & Decluttering)
+# POI 統一網址解析引擎與多地點共享清單萃取實施計畫
 
-> **計畫日期**: 2026-10-21  
-> **關聯規格**: [notification-bound-refresh-spec.md](file:///d:/Project/tabiji/travel-pwa/docs/specs/features/notification-bound-refresh-spec.md)  
-> **決策紀錄**: 經 `/Idea to Spec` 與 `/grill-me` 訪談確定，採全站資料統一步調，將重新整理連動至右上角通知鈴鐺，並徹底自所有頁面移除 `ZenRenew` 按鈕。
-
----
-
-## 提案使用者審核 (Proposed Changes for User Approval)
-
-### 1. `frontend/components/notifications/notification-bell.tsx`
-- **新增鈴鐺微動搖擺動畫 (`isRinging`)**:
-  使用 Framer Motion 對 Bell 圖示綁定 `animate={{ rotate: isRinging ? [0, -14, 14, -10, 10, -5, 5, 0] : 0 }}`，動畫時長 0.55 秒。
-- **點擊連動觸發與防抖節流**:
-  點擊展開鈴鐺時：
-  1. 觸發震動反饋 `haptic.selection()`。
-  2. 啟動 `isRinging` 微動動畫。
-  3. 執行 `fetchNotifications()` 讀取最新通知。
-  4. 經 2000ms 節流判斷後，廣播 `tabidachi-trigger-refresh` 全域自訂事件。
-
-### 2. 全域接收端連動 (`itinerary-view.tsx`, `tools-view.tsx`, `info-view.tsx`)
-- **`itinerary-view.tsx`**:
-  - 掛載 `window.addEventListener('tabidachi-trigger-refresh', ...)`。
-  - 當處於行程頁面 (`activeTripId` 存在) 時，執行 `Promise.allSettled([reloadTripDetail(), reloadCapsules()])`。
-  - 當處於旅程列表時，執行 `reloadTrips()`。
-- **`tools-view.tsx`**:
-  - 掛載 `window.addEventListener('tabidachi-trigger-refresh', ...)`，更新即時匯率、費用清單與行程資料。
-- **`info-view.tsx`**:
-  - 掛載 `window.addEventListener('tabidachi-trigger-refresh', ...)`，呼叫 `handleRefresh()` 重新取得機票、住宿憑證與行李清單。
-
-### 3. 標頭極致瘦身 (移除 `ZenRenew`)
-- **`frontend/components/itinerary/ItineraryHeader.tsx`**:
-  - 移除 `<ZenRenew ... />` 與相關未使用的 import，釋放 44px 寬度，徹底根除行動端標頭 5 顆按鈕擁擠問題。
-- **`frontend/components/itinerary/TabijiHomeDashboard.tsx`**:
-  - 移除 `<ZenRenew ... />` 與相關未使用的 import，僅保留景點口袋清單書籤按鈕。
-- **`frontend/components/views/tools-view.tsx`**:
-  - 移除標頭區域的 `<ZenRenew ... />`。
-- **`frontend/components/views/info-view.tsx`**:
-  - 移除標頭區域的 `<ZenRenew ... />`。
-
-### 4. 自動化對抗測試 (`frontend/__tests__/notification-bound-refresh-sentinel.test.tsx`)
-- 驗證點擊 `NotificationBell` 發送 `tabidachi-trigger-refresh`。
-- 驗證 2 秒內連續點擊之防抖節流機制。
-- 驗證 `ItineraryHeader`、`TabijiHomeDashboard`、`ToolsView`、`InfoView` 均不再出現 `ZenRenew`。
+## 1. 任務背景與根因回顧
+- **痛點**：使用者在 POI 口袋庫貼入 Google Maps 連結時，地名顯示為未解碼的 `%E8%80%81%E6%96%B0%E5%8F%B0%E8%8F%9C+(%E4%B9%9D%E5%A6%82...`，且門牌地址為空；此外無法批次匯入 Google 共享清單（Placelists）。
+- **根因**：先前在 Cloudflare Worker 手刻了簡陋正則解析器，割裂了後端成熟的 `link_resolver.py`，既缺少 DNA 地名解碼，也沒有 Photon 地址反查與清單 RPC。
+- **決策共識（來自 /grill-me）**：
+  1. 回歸後端 `link_resolver.py` 作為全站「單一解析之源」。
+  2. 後端擴展調研確證的 `entitylist/getlist` 內部 RPC，一口氣解析清單內 N 個地點（含標題、門牌地址、座標、備註）。
+  3. 單點自動結合 Photon 逆向門牌地址反查，確保有像「幸福花園」一般的完整地址。
+  4. 解析後由前端發送標準實體陣列至 Cloudflare D1 批次持久化。
+  5. 純後端保證清洗，歷史髒資料由使用者在 UI 直接手動刪除。
 
 ---
 
-## 驗證流程 (Verification Plan)
+## 2. 預計變更檔案清單
 
-### 靜態品質守門 (Static Quality Gates)
-1. `npx tsc --noEmit`: 確保 0 型別錯誤。
-2. `npm test`: 確保既有 78 份測試套件全數通過，無任何降級。
+| 檔案路徑 | 變更性質 | 核心職責 |
+| :--- | :--- | :--- |
+| `backend/services/link_resolver.py` | 邏輯擴展 | 實作 `entitylist/getlist` RPC 共享清單萃取；單點解析自動附加 Photon 結構化門牌地址反查；地名嚴格 unquote 清洗。 |
+| `backend/routers/poi.py` | 端點新增 | 新增 `POST /api/poi/resolve-link`，統一對接單點與清單解析，回傳標準化 POI 實體陣列。 |
+| `frontend/app/api/poi/[...path]/route.ts` | 路由分流 | 將 `resolve-link` 轉發至 FastAPI 後端；將 CRUD 與 `batch-save` 轉發至 Cloudflare D1。 |
+| `cloudflare/poi-service/worker.js` | 端點支援 | 確保 `POST /api/poi/batch-save` 能無縫接收後端傳來的標準陣列並原子寫入 D1。 |
+| `frontend/lib/api.ts` | API 封裝 | 更新 `poiPoolApi.importLink`：先呼叫 `resolve-link` 解析，再將標準 items 寫入 D1。 |
+| `frontend/lib/hooks/usePoiPool.ts` | 狀態更新 | 支援單點或多地點匯入後的即時 SWR mutate 與 IndexedDB 灌水，顯示精確成功筆數 toast。 |
+| `backend/tests/test_poi_universal_resolver.py` | 測試守門 | 新增單元測試：驗證老新台菜短網址單點解析、地名乾淨度、地址存在性與 Placelist 解析。 |
 
-### 人工與實機驗收點
-1. 進入首頁與行程頁面，標頭整齊清爽，無擁擠排版。
-2. 點擊右上角鈴鐺，鈴鐺優雅搖擺，通知面板展開，背後行程、工具箱、資訊資料無感靜默重新同步。
+---
+
+## 3. 實施步驟
+
+### 階段一：後端核心引擎擴展 (`backend/services/link_resolver.py`)
+1. 實作 `resolve_google_maps_placelist(url)`：
+   - 跟隨 302 重定向截獲清單 Token（匹配 `(?:!11m2!2s|/placelists/list/)([A-Za-z0-9_-]{16,})`）。
+   - 調用 Google 內部 RPC `https://www.google.com/maps/preview/entitylist/getlist?pb=!1m4!1s{list_id}!2e1!3m1!1e1!2e2!3e2!4i2000`。
+   - 脫除前綴 `)]}'\n`，提取 `item[2]` (title)、`item[1][4]` (address)、`item[1][5]` (lat, lng)、`item[3]` (user_notes)。
+2. 在 `resolve_google_maps_link(url)` 單點解析流程中：
+   - 取得座標後，呼叫 `reverse_geocode_with_photon(lat, lng)` 自動填補 `address`。
+   - 地名透過 `urllib.parse.unquote_plus` 徹底解碼，並剔除 ` - Google 地圖` 等後綴。
+
+### 階段二：後端端點與分流配置
+1. 在 `backend/routers/poi.py` 實作 `POST /api/poi/resolve-link`：
+   - 自動判斷輸入網址是 Placelist 還是 Single POI。
+   - 統一包裝回傳結構：`{ success: true, count: len(items), items: [...] }`。
+2. 在 `frontend/app/api/poi/[...path]/route.ts`：
+   - 確保 `resolve-link` 導向後端 FastAPI，其餘導向 Cloudflare D1。
+
+### 階段三：Cloudflare Worker 與前端管線串接
+1. 在 `cloudflare/poi-service/worker.js`：
+   - 確保 `POST /api/poi/batch-save`：接收 `{ items: [...] }`，直接使用 D1 `env.DB.batch()` 寫入，回傳插入結果。
+2. 在 `frontend/lib/api.ts`：
+   - 更新 `poiPoolApi.importLink(url, userId)`：先調用 `/api/poi/resolve-link` 解析，再調用 `/api/poi/batch-save` 存入 D1。
+3. 在 `frontend/lib/hooks/usePoiPool.ts`：
+   - 匯入成功後，將回傳的所有新項目原子推入 SWR 快取與 IndexedDB。
+
+### 階段四：自動化驗證與守門
+1. 執行 `pytest backend/tests`：確保既有 171 測試全數通過，並新增 `test_poi_universal_resolver.py`。
+2. 執行 `npx tsc --noEmit`：確保前端型別 0 錯誤。
+3. 執行 `npm test`：確保既有 79 份前端測試套件 100% 通過。
+4. 真機/終端驗證：測試老新台菜短網址 `https://maps.app.goo.gl/mXQjEKhJSDfJkWi17`，驗證標題為「老新台菜 (九如創始店)」，地址為真實街道門牌。

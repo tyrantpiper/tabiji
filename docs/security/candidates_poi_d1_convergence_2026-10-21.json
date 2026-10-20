@@ -1,0 +1,34 @@
+[
+  {
+    "id": "frontend/app/api/poi/[...path]/route.ts:transparent_proxy_robustness",
+    "file_path": "frontend/app/api/poi/[...path]/route.ts",
+    "attack_vector": "proxy_ssrf_and_header_smuggling",
+    "hypothesis": "Next.js App Router reverse proxy can fail if incoming Host header (e.g. localhost) is forwarded to Cloudflare, or if body is attached to GET/HEAD requests, causing TypeError.",
+    "start_line": 1,
+    "end_line": 70
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js:cors_fail_closed_boundary",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "attack_vector": "cors_misconfiguration_and_fail_open_leak",
+    "hypothesis": "Edge Shield fail-closed 503 response on POI service timeout/error may lack CORS headers, causing browser CORS block instead of letting PWA offline queue catch 503.",
+    "start_line": 15,
+    "end_line": 40
+  },
+  {
+    "id": "backend/routers/poi.py:obsolete_crud_memory_leak",
+    "file_path": "backend/routers/poi.py",
+    "attack_vector": "broken_access_control_and_in_memory_persistence",
+    "hypothesis": "Backend poi.py maintains redundant in-memory POI_POOL_STORE and swallows Supabase 404 errors, causing silent data loss on container restart.",
+    "start_line": 480,
+    "end_line": 540
+  },
+  {
+    "id": "backend/tests/test_poi_link_security_sentinel.py:import_breakage",
+    "file_path": "backend/tests/test_poi_link_security_sentinel.py",
+    "attack_vector": "test_regression_and_import_breakage",
+    "hypothesis": "Test imports import_poi_link from routers.poi, which will cause ImportError if backend endpoints are removed without updating test file.",
+    "start_line": 60,
+    "end_line": 82
+  }
+]

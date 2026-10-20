@@ -92,6 +92,20 @@ RE_SEARCH_PATH = re.compile(r'/search/([^/?&]+)')
 # Pattern F: staticmap?center=lat,lng (Metadata extraction)
 RE_STATICMAP = re.compile(r'center=(-?\d+\.\d+)(?:%2C|,)(-?\d+\.\d+)')
 
+def extract_address_from_description(desc: str) -> str | None:
+    """從 Google Maps 的 og:description 提取真實門牌 (例如: '老新台菜 · 807台灣高雄市三民區九如二路227號')"""
+    if not desc or not isinstance(desc, str):
+        return None
+    # 匹配包含郵遞區號或市/區/路/街/號的片段
+    match = re.search(r'·\s*([0-9\u4e00-\u9fa5]+(?:市|縣|區|鄉|鎮)[^\s·]+[路街巷弄號樓][^\s·]*)', desc)
+    if match:
+        return match.group(1).strip()
+    parts = [p.strip() for p in desc.split('·')]
+    for p in parts[1:]:
+        if any(k in p for k in ["市", "縣", "區", "鄉", "鎮", "路", "街", "號"]):
+            return p
+    return None
+
 async def fetch_og_metadata(url: str) -> Dict[str, Any]:
     """
     Scrapes Open Graph metadata from a URL.
@@ -204,6 +218,7 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
     result = {
         "lat": None,
         "lng": None,
+        "address": None,
         "query": None,
         "resolved_url": url,
         "method": "none",
@@ -495,7 +510,151 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
             result["metadata"]["image"] = static_url
             print(f"[ArcGIS] Engine 2 Fallback: Generated static map: {static_url[:60]}...")
 
+    # 📍 雙軌門牌地址提煉 (Description 正則優先 ➔ Photon 反查兜底)
+    resolved_address = None
+    if result.get("metadata", {}).get("description"):
+        resolved_address = extract_address_from_description(result["metadata"]["description"])
+    
+    if not resolved_address and result.get("lat") and result.get("lng"):
+        try:
+            from services.geocode_service import reverse_geocode_with_photon
+            geo = await reverse_geocode_with_photon(result["lat"], result["lng"])
+            if geo and geo.get("address"):
+                resolved_address = geo["address"]
+        except Exception as geo_err:
+            print(f"[ReverseGeocode] Photon fallback error: {geo_err}")
+            
+    result["address"] = resolved_address
+
+    # 🧬 繁中地名清洗與解碼 (去除 URL 編碼與 - Google 地圖 後綴)
+    raw_title = result.get("metadata", {}).get("title") or result.get("query") or ""
+    if "%" in raw_title:
+        try:
+            raw_title = unquote_plus(raw_title)
+        except Exception:
+            pass
+    clean_title = re.sub(r'\s*[-|]\s*Google\s*(Maps|地图|地圖|マップ|映射|map|search).*$', '', raw_title, flags=re.IGNORECASE).strip()
+    if clean_title:
+        result["metadata"]["title"] = clean_title
+        result["query"] = clean_title
+
     return result
+
+async def resolve_google_maps_placelist(url: str) -> Dict[str, Any]:
+    """
+    解析 Google Maps 共享清單 (Placelists / Saved Lists)。
+    利用 Google 內部 RPC (preview/entitylist/getlist) 一次性萃取整批清單內的 POI 地點。
+    """
+    result = {
+        "success": False,
+        "mode": "placelist",
+        "title": "Google 地圖清單",
+        "count": 0,
+        "items": [],
+        "resolved_url": url,
+        "error": None
+    }
+    
+    clean_url = url
+    if any(d in url for d in ["goo.gl", "maps.app.goo.gl"]):
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+                if not is_safe_url(url):
+                    result["error"] = "UNSAFE_URL"
+                    return result
+                resp = await client.get(url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                })
+                clean_url = str(resp.url)
+        except Exception as e:
+            print(f"[Placelist] Redirect trace failed: {e}")
+            clean_url = url
+
+    # 萃取 List ID
+    list_id_match = re.search(r'(?:!11m2!2s|/placelists/list/)([A-Za-z0-9_-]{16,})', clean_url)
+    if not list_id_match:
+        result["error"] = "CANNOT_EXTRACT_LIST_ID"
+        return result
+        
+    list_id = list_id_match.group(1)
+    rpc_url = f"https://www.google.com/maps/preview/entitylist/getlist?authuser=0&hl=zh-TW&gl=tw&pb=!1m4!1s{list_id}!2e1!3m1!1e1!2e2!3e2!4i2000"
+    
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
+            resp = await client.get(rpc_url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+            })
+            if resp.status_code != 200:
+                result["error"] = f"HTTP_{resp.status_code}"
+                return result
+                
+            raw_text = resp.text
+            if not raw_text.startswith(")]}'"):
+                result["error"] = "PRIVATE_OR_INVALID_LIST"
+                return result
+                
+            stripped = raw_text.lstrip(")]}'\n")
+            import json
+            data = json.loads(stripped)
+            
+            # 解析清單標題
+            list_title = "已儲存的地點清單"
+            if len(data) > 0 and len(data[0]) > 4 and data[0][4]:
+                list_title = str(data[0][4])
+            result["title"] = list_title
+            
+            # 遍歷地點陣列 (data[0][8])
+            raw_items = data[0][8] if (len(data) > 0 and len(data[0]) > 8 and isinstance(data[0][8], list)) else []
+            extracted_items = []
+            
+            for item in raw_items:
+                if not isinstance(item, list) or len(item) < 3:
+                    continue
+                try:
+                    title = item[2] if len(item) > 2 and item[2] else "已儲存地點"
+                    title = unquote_plus(str(title)).strip()
+                    
+                    # 門牌地址 item[1][4]
+                    address = None
+                    if len(item) > 1 and isinstance(item[1], list) and len(item[1]) > 4 and item[1][4]:
+                        address = str(item[1][4]).strip()
+                        
+                    # 座標 item[1][5][2], item[1][5][3]
+                    lat, lng = None, None
+                    if len(item) > 1 and isinstance(item[1], list) and len(item[1]) > 5 and isinstance(item[1][5], list):
+                        coords = item[1][5]
+                        if len(coords) > 3 and coords[2] is not None and coords[3] is not None:
+                            lat = float(coords[2])
+                            lng = float(coords[3])
+                            
+                    # 使用者備註 item[3]
+                    user_notes = None
+                    if len(item) > 3 and item[3]:
+                        user_notes = str(item[3]).strip()
+                        
+                    if lat is not None and lng is not None:
+                        extracted_items.append({
+                            "title": title,
+                            "address": address,
+                            "lat": lat,
+                            "lng": lng,
+                            "category": "attraction",
+                            "user_notes": user_notes,
+                            "source_url": clean_url
+                        })
+                except Exception as item_err:
+                    print(f"[Placelist] Skip corrupted item: {item_err}")
+                    continue
+                    
+            result["success"] = True
+            result["count"] = len(extracted_items)
+            result["items"] = extracted_items
+            return result
+    except Exception as e:
+        print(f"[Placelist] RPC parsing failed: {e}")
+        result["error"] = str(e)
+        return result
 
 async def resolve_generic_link(url: str) -> Dict[str, Any]:
     """
