@@ -200,9 +200,77 @@
 
 ---
 
-## 🎯 Next Steps
+## 🎯 Next Steps (Session 2 結案待辦)
 
 1. 處理 `poi_items` 持久化（技術債 1），先決定要走 migration 還是 D1。
 2. 補 `NotificationBell` 的 RTL 渲染測試，取代模擬 PoC（技術債 2）。
 3. 修正資安帳本兩筆狀態，並用中性措辭重跑 `throttle_bypass` 驗證（技術債 3）。
 4. `implementation_plan.md` 歸位，並把 `.md` 加進 Root Hygiene 白名單規則。
+
+---
+---
+
+# 🌅 Session 3 Addendum（03:30–05:30）：POI 萬用解析器收斂、Google Maps RPC 清單萃取、門牌提煉與全棧發布
+
+> **系統狀態**：🟢 Production Ready & Synced ([`8bc30e9`](https://github.com/tyrantpiper/tabiji/commit/8bc30e9))，Working Tree Clean。TypeScript 0 錯誤、ESLint 0 錯誤/0 警告、Vitest 79 檔 / 521 測試通過、Pytest 175 通過 / 5 略過、Neural Seam 10/10 不變量完好、Root Hygiene 通過、Telemetry 訊號發送完畢。
+> **提交串列**：
+> - [`8bc30e9`](https://github.com/tyrantpiper/tabiji/commit/8bc30e9) `feat(poi): converge universal link resolver and placelist rpc to single source of truth`（22 files, +1244 / −868）
+
+---
+
+## 🟢 Features & Fixes
+
+| # | 交付項 | 關鍵檔案 | 效益與技術落地 |
+| :-- | :-- | :-- | :-- |
+| 1 | **Google Maps 門牌雙軌提煉** | `backend/services/link_resolver.py` | 新增 `extract_address_from_description`，優先由 `og:description` 提取真實門牌（如「807台灣高雄市三民區九如二路227號」），Photon 座標反查兜底，地名全面實施 URL 解碼與後綴清洗。 |
+| 2 | **Google Maps 清單 RPC 批次萃取** | `backend/services/link_resolver.py` | 實作 `resolve_google_maps_placelist`，直連 Google Maps 內部 RPC `entitylist/getlist`，一次提取清單中所有地點名稱、門牌與座標，徹底擺脫 HTML 解析失敗問題。 |
+| 3 | **後端單一解析統一端點** | `backend/routers/poi.py` | 新增 `POST /api/poi/resolve-link`，自適應分流單點與清單解析，回傳結構化繁體中文 POI 陣列。 |
+| 4 | **Next.js 雙模透明分流網關** | `frontend/app/api/poi/[...path]/route.ts` | 依路徑白名單安全分流：`resolve-link` 轉發至 FastAPI 後端，`batch-save` / `pool` 轉發至 Cloudflare Edge Shield。 |
+| 5 | **Cloudflare Edge 批次存儲與覆寫加固** | `cloudflare/edge-shield/worker.js`、`cloudflare/poi-service/worker.js` | `edge-shield` 納入 `/api/poi/batch-save` 白名單；`poi-service` 新增批次端點並修復 `ON CONFLICT` 時門牌 `address` 覆寫遺失缺陷，淘汰歷史未解碼的髒字串。線上已部署完成。 |
+| 6 | **前端雙階匯入管線** | `frontend/lib/api.ts`、`frontend/lib/hooks/usePoiPool.ts` | `importLink` 重構為「後端洗滌 ➔ 邊緣持久化」兩階段，SWR mutate 支援依 ID 覆寫舊快取，即時刷新髒標題。 |
+| 7 | **全棧 Quality Gate 100% 綠燈發布** | 全專案 | Root Hygiene、Neural Seam Invariants、tsc (0 err)、ESLint (0 err/0 warn)、Vitest (521/521)、Pytest (175/175) 全數通過並推播至 `main`。 |
+
+---
+
+## 🏛️ Architecture Decisions
+
+- **AD-129：單一解析之源（SSOT）與兩階段管線（Two-Stage Pipeline）架構**
+  - *Context*：前端瀏覽器直接解析 Google 地圖連結會遭遇 CORS、反爬蟲與多層重定向阻擋；若各自實作解析邏輯會造成門牌格式與地名清洗不一致。
+  - *Decision*：確立法規級單一真實之源（SSOT）——所有外部旅遊連結的解析權威 100% 歸於後端 `backend/services/link_resolver.py`。前端管線嚴格走「Stage 1: 後端解析洗滌 ➔ Stage 2: 邊緣 D1 批次持久化」，杜絕各端各行其是。
+- **AD-130：門牌提煉 Description 優先與反向地理編碼兜底律**
+  - *Context*：Google 地圖短網址重定向後的網址常僅有座標而無門牌；而 Photon 反向地理編碼在不同行政區的顆粒度不一。
+  - *Decision*：雙軌互補：第一優先從 Google 地圖頁面 `<meta property="og:description">` 正則提取高準度繁體中文門牌；若無法提取則啟動 Photon 經緯度反查兜底，確保地點門牌字段絕不為空。
+- **AD-131：D1 覆寫更新冪等防線（On Conflict Overwrite Invariance）**
+  - *Context*：使用者重新匯入既有景點時，若 D1 SQLite 的 UPSERT 僅更新時間戳，歷史未解碼的 `%E8%80%...` 髒標題與空門牌將永久殘留。
+  - *Decision*：在 `batchInsertPois` SQL 中配置 `ON CONFLICT(user_id, place_id) DO UPDATE SET name = excluded.name, address = COALESCE(excluded.address, user_poi_pool.address), ...`，確保每次匯入都是一次自癒修復。
+
+---
+
+## 🛡️ Failed Paths
+
+- **FP-051：Uvicorn 靜態進程重載陷阱（Uvicorn Hot-Reload Hygiene）**
+  - *Symptom*：後端新增 `POST /api/poi/resolve-link` 後，前端代理與 curl 持續回報 `404 Not Found`。
+  - *Lesson*：`backend/main.py:1814` 為了防止 Windows `CLOSE_WAIT` 幽靈 Socket 永久關閉了 `reload=True`。在開發環境新增或修改 FastAPI Router 端點後，**必須手動重啟 Python 進程**，否則進程仍處於啟動時的靜態路由快照。
+- **FP-052：Edge Shield 代理白名單遺漏陷阱**
+  - *Symptom*：前端發送 `POST /api/poi/batch-save` 時被 Edge Shield 當作未登錄路由，轉向 Cloud Run 後端報 `404 Not Found`。
+  - *Lesson*：Edge Shield 作為邊緣反向代理網關，任何由前端直通 `poi-service` 的新端點，**必須同步在 `POI_POOL_ENDPOINTS` 白名單中登記**，並執行 `wrangler deploy`。
+- **FP-053：D1 SQLite UPSERT 遺漏門牌欄位陷阱**
+  - *Symptom*：解析出的門牌地址正確，但重新寫入 D1 後依然為空。
+  - *Lesson*：`batchInsertPois` 的 `ON CONFLICT DO UPDATE SET` 漏掉了 `address` 欄位更新，導致衝撞時只更新了部分欄位。所有資料持久化層在新增欄位時必須同步檢查 UPSERT 覆寫子句。
+
+---
+
+## 🔴 Technical Debt
+
+1. **Google Maps RPC 分頁迭代支援（Pagination Tokens）**：
+   - 當前 `resolve_google_maps_placelist` 僅抓取 RPC 第一批次結果（約前 50 筆景點）。對於超長清單（如 100+ 景點），後續可擴充 token 迭代機制以完整萃取。
+2. **`poi_items` Supabase 持久化方案拍板**（延續自 Session 2）：
+   - 需於後續架構會商決定是走 Migration 建立資料表，還是全面收斂至 Cloudflare D1。
+
+---
+
+## 🎯 Next Steps
+
+1. 針對超長清單進行壓力測試與 RPC 分頁迭代評估。
+2. 進行前端使用者體驗巡檢，確認口袋庫沉浸式地圖、門牌顯示與抽屜拖曳手感。
+3. 推進既有技術債項（Supabase `poi_items` 與資安帳本狀態更新）。
