@@ -11,7 +11,8 @@ import {
     Download, 
     LogOut, 
     Loader2, 
-    Hash
+    Hash,
+    Bookmark
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -21,7 +22,6 @@ import { generateTripPDF, downloadPDF, TripPDFData } from "@/lib/pdf-generator"
 import { tripsApi } from "@/lib/api"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
-import { ZenRenew } from "@/components/ui/zen-renew"
 import { getTripCoverUrl } from "@/lib/destination-covers"
 
 interface TabijiHomeDashboardProps {
@@ -32,7 +32,8 @@ interface TabijiHomeDashboardProps {
     onDeleteTrip: (id: string) => void
     onLeaveTrip: (id: string) => void
     leavingTripId: string | null
-    onRefresh: () => Promise<void>
+    onRefresh?: () => Promise<void>
+    onOpenPoiDrawer?: () => void
     onOpenCreateModal: () => void
     onOpenJoinDialog: () => void
 }
@@ -45,7 +46,7 @@ export function TabijiHomeDashboard({
     onDeleteTrip,
     onLeaveTrip,
     leavingTripId,
-    onRefresh,
+    onOpenPoiDrawer,
     onOpenCreateModal,
     onOpenJoinDialog,
 }: TabijiHomeDashboardProps) {
@@ -119,12 +120,21 @@ export function TabijiHomeDashboard({
                     </p>
                 </div>
 
-                <div className="flex items-center gap-2.5">
-                    <ZenRenew 
-                        onRefresh={onRefresh} 
-                        successMessage={t('update_success')} 
-                        errorMessage={t('update_failed')} 
-                    />
+                <div className="flex items-center gap-2">
+                    {onOpenPoiDrawer && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                haptic.selection()
+                                onOpenPoiDrawer()
+                            }}
+                            className="w-10 h-10 rounded-full flex items-center justify-center bg-white dark:bg-[#182320] hover:bg-amber-50/80 dark:hover:bg-amber-950/40 text-slate-700 dark:text-slate-200 hover:text-amber-600 dark:hover:text-amber-400 active:scale-90 transition-all cursor-pointer shadow-2xs select-none border border-black/5 dark:border-white/5"
+                            aria-label={t('poi_saved_places') || '景點口袋清單'}
+                            title={t('poi_saved_places') || '景點口袋清單'}
+                        >
+                            <Bookmark className="w-4 h-4 fill-amber-500/20 text-amber-600 dark:text-amber-400" />
+                        </button>
+                    )}
                 </div>
             </header>
 

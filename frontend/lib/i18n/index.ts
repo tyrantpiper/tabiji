@@ -16,6 +16,7 @@ import { weatherTranslations } from './weather'
 import { timelineTranslations } from './timeline'
 import { remainingTranslations } from './remaining'
 import { onboardingTranslations } from './onboarding'
+import { poiTranslations } from './poi'
 
 export const translations = {
     en: {
@@ -26,6 +27,7 @@ export const translations = {
         ...weatherTranslations.en,
         ...timelineTranslations.en,
         ...onboardingTranslations.en,
+        ...poiTranslations.en,
     },
     zh: {
         ...remainingTranslations.zh,
@@ -35,6 +37,7 @@ export const translations = {
         ...weatherTranslations.zh,
         ...timelineTranslations.zh,
         ...onboardingTranslations.zh,
+        ...poiTranslations.zh,
     },
 } as const
 

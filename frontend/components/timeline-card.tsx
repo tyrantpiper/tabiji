@@ -205,8 +205,15 @@ export const TimelineCard = memo(function TimelineCard({
                                     {index}
                                 </span>
                                 {/* 時間 */}
-                                <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-200 tracking-tight">
-                                    {activity.time || activity.time_slot || "00:00"}
+                                <span className={cn(
+                                    "text-xs tracking-tight",
+                                    (!activity.time || activity.time === "未定" || activity.time_slot === "未定" || activity.time === "Unscheduled")
+                                        ? "text-amber-600 dark:text-amber-400 font-semibold text-[11px]"
+                                        : "font-mono font-bold text-slate-700 dark:text-slate-200"
+                                )}>
+                                    {(!activity.time || activity.time === "未定" || activity.time_slot === "未定" || activity.time === "Unscheduled")
+                                        ? (t('poi_time_unset') || "未定")
+                                        : (activity.time || activity.time_slot)}
                                 </span>
                             </div>
                         )}

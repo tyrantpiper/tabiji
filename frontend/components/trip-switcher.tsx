@@ -20,10 +20,12 @@ import { fetcherWithUserId } from "@/lib/hooks"
 
 export function TripSwitcher({
     className,
-    pencilPosition = "right"
+    pencilPosition = "right",
+    showPencil = true
 }: {
     className?: string,
-    pencilPosition?: "left" | "right"
+    pencilPosition?: "left" | "right" | "none",
+    showPencil?: boolean
 }) {
     const { t } = useLanguage()
     const { trips, activeTripId, setActiveTripId, mutate, userId, isTransitioning } = useTripContext()
@@ -92,7 +94,7 @@ export function TripSwitcher({
         }
     }
 
-    const pencilButton = activeTrip && !isEditing && (
+    const pencilButton = showPencil && pencilPosition !== "none" && activeTrip && !isEditing && (
         <motion.button
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -128,7 +130,7 @@ export function TripSwitcher({
                             onBlur={() => {
                                 setTimeout(() => { if (!isSaving) handleCancel() }, 150)
                             }}
-                            className="h-7 text-inherit font-inherit border-none focus:ring-0 bg-transparent p-0 selection:bg-amber-100 min-w-[120px]"
+                            className="h-7 text-inherit font-inherit border-none focus:ring-0 bg-transparent p-0 selection:bg-amber-100 min-w-30"
                             placeholder={t('ts_title_placeholder')}
                             disabled={isSaving}
                         />
@@ -193,14 +195,14 @@ export function TripSwitcher({
                                                 initial={{ width: 0, opacity: 0 }}
                                                 animate={{ width: "100%", opacity: 1 }}
                                                 exit={{ opacity: 0, transition: { duration: 0.5 } }}
-                                                className="absolute bottom-0 left-0 h-[1.5px] bg-gradient-to-r from-transparent via-slate-900/50 to-transparent dark:via-white/50"
+                                                className="absolute bottom-0 left-0 h-[1.5px] bg-linear-to-r from-transparent via-slate-900/50 to-transparent dark:via-white/50"
                                                 transition={{ duration: 1.2, ease: "easeInOut" }}
                                             />
                                         )}
                                     </AnimatePresence>
                                 </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent className="w-[240px] p-1 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-white/20 dark:border-slate-800/20 shadow-2xl rounded-2xl overflow-hidden">
+                            <DropdownMenuContent className="w-60 p-1 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-white/20 dark:border-slate-800/20 shadow-2xl rounded-2xl overflow-hidden">
                                 <DropdownMenuLabel className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] px-3 py-2 opacity-50">
                                     {t('my_trips') || "My Journeys"}
                                 </DropdownMenuLabel>

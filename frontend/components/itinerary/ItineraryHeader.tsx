@@ -1,13 +1,12 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { ChevronLeft, Calendar, ChevronDown, Settings } from "lucide-react"
+import { ChevronLeft, Calendar, ChevronDown, Settings, Bookmark } from "lucide-react"
 import { motion } from "framer-motion"
 import { cn } from "@/lib/utils"
 import { TripSwitcher } from "@/components/trip-switcher"
 import { ShareButton } from "@/components/itinerary/ShareButton"
 import { TripMembersSheet } from "@/components/itinerary/TripMembersSheet"
-import { ZenRenew } from "@/components/ui/zen-renew"
 import { Trip } from "@/lib/itinerary-types"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
@@ -25,6 +24,7 @@ interface ItineraryHeaderProps {
     getDateInfo: (dayNum: number) => { date: string; week: string }
     userId: string | null
     onRefresh: () => Promise<void>
+    onOpenPoiDrawer?: () => void
     shouldShowDateSkeleton: boolean
     scrollerEl?: HTMLElement | null
 }
@@ -40,6 +40,7 @@ export function ItineraryHeader({
     getDateInfo,
     userId,
     onRefresh,
+    onOpenPoiDrawer,
     shouldShowDateSkeleton,
     scrollerEl = null
 }: ItineraryHeaderProps) {
@@ -121,7 +122,7 @@ export function ItineraryHeader({
 
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-1 gap-4 sm:gap-2">
                     <div className="w-full sm:w-auto min-w-0">
-                        <TripSwitcher className="w-full sm:w-60 justify-start px-0 font-bold text-2xl tracking-tight border-none shadow-none bg-transparent text-[#1E2927] dark:text-[#E5EBEA] hover:bg-black/5 dark:hover:bg-white/5 h-auto py-1" />
+                        <TripSwitcher showPencil={false} className="w-full sm:w-60 justify-start px-0 font-bold text-2xl tracking-tight border-none shadow-none bg-transparent text-[#1E2927] dark:text-[#E5EBEA] hover:bg-black/5 dark:hover:bg-white/5 h-auto py-1" />
                         
                         {/* 📅 iOS Date Range Capsule Button */}
                         {onOpenDatePicker && (
@@ -157,7 +158,22 @@ export function ItineraryHeader({
                                 />
                             )}
                         </div>
-                        <ZenRenew onRefresh={onRefresh} successMessage={t('update_success')} errorMessage={t('update_failed')} />
+
+                        {/* 🔖 全局景點口袋清單 (Bookmark Ribbon) */}
+                        {onOpenPoiDrawer && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    haptic.selection()
+                                    onOpenPoiDrawer()
+                                }}
+                                className="w-10 h-10 rounded-full flex items-center justify-center bg-stone-100/80 dark:bg-slate-700/80 hover:bg-amber-50/80 dark:hover:bg-amber-950/40 text-slate-700 dark:text-slate-200 hover:text-amber-600 dark:hover:text-amber-400 active:scale-90 transition-all cursor-pointer shadow-2xs select-none border border-black/5 dark:border-white/5"
+                                aria-label={t('poi_saved_places') || '景點口袋清單'}
+                                title={t('poi_saved_places') || '景點口袋清單'}
+                            >
+                                <Bookmark className="w-4 h-4 fill-amber-500/20 text-amber-600 dark:text-amber-400" />
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react"
 import Map, { MapRef, Marker, Source, Layer, NavigationControl, AttributionControl } from "react-map-gl/maplibre"
 import type { MapLayerMouseEvent } from "react-map-gl/maplibre"
-import { Satellite, Map as MapIcon, Route, ArrowRight, Plane, Footprints, Car, Bus, Eye, Calendar } from "lucide-react"
+import { Satellite, Map as MapIcon, Route, ArrowRight, Plane, Footprints, Car, Bus, Eye, Calendar, Bookmark } from "lucide-react"
 import "maplibre-gl/dist/maplibre-gl.css"
 import { setWorkerUrl } from "maplibre-gl"
 
@@ -29,17 +29,32 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button"
 import { MapControlCapsule } from "@/components/MapControlCapsule"
 import { API } from "@/lib/api"
+import { usePoiPool } from "@/lib/hooks/usePoiPool"
+import { POIItem } from "@/lib/poi-types"
 
 interface MultiDayMasterMapProps {
     trip?: Trip
     onSelectDay?: (day: number) => void
     onScrollToDay?: (day: number) => void
     onAddPOI?: (poi: POIBasicData, time: string, notes?: string, targetDay?: number) => void
+    pinnedPois?: POIItem[]
 }
 
-function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI }: MultiDayMasterMapProps) {
+function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI, pinnedPois }: MultiDayMasterMapProps) {
     const { lang } = useLanguage()
     const zh = lang === 'zh'
+
+    const [localUserId, setLocalUserId] = useState<string | null>(null)
+    useEffect(() => {
+        if (typeof window !== "undefined") {
+            setLocalUserId(localStorage.getItem("user_uuid"))
+        }
+    }, [])
+    const { poiList } = usePoiPool(localUserId)
+    const activePinnedPois = useMemo(() => {
+        const list = pinnedPois || poiList || []
+        return list.filter(p => Boolean(p.is_pinned) && typeof p.lat === 'number' && typeof p.lng === 'number' && !isNaN(p.lat) && !isNaN(p.lng))
+    }, [pinnedPois, poiList])
 
     const [activeDay, setActiveDay] = useState<number>(0) // 0 = ALL (全天高亮)
     const [mapMode, setMapMode] = useState<'standard' | 'satellite'>('standard')
@@ -972,6 +987,36 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
                                 </Marker>
                             )
                         })}
+
+                        {/* 🔖 全局景點口袋庫釘選標記 (Pinned POI Markers) */}
+                        {activePinnedPois.map((poi: POIItem) => (
+                            <Marker
+                                key={`master-pinned-poi-${poi.id}`}
+                                longitude={poi.lng}
+                                latitude={poi.lat}
+                                anchor="bottom"
+                                onClick={(e) => {
+                                    e.originalEvent.stopPropagation()
+                                    setSelectedPOI({
+                                        name: poi.title,
+                                        type: poi.category || "attraction",
+                                        address: poi.address || poi.title,
+                                        lat: poi.lat,
+                                        lng: poi.lng
+                                    })
+                                    setPoiDrawerOpen(true)
+                                }}
+                            >
+                                <div className="flex flex-col items-center group cursor-pointer relative transition-transform hover:scale-115 active:scale-95 z-20">
+                                    <div className="mb-1 px-2 py-0.5 rounded-full bg-amber-500/90 text-white text-[10px] font-bold shadow-md border border-white/80 truncate max-w-30 pointer-events-none">
+                                        {poi.title}
+                                    </div>
+                                    <div className="w-7 h-7 rounded-full bg-[#E56E25] text-white flex items-center justify-center shadow-lg border-2 border-white">
+                                        <Bookmark className="w-3.5 h-3.5 fill-white" />
+                                    </div>
+                                </div>
+                            </Marker>
+                        ))}
 
                         {/* 📍 使用者位置藍點脈衝標記 */}
                         {userLocation && (

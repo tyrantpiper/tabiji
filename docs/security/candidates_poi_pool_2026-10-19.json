@@ -1,0 +1,36 @@
+[
+  {
+    "id": "cloudflare/edge-shield/worker.js:service_binding_and_route_forwarding",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "attack_vector": "ssrf_and_unauthorized_bypass",
+    "hypothesis": "Forwarding /api/poi/* to internal Service Binding must prevent request spoofing, path traversal, or header injection that could bypass user authentication."
+  },
+  {
+    "id": "backend/routers/poi.py:import_link_safety",
+    "file_path": "backend/routers/poi.py",
+    "attack_vector": "ssrf_and_dos_in_poi_import",
+    "hypothesis": "Import link follows redirects and parses HTML. It must reject non-HTTP schemes (e.g. file://, gopher://), block private/internal IP access, and gracefully handle recursive redirect loops without unbounded resource consumption or ReDoS."
+  },
+  {
+    "id": "backend/routers/geocode.py:resolve_link_ssrf",
+    "file_path": "backend/routers/geocode.py",
+    "start_line": 133,
+    "end_line": 176,
+    "attack_vector": "ssrf_in_link_unshortening",
+    "hypothesis": "Google Maps unshortening in resolve-link must validate target domain and reject internal metadata/loopback addresses."
+  },
+  {
+    "id": "backend/utils/url_safety.py:dns_rebinding",
+    "file_path": "backend/utils/url_safety.py",
+    "start_line": 1,
+    "end_line": 56,
+    "attack_vector": "dns_rebinding_bypass",
+    "hypothesis": "Hostname validation in url_safety properly checks loopback, link-local and private IP spaces against SSRF."
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx:poi_pool_scheduling",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "idor_and_trip_injection",
+    "hypothesis": "Adding POI to a trip must validate targetTripId and userId to prevent unauthorized activity injection."
+  }
+]

@@ -9,6 +9,7 @@ import { useTheme } from "@/lib/ThemeContext"
 import { motion, AnimatePresence } from "framer-motion"
 import { useRouter } from "next/navigation"
 import { dispatchDeepLink } from "@/lib/hooks/useDeepLinkRouter"
+import { useHaptic } from "@/lib/hooks"
 
 interface Notification {
     id: string
@@ -47,14 +48,45 @@ function timeAgo(dateStr: string, zh: boolean): string {
     return zh ? `${days} 天前` : `${days}d ago`
 }
 
+// 🛡️ 模組層級全域單例戳記：跨組件卸載與路由跳轉依然保持 2000ms 物理節流
+let globalLastRefreshTimestamp = 0
+
+function dispatchGlobalRefreshThrottled() {
+    const now = Date.now()
+    if (now - globalLastRefreshTimestamp >= 2000) {
+        globalLastRefreshTimestamp = now
+        if (typeof window !== "undefined") {
+            window.dispatchEvent(
+                new CustomEvent("tabidachi-trigger-refresh", {
+                    detail: { timestamp: now, source: "notification-bell" }
+                })
+            )
+        }
+    }
+}
+
 export function NotificationBell() {
     const { lang } = useLanguage()
     const zh = lang === "zh"
     const { currentTheme, accentColor } = useTheme()
     const router = useRouter()
+    const haptic = useHaptic()
     const [isOpen, setIsOpen] = useState(false)
+    const [ringCount, setRingCount] = useState(0)
     const [notifications, setNotifications] = useState<Notification[]>([])
     const [unreadCount, setUnreadCount] = useState(0)
+
+    const handleBellClick = () => {
+        const nextOpen = !isOpen
+        setIsOpen(nextOpen)
+        // 🛡️ 僅在「展開」時觸發微動與重新整理，收合時靜默
+        if (nextOpen) {
+            setRingCount((c) => c + 1)
+            haptic.selection()
+            fetchNotifications()
+            dispatchGlobalRefreshThrottled()
+        }
+    }
 
     const fetchNotifications = useCallback(async () => {
         const userId = localStorage.getItem("user_uuid")
@@ -205,11 +237,17 @@ export function NotificationBell() {
         <div className="relative">
             {/* Bell Button */}
             <button
-                onClick={() => { setIsOpen(!isOpen); if (!isOpen) fetchNotifications(); }}
+                onClick={handleBellClick}
                 className="relative p-2 rounded-full hover:bg-stone-100 dark:hover:bg-slate-800 transition-colors active:scale-95"
                 aria-label={zh ? "通知" : "Notifications"}
             >
-                <Bell className="w-5 h-5 text-slate-600 dark:text-slate-300" />
+                <motion.div
+                    key={ringCount}
+                    animate={{ rotate: ringCount > 0 ? [0, -14, 14, -10, 10, -5, 5, 0] : 0 }}
+                    transition={{ duration: 0.55, ease: "easeInOut" }}
+                >
+                    <Bell className="w-5 h-5 text-slate-600 dark:text-slate-300" />
+                </motion.div>
                 {unreadCount > 0 && (
                     <motion.span
                         initial={{ scale: 0 }}

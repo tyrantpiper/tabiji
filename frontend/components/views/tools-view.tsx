@@ -27,7 +27,6 @@ import { ExpenseChart, CATEGORY_COLORS } from "@/components/expense-chart"
 import { useTripContext } from "@/lib/trip-context"
 import { encryptData, decryptData } from "@/lib/security"
 import { TripSwitcher } from "@/components/trip-switcher"
-import { ZenRenew } from "@/components/ui/zen-renew"
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso"
 import { useExpenses, useHaptic, useTripDetail } from "@/lib/hooks"
 import { useTargetExpenseId, useTripStore } from "@/lib/stores/tripStore"
@@ -157,17 +156,6 @@ export function ToolsView() {
         }
     }, [swrExpenses, activeTripId])
 
-    // 🆕 2026: Integrated global refresh event listener
-    useEffect(() => {
-        const handleRefresh = () => {
-            console.log("🔄 ToolsView: Global refresh triggered via Tab Hub")
-            reloadExpenses()
-            tripMutate()
-        }
-        window.addEventListener('refresh-active-view', handleRefresh)
-        return () => window.removeEventListener('refresh-active-view', handleRefresh)
-    }, [reloadExpenses, tripMutate])
-
     const [rate, setRate] = useState(0.22)
 
 
@@ -179,6 +167,25 @@ export function ToolsView() {
         const saved = localStorage.getItem("preferred_currency")
         if (saved) setSelectedCurrency(saved)
     }, [])
+
+    // 🔔 全域重新整理事件監聽 (通知鈴鐺連動)
+    useEffect(() => {
+        const handleRefresh = async () => {
+            try {
+                const r = await getExchangeRate(selectedCurrency || 'JPY')
+                setRate(r)
+                await Promise.allSettled([reloadExpenses(), tripMutate()])
+            } catch (err) {
+                console.warn("[GlobalRefresh] Handled gracefully in ToolsView:", err)
+            }
+        }
+        window.addEventListener('tabidachi-trigger-refresh', handleRefresh)
+        window.addEventListener('refresh-active-view', handleRefresh)
+        return () => {
+            window.removeEventListener('tabidachi-trigger-refresh', handleRefresh)
+            window.removeEventListener('refresh-active-view', handleRefresh)
+        }
+    }, [selectedCurrency, reloadExpenses, tripMutate])
 
     // Initial Rate Fetch (View)
     useEffect(() => {
@@ -713,18 +720,8 @@ export function ToolsView() {
                                     <h1 className="text-2xl font-bold tracking-tight text-[#1E2927] dark:text-[#E5EBEA]">{t('tools')}</h1>
                                     <p className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mt-0.5">{t('expense_ai')}</p>
                                 </div>
-                                <ZenRenew
-                                    onRefresh={async () => {
-                                        const r = await getExchangeRate(selectedCurrency || 'JPY')
-                                        setRate(r)
-                                        await Promise.all([reloadExpenses(), tripMutate()])
-                                    }}
-                                    successMessage={t('tv_receipt_synced')}
-                                    errorMessage={t('update_failed')}
-                                    className="text-[#1E2927]/70 dark:text-[#E5EBEA]/70 hover:text-[#0B3026] dark:hover:text-[#E5EBEA]"
-                                />
                             </div>
-                            <TripSwitcher className="bg-white/80 dark:bg-[#1E2927]/80 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/10 dark:border-white/10 hover:bg-white dark:hover:bg-[#1E2927] w-full" />
+                            <TripSwitcher showPencil={false} className="bg-white/80 dark:bg-[#1E2927]/80 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/10 dark:border-white/10 hover:bg-white dark:hover:bg-[#1E2927] w-full" />
                         </div>
                     </div>
 

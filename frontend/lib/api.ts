@@ -33,6 +33,7 @@ import {
     ReceiptDiagnostics // Added
 } from './schemas';
 import { SubItem, PreviewMetadata, TripCapsuleEntry, CapsuleProgressSummary } from './itinerary-types';
+import { POIItem, CreatePOIDTO, ImportLinkResponse } from './poi-types';
 import { z } from "zod";
 import { getSecureApiKey } from "@/lib/security";
 
@@ -1467,4 +1468,99 @@ export const capsulesApi = {
         return res.json()
     }
 }
+
+/** 📍 POI 景點口袋清單 API (Cloudflare D1 邊緣直通) */
+export const poiPoolApi = {
+    getAll: async (userId: string): Promise<POIItem[]> => {
+        const headers: Record<string, string> = { "X-User-ID": userId }
+        const res = await fetch(`${API.POI}/all`, { headers })
+        if (!res.ok) throw new Error(`Failed to fetch POIs: ${res.status}`)
+        const data = await res.json()
+        return Array.isArray(data) ? data : (data.items || [])
+    },
+
+    importLink: async (url: string, userId: string): Promise<ImportLinkResponse> => {
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "X-User-ID": userId
+        }
+        const res = await fetch(`${API.POI}/import-link`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ url })
+        })
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            throw new Error(err.detail || err.error || `Import failed: ${res.status}`)
+        }
+        return res.json()
+    },
+
+    create: async (dto: CreatePOIDTO, userId: string): Promise<POIItem> => {
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "X-User-ID": userId
+        }
+        const res = await offlineFetch(`${API.POI}/add`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(dto)
+        })
+        if (!res.ok) throw new Error(`Failed to create POI: ${res.status}`)
+        return res.json()
+    },
+
+    updateNote: async (id: string, note: string, userId: string): Promise<POIItem> => {
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "X-User-ID": userId
+        }
+        const res = await offlineFetch(`${API.POI}/${id}/note`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ note })
+        })
+        if (!res.ok) throw new Error(`Failed to update note: ${res.status}`)
+        return res.json()
+    },
+
+    togglePin: async (id: string, isPinned: boolean, userId: string): Promise<POIItem> => {
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "X-User-ID": userId
+        }
+        const res = await offlineFetch(`${API.POI}/${id}/pin`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ is_pinned: isPinned })
+        })
+        if (!res.ok) throw new Error(`Failed to toggle pin: ${res.status}`)
+        return res.json()
+    },
+
+    updateCategory: async (id: string, category: string, userId: string): Promise<POIItem> => {
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "X-User-ID": userId
+        }
+        const res = await offlineFetch(`${API.POI}/${id}/category`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ category })
+        })
+        if (!res.ok) throw new Error(`Failed to update category: ${res.status}`)
+        return res.json()
+    },
+
+    delete: async (id: string, userId: string): Promise<{ success: boolean }> => {
+        const headers: Record<string, string> = { "X-User-ID": userId }
+        const res = await offlineFetch(`${API.POI}/${id}`, {
+            method: "DELETE",
+            headers
+        })
+        if (!res.ok) throw new Error(`Failed to delete POI: ${res.status}`)
+        return res.json()
+    }
+}
+
 

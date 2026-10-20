@@ -1,0 +1,34 @@
+[
+  {
+    "id": "frontend/components/views/itinerary-view.tsx:immersive_overlay_cleanup",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "ui_lifecycle_state_leak",
+    "hypothesis": "If POI Pocket overlay unmounts without dispatching isOpen: false in useEffect cleanup, AppShell isFullOverlayOpen remains true permanently, resulting in catastrophic UI freeze where BottomNav and top status buttons never recover.",
+    "start_line": 2030,
+    "end_line": 2056
+  },
+  {
+    "id": "frontend/components/poi/PoiPoolView.tsx:map_container_inline_height_trap",
+    "file_path": "frontend/components/poi/PoiPoolView.tsx",
+    "attack_vector": "inline_style_override_defect",
+    "hypothesis": "In PoiPoolView.tsx, motion.div specifies hardcoded animate={{ height: 230 }}. Modifying Tailwind class h-80 sm:h-96 is ineffective because motion inline style height: 230px overrides CSS classes, preventing map enlargement.",
+    "start_line": 420,
+    "end_line": 442
+  },
+  {
+    "id": "frontend/components/views/app-shell.tsx:overlay_pointer_events_and_a11y",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "attack_vector": "pointer_events_and_a11y_leak",
+    "hypothesis": "When hiding top AIStatusButton and NotificationBell with opacity: 0, failing to set pointer-events: none and aria-hidden allows ghost clicks and keyboard navigation to trigger invisible buttons while interacting with the POI map.",
+    "start_line": 210,
+    "end_line": 225
+  },
+  {
+    "id": "frontend/components/views/app-shell.tsx:custom_event_type_guard",
+    "file_path": "frontend/components/views/app-shell.tsx",
+    "attack_vector": "event_payload_injection_and_race",
+    "hypothesis": "Listening to tabidachi-full-overlay-change without strict type validation of event.detail.isOpen could cause state corruption if malformed CustomEvents are dispatched by other modules or browser extensions.",
+    "start_line": 185,
+    "end_line": 200
+  }
+]

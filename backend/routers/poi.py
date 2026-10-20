@@ -12,15 +12,21 @@ import json
 import re
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from fastapi.responses import StreamingResponse
 import httpx
+import uuid
+import time
 from typing import List, Optional, Any, Dict
+from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
 from models.base import POIAIEnrichRequest, POIEnrichRequest, POIRecommendRequest, SmartSearchRequest
-from utils.deps import get_gemini_key
+from utils.deps import get_gemini_key, get_supabase
+from utils.url_safety import is_safe_url
+from services.link_resolver import resolve_google_maps_link
+from services.geocode_service import smart_geocode_logic, reverse_geocode_with_photon
 from utils.ai_config import LITE_MODEL, DAILY_ROUTING
 from services.poi_service import (
     enrich_poi_complete,
@@ -448,3 +454,391 @@ async def media_proxy(url: str):
     elif url.lower().endswith(".gif"): content_type = "image/gif"
 
     return StreamingResponse(stream_image(), media_type=content_type)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POI Pool & Shared List Ingestion (Link-to-Places)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class POIImportLinkRequest(BaseModel):
+    url: str
+
+class POICreateRequest(BaseModel):
+    title: str
+    address: Optional[str] = None
+    lat: float
+    lng: float
+    google_place_id: Optional[str] = None
+    category: Optional[str] = "attraction"
+    rating: Optional[float] = None
+    user_notes: Optional[str] = None
+    source_url: Optional[str] = None
+    is_pinned: Optional[bool] = False
+    pin_color: Optional[str] = "#E56E25"
+
+class POIUpdateNoteRequest(BaseModel):
+    note: str
+
+class POITogglePinRequest(BaseModel):
+    is_pinned: bool
+
+class POIUpdateCategoryRequest(BaseModel):
+    category: str
+
+
+POI_POOL_STORE: Dict[str, List[Dict[str, Any]]] = {}
+
+async def get_user_pois(user_id: str, supabase=None) -> List[Dict[str, Any]]:
+    if supabase:
+        try:
+            res = supabase.table("poi_items").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+            if res.data:
+                return res.data
+        except Exception:
+            pass
+    return POI_POOL_STORE.get(user_id, [])
+
+async def save_user_poi(user_id: str, item: Dict[str, Any], supabase=None):
+    if supabase:
+        try:
+            supabase.table("poi_items").upsert(item).execute()
+        except Exception:
+            pass
+    
+    current = POI_POOL_STORE.setdefault(user_id, [])
+    idx = next((i for i, x in enumerate(current) if x.get("id") == item.get("id")), None)
+    if idx is not None:
+        current[idx] = item
+    else:
+        current.insert(0, item)
+
+async def delete_user_poi(user_id: str, poi_id: str, supabase=None):
+    if supabase:
+        try:
+            supabase.table("poi_items").delete().eq("id", poi_id).eq("user_id", user_id).execute()
+        except Exception:
+            pass
+    current = POI_POOL_STORE.get(user_id, [])
+    POI_POOL_STORE[user_id] = [x for x in current if x.get("id") != poi_id]
+
+@router.get("/poi/all")
+async def get_all_pois(
+    fastapi_req: Request,
+    user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    supabase=Depends(get_supabase)
+):
+    uid = user_id or "guest-session"
+    items = await get_user_pois(uid, supabase)
+    return items
+
+@router.post("/poi/import-link")
+async def import_poi_link(
+    fastapi_req: Request,
+    req: POIImportLinkRequest,
+    user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    supabase=Depends(get_supabase)
+):
+    uid = user_id or "guest-session"
+    raw_url = req.url.strip()
+    if not raw_url:
+        raise HTTPException(status_code=400, detail="請提供有效的 Google 地圖連結")
+    
+    clean_match = re.search(r'(https?://[^\s]+)', raw_url)
+    clean_url = clean_match.group(1).rstrip('.,!?:;"\'。，！？') if clean_match else raw_url
+
+    # 🛡️ Security Sentinel: SSRF 防護與合法位址驗證
+    if not is_safe_url(clean_url):
+        raise HTTPException(status_code=400, detail="不允許存取私有網路、回環位址或不安全的網址 (SSRF 防護)")
+
+    places = []
+    final_url = clean_url
+    html_content = ""
+    is_placelist = "/placelists/list" in clean_url or "/placelists/" in clean_url
+
+    try:
+        # 手動安全追蹤轉址，防禦開放轉址至私有 IP
+        async with httpx.AsyncClient(follow_redirects=False, timeout=12.0) as client:
+            curr_url = clean_url
+            for _ in range(6):
+                resp = await client.get(curr_url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                })
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("Location")
+                    if not loc:
+                        break
+                    next_url = str(httpx.URL(curr_url).join(loc))
+                    if not is_safe_url(next_url):
+                        raise HTTPException(status_code=400, detail="轉址目標包含不安全或私有網路位址 (SSRF 防護)")
+                    curr_url = next_url
+                    continue
+                final_url = curr_url
+                html_content = resp.text
+                if "/placelists/list" in final_url or "/placelists/" in final_url:
+                    is_placelist = True
+                break
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[POI Import] Fetch/Redirect failed: {e}")
+
+    now_ms = int(time.time() * 1000)
+
+    # A. 共享清單 (Placelist / Collection) 提取
+    # 🕵️ 優先偵測 Google Maps 集合/清單 Token (!11m2!2s... 或 /placelists/list/...)
+    list_token_match = (
+        re.search(r'(?:!11m2!2s|/placelists/list/|/maps/placelists/list/)([A-Za-z0-9_-]{16,})', final_url)
+        or re.search(r'(?:!11m2!2s|/placelists/list/|/maps/placelists/list/)([A-Za-z0-9_-]{16,})', clean_url)
+    )
+
+    if list_token_match:
+        list_id = list_token_match.group(1)
+        api_url = f"https://www.google.com/maps/preview/entitylist/getlist?authuser=0&hl=zh-TW&gl=tw&pb=!1m4!1s{list_id}!2e1!3m1!1e1!2e2!3e2!4i2000"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(api_url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                })
+                if resp.status_code == 200:
+                    raw_text = resp.text
+                    if raw_text.startswith(")]}'"):
+                        raw_text = raw_text[4:].strip()
+                    list_data = json.loads(raw_text)
+                    raw_places = list_data[0][8] if list_data and len(list_data[0]) > 8 and list_data[0][8] else []
+                    for p in raw_places:
+                        try:
+                            title = p[2] if len(p) > 2 and p[2] else ""
+                            meta = p[1] if len(p) > 1 and p[1] else []
+                            addr = meta[4] if len(meta) > 4 and meta[4] and not str(meta[4]).startswith("http") else None
+                            coords = meta[5] if len(meta) > 5 and meta[5] else []
+                            lat = float(coords[2]) if len(coords) > 2 and coords[2] is not None else None
+                            lng = float(coords[3]) if len(coords) > 3 and coords[3] is not None else None
+                            notes = p[3] if len(p) > 3 and p[3] else ""
+                            if title and lat is not None and lng is not None:
+                                places.append({
+                                    "title": title,
+                                    "lat": lat,
+                                    "lng": lng,
+                                    "address": addr,
+                                    "user_notes": notes,
+                                })
+                        except Exception as parse_e:
+                            print(f"[POI List Item Parse Error] {parse_e}")
+                            continue
+        except Exception as e:
+            print(f"[POI EntityList Error] {e}")
+
+    # 次級保底：若 entitylist 失敗但為 HTML placelist，則正則萃取
+    if not places and is_placelist and html_content:
+        title_matches = re.findall(r'"([^"]{2,60})",null,null,null,null,\[null,null,(-?\d+\.\d+),(-?\d+\.\d+)\]', html_content)
+        if title_matches:
+            for t_match in title_matches:
+                t_title, t_lat, t_lng = t_match
+                try:
+                    lat_f = float(t_lat)
+                    lng_f = float(t_lng)
+                    if lat_f != 0 and lng_f != 0:
+                        clean_title = t_title.encode('utf-8').decode('unicode_escape', 'ignore').replace('"', '').strip()
+                        places.append({
+                            "title": clean_title,
+                            "lat": lat_f,
+                            "lng": lng_f,
+                            "address": None,
+                        })
+                except Exception:
+                    continue
+        else:
+            coord_matches = re.findall(r'\[null,\s*null,\s*(-?\d+\.\d+),\s*(-?\d+\.\d+)\]', html_content)
+            seen = set()
+            idx = 1
+            for c_match in coord_matches:
+                c_lat, c_lng = c_match
+                try:
+                    lat_f = float(c_lat)
+                    lng_f = float(c_lng)
+                    key = f"{lat_f:.4f},{lng_f:.4f}"
+                    if key not in seen and lat_f != 0 and lng_f != 0:
+                        seen.add(key)
+                        places.append({
+                            "title": f"口袋景點 #{idx}",
+                            "lat": lat_f,
+                            "lng": lng_f,
+                            "address": None,
+                        })
+                        idx += 1
+                except Exception:
+                    continue
+
+    # B. 單點解析提取
+    if not places:
+        res = await resolve_google_maps_link(clean_url)
+        lat = res.get("lat")
+        lng = res.get("lng")
+        title = res.get("query") or res.get("title")
+
+        if not title and html_content:
+            t_match = re.search(r'<title>(.*?)</title>', html_content, re.IGNORECASE)
+            if t_match:
+                raw_t = t_match.group(1).split(" - Google")[0].split(" - Google 地圖")[0].strip()
+                if raw_t and "Google" not in raw_t:
+                    title = raw_t
+
+        if (not lat or not lng) and title:
+            try:
+                geo = await smart_geocode_logic(title, limit=1)
+                if geo and len(geo) > 0:
+                    lat = geo[0].get("lat")
+                    lng = geo[0].get("lng")
+            except Exception as e:
+                print(f"[POI Import] JIT Geocode fallback failed: {e}")
+
+        if lat and lng:
+            # 🛡️ 乾淨地址逆向反查：絕不儲存醜陋的 Raw URL
+            clean_addr = None
+            try:
+                rev = await reverse_geocode_with_photon(float(lat), float(lng))
+                if rev and rev.get("address") and rev.get("address") != "Unknown":
+                    clean_addr = rev["address"]
+            except Exception as rev_err:
+                print(f"[POI Import] Reverse geocode error: {rev_err}")
+
+            places.append({
+                "title": title or "已儲存地點",
+                "lat": float(lat),
+                "lng": float(lng),
+                "address": clean_addr,
+            })
+
+    if not places:
+        raise HTTPException(status_code=400, detail="無法自此連結解析任何地點，請確認網址格式")
+
+    saved_items = []
+    for p in places:
+        raw_addr = p.get("address")
+        if raw_addr and (str(raw_addr).startswith("http") or "%" in str(raw_addr)):
+            raw_addr = None
+
+        poi_item = {
+            "id": f"poi_{uuid.uuid4().hex[:12]}",
+            "user_id": uid,
+            "title": p["title"],
+            "address": raw_addr or p["title"],
+            "lat": p["lat"],
+            "lng": p["lng"],
+            "category": "attraction",
+            "rating": None,
+            "user_notes": p.get("user_notes") or "",
+            "source_url": clean_url,
+            "is_pinned": False,
+            "pin_color": "#E56E25",
+            "created_at": now_ms,
+            "updated_at": now_ms
+        }
+        await save_user_poi(uid, poi_item, supabase)
+        saved_items.append(poi_item)
+
+    return {
+        "success": True,
+        "count": len(saved_items),
+        "items": saved_items
+    }
+
+@router.post("/poi/add")
+async def add_custom_poi(
+    fastapi_req: Request,
+    req: POICreateRequest,
+    user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    supabase=Depends(get_supabase)
+):
+    uid = user_id or "guest-session"
+    now_ms = int(time.time() * 1000)
+    poi_item = {
+        "id": f"poi_{uuid.uuid4().hex[:12]}",
+        "user_id": uid,
+        "title": req.title,
+        "address": req.address or req.title,
+        "lat": req.lat,
+        "lng": req.lng,
+        "google_place_id": req.google_place_id,
+        "category": req.category or "attraction",
+        "rating": req.rating,
+        "user_notes": req.user_notes or "",
+        "source_url": req.source_url,
+        "is_pinned": bool(req.is_pinned),
+        "pin_color": req.pin_color or "#E56E25",
+        "created_at": now_ms,
+        "updated_at": now_ms
+    }
+    await save_user_poi(uid, poi_item, supabase)
+    return poi_item
+
+@router.patch("/poi/{poi_id}/note")
+async def update_poi_note(
+    poi_id: str,
+    req: POIUpdateNoteRequest,
+    fastapi_req: Request,
+    user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    supabase=Depends(get_supabase)
+):
+    uid = user_id or "guest-session"
+    items = await get_user_pois(uid, supabase)
+    item = next((x for x in items if x.get("id") == poi_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="找不到該景點")
+    
+    item["user_notes"] = req.note
+    item["updated_at"] = int(time.time() * 1000)
+    await save_user_poi(uid, item, supabase)
+    return item
+
+@router.patch("/poi/{poi_id}/pin")
+async def toggle_poi_pin(
+    poi_id: str,
+    req: POITogglePinRequest,
+    fastapi_req: Request,
+    user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    supabase=Depends(get_supabase)
+):
+    uid = user_id or "guest-session"
+    items = await get_user_pois(uid, supabase)
+    item = next((x for x in items if x.get("id") == poi_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="找不到該景點")
+    
+    item["is_pinned"] = req.is_pinned
+    item["updated_at"] = int(time.time() * 1000)
+    await save_user_poi(uid, item, supabase)
+    return item
+
+@router.patch("/poi/{poi_id}/category")
+async def update_poi_category(
+    poi_id: str,
+    req: POIUpdateCategoryRequest,
+    fastapi_req: Request,
+    user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    supabase=Depends(get_supabase)
+):
+    uid = user_id or "guest-session"
+    items = await get_user_pois(uid, supabase)
+    item = next((x for x in items if x.get("id") == poi_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="找不到該景點")
+    
+    item["category"] = req.category
+    item["updated_at"] = int(time.time() * 1000)
+    await save_user_poi(uid, item, supabase)
+    return item
+
+
+@router.delete("/poi/{poi_id}")
+async def delete_poi(
+    poi_id: str,
+    fastapi_req: Request,
+    user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    supabase=Depends(get_supabase)
+):
+    uid = user_id or "guest-session"
+    await delete_user_poi(uid, poi_id, supabase)
+    return {"success": True}

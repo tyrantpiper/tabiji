@@ -7,6 +7,9 @@
     { "pattern": "tabijiapp.com/api*", "zone_name": "tabijiapp.com" },
     { "pattern": "www.tabijiapp.com/api*", "zone_name": "tabijiapp.com" }
   ],
+  "services": [
+    { "binding": "POI_SERVICE", "service": "tabijiapp-poi-service" }
+  ],
   "observability": {
     "enabled": true
   }

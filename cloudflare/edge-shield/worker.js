@@ -12,6 +12,26 @@ export default {
       return fetch(request);
     }
 
+    // 1.5 轉發至 POI Service 景點微服務 (Cloudflare D1 儲存)
+    const POI_POOL_ENDPOINTS = ['/api/poi/all', '/api/poi/import-link', '/api/poi/add'];
+    const isPoiPoolRequest = (
+      POI_POOL_ENDPOINTS.includes(pathname) ||
+      (/^\/api\/poi\/[^/]+(\/(note|pin|category))?$/.test(pathname) && ['PATCH', 'DELETE', 'GET'].includes(request.method))
+    );
+    if (isPoiPoolRequest && env.POI_SERVICE) {
+      try {
+        const serviceReq = request.clone();
+        const resp = await env.POI_SERVICE.fetch(serviceReq);
+        if (resp.ok || resp.status < 500) {
+          return resp;
+        }
+        console.warn(`[Edge-Shield] POI Service returned status ${resp.status}, failing over to Cloud Run...`);
+      } catch (err) {
+        console.error('[Edge-Shield] POI Service unreachable, failing over to Cloud Run:', err);
+      }
+      // 容錯降級：繼續執行後續 Cloud Run 原生轉發邏輯，業務永不中斷
+    }
+
     // 2. 目標 Google Cloud Run 實例
     const TARGET_HOST = 'antigravity-backend-589255638719.us-central1.run.app';
     const backendUrl = new URL(url.pathname + url.search, `https://${TARGET_HOST}`);

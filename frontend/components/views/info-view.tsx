@@ -20,7 +20,6 @@ import { ImageUpload } from "@/components/ui/image-upload"
 import { cn, openExternalLink } from "@/lib/utils"
 import { useTripContext } from "@/lib/trip-context"
 import { TripSwitcher } from "@/components/trip-switcher"
-import { ZenRenew } from "@/components/ui/zen-renew"
 import { toast } from "sonner"
 import { COUNTRY_REGIONS } from "@/lib/constants"
 import { tripsApi, geocodeApi } from "@/lib/api"
@@ -160,7 +159,7 @@ export function InfoView() {
         }
     }, [activeTripData, activeTripId, isEditing])
 
-    // 獨立的刷新函數供 ZenRenew 使用
+    // 獨立的刷新函數供全域通知鈴鐺與 Tab Hub 使用
     const refreshInfo = useCallback(async () => {
         if (!activeTripId) return
         try {
@@ -172,14 +171,21 @@ export function InfoView() {
         }
     }, [activeTripId, reloadTripDetail, tripMutate])
 
-    // 🆕 2026: Integrated global refresh event listener
+    // 🔔 全域重新整理事件監聽 (通知鈴鐺連動)
     useEffect(() => {
-        const handleRefresh = () => {
-            console.log("🔄 InfoView: Global refresh triggered via Tab Hub")
-            refreshInfo()
+        const handleRefresh = async () => {
+            try {
+                await refreshInfo()
+            } catch (err) {
+                console.warn("[GlobalRefresh] Handled gracefully in InfoView:", err)
+            }
         }
+        window.addEventListener('tabidachi-trigger-refresh', handleRefresh)
         window.addEventListener('refresh-active-view', handleRefresh)
-        return () => window.removeEventListener('refresh-active-view', handleRefresh)
+        return () => {
+            window.removeEventListener('tabidachi-trigger-refresh', handleRefresh)
+            window.removeEventListener('refresh-active-view', handleRefresh)
+        }
     }, [refreshInfo])
 
     const updateFlightSegment = (type: 'outbound' | 'inbound', index: number, field: string, value: string | string[]) => {
@@ -374,16 +380,10 @@ export function InfoView() {
                                 <h1 className="text-2xl font-bold tracking-tight text-[#1E2927] dark:text-[#E5EBEA]">{t('trip_info')}</h1>
                                 <p className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mt-0.5">{t('trip_details')}</p>
                             </div>
-                            <ZenRenew
-                                onRefresh={refreshInfo}
-                                successMessage={t('update_success')}
-                                errorMessage={t('update_failed')}
-                                className="text-[#1E2927]/70 dark:text-[#E5EBEA]/70 hover:text-[#0B3026] dark:hover:text-[#E5EBEA]"
-                            />
                         </div>
 
                         <div className="flex items-center justify-between gap-2">
-                            <TripSwitcher className="bg-white/80 dark:bg-[#1E2927]/80 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/10 dark:border-white/10 hover:bg-white dark:hover:bg-[#1E2927] flex-1" />
+                            <TripSwitcher showPencil={false} className="bg-white/80 dark:bg-[#1E2927]/80 text-[#1E2927] dark:text-[#E5EBEA] border border-[#0B3026]/10 dark:border-white/10 hover:bg-white dark:hover:bg-[#1E2927] flex-1" />
                             <Button
                                 variant={isEditing ? "default" : "outline"}
                                 size="sm"

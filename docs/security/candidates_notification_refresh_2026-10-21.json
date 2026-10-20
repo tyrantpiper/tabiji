@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/notifications/notification-bell.tsx:dos_flood_unauthenticated_refresh",
+    "file_path": "frontend/components/notifications/notification-bell.tsx",
+    "attack_vector": "dos_flood_unauthenticated_refresh",
+    "hypothesis": "Rapid clicking on the notification bell without debouncing can flood the backend with Supabase notification queries and trigger broadcast cascades, resulting in client thread blocking or API rate-limit exhaustion."
+  },
+  {
+    "id": "frontend/components/notifications/notification-bell.tsx:animation_state_stagnation",
+    "file_path": "frontend/components/notifications/notification-bell.tsx",
+    "attack_vector": "animation_state_stagnation",
+    "hypothesis": "If the bell ringing animation state is set to true on click without an explicit onAnimationComplete or timeout reset, subsequent bell clicks while the state is stuck true will fail to trigger animation feedback, resulting in UI unresponsiveness."
+  },
+  {
+    "id": "frontend/components/itinerary/ItineraryHeader.tsx:interface_regression_on_refresh",
+    "file_path": "frontend/components/itinerary/ItineraryHeader.tsx",
+    "attack_vector": "broken_access_control_or_interface_regression",
+    "hypothesis": "Removing onRefresh prop from ItineraryHeaderProps breaks TripMembersSheet onMemberKicked callback, preventing immediate member list synchronization after a kick action."
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx:unhandled_rejection_in_global_refresh",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "unhandled_rejection_in_global_refresh",
+    "hypothesis": "Global refresh listener executing reloadTripDetail or reloadTrips lacks try/catch or Promise.allSettled protection during offline or 500 error conditions, causing unhandled promise rejections that could crash or degrade React error boundaries."
+  }
+]

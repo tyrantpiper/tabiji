@@ -49,6 +49,8 @@ import { CalendarRangeSheet } from "@/components/itinerary/CalendarRangeSheet"
 import { FloatingMapCapsule } from "@/components/itinerary/FloatingMapCapsule"
 import { TripSettingsView } from "@/components/itinerary/TripSettingsView"
 import { saveTripSnapshot } from "@/lib/idb-storage"
+import { PoiPoolView } from "@/components/poi/PoiPoolView"
+import { POIItem } from "@/lib/poi-types"
 
 /**
  * 🔧 Helper to access day data with number/string key fallback
@@ -79,18 +81,37 @@ export function ItineraryView() {
         }
         return 'list'
     })
-    const [itinerarySubView, setItinerarySubView] = useState<'main' | 'settings'>('main')
+    const [itinerarySubView, setItinerarySubView] = useState<'main' | 'settings' | 'poi-pool'>('main')
 
-    // 🔙 物理返回鍵與瀏覽器上一頁事件監聽 (當處於 settings 子視圖時退回 main)
+    // 🔙 物理返回鍵與瀏覽器上一頁事件監聽 (當處於 subview 時退回 main)
     useEffect(() => {
         const handlePopState = () => {
-            if (itinerarySubView === 'settings') {
+            if (itinerarySubView !== 'main') {
                 setItinerarySubView('main')
             }
         }
         window.addEventListener('popstate', handlePopState)
         return () => window.removeEventListener('popstate', handlePopState)
     }, [itinerarySubView])
+
+    // 🌐 全螢幕沉浸式視圖狀態同步 (通知 AppShell 隱藏/復原頂部狀態列與底部導覽列，含 unmount 防呆清理)
+    useEffect(() => {
+        const isPoiPoolOpen = itinerarySubView === 'poi-pool'
+        window.dispatchEvent(
+            new CustomEvent('tabidachi-full-overlay-change', {
+                detail: { isOpen: isPoiPoolOpen, name: 'poi-pool' },
+            })
+        )
+
+        return () => {
+            window.dispatchEvent(
+                new CustomEvent('tabidachi-full-overlay-change', {
+                    detail: { isOpen: false, name: 'poi-pool' },
+                })
+            )
+        }
+    }, [itinerarySubView])
+
 
     // 🆕 Hyper-Heuristics: Dynamic Polling Interval
     const refreshInterval = useDynamicPolling()
@@ -111,6 +132,15 @@ export function ItineraryView() {
     const [isJoinOpen, setIsJoinOpen] = useState(false)
     const haptic = useHaptic()
     const isOnline = useOnlineStatus()  // 🆕 離線狀態偵測
+
+    // 🔖 開啟全域景點口袋庫 (注入歷程以便上一頁退回)
+    const handleOpenPoiPool = useCallback(() => {
+        haptic.selection()
+        if (typeof window !== 'undefined') {
+            window.history.pushState({ itinerarySubView: 'poi-pool' }, '')
+        }
+        setItinerarySubView('poi-pool')
+    }, [haptic])
 
     const [editItem, setEditItem] = useState<ItineraryItemState | null>(null)
     const [isEditOpen, setIsEditOpen] = useState(false)
@@ -138,6 +168,47 @@ export function ItineraryView() {
         return () => window.removeEventListener('tabidachi-reset-itinerary-view', handleReset)
     }, [])
 
+    // 🔔 全域重新整理事件監聽 (通知鈴鐺連動)
+    useEffect(() => {
+        const handleGlobalRefresh = async () => {
+            try {
+                if (activeTripId) {
+                    await Promise.allSettled([reloadTripDetail(), reloadCapsules()])
+                } else {
+                    await reloadTrips()
+                }
+            } catch (err) {
+                console.warn("[GlobalRefresh] Handled gracefully in ItineraryView:", err)
+            }
+        }
+        window.addEventListener('tabidachi-trigger-refresh', handleGlobalRefresh)
+        return () => window.removeEventListener('tabidachi-trigger-refresh', handleGlobalRefresh)
+    }, [activeTripId, reloadTripDetail, reloadCapsules, reloadTrips])
+
+
+
+    const handleAddPoiToTrip = useCallback(async (targetTripId: string, dayNum: number, poi: POIItem, timeStr?: string) => {
+        if (!targetTripId) return
+        const activityData = {
+            place: poi.title,
+            place_name: poi.title,
+            time: timeStr || "未定",
+            desc: poi.address || poi.title,
+            lat: poi.lat,
+            lng: poi.lng,
+            google_place_id: poi.google_place_id || undefined,
+            category: poi.category || "attraction",
+            memo: poi.user_notes || undefined,
+            day: dayNum,
+            trip_id: targetTripId,
+            user_id: userId || "",
+        }
+        await itemsApi.create(activityData)
+        if (targetTripId === activeTripId) {
+            await reloadTripDetail()
+        }
+        await reloadTrips()
+    }, [userId, activeTripId, reloadTripDetail, reloadTrips])
 
     // 🆕 DND State
     const [activeId, setActiveId] = useState<string | null>(null)
@@ -1442,6 +1513,7 @@ export function ItineraryView() {
                                     onLeaveTrip={handleLeaveTrip}
                                     leavingTripId={leavingTripId}
                                     onRefresh={async () => { await reloadTrips() }}
+                                    onOpenPoiDrawer={handleOpenPoiPool}
                                     onOpenCreateModal={() => {
                                         setIsCreateOpen(true)
                                     }}
@@ -1601,6 +1673,7 @@ export function ItineraryView() {
                     getDateInfo={getDateInfo}
                     userId={userId}
                     onRefresh={reloadTripDetail}
+                    onOpenPoiDrawer={handleOpenPoiPool}
                     shouldShowDateSkeleton={shouldShowDateSkeleton}
                     scrollerEl={scrollerEl}
                 />
@@ -1985,6 +2058,33 @@ export function ItineraryView() {
                 initialDay={day > 0 ? day : 1}
                 tripTitle={currentTrip?.title || ""}
             />
+
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* 🔖 Full-Page Global POI Pool Overlay (Accessible from both Home Dashboard & Trip Detail) */}
+            <AnimatePresence>
+                {itinerarySubView === 'poi-pool' && (
+                    <motion.div
+                        key="poi-pool"
+                        initial={{ opacity: 0, x: "100%" }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: "100%" }}
+                        transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                        className="fixed inset-0 z-50 w-full h-full overflow-hidden bg-[#F6F5EE] dark:bg-[#121A18] gpu-layer-accelerated"
+                    >
+                        <PoiPoolView
+                            userId={userId}
+                            currentTrip={viewMode === 'detail' ? currentTrip : null}
+                            allTrips={trips}
+                            totalDays={viewMode === 'detail' ? totalDays : 1}
+                            onBack={() => {
+                                haptic.selection()
+                                setItinerarySubView('main')
+                            }}
+                            onAddPoiToTrip={handleAddPoiToTrip}
+                        />
                     </motion.div>
                 )}
             </AnimatePresence>

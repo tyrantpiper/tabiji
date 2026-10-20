@@ -83,6 +83,7 @@ export function AppShell() {
     useTripRealtime(activeTripId, userId)
 
     const [activeView, setActiveView] = useState("itinerary")
+    const [isFullOverlayOpen, setIsFullOverlayOpen] = useState(false)
     const [prevTab, setPrevTab] = useState("itinerary")
     const [transitionIntent, setTransitionIntent] = useState<TabTransitionIntent>("instant")
     const isReducedMotion = useReducedMotion()
@@ -194,6 +195,18 @@ export function AppShell() {
         return () => window.removeEventListener("tabidachi-restart-tour", handleRestart)
     }, [handleTabChange])
 
+    // 🌐 全螢幕沉浸式視圖監聽 (如 POI Pocket 開啟時隱藏頂部按鈕與底部導覽列)
+    useEffect(() => {
+        const handleOverlayChange = (event: Event) => {
+            const customEvent = event as CustomEvent<{ isOpen?: unknown; name?: unknown }>
+            if (typeof customEvent.detail?.isOpen === "boolean") {
+                setIsFullOverlayOpen(customEvent.detail.isOpen)
+            }
+        }
+        window.addEventListener("tabidachi-full-overlay-change", handleOverlayChange)
+        return () => window.removeEventListener("tabidachi-full-overlay-change", handleOverlayChange)
+    }, [])
+
     return (
         <>
             <OfflineBanner />
@@ -208,16 +221,34 @@ export function AppShell() {
             <SpotlightTour />
             <div className="h-screen bg-background flex flex-col overflow-hidden">
                 <main className="flex-1 flex flex-col min-h-0 relative" data-scroll="true">
-                    {/* ✨ 全域 AI 狀態按鈕 — 左上角固定定位 (注入 safe-area-inset-top 杜絕與動態島/狀態列撞車) */}
-                    <div className="absolute top-[calc(max(env(safe-area-inset-top,0px),0px)+0.5rem)] left-3 z-100">
+                    {/* ✨ 全域 AI 狀態按鈕 — 左上角固定定位 (注入 safe-area-inset-top 杜絕與動態島/狀態列撞車，沉浸視圖下平滑退場) */}
+                    <motion.div
+                        animate={{
+                            opacity: isFullOverlayOpen ? 0 : 1,
+                            y: isFullOverlayOpen ? -16 : 0,
+                            pointerEvents: isFullOverlayOpen ? "none" : "auto",
+                        }}
+                        transition={MOTION_CONFIG.spring}
+                        aria-hidden={isFullOverlayOpen}
+                        className="absolute top-[calc(max(env(safe-area-inset-top,0px),0px)+0.5rem)] left-3 z-100"
+                    >
                         <AIStatusButton />
-                    </div>
+                    </motion.div>
 
-                    {/* 🔔 通知鈴鐺與 ☁️ 離線同步狀態膠囊 — 右上角固定定位 (注入 safe-area-inset-top) */}
-                    <div className="absolute top-[calc(max(env(safe-area-inset-top,0px),0px)+0.5rem)] right-3 z-100 flex items-center gap-2">
+                    {/* 🔔 通知鈴鐺與 ☁️ 離線同步狀態膠囊 — 右上角固定定位 (注入 safe-area-inset-top，沉浸視圖下平滑退場) */}
+                    <motion.div
+                        animate={{
+                            opacity: isFullOverlayOpen ? 0 : 1,
+                            y: isFullOverlayOpen ? -16 : 0,
+                            pointerEvents: isFullOverlayOpen ? "none" : "auto",
+                        }}
+                        transition={MOTION_CONFIG.spring}
+                        aria-hidden={isFullOverlayOpen}
+                        className="absolute top-[calc(max(env(safe-area-inset-top,0px),0px)+0.5rem)] right-3 z-100 flex items-center gap-2"
+                    >
                         <SyncStatusCapsule />
                         <NotificationBell />
-                    </div>
+                    </motion.div>
 
                     {/* ItineraryView (Critical Path - Now Dynamic & Preheated) */}
                     <div className={activeView === "itinerary" ? "flex-1 h-full min-h-0 overflow-hidden" : "hidden"}>
@@ -319,7 +350,7 @@ export function AppShell() {
                             haptic.success()
                         }
                     }}
-                    isVisible={isNavVisible} // 🆕 滾動時自動隱藏
+                    isVisible={isNavVisible && !isFullOverlayOpen} // 🆕 滾動或全螢幕沉浸時自動隱藏
                 />
             </div>
         </>

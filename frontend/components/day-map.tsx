@@ -6,7 +6,7 @@
 // 2. Expected: 6x smaller tiles, 2-3x faster render
 // See: https://maplibre.org/news/2026-01-23-mlt-release/
 
-import { useEffect, useState, useRef, useCallback } from "react"
+import { useEffect, useState, useRef, useCallback, useMemo } from "react"
 import Map, { Marker, Popup, Source, Layer, AttributionControl } from "react-map-gl/maplibre"
 import type { MapRef, LngLatBoundsLike, MapLayerMouseEvent } from "react-map-gl/maplibre"
 import "maplibre-gl/dist/maplibre-gl.css"
@@ -15,7 +15,9 @@ import { setWorkerUrl } from "maplibre-gl"
 if (typeof window !== "undefined") {
     setWorkerUrl("/maplibre/maplibre-gl-worker.mjs")
 }
-import { Bus, Car, Footprints, Satellite, Map as MapIcon, Search, X, Loader2, MapPin, Clock, Trash, Plane, Eye } from "lucide-react"
+import { Bus, Car, Footprints, Satellite, Map as MapIcon, Search, X, Loader2, MapPin, Clock, Trash, Plane, Eye, Bookmark } from "lucide-react"
+import { usePoiPool } from "@/lib/hooks/usePoiPool"
+import { POIItem } from "@/lib/poi-types"
 import { MAP_STYLES, MAP_LOCALIZATION, MAPILLARY } from "@/lib/constants"
 import MapillaryViewer from "@/components/MapillaryViewer"
 import { isMapillaryAvailable } from "@/lib/mapillary"
@@ -221,9 +223,21 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
     const [mapMode, setMapMode] = useState<'standard' | 'satellite'>('standard')
 
     // 🆕 POI Detail Drawer 狀態
-    // 🆕 POI Detail Drawer 狀態
     const [poiDrawerOpen, setPoiDrawerOpen] = useState(false)
     const [selectedPOI, setSelectedPOI] = useState<POIBasicData | null>(null)
+
+    // 🔖 全局景點庫釘選清單 (Active Pinned POIs)
+    const [localUserId, setLocalUserId] = useState<string | null>(null)
+    useEffect(() => {
+        if (typeof window !== "undefined") {
+            setLocalUserId(localStorage.getItem("user_uuid"))
+        }
+    }, [])
+    const { poiList } = usePoiPool(localUserId)
+    const activePinnedPois = useMemo(() => {
+        const list = poiList || []
+        return list.filter(p => Boolean(p.is_pinned) && typeof p.lat === 'number' && typeof p.lng === 'number' && !isNaN(p.lat) && !isNaN(p.lng))
+    }, [poiList])
 
     // 🔍 搜尋狀態
     const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -1549,6 +1563,36 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                             </Marker>
                         )
                     })}
+
+                    {/* 🔖 全局景點口袋庫釘選標記 (Pinned POI Markers) */}
+                    {activePinnedPois.map((poi: POIItem) => (
+                        <Marker
+                            key={`pinned-poi-${poi.id}`}
+                            longitude={poi.lng}
+                            latitude={poi.lat}
+                            anchor="bottom"
+                            onClick={(e) => {
+                                e.originalEvent.stopPropagation()
+                                setSelectedPOI({
+                                    name: poi.title,
+                                    type: poi.category || "sightseeing",
+                                    lat: poi.lat,
+                                    lng: poi.lng,
+                                    address: poi.address || poi.title,
+                                })
+                                setPoiDrawerOpen(true)
+                            }}
+                        >
+                            <div className="flex flex-col items-center group cursor-pointer relative transition-transform hover:scale-115 active:scale-95 z-20">
+                                <div className="mb-1 px-2 py-0.5 rounded-full bg-amber-500/90 text-white text-[10px] font-bold shadow-md border border-white/80 truncate max-w-30 pointer-events-none">
+                                    {poi.title}
+                                </div>
+                                <div className="w-7 h-7 rounded-full bg-[#E56E25] text-white flex items-center justify-center shadow-lg border-2 border-white">
+                                    <Bookmark className="w-3.5 h-3.5 fill-white" />
+                                </div>
+                            </div>
+                        </Marker>
+                    ))}
 
                     {/* 🆕 搜尋結果標記（紅色大頭針） */}
                     {searchResultMarker && (

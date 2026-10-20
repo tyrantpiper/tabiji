@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/notifications/notification-bell.tsx:throttle_bypass_on_remount",
+    "file_path": "frontend/components/notifications/notification-bell.tsx",
+    "start_line": 51,
+    "end_line": 88,
+    "attack_vector": "dos_flood_unauthenticated_refresh",
+    "hypothesis": "lastRefreshRef is declared as a component-local useRef(0). If the component unmounts and remounts within 2000ms (e.g., page navigation or re-rendering), the throttle state is reset to 0, allowing an attacker or rapid user to bypass the 2000ms throttle and flood the application with trigger-refresh events."
+  },
+  {
+    "id": "frontend/components/notifications/notification-bell.tsx:animation_restart_on_rapid_reopen",
+    "file_path": "frontend/components/notifications/notification-bell.tsx",
+    "start_line": 70,
+    "end_line": 88,
+    "attack_vector": "animation_state_stagnation",
+    "hypothesis": "isRinging is a boolean state set to true on open and reset via onAnimationComplete. If the user rapidly toggles the bell open/closed/open within 550ms while isRinging is still true, setIsRinging(true) does not change state value and fails to trigger Framer Motion keyframe re-evaluation, leaving the user with a stagnant bell icon."
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx:event_listener_asymmetry_and_visibility_guard",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "start_line": 170,
+    "end_line": 188,
+    "attack_vector": "concurrent_multi_view_network_flood",
+    "hypothesis": "itinerary-view.tsx only listens to 'tabidachi-trigger-refresh' while other views listen to both 'tabidachi-trigger-refresh' and legacy 'refresh-active-view'. Furthermore, it does not check document.visibilityState, causing hidden or background tabs to execute redundant reloadTripDetail and reloadCapsules network requests during global broadcast."
+  }
+]
