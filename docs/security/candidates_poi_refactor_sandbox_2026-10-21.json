@@ -1,0 +1,26 @@
+[
+  {
+    "id": "POI-REF-01",
+    "file_path": "backend/services/link_resolver.py",
+    "start_line": 135,
+    "end_line": 185,
+    "attack_vector": "rpc_schema_mutation_index_out_of_bounds",
+    "hypothesis": "In fetch_place_from_google_rpc, direct array indexing data[6][9][2] or d6[11] without length and type bounds checking can raise IndexError or TypeError if Google Maps alters preview/place RPC structure, crashing the parser or failing to fallback safely."
+  },
+  {
+    "id": "POI-REF-02",
+    "file_path": "cloudflare/poi-service/worker.js",
+    "start_line": 45,
+    "end_line": 95,
+    "attack_vector": "d1_not_null_coordinate_batch_crash",
+    "hypothesis": "In batchInsertPois, iterating over places and issuing INSERT INTO user_poi_pool without filtering out items lacking valid numeric lat/lng causes SQLite NOT NULL constraint failures on user_poi_pool.lat/lng, completely failing the entire batch transaction for legitimate POIs."
+  },
+  {
+    "id": "POI-REF-03",
+    "file_path": "frontend/lib/hooks/usePoiPool.ts",
+    "start_line": 65,
+    "end_line": 85,
+    "attack_vector": "swr_cache_conflation_undefined_coords",
+    "hypothesis": "In usePoiPool isSamePoi comparison, if both items lack source_url and have undefined lat/lng, checking a.lat === b.lat evaluates to undefined === undefined (true), causing disparate unlocated POIs to erroneously overwrite each other in SWR memory and IndexedDB."
+  }
+]

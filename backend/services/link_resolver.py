@@ -1,6 +1,8 @@
 import httpx
+import asyncio
 import re
 import os
+import json
 import random
 import time as _time
 from urllib.parse import unquote, unquote_plus
@@ -106,6 +108,108 @@ def extract_address_from_description(desc: str) -> str | None:
             return p
     return None
 
+ADDRESS_POI_PATTERN = re.compile(
+    r'^(\d{3,5})?'
+    r'([台臺]灣)?'
+    r'([台臺]北市|[台臺]中市|基隆市|[台臺]南市|高雄市|新北市|桃園市|新竹市|嘉義市|[^\s區縣市]+[縣市])'
+    r'([^\s區鄉鎮市]+[區鄉鎮市])?'
+    r'([^\s里村]+[里村])?'
+    r'([^\s號樓]+(?:路|街|大道|巷|弄)[^\s號樓]*\d+號(?:之\d+)?(?:[^\s號樓]*樓)?)'
+    r'(.*)$'
+)
+
+def split_taiwan_address_and_poi(raw_text: str) -> tuple[str | None, str | None]:
+    """將混雜字串純粹分離為 (純門牌地址, 純景點名稱)"""
+    if not raw_text or not isinstance(raw_text, str):
+        return None, None
+    clean_text = raw_text.strip()
+    m = ADDRESS_POI_PATTERN.search(clean_text)
+    if not m:
+        return None, clean_text
+    zip_code, country, city, dist, village, road_no, poi_name = m.groups()
+    full_address = f"{city}{dist or ''}{road_no}"
+    clean_poi_name = (poi_name or '').strip()
+    if not clean_poi_name:
+        return full_address, clean_text
+    return full_address, clean_poi_name
+
+def parse_google_place_rpc_payload(rpc_text: str) -> dict | None:
+    """解析 Google Maps Web preview/place RPC 回傳的結構化資料包 (含邊界與變異容錯防禦)"""
+    if not rpc_text or not isinstance(rpc_text, str):
+        return None
+    try:
+        clean_json = re.sub(r"^\)]\}'\s*", "", rpc_text).strip()
+        data = json.loads(clean_json)
+        if not isinstance(data, list) or len(data) <= 6 or not isinstance(data[6], list):
+            return None
+        d6 = data[6]
+        pure_name = d6[11] if len(d6) > 11 and isinstance(d6[11], str) else None
+        
+        lat = None
+        lng = None
+        if len(d6) > 9 and isinstance(d6[9], list) and len(d6[9]) > 3:
+            lat = d6[9][2]
+            lng = d6[9][3]
+            
+        if lat is None or lng is None:
+            return None
+            
+        address = None
+        if len(d6) > 39 and isinstance(d6[39], str):
+            address = d6[39]
+        elif len(d6) > 2 and isinstance(d6[2], list) and len(d6[2]) > 0 and isinstance(d6[2][0], str):
+            address = d6[2][0]
+            
+        place_id = None
+        def find_place_id(obj):
+            nonlocal place_id
+            if place_id:
+                return
+            if isinstance(obj, list):
+                for item in obj:
+                    find_place_id(item)
+            elif isinstance(obj, str):
+                if re.match(r'^ChIJ[A-Za-z0-9_-]{20,}$', obj):
+                    place_id = obj
+        find_place_id(d6)
+        
+        return {
+            "lat": float(lat),
+            "lng": float(lng),
+            "title": pure_name,
+            "address": address,
+            "place_id": place_id
+        }
+    except Exception:
+        return None
+
+
+async def fetch_place_from_google_rpc(cid_hex: str) -> dict | None:
+    """透過未公開 Google Web RPC 提取精確物理座標與純地名 (0成本，非付費 API)"""
+    try:
+        cid_dec = int(cid_hex, 16)
+        cid_url = f"https://www.google.com/maps?cid={cid_dec}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8"
+        }
+        async with httpx.AsyncClient(follow_redirects=True, timeout=3.5) as client:
+            resp = await client.get(cid_url, headers=headers)
+            if resp.status_code != 200:
+                return None
+            m = re.search(r'href="(/maps/preview/place\?[^"]+)"', resp.text)
+            if not m:
+                return None
+            rpc_url = f"https://www.google.com{m.group(1).replace('&amp;', '&')}"
+            rpc_resp = await client.get(rpc_url, headers=headers)
+            if rpc_resp.status_code != 200:
+                return None
+            return parse_google_place_rpc_payload(rpc_resp.text)
+    except Exception as e:
+        print(f"[PlaceRPC] Extraction skipped/failed: {e}")
+        return None
+
+
 async def fetch_og_metadata(url: str) -> Dict[str, Any]:
     """
     Scrapes Open Graph metadata from a URL.
@@ -189,13 +293,22 @@ async def fetch_og_metadata(url: str) -> Dict[str, Any]:
                     metadata["image"] = None
                 
                 # 🆕 v35.94: Metadata Coordinate Extraction (Tier 2.5)
-                # If image is a staticmap, it contains precise POI coordinates
-                if metadata["image"] and "staticmap" in metadata["image"]:
-                    sm_match = RE_STATICMAP.search(metadata["image"])
-                    if sm_match:
-                        metadata["lat"] = float(sm_match.group(1))
-                        metadata["lng"] = float(sm_match.group(2))
-                        print(f"[MetadataEngine] Found coordinates in staticmap: ({metadata['lat']}, {metadata['lng']})")
+                # 🛡️ 封殺純 ?q= 網址之 staticmap 概覽中心 (消除美中 Nebraska 與城市預設中心假座標)
+                is_pure_query = bool(RE_QUERY.search(url)) and not bool(re.search(r'!3d-?\d+\.\d+!4d-?\d+\.\d+', url))
+                if metadata["image"] and "staticmap" in metadata["image"] and not is_pure_query:
+                    zoom_m = re.search(r'zoom=(\d+)', metadata["image"])
+                    zoom_val = int(zoom_m.group(1)) if zoom_m else 15
+                    if zoom_val > 10:
+                        sm_match = RE_STATICMAP.search(metadata["image"])
+                        if sm_match:
+                            metadata["lat"] = float(sm_match.group(1))
+                            metadata["lng"] = float(sm_match.group(2))
+                            print(f"[MetadataEngine] Found coordinates in staticmap: ({metadata['lat']}, {metadata['lng']})")
+                    else:
+                        print(f"[MetadataEngine] Low zoom staticmap rejected ({zoom_val} <= 10): {metadata['image']}")
+                elif is_pure_query and metadata["image"] and "staticmap" in metadata["image"]:
+                    print(f"[MetadataEngine] Pure-query staticmap center rejected to prevent IP context poisoning: {metadata['image'][:80]}...")
+
             
             # 5. 回退機制 - Title & Description
             if not metadata["title"] and soup.title:
@@ -337,47 +450,40 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # 🕵️ Step 3.5: HTML Deep Mining (最後一道防線)
-    # 只有當 (1) 沒座標 (2) 是 Google Maps 連結 時才啟動
-    if not result["lat"] and result.get("resolved_url") and "google.com/maps" in result["resolved_url"]:
-        try:
-            print(f"[DeepMine] Starting HTML search: {result['resolved_url']}")
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
-            }
-            async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
-                # 🛡️ SSRF Check
-                if not is_safe_url(result['resolved_url']):
-                    print(f"[SSRF Block] DeepMine aborted for unsafe URL: {result['resolved_url']}")
-                    return result
-
-                resp = await client.get(result['resolved_url'], headers=headers)
-                if resp.status_code == 200:
-                    body_text = resp.text
-                    # 🛡️ v35.90: Decode %21 to ! (Google encodes ! as %21 in HTML body)
-                    body_decoded = body_text.replace('%21', '!')
-                    
-                    # 🗑️ v35.93: ALL HTML Body Mining REMOVED due to IP Context Poisoning.
-                    # As discovered in testing, Google Maps URLs using "?q=" statically render 
-                    # HTML body with !2d/!3d and APP_INITIALIZATION_STATE mapped to the SERVER'S IP LOCATION.
-                    # It is absolutely impossible to extract POI coords from the static SSR HTML body reliably.
-                    # We are intentionally removing Priority 1 and Priority 2 to force the resolver
-                    # to fail-forward gracefully, passing only the extracted "Query" (Name DNA) 
-                    # down to the Tier 3 JIT Geocoding System (Photon/Nominatim).
-                        
-                    # 🥉 v35.91: Generic array mining completely REMOVED.
-                    # Rationale: Protobuf (!2d/!3d) & InitState now safely cover global domains (-90~90).
-                    # Retaining generic array mining would risk pulling garbage floats out of the document
-                    # causing trans-continental coordinate swaps for non-Asian URLs.
-        except Exception as e:
-            # 異常吞噬：失敗則跳過，確保不影響後續視覺抓取
-            print(f"[DeepMine] HTML Search skipped: {e}")
+    # 🕵️ Step 3.5: HTML Deep Mining (Deprecated due to IP Context Poisoning)
+    # As discovered in testing, Google Maps URLs using "?q=" statically render 
+    # HTML body with !2d/!3d and APP_INITIALIZATION_STATE mapped to the SERVER'S IP LOCATION.
+    # SSR HTML body mining is permanently disabled to force fail-forward to RPC / geocoding.
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 🆕 Step 3.6: Google Web Place RPC (Zero-Cost CID/FTID Miner)
+    # 條件: (1) 沒座標 (2) URL 包含 ftid 或 cid 特徵
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if not result["lat"]:
+        cid_match = re.search(r'ftid=0x[0-9a-fA-F]+:0x([0-9a-fA-F]+)', final_url) or re.search(r'cid=([0-9a-fA-F]+)', final_url)
+        if not cid_match:
+            cid_match = re.search(r'ftid=0x[0-9a-fA-F]+:0x([0-9a-fA-F]+)', original_input_url) or re.search(r'cid=([0-9a-fA-F]+)', original_input_url)
+        
+        if cid_match:
+            hex_cid = cid_match.group(1)
+            print(f"[PlaceRPC] Found CID {hex_cid}, probing Google Maps Web preview/place RPC...")
+            rpc_res = await fetch_place_from_google_rpc(hex_cid)
+            if rpc_res and rpc_res.get("lat") and rpc_res.get("lng"):
+                result["lat"] = rpc_res["lat"]
+                result["lng"] = rpc_res["lng"]
+                result["method"] = f"{result.get('method', 'none')}+place_rpc"
+                if rpc_res.get("title"):
+                    result["query"] = rpc_res["title"]
+                if rpc_res.get("address"):
+                    result["address"] = rpc_res["address"]
+                if rpc_res.get("place_id"):
+                    result["place_id"] = rpc_res["place_id"]
+                print(f"[PlaceRPC] Success: ({result['lat']}, {result['lng']}) title={result.get('query')}")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 🆕 Step 3.7: GAS Two-Shot Rescue (Failure-Only Gateway)
     # 條件: (1) 所有本地引擎失敗 (2) 原始輸入是短網址
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
     if not result["lat"] and any(d in original_input_url for d in ["goo.gl", "maps.app.goo.gl"]):
         try:
             gas_input = original_input_url  # 使用原始短網址呼叫 GAS 效果最好
@@ -473,6 +579,19 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
             result["lng"] = None
             result["method"] = f"{result.get('method', 'unknown')}+drift_purged"
         
+        # Taiwan / CJK vs US Geo-Drift (e.g., Cloud Run us-central1 IP location Nebraska: 41.10567, -96.265644)
+        is_us_geo = 24.0 <= result["lat"] <= 50.0 and -130.0 <= result["lng"] <= -65.0
+        is_taiwan_meta = any(token in metadata_text for token in [
+            "taiwan", "台灣", "臺灣", "台北", "臺北", "台中", "臺中", "台南", "臺南", "高雄", "新北", "桃園", "新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "台東", "臺東", "澎湖", "金門", "馬祖"
+        ])
+        has_cjk = bool(re.search(r'[\u4e00-\u9fff]', metadata_text))
+        
+        if is_us_geo and (is_taiwan_meta or has_cjk):
+            print(f"[RegionGuard] US Geo-Drift detected for CJK/Taiwan POI! Coords at ({result['lat']}, {result['lng']}). PURGING COORDS.")
+            result["lat"] = None
+            result["lng"] = None
+            result["method"] = f"{result.get('method', 'unknown')}+drift_purged"
+        
     # Phase 2: The "DNA" Upgrade (Place ID / CID Extraction)
     # 使用 Side-car 方法提取正式 ID，而不干擾原本的座標邏輯
     try:
@@ -534,9 +653,51 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
         except Exception:
             pass
     clean_title = re.sub(r'\s*[-|]\s*Google\s*(Maps|地图|地圖|マップ|映射|map|search).*$', '', raw_title, flags=re.IGNORECASE).strip()
+
+    # 🇹🇼 台灣地址與景點名稱分離演算法 (Zero-Cost 分離純店名與純門牌)
+    extracted_addr = None
+    if "·" in clean_title:
+        parts = [p.strip() for p in clean_title.split("·")]
+        part0 = parts[0]
+        addr0, poi0 = split_taiwan_address_and_poi(part0)
+        if poi0:
+            clean_title = poi0
+            extracted_addr = addr0
+        else:
+            clean_title = part0
+        if not extracted_addr and len(parts) > 1:
+            addr1, _ = split_taiwan_address_and_poi(parts[1])
+            if addr1:
+                extracted_addr = addr1
+            elif any(k in parts[1] for k in ["市", "縣", "區", "路", "街", "號"]):
+                extracted_addr = parts[1]
+    else:
+        addr, poi = split_taiwan_address_and_poi(clean_title)
+        if poi:
+            clean_title = poi
+            extracted_addr = addr
+
+    if extracted_addr and not result.get("address"):
+        result["address"] = extracted_addr
+
     if clean_title:
         result["metadata"]["title"] = clean_title
         result["query"] = clean_title
+
+    # 🧭 Tier 3 Fallback Geocoding: 若無座標但有地址或清洗後店名
+    if not result.get("lat") and (result.get("address") or clean_title):
+        try:
+            from services.geocode_service import geocode_place
+            target_query = result.get("address") or clean_title
+            print(f"[LinkResolver] Fallback geocoding target: {target_query}")
+            geo_res = await geocode_place(target_query)
+            if geo_res and geo_res.get("lat") and geo_res.get("lng"):
+                result["lat"] = geo_res["lat"]
+                result["lng"] = geo_res["lng"]
+                result["method"] = f"{result.get('method', 'none')}+fallback_geocode"
+                print(f"[LinkResolver] Fallback geocode success: ({result['lat']}, {result['lng']})")
+        except Exception as geocode_err:
+            print(f"[LinkResolver] Fallback geocode error: {geocode_err}")
 
     return result
 
@@ -558,7 +719,7 @@ async def resolve_google_maps_placelist(url: str) -> Dict[str, Any]:
     clean_url = url
     if any(d in url for d in ["goo.gl", "maps.app.goo.gl"]):
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
                 if not is_safe_url(url):
                     result["error"] = "UNSAFE_URL"
                     return result
@@ -579,78 +740,102 @@ async def resolve_google_maps_placelist(url: str) -> Dict[str, Any]:
     list_id = list_id_match.group(1)
     rpc_url = f"https://www.google.com/maps/preview/entitylist/getlist?authuser=0&hl=zh-TW&gl=tw&pb=!1m4!1s{list_id}!2e1!3m1!1e1!2e2!3e2!4i2000"
     
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
-            resp = await client.get(rpc_url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
-            })
-            if resp.status_code != 200:
-                result["error"] = f"HTTP_{resp.status_code}"
-                return result
-                
-            raw_text = resp.text
-            if not raw_text.startswith(")]}'"):
-                result["error"] = "PRIVATE_OR_INVALID_LIST"
-                return result
-                
-            stripped = raw_text.lstrip(")]}'\n")
-            import json
-            data = json.loads(stripped)
-            
-            # 解析清單標題
-            list_title = "已儲存的地點清單"
-            if len(data) > 0 and len(data[0]) > 4 and data[0][4]:
-                list_title = str(data[0][4])
-            result["title"] = list_title
-            
-            # 遍歷地點陣列 (data[0][8])
-            raw_items = data[0][8] if (len(data) > 0 and len(data[0]) > 8 and isinstance(data[0][8], list)) else []
-            extracted_items = []
-            
-            for item in raw_items:
-                if not isinstance(item, list) or len(item) < 3:
-                    continue
-                try:
-                    title = item[2] if len(item) > 2 and item[2] else "已儲存地點"
-                    title = unquote_plus(str(title)).strip()
+    max_retries = 2
+    data = None
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
+                resp = await client.get(rpc_url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+                })
+                if resp.status_code != 200:
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(0.3)
+                        continue
+                    result["error"] = f"HTTP_{resp.status_code}"
+                    return result
                     
-                    # 門牌地址 item[1][4]
-                    address = None
-                    if len(item) > 1 and isinstance(item[1], list) and len(item[1]) > 4 and item[1][4]:
-                        address = str(item[1][4]).strip()
-                        
-                    # 座標 item[1][5][2], item[1][5][3]
-                    lat, lng = None, None
-                    if len(item) > 1 and isinstance(item[1], list) and len(item[1]) > 5 and isinstance(item[1][5], list):
-                        coords = item[1][5]
-                        if len(coords) > 3 and coords[2] is not None and coords[3] is not None:
-                            lat = float(coords[2])
-                            lng = float(coords[3])
-                            
-                    # 使用者備註 item[3]
-                    user_notes = None
-                    if len(item) > 3 and item[3]:
-                        user_notes = str(item[3]).strip()
-                        
-                    if lat is not None and lng is not None:
-                        extracted_items.append({
-                            "title": title,
-                            "address": address,
-                            "lat": lat,
-                            "lng": lng,
-                            "category": "attraction",
-                            "user_notes": user_notes,
-                            "source_url": clean_url
-                        })
-                except Exception as item_err:
-                    print(f"[Placelist] Skip corrupted item: {item_err}")
-                    continue
+                raw_text = resp.text.strip()
+                if not raw_text.startswith(")]}'"):
+                    if attempt < max_retries - 1:
+                        print(f"[Placelist] Attempt {attempt+1}: Non-XSSI response received, retrying in 300ms...")
+                        await asyncio.sleep(0.3)
+                        continue
+                    result["error"] = "PRIVATE_OR_INVALID_LIST"
+                    return result
                     
-            result["success"] = True
-            result["count"] = len(extracted_items)
-            result["items"] = extracted_items
+                # 🛡️ 採用決定性正則剝除 XSSI 前綴，防止字符集剝除誤殺
+                stripped = re.sub(r"^\)]\}'\s*", "", raw_text).strip()
+                import json
+                data = json.loads(stripped)
+                break
+        except Exception as net_err:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.3)
+                continue
+            print(f"[Placelist] RPC attempt failed: {net_err}")
+            result["error"] = str(net_err)
             return result
+
+    if not data:
+        result["error"] = "NO_DATA"
+        return result
+
+    try:
+        # 解析清單標題
+        list_title = "已儲存的地點清單"
+        if len(data) > 0 and len(data[0]) > 4 and data[0][4]:
+            list_title = str(data[0][4])
+        result["title"] = list_title
+        
+        # 遍歷地點陣列 (data[0][8])
+        raw_items = data[0][8] if (len(data) > 0 and len(data[0]) > 8 and isinstance(data[0][8], list)) else []
+        extracted_items = []
+        
+        for item in raw_items:
+            if not isinstance(item, list) or len(item) < 3:
+                continue
+            try:
+                title = item[2] if len(item) > 2 and item[2] else "已儲存地點"
+                title = unquote_plus(str(title)).strip()
+                
+                # 門牌地址 item[1][4]
+                address = None
+                if len(item) > 1 and isinstance(item[1], list) and len(item[1]) > 4 and item[1][4]:
+                    address = str(item[1][4]).strip()
+                    
+                # 座標 item[1][5][2], item[1][5][3]
+                lat, lng = None, None
+                if len(item) > 1 and isinstance(item[1], list) and len(item[1]) > 5 and isinstance(item[1][5], list):
+                    coords = item[1][5]
+                    if len(coords) > 3 and coords[2] is not None and coords[3] is not None:
+                        lat = float(coords[2])
+                        lng = float(coords[3])
+                        
+                # 使用者備註 item[3]
+                user_notes = None
+                if len(item) > 3 and item[3]:
+                    user_notes = str(item[3]).strip()
+                    
+                if lat is not None and lng is not None:
+                    extracted_items.append({
+                        "title": title,
+                        "address": address,
+                        "lat": lat,
+                        "lng": lng,
+                        "category": "attraction",
+                        "user_notes": user_notes,
+                        "source_url": clean_url
+                    })
+            except Exception as item_err:
+                print(f"[Placelist] Skip corrupted item: {item_err}")
+                continue
+                
+        result["success"] = True
+        result["count"] = len(extracted_items)
+        result["items"] = extracted_items
+        return result
     except Exception as e:
         print(f"[Placelist] RPC parsing failed: {e}")
         result["error"] = str(e)

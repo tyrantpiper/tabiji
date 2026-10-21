@@ -1,0 +1,26 @@
+[
+  {
+    "id": "POI-ZERO-01",
+    "file_path": "backend/services/link_resolver.py",
+    "attack_vector": "ip_context_poisoning_nebraska_drift",
+    "hypothesis": "When resolving a Google Maps short link with only a search query (?q=), Google Maps returns a staticmap centered at the request server IP location (e.g. Nebraska, USA 41.10567, -96.265644 with zoom=6). If link_resolver unconditionally adopts staticmap center, Taiwan POIs are placed in the United States."
+  },
+  {
+    "id": "POI-ZERO-02",
+    "file_path": "backend/services/link_resolver.py",
+    "attack_vector": "city_overview_dummy_coordinate_leak",
+    "hypothesis": "When resolving a query-only Google Maps link in Taiwan, Google Maps falls back to city overview coordinates (22.6459648, 120.3109888). Unconditionally trusting staticmap center causes disparate venues across Kaohsiung to share identical dummy coordinates."
+  },
+  {
+    "id": "POI-ZERO-03",
+    "file_path": "cloudflare/poi-service/worker.js",
+    "attack_vector": "cascading_overwrite_on_conflict_bug",
+    "hypothesis": "Because query-only links receive identical dummy coordinates, Cloudflare D1 batchInsertPois ON CONFLICT(user_id, lat, lng) and frontend SWR mutate treat subsequent different venues as the same POI, causing previous venues to be completely overwritten upon importing new ones."
+  },
+  {
+    "id": "POI-ZERO-04",
+    "file_path": "backend/services/link_resolver.py",
+    "attack_vector": "taiwan_address_title_concatenation",
+    "hypothesis": "Mobile Google Maps export concatenates postal code, district, village, street number and venue name into a single dirty query string. Without deterministic regex splitting, UI displays deformed titles like '807高雄市三民區十美里漢口街103號君腿庫飯'."
+  }
+]

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "cloudflare/poi-service/worker.js:category_whitelist_override",
+    "file_path": "cloudflare/poi-service/worker.js",
+    "attack_vector": "schema_whitelist_mutation_drop",
+    "hypothesis": "Cloudflare Worker lines 409-410 enforce a strict 7-item whitelist ['attraction', 'food', ...] on PATCH /api/poi/:id/category, causing any custom category protocol 'custom:...' to be forcibly overwritten to 'attraction'."
+  },
+  {
+    "id": "frontend/lib/poi-category-protocol.ts:colon_delimiter_injection",
+    "file_path": "frontend/lib/poi-category-protocol.ts",
+    "attack_vector": "protocol_delimiter_injection",
+    "hypothesis": "When category name contains colons (e.g., '下午茶:甜點'), naive string splitting splits into 5+ items, shifting the hex color offset and corrupting UI styles."
+  },
+  {
+    "id": "frontend/lib/poi-category-protocol.ts:malformed_protocol_crash",
+    "file_path": "frontend/lib/poi-category-protocol.ts",
+    "attack_vector": "input_deserialization_unhandled_crash",
+    "hypothesis": "Malformed or truncated custom category strings (e.g. 'custom:', 'custom:🍜', 'custom:::') cause index out of bounds or undefined properties in rendering."
+  },
+  {
+    "id": "frontend/lib/poi-category-protocol.ts:dynamic_harvesting_dedup",
+    "file_path": "frontend/lib/poi-category-protocol.ts",
+    "attack_vector": "state_desynchronization",
+    "hypothesis": "Dynamic harvesting across heterogeneous POIs fails to deduplicate identical custom categories or mistakenly includes standard categories, polluting filter tabs."
+  },
+  {
+    "id": "frontend/components/poi/PoiPoolMap.tsx:custom_marker_component_render_type",
+    "file_path": "frontend/components/poi/PoiPoolMap.tsx",
+    "attack_vector": "ui_component_type_error",
+    "hypothesis": "Map component treats CATEGORY_ICONS[p.category] as a React SVG ElementType, resulting in undefined when rendered with custom category protocol strings."
+  }
+]

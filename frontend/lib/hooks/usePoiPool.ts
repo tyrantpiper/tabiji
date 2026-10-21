@@ -65,11 +65,28 @@ export function usePoiPool(userId: string | null) {
                 haptic.success()
                 await mutate((prev) => {
                     const current = prev || []
+                    const isSamePoi = (a: POIItem, b: POIItem) => {
+                        if (a.id && b.id) return a.id === b.id
+                        if (a.source_url && b.source_url) return a.source_url === b.source_url
+                        if (
+                            !a.source_url &&
+                            !b.source_url &&
+                            typeof a.lat === "number" &&
+                            typeof b.lat === "number" &&
+                            typeof a.lng === "number" &&
+                            typeof b.lng === "number" &&
+                            a.lat === b.lat &&
+                            a.lng === b.lng
+                        ) {
+                            return true
+                        }
+                        return false
+                    }
                     const updated = current.map((c) => {
-                        const matched = res.items.find((item: POIItem) => item.id === c.id || (item.lat === c.lat && item.lng === c.lng))
+                        const matched = res.items.find((item: POIItem) => isSamePoi(item, c))
                         return matched || c
                     })
-                    const brandNew = res.items.filter((item: POIItem) => !current.some((c) => c.id === item.id || (c.lat === item.lat && c.lng === item.lng)))
+                    const brandNew = res.items.filter((item: POIItem) => !current.some((c) => isSamePoi(item, c)))
                     const finalPool = [...brandNew, ...updated]
                     set(`${IDB_POI_KEY_PREFIX}${userId}`, finalPool).catch(() => {})
                     return finalPool

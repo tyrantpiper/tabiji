@@ -1,0 +1,26 @@
+[
+  {
+    "id": "POI-LIST-01",
+    "file_path": "backend/services/link_resolver.py",
+    "start_line": 740,
+    "end_line": 765,
+    "attack_vector": "xssi_lstrip_bracket_corruption",
+    "hypothesis": "In resolve_google_maps_placelist, using raw_text.lstrip(\")]}'\\n\") treats the argument as a character set rather than a prefix string. If raw_text contains an empty list like )]}'\\n[], lstrip strips the left bracket or delimiter, causing JSONDecodeError instead of safe JSON parsing."
+  },
+  {
+    "id": "POI-LIST-02",
+    "file_path": "backend/services/link_resolver.py",
+    "start_line": 740,
+    "end_line": 765,
+    "attack_vector": "single_shot_unretried_rpc_failure",
+    "hypothesis": "In resolve_google_maps_placelist, executing a single-shot unretried HTTP call to preview/entitylist/getlist causes transient Google Maps edge CDN cold-cache, challenge, or empty-item responses to fail immediately without retry, resulting in false-negative 422 errors."
+  },
+  {
+    "id": "POI-LIST-03",
+    "file_path": "backend/routers/poi.py",
+    "start_line": 74,
+    "end_line": 100,
+    "attack_vector": "asymmetric_timeout_pipeline_misrouting",
+    "hypothesis": "In poi_resolve_link, head_resp timeout is 8.0s while placelist RPC timeout is 12.0s. If short-link redirect takes >8s, head_resp times out and is caught, leaving is_placelist=False and erroneously routing the placelist into single-POI resolver which fails with 422."
+  }
+]

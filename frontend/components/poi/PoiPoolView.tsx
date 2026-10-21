@@ -6,13 +6,19 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
     ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Bookmark, Search, Link as LinkIcon, Sparkles, Clipboard,
     MapPin, ExternalLink, StickyNote, Plus, Trash2, Check, X, Loader2,
-    Utensils, Coffee, Landmark, ShoppingBag, Hotel, Train, Star, Compass, Clock, Map as MapIcon
+    Star, Clock, Map as MapIcon
 } from "lucide-react"
-import { TranslationKey } from "@/lib/i18n"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
 import { usePoiPool } from "@/lib/hooks/usePoiPool"
 import { POIItem, POICategory } from "@/lib/poi-types"
+import {
+    parseCategory,
+    harvestCustomCategories,
+    STANDARD_CATEGORIES,
+    CATEGORY_MAP,
+} from "@/lib/poi-category-protocol"
+import { CustomCategoryModal } from "./CustomCategoryModal"
 import { Trip } from "@/lib/itinerary-types"
 import { cn, openExternalLink } from "@/lib/utils"
 import { toast } from "sonner"
@@ -50,17 +56,6 @@ interface PoiPoolViewProps {
     onAddPoiToTrip?: (targetTripId: string, dayNum: number, poi: POIItem, timeStr?: string) => Promise<void>
 }
 
-// 🏷️ 類別圖示與色彩映射
-const CATEGORY_MAP: Record<POICategory, { labelKey: TranslationKey; icon: React.ElementType; color: string; bg: string }> = {
-    attraction: { labelKey: "poi_cat_attraction", icon: Landmark, color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/40" },
-    food: { labelKey: "poi_cat_food", icon: Utensils, color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-50 dark:bg-amber-950/40" },
-    cafe: { labelKey: "poi_cat_cafe", icon: Coffee, color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-950/40" },
-    shopping: { labelKey: "poi_cat_shopping", icon: ShoppingBag, color: "text-pink-600 dark:text-pink-400", bg: "bg-pink-50 dark:bg-pink-950/40" },
-    hotel: { labelKey: "poi_cat_hotel", icon: Hotel, color: "text-indigo-600 dark:text-indigo-400", bg: "bg-indigo-50 dark:bg-indigo-950/40" },
-    transport: { labelKey: "poi_cat_transport", icon: Train, color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-50 dark:bg-blue-950/40" },
-    other: { labelKey: "poi_cat_all", icon: Compass, color: "text-slate-600 dark:text-slate-400", bg: "bg-slate-50 dark:bg-slate-800" },
-}
-
 export function PoiPoolView({
     userId,
     currentTrip,
@@ -84,8 +79,35 @@ export function PoiPoolView({
 
     // 🔍 搜尋與 Omnibar 狀態
     const [omnibarInput, setOmnibarInput] = useState("")
-    const [selectedCategory, setSelectedCategory] = useState<POICategory | "all" | "pinned">("all")
+    const [selectedCategory, setSelectedCategory] = useState<POICategory | "all" | "pinned" | (string & {})>("all")
     const [isImporting, setIsImporting] = useState(false)
+    const [customModalTargetPoiId, setCustomModalTargetPoiId] = useState<string | null>(null)
+
+    // 🛡️ 跨 POIs 動態收割提取使用中的自訂類別
+    const customCategories = useMemo(() => harvestCustomCategories(poiList), [poiList])
+
+    // 🏷️ 刪除自訂類別並將關聯地點平滑降級至 "other"
+    const handleDeleteCustomCategory = async (catKey: string, e: React.MouseEvent) => {
+        e.stopPropagation()
+        haptic.tap()
+        const affected = poiList.filter((p) => p.category === catKey)
+        if (affected.length > 0) {
+            for (const p of affected) {
+                await updateCategory(p.id, "other")
+            }
+        }
+        if (selectedCategory === catKey) {
+            setSelectedCategory("all")
+        }
+        toast.success("已移除自訂類別，已將關聯地點重設為全部")
+    }
+
+    const handleCustomCategorySubmit = (protocol: string) => {
+        if (!customModalTargetPoiId) return
+        updateCategory(customModalTargetPoiId, protocol)
+        setCustomModalTargetPoiId(null)
+        toast.success("已成功套用自訂類別！")
+    }
 
     // 🗺️ 地圖檢視狀態 (Google Maps Saved Places UX)
     const [showMap, setShowMap] = useState(true)
@@ -356,7 +378,7 @@ export function PoiPoolView({
                             <span>({stats.pinned})</span>
                         </button>
 
-                        {(["attraction", "food", "cafe", "shopping", "hotel", "transport"] as POICategory[]).map((cat) => {
+                        {STANDARD_CATEGORIES.filter((c) => c !== "other").map((cat) => {
                             const meta = CATEGORY_MAP[cat]
                             const count = poiList.filter((p) => p.category === cat).length
                             if (count === 0 && selectedCategory !== cat) return null
@@ -366,7 +388,7 @@ export function PoiPoolView({
                                 <button
                                     key={cat}
                                     type="button"
-                                    onClick={() => setSelectedCategory(cat)}
+                                    onClick={() => setSelectedCategory(selectedCategory === cat ? "all" : cat)}
                                     className={cn(
                                         "px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 active:scale-95 flex items-center gap-1.5",
                                         selectedCategory === cat
@@ -376,6 +398,31 @@ export function PoiPoolView({
                                 >
                                     <IconComponent className="w-3 h-3" />
                                     <span>{t(meta.labelKey) || cat}</span>
+                                    <span className="opacity-60 text-[10px]">({count})</span>
+                                </button>
+                            )
+                        })}
+
+                        {/* 🏷️ 自訂類別動態標籤 */}
+                        {customCategories.map((c) => {
+                            const count = poiList.filter((p) => p.category === c.key).length
+                            const isCur = selectedCategory === c.key
+
+                            return (
+                                <button
+                                    key={c.key}
+                                    type="button"
+                                    onClick={() => setSelectedCategory(isCur ? "all" : c.key)}
+                                    style={isCur ? { backgroundColor: c.color, color: "#FFFFFF", borderColor: "transparent" } : undefined}
+                                    className={cn(
+                                        "px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 active:scale-95 flex items-center gap-1.5 border shadow-2xs",
+                                        isCur
+                                            ? "shadow-xs font-extrabold"
+                                            : "bg-white/80 dark:bg-[#1E2927]/80 text-[#5C6B68] dark:text-[#A2B1AE] border-black/5 dark:border-white/5 hover:bg-black/5"
+                                    )}
+                                >
+                                    <span className="text-xs leading-none">{c.emoji}</span>
+                                    <span>{c.label}</span>
                                     <span className="opacity-60 text-[10px]">({count})</span>
                                 </button>
                             )
@@ -461,8 +508,7 @@ export function PoiPoolView({
                         </div>
                     ) : (
                         filteredPois.map((poi) => {
-                            const catMeta = CATEGORY_MAP[poi.category] || CATEGORY_MAP.other
-                            const IconComp = catMeta.icon
+                            const catMeta = parseCategory(poi.category)
                             const isEditingNote = editingNoteId === poi.id
                             const scheduled = scheduledRecords[poi.id] || []
 
@@ -483,22 +529,27 @@ export function PoiPoolView({
                                                 <DropdownMenuTrigger asChild>
                                                     <button
                                                         type="button"
+                                                        style={catMeta.isCustom ? { backgroundColor: `${catMeta.color}22`, color: catMeta.color } : undefined}
                                                         className={cn(
                                                             "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-2xs hover:scale-105 active:scale-95 transition-all cursor-pointer relative group",
-                                                            catMeta.bg,
-                                                            catMeta.color
+                                                            !catMeta.isCustom && catMeta.bg,
+                                                            !catMeta.isCustom && catMeta.color
                                                         )}
                                                         title={t('poi_change_category_tooltip') || "點擊切換分類圖示"}
                                                     >
-                                                        <IconComp className="w-5 h-5" />
+                                                        {catMeta.isCustom ? (
+                                                            <span className="text-xl leading-none select-none">{catMeta.emoji}</span>
+                                                        ) : (
+                                                            catMeta.icon && <catMeta.icon className="w-5 h-5" />
+                                                        )}
                                                     </button>
                                                 </DropdownMenuTrigger>
-                                                <DropdownMenuContent align="start" className="w-44 p-1 rounded-2xl shadow-xl">
+                                                <DropdownMenuContent align="start" className="w-48 p-1 rounded-2xl shadow-xl max-h-80 overflow-y-auto">
                                                     <DropdownMenuLabel className="text-[11px] text-slate-400 font-bold px-2 py-1">
                                                         {t('poi_change_category_label') || "變更地點類別"}
                                                     </DropdownMenuLabel>
                                                     <DropdownMenuSeparator />
-                                                    {(["attraction", "food", "cafe", "shopping", "hotel", "transport", "other"] as POICategory[]).map((cKey) => {
+                                                    {STANDARD_CATEGORIES.map((cKey) => {
                                                         const cm = CATEGORY_MAP[cKey]
                                                         const CIcon = cm.icon
                                                         const isCur = poi.category === cKey
@@ -521,6 +572,62 @@ export function PoiPoolView({
                                                             </DropdownMenuItem>
                                                         )
                                                     })}
+
+                                                    {/* 🏷️ 自訂類別選項 */}
+                                                    {customCategories.length > 0 && (
+                                                        <>
+                                                            <DropdownMenuSeparator />
+                                                            <DropdownMenuLabel className="text-[11px] text-slate-400 font-bold px-2 py-0.5">
+                                                                自訂類別
+                                                            </DropdownMenuLabel>
+                                                            {customCategories.map((c) => {
+                                                                const isCur = poi.category === c.key
+                                                                return (
+                                                                    <DropdownMenuItem
+                                                                        key={c.key}
+                                                                        onClick={() => {
+                                                                            updateCategory(poi.id, c.key)
+                                                                        }}
+                                                                        className={cn(
+                                                                            "flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold cursor-pointer group/item",
+                                                                            isCur ? "bg-black/5 dark:bg-white/10 font-bold" : ""
+                                                                        )}
+                                                                    >
+                                                                        <div
+                                                                            className="w-6 h-6 rounded-lg flex items-center justify-center text-xs"
+                                                                            style={{ backgroundColor: `${c.color}20`, color: c.color }}
+                                                                        >
+                                                                            <span>{c.emoji}</span>
+                                                                        </div>
+                                                                        <span className="flex-1 truncate">{c.label}</span>
+                                                                        {isCur && <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />}
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => handleDeleteCustomCategory(c.key, e)}
+                                                                            title="刪除此自訂類別"
+                                                                            className="opacity-0 group-hover/item:opacity-100 hover:text-red-500 p-0.5 rounded transition-opacity"
+                                                                        >
+                                                                            <X className="w-3 h-3 text-slate-400 hover:text-red-500" />
+                                                                        </button>
+                                                                    </DropdownMenuItem>
+                                                                )
+                                                            })}
+                                                        </>
+                                                    )}
+
+                                                    {/* ＋ 新增自訂類別 */}
+                                                    <DropdownMenuSeparator />
+                                                    <DropdownMenuItem
+                                                        onClick={() => {
+                                                            setCustomModalTargetPoiId(poi.id)
+                                                        }}
+                                                        className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-bold text-[#E56E25] dark:text-amber-400 hover:bg-[#E56E25]/10 cursor-pointer"
+                                                    >
+                                                        <div className="w-6 h-6 rounded-lg flex items-center justify-center bg-[#E56E25]/10 text-[#E56E25]">
+                                                            <Plus className="w-3.5 h-3.5" />
+                                                        </div>
+                                                        <span>＋ 自訂新類別...</span>
+                                                    </DropdownMenuItem>
                                                 </DropdownMenuContent>
                                             </DropdownMenu>
 
@@ -972,6 +1079,14 @@ export function PoiPoolView({
                     )}
                 </DialogContent>
             </Dialog>
+
+            {/* 🏷️ 自訂類別彈窗 (Custom Category Modal) */}
+            <CustomCategoryModal
+                key={customModalTargetPoiId || "closed"}
+                isOpen={Boolean(customModalTargetPoiId)}
+                onClose={() => setCustomModalTargetPoiId(null)}
+                onSubmit={handleCustomCategorySubmit}
+            />
         </div>
     )
 }

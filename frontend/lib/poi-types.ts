@@ -2,7 +2,8 @@
  * POI Pool & Saved Places Type Definitions
  */
 
-export type POICategory = "attraction" | "food" | "cafe" | "shopping" | "hotel" | "transport" | "other"
+export type StandardPOICategory = "attraction" | "food" | "cafe" | "shopping" | "hotel" | "transport" | "other"
+export type POICategory = StandardPOICategory | (string & {})
 
 export interface POIItem {
     id: string

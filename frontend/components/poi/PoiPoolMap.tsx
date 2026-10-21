@@ -5,24 +5,15 @@ import Map, { Marker, Popup, NavigationControl, AttributionControl } from "react
 import type { MapRef } from "react-map-gl/maplibre"
 import "maplibre-gl/dist/maplibre-gl.css"
 import { setWorkerUrl } from "maplibre-gl"
-import { POIItem, POICategory } from "@/lib/poi-types"
+import { POIItem } from "@/lib/poi-types"
+import { parseCategory } from "@/lib/poi-category-protocol"
 import { MAP_STYLES } from "@/lib/constants"
-import { Landmark, Utensils, Coffee, ShoppingBag, Hotel, Train, Compass, MapPin, Plus, ExternalLink } from "lucide-react"
+import { MapPin, Plus, ExternalLink, Compass } from "lucide-react"
 import { cn, openExternalLink } from "@/lib/utils"
 import { useLanguage } from "@/lib/LanguageContext"
 
 if (typeof window !== "undefined") {
     setWorkerUrl("/maplibre/maplibre-gl-worker.mjs")
-}
-
-const CATEGORY_ICONS: Record<POICategory, React.ElementType> = {
-    attraction: Landmark,
-    food: Utensils,
-    cafe: Coffee,
-    shopping: ShoppingBag,
-    hotel: Hotel,
-    transport: Train,
-    other: Compass,
 }
 
 interface PoiPoolMapProps {
@@ -135,7 +126,8 @@ export default function PoiPoolMap({
 
                 {/* 📌 POI Markers */}
                 {validPois.map((p) => {
-                    const IconComp = CATEGORY_ICONS[p.category] || Compass
+                    const parsed = parseCategory(p.category)
+                    const IconComp = parsed.icon || Compass
                     const isSelected = p.id === (selectedPoiId || popupPoi?.id)
 
                     return (
@@ -153,6 +145,7 @@ export default function PoiPoolMap({
                             <div className="relative group cursor-pointer -translate-y-1 active:scale-95 transition-transform">
                                 {/* 圓圈圖示標籤 */}
                                 <div
+                                    style={parsed.isCustom && !isSelected && !p.is_pinned ? { borderColor: parsed.color } : undefined}
                                     className={cn(
                                         "w-8 h-8 rounded-full flex items-center justify-center shadow-lg transition-all border-2",
                                         isSelected
@@ -162,10 +155,15 @@ export default function PoiPoolMap({
                                             : "bg-white dark:bg-[#1E2927] text-[#1E2927] dark:text-[#E5EBEA] border-[#E56E25]/60 hover:scale-115 hover:border-[#E56E25]"
                                     )}
                                 >
-                                    <IconComp className="w-4 h-4" />
+                                    {parsed.isCustom ? (
+                                        <span className="text-xs leading-none select-none">{parsed.emoji}</span>
+                                    ) : (
+                                        <IconComp className="w-4 h-4" />
+                                    )}
                                 </div>
                                 {/* 針尖小倒三角 */}
                                 <div
+                                    style={parsed.isCustom && !isSelected && !p.is_pinned ? { borderTopColor: parsed.color } : undefined}
                                     className={cn(
                                         "w-0 h-0 border-l-4 border-l-transparent border-r-4 border-r-transparent border-t-[5px] mx-auto",
                                         isSelected ? "border-t-[#E56E25]" : p.is_pinned ? "border-t-amber-500" : "border-t-white dark:border-t-[#1E2927]"
@@ -191,6 +189,20 @@ export default function PoiPoolMap({
                         className="tabidachi-map-popup"
                     >
                         <div className="p-1 space-y-1.5 max-w-52.5 text-left">
+                            {(() => {
+                                const popupCat = parseCategory(popupPoi.category)
+                                return (
+                                    <div className="flex items-center gap-1.5">
+                                        <span
+                                            className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md"
+                                            style={{ backgroundColor: `${popupCat.color}20`, color: popupCat.color }}
+                                        >
+                                            <span>{popupCat.emoji || "📍"}</span>
+                                            <span>{popupCat.label}</span>
+                                        </span>
+                                    </div>
+                                )
+                            })()}
                             <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
                                 {popupPoi.title}
                             </h4>

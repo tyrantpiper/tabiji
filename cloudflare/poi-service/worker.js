@@ -49,8 +49,17 @@ async function batchInsertPois(db, userId, places, rawUrl) {
   const CHUNK_SIZE = 90;
   const allInserted = [];
 
-  for (let i = 0; i < places.length; i += CHUNK_SIZE) {
-    const chunk = places.slice(i, i + CHUNK_SIZE);
+  // 🛡️ 座標防禦過濾：嚴格剔除缺少合法數值經緯度的項目，防止 D1 NOT NULL 約束崩潰
+  const validPlaces = (places || []).filter(
+    (p) => p && typeof p.lat === "number" && typeof p.lng === "number" && !Number.isNaN(p.lat) && !Number.isNaN(p.lng)
+  );
+
+  if (validPlaces.length === 0) {
+    return [];
+  }
+
+  for (let i = 0; i < validPlaces.length; i += CHUNK_SIZE) {
+    const chunk = validPlaces.slice(i, i + CHUNK_SIZE);
     const statements = chunk.map((p) => {
       const id = crypto.randomUUID();
       return db.prepare(`
@@ -59,10 +68,13 @@ async function batchInsertPois(db, userId, places, rawUrl) {
           category, rating, user_notes, source_url, is_pinned, pin_color, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, lat, lng) DO UPDATE SET
-          title = excluded.title,
+          title = CASE 
+            WHEN user_poi_pool.source_url IS NULL OR user_poi_pool.source_url = excluded.source_url THEN excluded.title 
+            ELSE user_poi_pool.title 
+          END,
           address = COALESCE(excluded.address, user_poi_pool.address),
           user_notes = COALESCE(excluded.user_notes, user_poi_pool.user_notes),
-          source_url = excluded.source_url,
+          source_url = COALESCE(excluded.source_url, user_poi_pool.source_url),
           updated_at = excluded.updated_at
         RETURNING *
       `).bind(
@@ -394,8 +406,14 @@ export default {
         const id = catMatch[1];
         const body = await request.json().catch(() => ({}));
         const now = Date.now();
-        const validCategories = ["attraction", "food", "cafe", "shopping", "hotel", "transport", "other"];
-        const category = validCategories.includes(body.category) ? body.category : "attraction";
+        // 🛡️ 放行標準 7 大類別與合規之自訂協定 custom:<emoji>:<name>:<color>
+        const isValidCategory = (cat) => {
+          if (typeof cat !== "string") return false;
+          const standardCategories = ["attraction", "food", "cafe", "shopping", "hotel", "transport", "other"];
+          if (standardCategories.includes(cat)) return true;
+          return cat.startsWith("custom:") && cat.split(":").length >= 4;
+        };
+        const category = isValidCategory(body.category) ? body.category : "attraction";
         const stmt = env.DB.prepare(
           "UPDATE user_poi_pool SET category = ?, updated_at = ? WHERE id = ? AND user_id = ? RETURNING *"
         ).bind(category, now, id, userId);

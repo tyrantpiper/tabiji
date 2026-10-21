@@ -76,7 +76,8 @@ async def poi_resolve_link(request: PoiResolveLinkRequest):
     # 針對短網址判斷是否可能重定向為清單
     if not is_placelist and any(d in clean_url for d in ["goo.gl", "maps.app.goo.gl"]):
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=8.0) as client:
+            # 🛡️ 對齊下游清單 RPC 超時閾值 (12.0s)，防範行動網路下過早放棄造成誤導流至單點 POI
+            async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
                 head_resp = await client.get(clean_url, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
                 })
