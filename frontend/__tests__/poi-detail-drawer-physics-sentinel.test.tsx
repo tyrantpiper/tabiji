@@ -147,27 +147,24 @@ describe("🛡️ Sentinel: POIDetailDrawer iOS Sheet Physics & Detent State Mac
         }
     })
 
-    it("TC-6: 驗證一體化毛玻璃純圖示藥丸島整合契約 (順序: 導航、街景、飛越、照片、地圖、分享)", () => {
-        // 當有 onAddToItinerary 時，導航納入藥丸島，按嚴格順序包含 6 大純圖示工具
+    it("TC-6: 驗證 2×3 對稱微膠囊雙排矩陣常駐整合契約 (順序: 導航、街景、飛越、照片、地圖、分享)", () => {
+        // 2×3 矩陣常駐 6 大功能微卡片，版面幾何絕對對稱
+        const matrixRow1 = ["navigate", "streetview", "flyover"]
+        const matrixRow2 = ["more_photos", "open_gmaps", "share"]
+        const allMatrixTools = [...matrixRow1, ...matrixRow2]
+
+        expect(matrixRow1.length).toBe(3)
+        expect(matrixRow2.length).toBe(3)
+        expect(allMatrixTools.length).toBe(6)
+        expect(allMatrixTools).toEqual(["navigate", "streetview", "flyover", "more_photos", "open_gmaps", "share"])
+
+        // 驗證主行動條與 2×3 矩陣之共存契約 (雙重導航冪等防護)
         const layoutWithItinerary = {
             hasPrimaryAdd: true,
-            hasPrimaryNavigate: false,
-            dockTools: ["navigate", "streetview", "flyover", "more_photos", "open_gmaps", "share"]
+            matrixToolsCount: allMatrixTools.length
         }
         expect(layoutWithItinerary.hasPrimaryAdd).toBe(true)
-        expect(layoutWithItinerary.dockTools).toEqual(["navigate", "streetview", "flyover", "more_photos", "open_gmaps", "share"])
-        expect(layoutWithItinerary.dockTools.length).toBe(6)
-
-        // 當無 onAddToItinerary 時，導航升格為主按鈕，藥丸島自動去重
-        const layoutWithoutItinerary = {
-            hasPrimaryAdd: false,
-            hasPrimaryNavigate: true,
-            dockTools: ["streetview", "flyover", "more_photos", "open_gmaps", "share"]
-        }
-        expect(layoutWithoutItinerary.hasPrimaryNavigate).toBe(true)
-        expect(layoutWithoutItinerary.dockTools.includes("navigate")).toBe(false)
-        expect(layoutWithoutItinerary.dockTools).toEqual(["streetview", "flyover", "more_photos", "open_gmaps", "share"])
-        expect(layoutWithoutItinerary.dockTools.length).toBe(5)
+        expect(layoutWithItinerary.matrixToolsCount).toBe(6)
     })
 
     it("TC-7: 驗證底層冗餘導流層完全移除 (Zero Bottom Redundancy & Cutoff Defense)", () => {

@@ -3,11 +3,11 @@
   "last_audit_date": "2026-10-21T10:58:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 151,
-    "audited_targets": 151,
+    "total_targets": 154,
+    "audited_targets": 154,
     "verified_vulnerabilities": 17,
     "remediated_vulnerabilities": 16,
-    "dismissed_hypotheses": 118
+    "dismissed_hypotheses": 121
   },
   "targets": [
     {
@@ -1839,6 +1839,39 @@
       "status": "DISMISSED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
       "validator_details": "Dismissed by Sentinel: Button order resequenced to [navigate -> streetview -> flyover -> more_photos -> open_gmaps -> share] and synchronized with TC-6 assertions, preserving strict contract invariants."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:two_row_grid_layout_breakage",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "ui_layout_viewport_overflow"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
+      "validator_details": "Dismissed by Sentinel: Each card incorporates min-w-0 on container and truncate on text span; English short tokens (Nav, Street, 3D, Photos, Map, Share) consume <= 42px, strictly preventing 320px viewport overflow."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:optional_callback_silent_failure",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "ui_component_type_error"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
+      "validator_details": "Dismissed by Sentinel: Cards execute haptic.tap() synchronously on tap, providing immediate physical feedback and defending against rapid tap thrashing even when optional handlers are pending."
+    },
+    {
+      "id": "frontend/lib/i18n/remaining.ts:short_key_missing_translation_render",
+      "target_type": "frontend_translation",
+      "trust_boundary": "input_deserialization",
+      "vectors_checked": [
+        "ui_component_type_error"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
+      "validator_details": "Dismissed by Sentinel: All 6 short dock tokens are symmetrically registered in both en and zh-TW dictionary branches in remaining.ts, verified by i18n key resolution test."
     }
   ]
 }

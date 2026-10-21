@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:two_row_grid_layout_breakage",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 545,
+    "end_line": 645,
+    "attack_vector": "ui_layout_viewport_overflow",
+    "hypothesis": "Under extreme 320px screen width with English locale, cards in a 3-column grid lacking min-w-0 and truncate classes will be forced outward by text content, breaking out of the drawer viewport."
+  },
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:optional_callback_silent_failure",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 560,
+    "end_line": 615,
+    "attack_vector": "ui_component_type_error",
+    "hypothesis": "When optional callbacks onOpenStreetView or onFlyover are undefined, tapping cards without haptic or fallback feedback results in silent no-op, enticing user thrashing and rapid tap contention."
+  },
+  {
+    "id": "frontend/lib/i18n/remaining.ts:short_key_missing_translation_render",
+    "file_path": "frontend/lib/i18n/remaining.ts",
+    "start_line": 1,
+    "end_line": 150,
+    "attack_vector": "ui_component_type_error",
+    "hypothesis": "Adding 6 new short translation keys without synchronous parity in both en and zh-TW dictionaries will cause raw fallback key strings to leak into the production UI."
+  }
+]
