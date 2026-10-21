@@ -506,6 +506,66 @@
   - *Lesson*: 寬度受限的工具列切忌強行堆疊長文字。若需多功能排列，應堅決採用「純圖示 + 精準 Tooltip/aria-label」，或自然寬度流動膠囊（Pill Chips），嚴禁依賴強制 truncate 掩蓋排版缺陷。
 
 
+---
+
+## 🚀 Session 9: POI 景點抽屜「2×3 微膠囊雙排網格矩陣」重構與極致視覺工藝 (Two-Row Grid Matrix & 20px Icons)
+
+### 1. 痛點診斷與使用者直覺提議 (User Intuition & Co-Design)
+- **視覺與佈局痛點 (Single-Row Icon Shrinkage)**:
+  - 在 Session 8 將 Dock 升級為單排純圖示藥丸島後，使用者審視實際效果發現：單排 6 顆純圖示在手機橫向長條中顯得圖示偏小（16px / `w-4 h-4`）、單薄且略顯空洞。
+  - 使用者直覺提議：「如果把它變上下兩排呢，這樣也可以圖示大一點」。
+  - 「我們點進去就會自己顯示此地沒有啦，所以不用特別拿掉」——確立維持固定 2 排 × 3 列（常駐 6 顆卡片），版面幾何絕對對稱。
+- **共識收斂 (/grill-me ✕ /idea-to-spec)**:
+  - 規格書建立於 `docs/specs/features/poi-drawer-two-row-grid-spec.md`。
+  - 確定矩陣幾何架構：固定常駐 6 顆微膠囊卡片，2 排 × 3 列均分佈局。
+  - 圖示尺寸升級：由 16px 放大為 20px (`w-5 h-5`)，視覺重心與可點擊感顯著增強。
+  - 精簡雙字短標籤策略：繁體中文配置雙字短詞（`導航/街景/飛越/照片/地圖/分享`），英文配置極致短詞（`Nav/Street/3D/Photos/Maps/Share`）。
+  - 統一高級毛玻璃中性底：所有卡片統一採用 `bg-slate-50 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 rounded-xl h-11`，圖示保留專屬微色彩（靛青、翡翠綠、紫羅蘭、琥珀橙、寶藍、石墨灰）。
+
+---
+
+### 2. 架構突破與防衛工程 (Architectural Breakthrough & Defensiveness)
+
+1. **2×3 矩陣拓撲與流體約束 (Two-Row Grid Matrix Topology)**:
+   - 容器宣告 `grid grid-cols-3 gap-1.5 sm:gap-2 w-full touch-manipulation` 並阻斷 `onPointerDown` 事件冒泡。
+   - 卡片內部宣告 `flex items-center justify-center gap-1 sm:gap-1.5 py-2 px-1.5 sm:px-2.5 h-11 min-w-0`，文字 span 宣告 `text-[11px] sm:text-xs font-semibold tracking-tight truncate`。
+2. **iPhone SE 320px 極限排版幾何計算證明 (Geometric Clamping Proof)**:
+   - 視口 320px - 邊距 40px (px-5) = 280px 可用寬度。
+   - 3 欄扣除間隙 12px (2 * 6px) 後，單欄淨寬度為 89.3px。
+   - 單卡扣除 padding 12px (px-1.5) 與圖示間隔 24px (w-5 20px + gap 4px) 後，剩餘文字專屬空間為 53.3px。
+   - 繁中雙字「街景」佔 24px <= 53.3px (留白 29.3px, 安全率 222%)；英文 "Street" 佔 45px <= 53.3px (留白 8.3px, 安全率 118%)。徹底杜絕截斷與破版。
+3. **觸感反饋與防呆 (Defensive Feedback Loop)**:
+   - 點擊卡片同步調用 `haptic.tap()` 提供實體觸覺反饋。
+   - 對可選回調（如街景 `onOpenStreetView`、飛越 `onFlyover`）進行防呆保護，杜絕因無回調而靜默無響應引發之使用者盲目連擊。
+   - 移除頂部未使用之 `isMapillaryAvailable` import，達成 ESLint 0 警告底線。
+
+---
+
+### 3. 全鏈路驗證與品質成果 (Full-Stack Quality Gates)
+- **TypeScript**: `tsc --noEmit` 0 錯誤。
+- **ESLint**: 0 錯誤、0 警告。
+- **物理哨兵**: `frontend/__tests__/poi-detail-drawer-physics-sentinel.test.tsx` TC-6 更新為 2×3 矩陣 6 卡常駐契約驗證，7 項測試全綠通過。
+- **全量測試**: 前端 81 個測試檔、538 個測試 100% 通過；後端 198 個 pytest 測試全綠。
+- **資安台帳**: `docs/security/security-coverage-ledger.json` 擴展至 154 項目標，`validate_security_ledger.py` 守恆驗證通過。
+- **Git 交付**: Commit `27714dd` 成功推送至 GitHub `main`。
+
+---
+
+## 🏛️ 新增架構決策 (Session 9 ADR)
+
+- **AD-131: POI 景點抽屜 2×3 微膠囊雙排矩陣與雙字短標籤拓撲架構 (Two-Row Grid Matrix & Micro-Label Topology)**
+  - *Context*: 行動端單排工具列若塞入 6 顆純圖示易顯得圖示過小（16px）與空間空洞；若強塞完整字串又會截斷破版。
+  - *Decision*: 快捷工具列重構為 `grid-cols-3` 雙排矩陣，固定常駐 6 顆微膠囊卡片（Row 1: 空間抵達與沉浸；Row 2: 情報檢索與外部延伸）。圖示放大為 20px (`w-5 h-5`)，搭配雙字短標籤（`Nav/Street/3D/Photos/Maps/Share`），卡片內邊界嚴格配置 `min-w-0` 與 `truncate`。
+
+---
+
+## 🛡️ 新增失敗路徑與防禦反思 (Session 9 Failed Paths)
+
+- **FP-050: 純圖示單排按鈕過小與視覺空洞陷阱 (Single-Row Pure Icon Shrinkage Pitfall)**
+  - *Symptom*: 在手機視口中將 6 顆功能壓縮為單排純圖示，雖然避免了文字截斷，但圖示縮小至 16px (`w-4 h-4`) 後點擊目標過小，且橫向長條內部空間留白過多，呈現單薄感。
+  - *Lesson*: 當工具數量達到 6 顆時，應優先考慮 2 排 × 3 列雙排幾何對稱矩陣，將圖示放大為 20px 並輔以精簡雙字短詞，兼具視覺飽滿度、極高辨識度與 320px 零截斷之物理防護。
+
+
 ## 🧬 Machine-Executable Invariant Rules
 
 ```json
@@ -579,6 +639,13 @@
     "id": "INV-IOS-024",
     "title": "抽屜一體化毛玻璃純圖示藥丸島法則 (Segmented Frosted Glass Icon Capsule Invariance)",
     "content": "抽屜第一屏快捷工具列必須採用單一毛玻璃圓角膠囊底座 (rounded-2xl max-w-sm mx-auto h-12 backdrop-blur-md)，內部按鈕採用純圖示一字排開零滾動，嚴禁在固定窄卡片內堆疊文字導致 truncate 截斷；每個純圖示按鈕必須配備 localized title 與 aria-label，容器宣告 touch-manipulation 防止 WebKit 300ms 點擊延遲。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-IOS-025",
+    "title": "POI 抽屜 2×3 微膠囊雙排矩陣與極限寬度防護法則 (Two-Row Grid Matrix & Viewport Clamping Invariance)",
+    "content": "底抽二級快捷操作列採用 2 排 × 3 列網格矩陣 (grid grid-cols-3 gap-1.5 sm:gap-2) 常駐 6 顆微卡片；圖示規格統一為 20px (w-5 h-5)，文字標籤嚴格使用精簡雙字短詞 (繁中雙字 / 英文 <=6 字母)；容器與卡片全面配置 min-w-0 與 truncate，並宣告 touch-manipulation 與 onPointerDown stopPropagation，保證 iPhone SE 320px 螢幕下字串零截斷且手勢互不干擾。"
   }
 ]
 ```
