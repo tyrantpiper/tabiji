@@ -20,6 +20,7 @@
 - **解耦按鈕 DOM 架構**: HTML5 嚴禁 <button> 嵌套 <button>。卡片點擊與操作列按鈕在 DOM 層級解耦為同級 Sibling 節點。
 - **無狀態銷毀的視圖動畫架構 (Zero-Remount Architecture)**: motion.div 採靜態標識搭配屬性位移，主頁面常駐不銷毀，達成 0 重複請求與 100% 滾動記憶。
 - **iOS 全域雙向滑動轉場與觸控防衛**: app-shell.tsx 導入方向感知索引與彈簧滑入 (x: ±28px)；全域注入 select-none，底部導航搭配 haptic.selection()。
+- **純函數空間索引拓撲與零漂移視差法則 (Tab Spatial Index Topology & Parallax Invariance)**: 分頁滑動轉場嚴禁依賴組件歷史內部狀態。必須透過 TAB_INDICES 純量索引映射與 calculateTabOffset 純函數比對；當任一分頁非登記分頁或啟用 reduced-motion 時位移恆定歸 0，保證 100% 空間物理確定性且無方向漂移。app-shell 調用端以封閉枚舉字面量呼叫，外部深層連結以 instant 意圖早退歸零。
 - **合成點擊與拖曳手勢競態防衛**: hasMovedRef 追蹤位移並在 handleDragEnd 設置 80ms 延遲釋放閥，徹底杜絕拖曳放開手指誤開面板。
 - **輸入法組合態攔截 (IME Composition Guard)**: 中日文選字時在 onKeyDown 嚴格掛載 if (e.nativeEvent.isComposing) return，防止提前發送。
 - **導覽列原生 CSS 暗黑適配優先**: 核心控制項背景邊框以 Tailwind dark: 類別接管，杜絕 Hydration 前色彩跳動。

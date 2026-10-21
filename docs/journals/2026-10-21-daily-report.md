@@ -566,6 +566,54 @@
   - *Lesson*: 當工具數量達到 6 顆時，應優先考慮 2 排 × 3 列雙排幾何對稱矩陣，將圖示放大為 20px 並輔以精簡雙字短詞，兼具視覺飽滿度、極高辨識度與 320px 零截斷之物理防護。
 
 
+---
+
+# 🚀 2026-10-21 Session 10 增補記錄：全景知識點結晶化、空間拓撲對抗審查與資安台帳閉環 (Knowledge Consolidation, Spatial Topology Adversarial Audit & Security Ledger Convergence)
+
+> **核心目標**：全面復盤今日 10 大研發會話產生的架構果實，萃取未固化之核心知識點；調度 Security Sentinel (`runner.py` ✕ `agy.exe -p --sandbox`) 執行物理沙盒證偽審查；完成領域知識庫 GC 與台帳 157 筆確定性數學守恆驗收。
+
+### 1. 核心成果與架構突破 (Key Architectural Breakthroughs)
+
+1. **跨會話全景知識點提煉與 3-Tier 大腦固化**：
+   - 盤點 Stanford CS 329Z 實地筆記、Google Maps RPC 脫殼、Cloudflare D1 Polyglot Persistence 與自訂類別協定。
+   - 提煉 5 大未固化核心架構決策並路由注入 `.agents/domains/*.md`。
+   - 執行 GC 垃圾回收：拔除 `backend_concurrency.md` 第 18 行冗餘條目，保持領域知識庫絕對純淨。
+
+2. **空間拓撲純函數物理對抗審核 (Security Sentinel Confrontation)**：
+   - 審查 `spatial-tab-topology.ts`，證偽出未登記分頁使用 `?? 0` 導致雙向轉場恆定回傳 `-28px` 的反對稱性破缺漏洞。
+   - 依據 Human Gate 裁決落實 **方案 A (Closed-Set Invariance)**：確認 `app-shell.tsx` 調用端均為編譯期封閉枚舉字面量，且外部深層連結由 `intent === 'instant'` 守衛早退歸零，保留原始碼零變更，於台帳將其標記為 `DISMISSED`。
+
+3. **資安覆蓋台帳擴展至 157 筆與數學守恆驗收**：
+   - 更新 `docs/security/security-coverage-ledger.json`，審核目標數由 154 推進至 157。
+   - 產出獨立物理沙盒審查報表 `docs/security/reports/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md`。
+   - 執行 `validate_security_ledger.py` 驗收：16 Remediated + 17 Verified + 124 Dismissed = 157，達成 100% 確定性守恆。
+
+---
+
+## 🏛️ 新增架構決策 (Session 10 ADR)
+
+- **AD-132: Google Maps Web RPC 脫殼與 XSSI 容錯防護法則 (Google Maps RPC & XSSI Stripping Invariance)**
+  - *Context*: Google Maps 公開 Web 端點帶有 XSSI 偽裝前綴 `)]}'\n`，且可能在遭遇 429 或驗證碼挑戰時回傳 HTML。
+  - *Decision*: 存取 Web 端點前必須以正則 `re.sub(r"^\)\]\}'\s*", "", text)` 脫除防跨站前綴；解析前由頂層 try-except 攔截 HTML 標頭以防 429/CAPTCHA 引發 `JSONDecodeError` 崩潰；自稠密陣列 d6 提取座標 (`d6[9][2..3]`) 與標題 (`d6[11]`)，官方 Place ID 統一採 `^ChIJ[A-Za-z0-9_-]{20,}$` 邊界掃描萃取。
+
+- **AD-133: 兩階段意圖路由與動態工具門控法則 (Two-Stage Intent Routing & Dynamic Tool Gating)**
+  - *Context*: 行動端旅客 Prompt 短小（中位數 18 tokens），若每輪無差別注入全量工具 Schema（~2,180 tokens）會引發 2 秒以上 KV-Cache 延遲與嚴重的工具注意力稀釋誤觸。
+  - *Decision*: 採 Stage 1 Fast-Path 正則分類器 (<1ms, 嚴格防禦 ReDoS) 與 Stage 2 動態門控：閒聊請求注入 0 工具，明確意圖僅注入單一對應 Schema，將首包延遲 TTFT 壓制於 400ms 內。
+
+- **AD-134: 邊緣 D1 與核心 Supabase 異構雙庫權責劃分法則 (Edge-Core Polyglot Persistence Invariance)**
+  - *Context*: 邊緣資料庫 (Cloudflare D1) 與核心主庫 (Supabase PostgreSQL) 若無明確邊界，易引發 User 表雙重維護與分散式事務不一致。
+  - *Decision*: D1 專責承載無狀態、高頻讀取之全域個人 POI 口袋庫 (sub-10ms 邊緣直出，以 `user_uuid` 建立 `idx_poi_user` 複合索引防 5M 全表掃描計費巨坑)；Supabase 專責多日行程關聯時間軸與協作；景點加入行程時採副本分離，D1 原點永不刪除，徹底杜絕跨庫分散式事務。
+
+- **AD-135: 純函數空間索引拓撲與零漂移視差法則 (Tab Spatial Index Topology & Parallax Invariance)**
+  - *Context*: 行動端分頁轉場若依賴可變歷史方向狀態，容易在深層連結或熱模組替換時發生方向漂移。
+  - *Decision*: 分頁滑動轉場嚴禁依賴組件歷史內部狀態。必須透過 `TAB_INDICES` 純量索引映射與 `calculateTabOffset` 純函數比對；當任一分頁非登記分頁或啟用 reduced-motion 時位移恆定歸 0，保證 100% 空間物理確定性且無方向漂移。
+
+- **AD-136: 記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**
+  - *Context*: 集中式自訂類別表增加資料庫維護負擔，且在離線與快取同步時容易發生資料割裂。
+  - *Decision*: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 `custom:<emoji>:<name>:<colorHex>` 字串中；UI 篩選器透過純函數 `extractCategoriesFromPois` 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
+
+---
+
 ## 🧬 Machine-Executable Invariant Rules
 
 ```json
@@ -646,6 +694,41 @@
     "id": "INV-IOS-025",
     "title": "POI 抽屜 2×3 微膠囊雙排矩陣與極限寬度防護法則 (Two-Row Grid Matrix & Viewport Clamping Invariance)",
     "content": "底抽二級快捷操作列採用 2 排 × 3 列網格矩陣 (grid grid-cols-3 gap-1.5 sm:gap-2) 常駐 6 顆微卡片；圖示規格統一為 20px (w-5 h-5)，文字標籤嚴格使用精簡雙字短詞 (繁中雙字 / 英文 <=6 字母)；容器與卡片全面配置 min-w-0 與 truncate，並宣告 touch-manipulation 與 onPointerDown stopPropagation，保證 iPhone SE 320px 螢幕下字串零截斷且手勢互不干擾。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-BACKEND-026",
+    "title": "Google Maps Web RPC 脫殼與 XSSI 容錯防護法則 (Google Maps RPC & XSSI Stripping Invariance)",
+    "content": "存取 Web 端點前必須以 re.sub(r\"^\\)\\]\\}'\\s*\", \"\", text) 脫除防跨站前綴；解析前由頂層 try-except 攔截 HTML 標頭以防 429/CAPTCHA 引發 JSONDecodeError 崩潰；自稠密陣列 d6 提取座標 (d6[9][2..3]) 與標題 (d6[11])，官方 Place ID 統一採 ^ChIJ[A-Za-z0-9_-]{20,}$ 邊界掃描萃取。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-BACKEND-027",
+    "title": "兩階段意圖路由與動態工具門控法則 (Two-Stage Intent Routing & Dynamic Tool Gating)",
+    "content": "為杜絕移動端 2,180 tokens 全量工具注入造成的 2s+ KV-Cache 延遲與工具誤觸，必須採用 Stage 1 Fast-Path 正則分類器 (<1ms, 嚴格防禦 ReDoS) 與 Stage 2 動態門控：閒聊請求注入 0 工具，明確意圖僅注入單一對應 Schema，將 TTFT 壓制於 400ms 內。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-BACKEND-028",
+    "title": "邊緣 D1 與核心 Supabase 異構雙庫權責劃分法則 (Edge-Core Polyglot Persistence Invariance)",
+    "content": "D1 專責承載無狀態、高頻讀取之全域個人 POI 口袋庫 (sub-10ms 邊緣直出，以 user_uuid 建立 idx_poi_user 複合索引防 5M 全表掃描計費巨坑)；Supabase 專責多日行程關聯時間軸與協作；景點加入行程時採副本分離，D1 原點永不刪除，徹底杜絕跨庫分散式事務。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-IOS-029",
+    "title": "純函數空間索引拓撲與零漂移視差法則 (Tab Spatial Index Topology & Parallax Invariance)",
+    "content": "分頁滑動轉場嚴禁依賴組件歷史內部狀態。必須透過 TAB_INDICES 純量索引映射與 calculateTabOffset 純函數比對；當任一分頁非登記分頁或啟用 reduced-motion 時位移恆定歸 0，保證 100% 空間物理確定性且無方向漂移。app-shell 調用端以封閉枚舉字面量呼叫，外部深層連結以 instant 意圖早退歸零。"
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-STATE-030",
+    "title": "記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)",
+    "content": "自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。"
   }
 ]
 ```

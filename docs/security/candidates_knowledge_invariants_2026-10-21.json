@@ -1,0 +1,42 @@
+[
+  {
+    "id": "frontend/lib/spatial-tab-topology.ts:unregistered_tab_direction_inversion",
+    "file_path": "frontend/lib/spatial-tab-topology.ts",
+    "target_type": "frontend_utility",
+    "trust_boundary": "browser_runtime",
+    "start_line": 1,
+    "end_line": 48,
+    "attack_vector": "spatial_parity_asymmetry",
+    "vectors_checked": [
+      "unregistered_tab_direction_inversion",
+      "spatial_parity_asymmetry"
+    ],
+    "hypothesis": "When targetTab or currentActiveTab is not present in TAB_INDICES, falling back to 0 via '?? 0' causes targetIdx > currentIdx (0 > 0) to evaluate to false, returning -28px in both directions when transitioning to/from itinerary (index 0), breaking spatial determinism."
+  },
+  {
+    "id": "backend/services/link_resolver.py:rpc_xssi_non_json_html_resilience",
+    "file_path": "backend/services/link_resolver.py",
+    "target_type": "backend_service",
+    "trust_boundary": "edge_to_upstream",
+    "start_line": 136,
+    "end_line": 215,
+    "attack_vector": "deserialization_resilience",
+    "vectors_checked": [
+      "rpc_xssi_html_challenge_deserialization_crash"
+    ],
+    "hypothesis": "In parse_google_place_rpc_payload, when Google Maps preview/place RPC returns an HTML challenge or 429 page instead of JSON, regex stripping and json.loads could raise uncaught JSONDecodeError if not shielded by top-level try-except."
+  },
+  {
+    "id": "frontend/lib/poi-category-protocol.ts:category_harvesting_display_name_collision",
+    "file_path": "frontend/lib/poi-category-protocol.ts",
+    "target_type": "frontend_protocol",
+    "trust_boundary": "state_synchronization",
+    "start_line": 80,
+    "end_line": 142,
+    "attack_vector": "state_synchronization",
+    "vectors_checked": [
+      "category_harvesting_display_name_collision"
+    ],
+    "hypothesis": "harvestCustomCategories keys POIs by exact protocol string rather than display name, potentially causing visual duplicate labels in filter chips if users create identical names with different emojis or colors."
+  }
+]

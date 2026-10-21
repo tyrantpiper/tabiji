@@ -3,11 +3,11 @@
   "last_audit_date": "2026-10-21T10:58:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 154,
-    "audited_targets": 154,
+    "total_targets": 157,
+    "audited_targets": 157,
     "verified_vulnerabilities": 17,
     "remediated_vulnerabilities": 16,
-    "dismissed_hypotheses": 121
+    "dismissed_hypotheses": 124
   },
   "targets": [
     {
@@ -1872,6 +1872,40 @@
       "status": "DISMISSED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
       "validator_details": "Dismissed by Sentinel: All 6 short dock tokens are symmetrically registered in both en and zh-TW dictionary branches in remaining.ts, verified by i18n key resolution test."
+    },
+    {
+      "id": "frontend/lib/spatial-tab-topology.ts:unregistered_tab_direction_inversion",
+      "target_type": "frontend_utility",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "unregistered_tab_direction_inversion",
+        "spatial_parity_asymmetry"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
+      "validator_details": "Dismissed by Human/Sentinel (Option A): In current app-shell architecture, call sites exclusively pass compile-time literals from TAB_INDICES ('itinerary', 'info', 'tools', 'profile'), and deep link router early-exits via intent === 'instant' guard (L41). Closed-set state machine eliminates trigger path in production."
+    },
+    {
+      "id": "backend/services/link_resolver.py:rpc_xssi_non_json_html_resilience",
+      "target_type": "backend_service",
+      "trust_boundary": "edge_to_upstream",
+      "vectors_checked": [
+        "rpc_xssi_html_challenge_deserialization_crash"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
+      "validator_details": "Dismissed by Sentinel: parse_google_place_rpc_payload wraps regex and json.loads inside top-level try...except Exception, safely catching json.JSONDecodeError on HTML challenge/429 pages and returning None."
+    },
+    {
+      "id": "frontend/lib/poi-category-protocol.ts:category_harvesting_display_name_collision",
+      "target_type": "frontend_protocol",
+      "trust_boundary": "state_synchronization",
+      "vectors_checked": [
+        "category_harvesting_display_name_collision"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
+      "validator_details": "Dismissed by Sentinel: Keying by exact protocol string (p.category) is essential for filtering integrity. Collapsing by label would discard distinct categories and drop associated POIs. True duplicates with identical emoji/label/color are safely deduplicated by map.has()."
     }
   ]
 }

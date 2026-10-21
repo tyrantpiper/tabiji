@@ -14,6 +14,7 @@
 - **虛擬化清單篩選器穿透機制**: 長清單尋址時自動歸零前置篩選器，調用 virtuosoRef.current.scrollToIndex 尋址。
 - **全域通知連動重新整理與標頭瘦身**: 徹底移除所有 ZenRenew 按鈕。通知鈴鐺展開時 2000ms 節流廣播 tabidachi-trigger-refresh；模組單例戳記必須匯出 __resetGlobalRefreshTimestampForTesting。
 - **全域景點口袋庫 (Global POI Pocket & D1 Topology)**: 抽屜、全螢幕清單與口袋地圖結合 Cloudflare D1 微服務與 Next.js 代理，支援 SSRF 防護與跨應用互通。
+- **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
 - **FP-004 (SWR 快取鍵錯位)**: 使用 new Date().toISOString() 在 UTC+8 深夜產生前一天日期。所有日期快取鍵一律採用 new Date().toLocaleDateString('en-CA')。
