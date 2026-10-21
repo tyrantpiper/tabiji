@@ -1,7 +1,16 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { useState, useEffect, useCallback } from "react"
+import { motion, AnimatePresence, type PanInfo } from "framer-motion"
+
+export type POIDrawerDetent = "peek" | "half" | "full"
+
+const SPRING_CONFIG = {
+    type: "spring",
+    stiffness: 380,
+    damping: 32,
+    mass: 0.8,
+} as const
 import {
     X, MapPin, Phone, Globe, Clock,
     Navigation, Share2, Plus, Sparkles,
@@ -91,7 +100,7 @@ export default function POIDetailDrawer({
     const [aiError, setAiError] = useState<string | null>(null)
     const [selectedTime, setSelectedTime] = useState(suggestedTime)
     const [isSharing, setIsSharing] = useState(false)
-    const [isMinimized, setIsMinimized] = useState(false)
+    const [detent, setDetent] = useState<POIDrawerDetent>("half")
 
     // 🚀 Phase 3 Logic Guards (Unified Flow)
     const isLegacy = aiData && !('status' in aiData)
@@ -106,14 +115,69 @@ export default function POIDetailDrawer({
     const showWikipediaHint = effectiveStatus === "PARTIAL_SUCCESS" && !hasCulturalDesc
     const isFailed = effectiveStatus === "FAILED"
 
-    // 🛡️ 狀態重置：當 POI 變更或關閉時清除舊資料
+    // 🛡️ 狀態重置：當 POI 變更或關閉時清除舊資料並回歸半屏預設
     useEffect(() => {
         setAiData(null)
         setAiError(null)
         setAiLoading(false)
         setSelectedTime(suggestedTime)
-        setIsMinimized(false)  // 🆕 重置最小化狀態
+        setDetent("half")
     }, [poi?.name, poi?.lat, poi?.lng, suggestedTime, isOpen])
+
+    // 🖐️ iOS 智慧手勢吸附判定
+    const handleDragEnd = useCallback(
+        (_: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+            const { offset, velocity } = info
+
+            // 1. 向下快速甩動 (velocity.y > 550) 或超大幅度下拉 (offset.y > 140) -> 關閉
+            if (velocity.y > 550 || offset.y > 140) {
+                haptic.tap()
+                onClose()
+                return
+            }
+
+            // 2. Full 檔位邏輯
+            if (detent === "full") {
+                if (offset.y > 45 || velocity.y > 200) {
+                    haptic.selection()
+                    setDetent("half")
+                }
+                return
+            }
+
+            // 3. Half 檔位邏輯
+            if (detent === "half") {
+                if (offset.y < -45 || velocity.y < -200) {
+                    haptic.selection()
+                    setDetent("full")
+                } else if (offset.y > 50 || velocity.y > 200) {
+                    haptic.selection()
+                    setDetent("peek")
+                }
+                return
+            }
+
+            // 4. Peek 檔位邏輯
+            if (detent === "peek") {
+                if (offset.y < -30 || velocity.y < -150) {
+                    haptic.selection()
+                    setDetent("half")
+                } else if (offset.y > 45) {
+                    haptic.tap()
+                    onClose()
+                }
+                return
+            }
+        },
+        [detent, haptic, onClose]
+    )
+
+    // 視窗高度映射：isInternal (地圖容器內) 採百分比，全域模式採 vh
+    const heightClass = (() => {
+        if (detent === "peek") return "h-[110px]"
+        if (detent === "full") return isInternal ? "h-[92%]" : "h-[90vh]"
+        return isInternal ? "h-[56%] min-h-[360px]" : "h-[58vh] min-h-[360px]"
+    })()
 
     if (!poi) return null
 
@@ -223,61 +287,129 @@ export default function POIDetailDrawer({
         <AnimatePresence>
             {isOpen && (
                 <>
-                    {/* 背景遮罩 - 最小化時隱藏 */}
-                    {!isMinimized && (
+                    {/* 1. 階梯式背景遮罩 (Peek 完全無遮罩可操作地圖, Half 輕遮罩, Full 高斯模糊) */}
+                    {detent !== "peek" && (
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            onClick={onClose}
-                            className={`${isInternal ? 'absolute' : 'fixed'} inset-0 bg-black/50 ${isInternal ? 'z-40' : 'z-100'}`}
+                            transition={{ duration: 0.2 }}
+                            onClick={() => {
+                                haptic.tap()
+                                if (detent === "full") {
+                                    setDetent("half")
+                                } else {
+                                    onClose()
+                                }
+                            }}
+                            className={`${isInternal ? 'absolute' : 'fixed'} inset-0 transition-colors duration-300 ${isInternal ? 'z-40' : 'z-100'} ${detent === "full" ? 'bg-black/50 backdrop-blur-sm' : 'bg-black/20'}`}
                         />
                     )}
 
-                    {/* Drawer 主體 */}
+                    {/* 2. Drawer 主體面板 */}
                     <motion.div
                         initial={{ y: "100%" }}
                         animate={{ y: 0 }}
                         exit={{ y: "100%" }}
-                        transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                        className={`${isInternal ? 'absolute' : 'fixed'} bottom-0 left-0 right-0 ${isInternal ? 'z-50 border-t border-x border-slate-200/80 dark:border-slate-800' : 'z-100 shadow-2xl border-t border-slate-200/80 dark:border-slate-800'} bg-white/96 dark:bg-slate-900/96 backdrop-blur-xl saturate-180 shadow-[inset_0_1.5px_1px_0_rgba(255,255,255,0.8),0_-8px_32px_rgba(0,0,0,0.12)] dark:shadow-[inset_0_1px_0.5px_0_rgba(255,255,255,0.1),0_-8px_32px_rgba(0,0,0,0.3)] rounded-t-3xl overflow-hidden transition-all ${isMinimized ? 'max-h-27.5' : (isInternal ? 'max-h-[70%]' : 'max-h-[85vh]')}`}
+                        transition={SPRING_CONFIG}
+                        className={`${isInternal ? 'absolute' : 'fixed'} bottom-0 left-0 right-0 ${isInternal ? 'z-50 border-t border-x border-slate-200/80 dark:border-slate-800' : 'z-100 shadow-2xl border-t border-slate-200/80 dark:border-slate-800'} bg-white/96 dark:bg-slate-900/96 backdrop-blur-xl saturate-180 shadow-[inset_0_1.5px_1px_0_rgba(255,255,255,0.8),0_-8px_32px_rgba(0,0,0,0.12)] dark:shadow-[inset_0_1px_0.5px_0_rgba(255,255,255,0.1),0_-8px_32px_rgba(0,0,0,0.3)] rounded-t-3xl overflow-hidden flex flex-col ${heightClass} transition-[height] duration-300 ease-out`}
                     >
-                        {/* 🆕 拖曳把手 - 點擊切換最小化 */}
-                        <button
-                            onClick={() => setIsMinimized(!isMinimized)}
-                            className="w-full flex flex-col items-center pt-3 pb-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer group"
+                        {/* 3. 頂部拖曳把手與操作列 (Touch Delegation for Drag) */}
+                        <motion.div
+                            drag="y"
+                            dragConstraints={{ top: 0, bottom: 0 }}
+                            dragElastic={{ top: 0.1, bottom: 0.6 }}
+                            onDragEnd={handleDragEnd}
+                            className="w-full pt-2.5 pb-2 px-4 flex flex-col items-center cursor-grab active:cursor-grabbing select-none shrink-0"
                         >
-                            <div className="w-12 h-1.5 bg-slate-300/80 dark:bg-slate-600/80 rounded-full group-hover:bg-slate-400 dark:group-hover:bg-slate-500 shadow-[inset_0_1px_1px_rgba(0,0,0,0.1)] transition-colors" />
-                            <span className="text-xs text-slate-400 mt-1 group-hover:text-slate-600 transition-colors">
-                                {isMinimized ? t('poi_expand') : t('poi_collapse')}
-                            </span>
-                        </button>
+                            {/* iOS Drag Pill - 點擊可在 peek 與 half 之間快速切換 */}
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    haptic.selection()
+                                    setDetent(prev => prev === "peek" ? "half" : "peek")
+                                }}
+                                className="py-1 px-4 -my-1 cursor-pointer focus:outline-none"
+                                aria-label="Toggle Detent"
+                            >
+                                <div className="w-11 h-1.5 rounded-full bg-slate-300/80 dark:bg-slate-600/80 hover:bg-slate-400 dark:hover:bg-slate-500 transition-colors shadow-[inset_0_1px_1px_rgba(0,0,0,0.1)]" />
+                            </button>
 
-                        {/* 關閉按鈕 */}
-                        <button
-                            onClick={() => { onClose(); setIsMinimized(false); }}
-                            className="absolute top-4 right-4 p-2 rounded-full hover:bg-slate-100/80 dark:hover:bg-slate-800/80 transition-all active:scale-90 cursor-pointer"
-                        >
-                            <X className="w-5 h-5" />
-                        </button>
+                            {/* 頂部操作列：分類標籤、檔位切換按鈕、關閉按鈕 */}
+                            <div className="w-full flex items-center justify-between mt-1 px-1">
+                                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tracking-wide flex items-center gap-1.5 min-w-0">
+                                    <span className="shrink-0">{poi.type === 'cluster' ? '📑' : getTypeIcon(poi.type)}</span>
+                                    <span className="truncate max-w-35 sm:max-w-50">
+                                        {poi.type === 'cluster'
+                                            ? (poi.clusterItems ? `群聚清單 (${poi.clusterItems.length})` : poi.name)
+                                            : poi.name}
+                                    </span>
+                                </span>
 
-                        {/* 🆕 最小化時只顯示標題 */}
-                        {isMinimized ? (
-                            <div className="px-6 pb-4 flex items-center gap-3">
-                                <span className="text-2xl">{getTypeIcon(poi.type)}</span>
-                                <div className="flex-1 min-w-0">
-                                    <h3 className="font-bold text-slate-900 dark:text-white truncate">{poi.name}</h3>
-                                    <p className="text-xs text-slate-500 truncate">{poi.address || poi.type}</p>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    {/* 展開/收合檔位按鈕 */}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            haptic.selection()
+                                            setDetent(prev => {
+                                                if (prev === "peek") return "half"
+                                                if (prev === "half") return "full"
+                                                return "half"
+                                            })
+                                        }}
+                                        className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
+                                    >
+                                        {detent === "full" ? "半屏" : (detent === "half" ? "全屏" : "展開")}
+                                    </button>
+
+                                    {/* 圓形關閉按鈕 */}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            haptic.tap()
+                                            onClose()
+                                        }}
+                                        className="p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all active:scale-90 cursor-pointer"
+                                        aria-label="Close"
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </button>
                                 </div>
                             </div>
+                        </motion.div>
+
+                        {/* 4. 內容主體區 */}
+                        {detent === "peek" ? (
+                            /* 🆕 PEEK 最小化狀態 (保留原本收起的精練特色) */
+                            <div
+                                onClick={() => {
+                                    haptic.selection()
+                                    setDetent("half")
+                                }}
+                                className="px-5 pb-3 flex items-center justify-between gap-3 cursor-pointer select-none"
+                            >
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">{poi.name}</h3>
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-medium shrink-0">
+                                            {poi.type}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-500 truncate mt-0.5">{poi.address || poi.type || "點擊或上滑展開詳情"}</p>
+                                </div>
+                                <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 shrink-0">
+                                    向上展開 ↑
+                                </span>
+                            </div>
                         ) : poi.type === 'cluster' ? (
-                            /* 🆕 CLUSTER LIST VIEW (2026 Selection Menu) */
-                            <div className="px-6 pb-8 space-y-4">
+                            /* 🆕 CLUSTER LIST VIEW (群聚清單流式滾動) */
+                            <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-4">
                                 <div className="flex items-center gap-2 mb-2">
                                     <div className="w-1.5 h-6 bg-indigo-500 rounded-full" />
                                     <h3 className="text-lg font-black text-slate-900 dark:text-white">{poi.name}</h3>
                                 </div>
-                                <div className={`grid gap-2 overflow-y-auto ${isInternal ? 'max-h-55' : 'max-h-[50vh]'} pr-1`}>
+                                <div className="grid gap-2 pr-1">
                                     {poi.clusterItems?.map((item, idx) => (
                                         <button
                                             key={item.id || idx}
@@ -315,7 +447,8 @@ export default function POIDetailDrawer({
                                 <p className="text-[10px] text-slate-400 text-center italic">{t('poi_tap_to_view')}</p>
                             </div>
                         ) : (
-                            <div className={`px-6 pb-6 space-y-4 overflow-y-auto ${isInternal ? 'max-h-60' : 'max-h-[calc(85vh-100px)]'}`}>
+                            /* 🆕 POI DETAIL VIEW (景點詳情流式滾動) */
+                            <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-4">
                                 {/* ========== Layer 1: OSM 骨架層 ========== */}
 
                                 {/* Header */}
