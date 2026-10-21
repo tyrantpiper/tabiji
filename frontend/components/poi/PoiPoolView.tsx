@@ -258,17 +258,10 @@ export function PoiPoolView({
                     >
                         <ChevronLeft className="w-5 h-5 -ml-0.5" />
                     </button>
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <h1 className="text-base font-bold text-[#1E2927] dark:text-[#E5EBEA] tracking-tight flex items-center gap-1.5">
-                                <Bookmark className="w-4 h-4 fill-amber-500/30 text-[#E56E25] dark:text-amber-400" />
-                                <span>{t('poi_drawer_title') || "全域景點口袋庫"}</span>
-                            </h1>
-                        </div>
-                        <p className="text-[11px] text-[#5C6B68] dark:text-[#A2B1AE] truncate max-w-60 sm:max-w-xs">
-                            {currentTrip ? currentTrip.title : (t('poi_drawer_desc') || "儲存喜愛地點，隨時排入行程")}
-                        </p>
-                    </div>
+                    <h1 className="text-base font-bold text-[#1E2927] dark:text-[#E5EBEA] tracking-tight flex items-center gap-1.5">
+                        <Bookmark className="w-4 h-4 fill-amber-500/30 text-[#E56E25] dark:text-amber-400" />
+                        <span>{t('poi_drawer_title') || "全域景點口袋庫"}</span>
+                    </h1>
                 </div>
 
                 {/* 📊 統計徽章 */}
