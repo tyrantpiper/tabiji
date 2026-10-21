@@ -1,0 +1,14 @@
+[
+  {
+    "id": "backend/tests/test_supabase_grants_sentinel.py:multiline_and_role_order_false_positive",
+    "file_path": "backend/tests/test_supabase_grants_sentinel.py",
+    "attack_vector": "ci_pipeline_denial_of_service",
+    "hypothesis": "Regex pattern `GRANT .* ON` lacks re.DOTALL and requires `authenticated` immediately after `TO`. When standard multi-line SQL or official Supabase templates (`TO anon, authenticated;`) are used in new migrations, the sentinel falsely flags valid migrations as security violations, breaking CI builds."
+  },
+  {
+    "id": "backend/tests/test_supabase_grants_sentinel.py:rls_pattern_syntax_rigidity",
+    "file_path": "backend/tests/test_supabase_grants_sentinel.py",
+    "attack_vector": "static_analysis_evasion_or_false_rejection",
+    "hypothesis": "RLS activation pattern `ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY` rejects standard defensive SQL variants containing `IF EXISTS` or `ONLY`, rejecting valid migrations."
+  }
+]

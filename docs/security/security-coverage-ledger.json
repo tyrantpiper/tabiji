@@ -1,15 +1,79 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-21T10:58:00Z",
+  "last_audit_date": "2026-10-21T16:15:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 157,
-    "audited_targets": 157,
+    "total_targets": 163,
+    "audited_targets": 163,
     "verified_vulnerabilities": 17,
-    "remediated_vulnerabilities": 16,
-    "dismissed_hypotheses": 124
+    "remediated_vulnerabilities": 21,
+    "dismissed_hypotheses": 125
   },
   "targets": [
+    {
+      "id": "backend/tests/test_supabase_grants_sentinel.py:multiline_and_role_order_false_positive",
+      "target_type": "ci_sentinel_test",
+      "trust_boundary": "internal_developer_tooling",
+      "vectors_checked": ["ci_pipeline_denial_of_service", "regex_dotall_omission", "role_order_rigidity"],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_regex_hardening.md",
+      "validator_details": "Confirmed by Sentinel: Missing re.DOTALL and rigid role placement causes valid multiline or multi-role GRANT statements to fail match and break CI builds.",
+      "remediated_at": "2026-10-21T16:18:00Z",
+      "resolution": "Remediated in test_supabase_grants_sentinel.py: Hardened grant_pattern and view_grant_pattern using [\\s\\S]*? for multiline tolerance and [^;]* for comma-separated role flexibility."
+    },
+    {
+      "id": "backend/tests/test_supabase_grants_sentinel.py:rls_pattern_syntax_rigidity",
+      "target_type": "ci_sentinel_test",
+      "trust_boundary": "internal_developer_tooling",
+      "vectors_checked": ["static_analysis_false_rejection", "optional_clauses_omission"],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_regex_hardening.md",
+      "validator_details": "Confirmed by Sentinel: RLS pattern rejects defensive SQL clauses (IF EXISTS, ONLY), falsely flagging valid migrations.",
+      "remediated_at": "2026-10-21T16:18:00Z",
+      "resolution": "Remediated in test_supabase_grants_sentinel.py: Injected (?:IF\\s+EXISTS\\s+)?(?:ONLY\\s+)? modifiers into rls_pattern to support standard defensive DDL."
+    },
+    {
+      "id": "backend/migrations/20260120_user_preferences.sql:missing_rls_data_exposure",
+      "target_type": "database_migration",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": ["unauthenticated_data_exposure", "missing_row_level_security"],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
+      "validator_details": "Confirmed by Sentinel: user_preferences lacks ENABLE ROW LEVEL SECURITY, allowing anonymous PostgREST queries to extract all users' personal AI preferences.",
+      "remediated_at": "2026-10-21T15:58:00Z",
+      "resolution": "Remediated in 20261022_data_api_explicit_grants.sql: Explicitly enabled RLS and applied auth.uid()::text = user_id::text policies across live and local environments."
+    },
+    {
+      "id": "supabase/migrations/20261014_trip_capsules.sql:missing_explicit_data_api_grants",
+      "target_type": "database_migration",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": ["permission_denied_on_fresh_environment", "dac_precedes_rls"],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
+      "validator_details": "Confirmed by Sentinel: DAC evaluation precedes RLS in PostgreSQL; omitting GRANT causes 42501 permission denied in PostgREST on clean environments.",
+      "remediated_at": "2026-10-21T15:58:00Z",
+      "resolution": "Remediated in 20261022_data_api_explicit_grants.sql and test_supabase_grants_sentinel.py: All public tables granted explicit PostgREST permissions and CI sentinel blocks ungranted tables."
+    },
+    {
+      "id": "backend/migrations/20260120_consolidated_trips_view.sql:view_permission_boundary",
+      "target_type": "database_migration",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": ["view_privilege_denial"],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
+      "validator_details": "Confirmed by Sentinel: View user_trips_view lacks explicit GRANT SELECT to API roles, failing Data API queries upon reconstruction.",
+      "remediated_at": "2026-10-21T15:58:00Z",
+      "resolution": "Remediated in 20261022_data_api_explicit_grants.sql: Explicit GRANT SELECT on user_trips_view codified and executed on production."
+    },
+    {
+      "id": "cloudflare/poi-service/schema.sql:cross_engine_sqlite_false_positive",
+      "target_type": "database_schema",
+      "trust_boundary": "edge_to_storage",
+      "vectors_checked": ["cross_engine_parser_confusion"],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
+      "validator_details": "Dismissed by Sentinel architecture: D1 SQLite schemas reside strictly in cloudflare/ directory and are isolated from PostgreSQL migration gates."
+    },
     {
       "id": "cloudflare/poi-service/worker.js:category_whitelist_override",
       "target_type": "cloudflare_worker",

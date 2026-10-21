@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/migrations/20260120_user_preferences.sql:missing_rls_data_exposure",
+    "file_path": "backend/migrations/20260120_user_preferences.sql",
+    "attack_vector": "unauthenticated_data_exposure",
+    "hypothesis": "Table user_preferences was created without Row Level Security enabled. Granting table-level access allows PostgREST Data API to serve sensitive contextual user preferences to unauthenticated queries."
+  },
+  {
+    "id": "supabase/migrations/20261014_trip_capsules.sql:missing_explicit_data_api_grants",
+    "file_path": "supabase/migrations/20261014_trip_capsules.sql",
+    "attack_vector": "permission_denied_on_fresh_environment",
+    "hypothesis": "Table trip_capsule_entries lacks explicit GRANT statements in its creation migration. When rebuilt in fresh environments after October 30 without automatic default grants, PostgREST queries fail with 42501 permission denied."
+  },
+  {
+    "id": "backend/migrations/20260120_consolidated_trips_view.sql:view_permission_boundary",
+    "file_path": "backend/migrations/20260120_consolidated_trips_view.sql",
+    "attack_vector": "view_privilege_denial",
+    "hypothesis": "View user_trips_view lacks explicit GRANT SELECT to API roles. Recreating the view in environments without inherited default privileges causes PostgREST to reject view queries."
+  },
+  {
+    "id": "cloudflare/poi-service/schema.sql:cross_engine_sqlite_false_positive",
+    "file_path": "cloudflare/poi-service/schema.sql",
+    "attack_vector": "cross_engine_parser_confusion",
+    "hypothesis": "A naive migration static analysis scanner inspecting CREATE TABLE statements fails to differentiate Cloudflare D1 SQLite schemas from PostgreSQL schemas, producing false positive build rejections on valid SQLite files."
+  }
+]
