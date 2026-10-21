@@ -450,6 +450,62 @@
 
 ---
 
+---
+
+## 🚀 Session 8: POI 抽屜「一體化毛玻璃純圖示藥丸島」重構與極致視覺美學 (Segmented Icon Capsule & Zero Truncation)
+
+### 1. 痛點診斷與人機協同決策 (Human-in-the-Loop Co-Design)
+- **視覺硬傷 (The 64px Cutoff Disaster)**:
+  - 在早期設計中，微型 Dock 按鈕固定宣告寬度為 `w-16` (64px) 並垂直堆疊圖示與文字。
+  - 當遇到長字串時（如繁體中文「在 Google Maps 開啟」或「尋找更多照片」），`truncate` 類別強制截斷文字為「在 Googl...」、「尋找更多...」，呈現極度粗糙、未完成的「腰斬感」。
+  - 每個按鈕各自帶有獨立的灰色、綠色、紫色外框與背景，視覺上碎裂分散，缺乏現代 iOS / VisionOS 頂級系統的整體感。
+- **共識收斂 (/Idea to Spec ✕ /grill-me)**:
+  - 經使用者提出「如果文字描述都拿掉了？」的關鍵啟發，雙方迅速收斂至「**一體化毛玻璃純圖示藥丸島 (Segmented Icon Capsule)**」。
+  - 全螢幕一字排開、免滾動條、徹底消滅文字截斷。
+  - 嚴格鎖定使用者指定之心智模型順序：`[1. 導航] ➔ [2. 街景預覽] ➔ [3. 3D 飛越] ➔ [4. 尋找更多照片] ➔ [5. 在 Google Maps 打開 (MapPin)] ➔ [6. 分享]`。
+
+---
+
+### 2. 架構突破與四重防衛工程 (Fourfold Engineering Defense)
+
+1. **容器形態 (Segmented Capsule Island)**:
+   - 單一毛玻璃圓角膠囊底座：`w-full max-w-sm mx-auto h-12 rounded-2xl bg-slate-100/70 dark:bg-slate-800/60 backdrop-blur-md border border-slate-200/50 dark:border-slate-700/50 shadow-xs flex items-center justify-around px-2`。
+   - `max-w-sm mx-auto` 聚合寬度防護：無論按鈕受條件渲染為 3 顆（基礎模式）或 6 顆（全功能模式），皆維持緊湊黃金比例，杜絕寬螢幕失衡。
+2. **具象圖示與微色彩識別 (Subtle Theme Tint)**:
+   - 跳轉 Google Maps 升格為具象圖釘 **`MapPin`**（寶藍色），取代語意模糊的外連箭頭。
+   - 保留各功能專屬微色調（導航靛青、照片琥珀橙、分享石墨灰、街景翡翠綠、飛越紫羅蘭）。
+3. **WebKit 觸控延遲與手勢解耦 (Touch Action & Event Boundary)**:
+   - 容器宣告 `touch-manipulation` 徹底消除 iOS Safari 雙擊縮放 300ms 延遲；結合 `onPointerDown={(e) => e.stopPropagation()}`，徹底切斷與外層抽屜 `motion.div drag="y"` 的手勢搶奪。
+4. **無障礙契約 (A11y Compensation)**:
+   - 移除視覺文字後，所有 6 顆純圖示按鈕皆配置多語系 `title={t(...)}` 與 `aria-label={t(...)}`，滿足 WCAG 2.1 AA 4.1.2 無障礙規範，支援桌面原生 Hover 氣泡與手機長按提示。
+
+---
+
+### 3. 全鏈路驗證與品質成果 (Full-Stack Quality Gates)
+- **TypeScript**: `tsc --noEmit` 0 錯誤。
+- **ESLint**: 0 錯誤、0 警告。
+- **物理哨兵**: `frontend/__tests__/poi-detail-drawer-physics-sentinel.test.tsx` 擴充 TC-6 嚴格順序契約，7 項測試全綠通過。
+- **全量測試**: 前端 81 個測試檔、538 個測試 100% 通過；後端 198 個 pytest 測試全綠。
+- **資安台帳**: `docs/security/security-coverage-ledger.json` 擴展至 151 項目標守恆通過 (`validate_security_ledger.py` PASS)。
+- **Git 交付**: Commit `35e3b93` 成功推送至 GitHub `main`。
+
+---
+
+## 🏛️ 新增架構決策 (Session 8 ADR)
+
+- **AD-130: 抽屜功能快捷列純圖示一體化藥丸島架構 (Segmented Icon Capsule Architecture)**
+  - *Context*: 行動端抽屜第一屏高度極端受限，按鈕內塞長文字必然面臨截斷或折行破版；獨立小方塊卡片產生視覺割裂。
+  - *Decision*: 快捷功能列統一採用單一毛玻璃圓角藥丸島 (`rounded-2xl backdrop-blur-md`)，子項全數移除視覺文字改採純圖示 (`w-10 h-10`)，並以 `title` + `aria-label` 補足 a11y。容器綁定 `max-w-sm mx-auto` 與 `touch-manipulation`。
+
+---
+
+## 🛡️ 新增失敗路徑與防禦反思 (Session 8 Failed Paths)
+
+- **FP-049: 窄固定寬度按鈕文字腰斬陷阱 (Fixed-Width Button Text Truncation Pitfall)**
+  - *Symptom*: 在 64px (`w-16`) 按鈕中放置多字語系字串（如「在 Google Maps 開啟」），導致中文被強制截斷為「在 Googl...」，外觀粗糙。
+  - *Lesson*: 寬度受限的工具列切忌強行堆疊長文字。若需多功能排列，應堅決採用「純圖示 + 精準 Tooltip/aria-label」，或自然寬度流動膠囊（Pill Chips），嚴禁依賴強制 truncate 掩蓋排版缺陷。
+
+
 ## 🧬 Machine-Executable Invariant Rules
 
 ```json
@@ -516,6 +572,13 @@
     "id": "INV-DEVOPS-023",
     "title": "Windows CLI 命令列長度防禦法則 (Windows CLI Character Limit Defense)",
     "content": "所有調度外部子行程 CLI（如 agy.exe）的維護腳本與 candidates 清單，必須嚴格宣告 start_line/end_line 進行片段切片，嚴禁將未經切片的大型原始檔直接嵌入 -p 參數，防止 Windows WinError 206 溢位崩潰。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-IOS-024",
+    "title": "抽屜一體化毛玻璃純圖示藥丸島法則 (Segmented Frosted Glass Icon Capsule Invariance)",
+    "content": "抽屜第一屏快捷工具列必須採用單一毛玻璃圓角膠囊底座 (rounded-2xl max-w-sm mx-auto h-12 backdrop-blur-md)，內部按鈕採用純圖示一字排開零滾動，嚴禁在固定窄卡片內堆疊文字導致 truncate 截斷；每個純圖示按鈕必須配備 localized title 與 aria-label，容器宣告 touch-manipulation 防止 WebKit 300ms 點擊延遲。"
   }
 ]
 ```

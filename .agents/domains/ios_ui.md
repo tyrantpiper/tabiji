@@ -3,6 +3,8 @@
 > **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
 
 ## 🏛️ 架構決策 (Decisions)
+- **抽屜一體化毛玻璃純圖示藥丸島法則 (Segmented Frosted Glass Icon Capsule Invariance)**: 抽屜第一屏快捷工具列必須採用單一毛玻璃圓角膠囊底座 (rounded-2xl max-w-sm mx-auto h-12 backdrop-blur-md)，內部按鈕採用純圖示一字排開零滾動，嚴禁在固定窄卡片內堆疊文字導致 truncate 截斷；每個純圖示按鈕必須配備 localized title 與 aria-label，容器宣告 touch-manipulation 防止 WebKit 300ms 點擊延遲。
+
 - **動態圖標工具列等寬流體拓撲架構 (Fluid Auto-Cols-Fr Grid & Icon Stack Architecture)**: 底抽次要功能工具列必須採用 grid grid-flow-col auto-cols-fr gap-2 w-full 與縱向 Icon 微堆疊排列，子項一律約束 min-w-0 truncate，徹底消滅橫向撐破容器寬度之物理缺陷。
 
 - **底抽滾動容器四重軸向硬鎖定法則 (Fourfold Axis-Lock & Touch-Pan-Y Invariance)**: 底抽內部所有可滾動容器必須顯式宣告 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain 並掛載 style={{ touchAction: 'pan-y' }}，徹底在瀏覽器底層阻斷斜向滑動引發之水平晃動。
