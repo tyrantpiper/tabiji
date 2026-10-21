@@ -15,6 +15,7 @@ import uuid
 import random
 import string
 import copy
+import hashlib
 import traceback
 from datetime import datetime, timedelta
 from typing import Optional, List
@@ -282,9 +283,11 @@ async def get_trip_by_id(
         created_by = trip.get("created_by", "")
         
         is_member = False
+        is_owner = False
         if user_id:
-            is_member = (user_id == created_by) or any(m.get("user_id") == user_id for m in members)
-            print(f"🔍 [Trips] user_id={user_id}, is_creator={user_id == created_by}, is_member={is_member}")
+            is_owner = (user_id == created_by)
+            is_member = is_owner or any(m.get("user_id") == user_id for m in members)
+            print(f"🔍 [Trips] user_id={user_id}, is_creator={is_owner}, is_member={is_member}")
         else:
             print(f"🔍 [Trips] No user_id provided, treating as non-member")
         
@@ -400,8 +403,16 @@ async def get_trip_by_id(
             "hotel_info": content.get("hotel_info") or trip.get("hotel_info") or {},
             "credit_cards": filter_private_cards(content.get("credit_cards", [])),
             "is_member": is_member,  # 🆕 告訴前端是否為成員
-            "members": members,  # 🆕 所有成員列表 (用於成員管理)
-            "created_by": created_by,  # 🆕 創建者 ID (用於判斷踢人權限)
+            "is_owner": is_owner,    # 🆕 告訴前端是否為創立者
+            # 🛡️ 伺服端動態脫敏：非本人 UUID 動態雜湊，杜絕隊友奪舍
+            "created_by": created_by if is_owner else None,
+            "members": [
+                {
+                    **m,
+                    "user_id": m["user_id"] if m.get("user_id") == user_id else f"mem_{hashlib.sha256((str(m.get('user_id')) + trip_id).encode()).hexdigest()[:10]}"
+                }
+                for m in members
+            ],
             "days": [{"day": d, "activities": days_map[d]} for d in sorted(days_map.keys())] if days_map else []
         }
 
@@ -1244,12 +1255,12 @@ async def update_trip_location(
 @router.post("/{trip_id}/leave")
 async def leave_trip(
     trip_id: str,
-    user_id: str = Header(None, alias="X-User-ID"),
+    user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
     """👋 退出行程"""
     if not user_id:
-        raise HTTPException(status_code=401, detail="Missing X-User-ID")
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     try:
         # 1. Check trip ownership
@@ -2060,16 +2071,17 @@ async def get_trip_expenses(
                 ),
                 details_schema_version=version,
                 created_at=str(exp.get("created_at")),
-                created_by=str(exp.get("created_by")),
+                created_by=str(exp.get("created_by")) if str(exp.get("created_by")) == user_id else f"mem_{hashlib.sha256((str(exp.get('created_by')) + trip_id).encode()).hexdigest()[:10]}",
                 creator_name=exp.get("creator_name"),
                 image_url=exp.get("image_url"),
                 card_name=exp.get("card_name"),
                 cashback_rate=exp.get("cashback_rate", 0.0),
                 custom_icon=exp.get("custom_icon"),
                 notes=exp.get("notes"),
-                payer_id=exp.get("payer_id")
+                payer_id=exp.get("payer_id") if exp.get("payer_id") == user_id else (f"mem_{hashlib.sha256((str(exp.get('payer_id')) + trip_id).encode()).hexdigest()[:10]}" if exp.get("payer_id") else None),
+                payer_name=exp.get("payer_name")
             )
-            filtered.append(expense_resp.dict())
+            filtered.append(expense_resp.model_dump())
                 
         print(f"✅ [Trips] Returned {len(filtered)} standardized expenses")
         return filtered

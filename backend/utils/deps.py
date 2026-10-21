@@ -42,48 +42,55 @@ async def get_gemini_key(
     return final_key
 
 
+import hashlib
+import jwt
+
+
+def get_session_secret() -> str:
+    """獲取 JWT 簽章密鑰，若未設置則衍生自 SUPABASE_KEY 安全雜湊保底"""
+    secret = os.getenv("SESSION_SECRET_KEY")
+    if secret and len(secret) >= 16:
+        return secret
+    supabase_key = os.getenv("SUPABASE_KEY", "")
+    if supabase_key:
+        return hashlib.sha256(f"tabiji-session-salt-{supabase_key}".encode()).hexdigest()
+    return "tabiji-default-dev-fallback-secret-key-32chars!!"
+
+
 def get_supabase(request: Request) -> Client:
     """從 app.state 獲取全域 Supabase 客戶端 (使用 Service Role Key)"""
     return request.app.state.supabase
 
 async def get_verified_user(
     request: Request,
-    x_user_id: str = Header(None, alias="X-User-ID"),
     auth_header: str = Header(None, alias="Authorization")
 ) -> str:
     """
-    🛡️ 安全身分驗證依賴 (v2026 Security Hardening)
-    
-    邏輯推理：
-    1. 優先驗證 JWT Token (如果前端有傳)。
-    2. 如果沒有 Token，暫時允許 X-User-ID (向後相容)，但會在後台標記為「低安全性請求」。
-    3. 如果 ID 衝突，以 Token 解析出的 ID 為準。
+    🛡️ 嚴格密碼學身分驗證依賴 (JWT-Only)
+    徹底拔除 X-User-ID 明文 Header 回退信任漏洞。
     """
-    supabase: Client = request.app.state.supabase
-    
-    # 1. 嘗試從 Authorization Header 驗證 (最安全)
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
-        try:
-            # 使用 Supabase Auth 驗證 Token
-            user_res = supabase.auth.get_user(token)
-            if user_res and user_res.user:
-                verified_id = str(user_res.user.id)
-                print(f"🛡️ [Auth] Verified JWT for User: {verified_id}")
-                # 安全校驗：如果同時傳了 X-User-ID 但不吻合，視為偽造嘗試
-                if x_user_id and x_user_id != verified_id:
-                    print(f"🚨 [Security] Identity Mismatch! Token: {verified_id} vs Header: {x_user_id}")
-                    raise HTTPException(status_code=403, detail="身分令牌不匹配")
-                return verified_id
-        except Exception as e:
-            print(f"⚠️ [Auth] Token verification failed: {e}")
-            # Token 失效時不直接報錯，回落到 X-User-ID 以維持過度期穩定
-            
-    # 2. 回落到 X-User-ID (維持目前的 UX 流暢度)
-    if x_user_id:
-        # 🧪 Debug Log: 追蹤 ID 來源
-        is_uuid = len(x_user_id) == 36 and "-" in x_user_id
-        print(f"👤 [Identity] Identifying via X-User-ID: {x_user_id} (IsUUID: {is_uuid})")
-        return x_user_id
-        
-    raise HTTPException(status_code=401, detail="無法識別使用者身分")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
+
+    token = auth_header.split(" ")[1].strip()
+    secret = get_session_secret()
+
+    # 1. 本地高速記憶體驗證 (0.05ms)
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+        verified_uid = payload.get("sub")
+        if verified_uid:
+            return str(verified_uid)
+    except jwt.PyJWTError:
+        pass
+
+    # 2. Supabase 官方 Token 相容校驗 (若未來串接 OAuth)
+    try:
+        supabase: Client = request.app.state.supabase
+        user_res = supabase.auth.get_user(token)
+        if user_res and user_res.user:
+            return str(user_res.user.id)
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=401, detail="Invalid or expired token")

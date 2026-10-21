@@ -21,6 +21,37 @@ if (typeof window === "undefined" || process.env.NODE_ENV === "development") {
     console.log("🚀 [API] Connected to:", API_HOST || "(same-origin /api)");
 }
 
+import { getCachedToken } from './auth-session';
+
+const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const token = getCachedToken();
+    if (token) {
+        if (init?.headers instanceof Headers) {
+            if (!init.headers.has("Authorization")) {
+                init.headers.set("Authorization", `Bearer ${token}`);
+            }
+        } else if (Array.isArray(init?.headers)) {
+            const hasAuth = init.headers.some(([k]) => k.toLowerCase() === "authorization");
+            if (!hasAuth) {
+                init.headers.push(["Authorization", `Bearer ${token}`]);
+            }
+        } else {
+            init = {
+                ...init,
+                headers: {
+                    ...(init?.headers as Record<string, string>),
+                    Authorization: `Bearer ${token}`
+                }
+            };
+        }
+    }
+    const activeFetch = typeof globalThis !== "undefined" && globalThis.fetch ? globalThis.fetch : (typeof window !== "undefined" ? window.fetch : undefined);
+    if (!activeFetch) {
+        throw new Error("No fetch implementation available");
+    }
+    return activeFetch(input, init);
+};
+
 import { SyncQueue } from './sync-engine';
 import {
     TripSchema,

@@ -1,0 +1,34 @@
+[
+  {
+    "id": "backend/utils/deps.py:unauthenticated_x_user_id_fallback",
+    "file_path": "backend/utils/deps.py",
+    "attack_vector": "broken_authentication_idor",
+    "hypothesis": "get_verified_user falls back to client-supplied X-User-ID when Authorization header is absent, allowing arbitrary attackers to impersonate any user UUID and access/mutate their private resources without cryptographic credentials.",
+    "start_line": 49,
+    "end_line": 90
+  },
+  {
+    "id": "backend/routers/trips.py:trip_collaborator_uuid_broadcast",
+    "file_path": "backend/routers/trips.py",
+    "attack_vector": "identity_leakage_and_account_takeover",
+    "hypothesis": "get_trip_by_id serializes the creator's raw UUID in created_by and all members' raw UUIDs in members list to all collaborators. An attacker who is invited to or views a trip can harvest the victim's UUID and use it to log into the victim's account via the landing page recovery input.",
+    "start_line": 280,
+    "end_line": 406
+  },
+  {
+    "id": "backend/routers/expenses.py:expense_payer_and_creator_uuid_leakage",
+    "file_path": "backend/routers/expenses.py",
+    "attack_vector": "financial_identity_harvesting",
+    "hypothesis": "get_expenses returns created_by and payer_id raw UUIDs for all expense records in a shared trip without masking. Any collaborator can extract the owner's UUID from the expenses endpoint even if trips.py is masked.",
+    "start_line": 340,
+    "end_line": 352
+  },
+  {
+    "id": "backend/routers/trips.py:residual_hardcoded_x_user_id_header",
+    "file_path": "backend/routers/trips.py",
+    "attack_vector": "authentication_bypass_island",
+    "hypothesis": "The leave_trip endpoint at line 1247 bypasses get_verified_user dependency and directly injects Header(None, alias='X-User-ID'). An attacker can spoof another user's ID to force members out or manipulate trip state without any JWT.",
+    "start_line": 1245,
+    "end_line": 1255
+  }
+]

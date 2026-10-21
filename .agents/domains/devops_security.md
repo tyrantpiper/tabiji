@@ -20,6 +20,8 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **CI 靜態正則缺 re.DOTALL 與角色排列硬編碼誤報陷阱**: CI 靜態掃描測試使用 .* 且寫死 TO (authenticated|service_role)，導致合法的多行 SQL 與 TO anon, authenticated; 被判為未授權，CI 假陽性阻斷。修復準則：靜態代碼分析器正則必須使用 [\s\S]*? 穿透跨行換行符，並以 [^;]* 支援逗號分隔的任意角色排列順序。
+
 - **FP-062 (CI 靜態正則缺 re.DOTALL 與角色排列硬編碼誤報陷阱)**: CI 靜態掃描測試使用 .* 且寫死 TO (authenticated|service_role)，導致合法的多行 SQL 與 TO anon, authenticated; 被判為未授權，CI 假陽性阻斷。修復準則：靜態代碼分析器正則必須使用 [\s\S]*? 穿透跨行換行符，並以 [^;]* 支援逗號分隔的任意角色排列順序。
 
 - **FP-050 (Sentinel 假說被安全過濾器攔截)**: 候選假說使用了攻擊性字眼導致雲端 API 攔截報 INCONCLUSIVE。規範一律使用中性品質工程措辭。

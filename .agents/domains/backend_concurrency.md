@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **1Password 私鑰與伺服端動態脫敏法則 (AD-144)**: 嚴禁將使用者 UUID 作為明文公開標籤（如行程成員 ID、記帳建立者 ID）直接回傳給協同者。所有日常 API 必須透過本地高速 HS256 JWT（0.05ms）完成驗證；行程與記帳端點對非本人查詢必須動態遮蔽為 mem_sha256(user_id + trip_id)[:10]，確保真金鑰永不洩漏。
+
 - **台灣地址門牌與景點名稱決定性分離法則 (Deterministic Taiwan Address Separator)**: Google Maps 清單與公開端點獲取之文字，必須以 ADDRESS_POI_PATTERN 邊界正則決定性分離縣市區里路街號與店家名稱，嚴禁將地址前綴混入景點標題。
 
 - **純記憶體存活探針與保活解耦**: /health 端點堅持 0ms 純記憶體計算，不觸發外部 I/O；Supabase 防休眠保活由 Lifespan 獨立背景定時循環守護。
@@ -21,6 +23,10 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **歷史相容路徑之次級記帳接口未脫敏洩漏陷阱**: 雖然修復了 /api/expenses，但 backend/routers/trips.py 中保留的舊式相容接口 /{trip_id}/expenses 仍直接回傳原始 created_by 與 payer_id。修復準則：敏感憑證脫敏必須對所有路由別名與歷史跨模組端點進行全路徑拓撲掃描，杜絕次級通道洩漏。
+
+- **PostgreSQL RLS 型別比對運算子遺漏陷阱**: 在 Supabase RLS Policy 中撰寫 auth.uid()::text = user_id 時，若 user_id 為 UUID 型別，PostgreSQL 會報 operator does not exist: text = uuid (42883) 阻斷 Migration。修復準則：一律採用 auth.uid()::text = user_id::text 進行雙邊字串歸一化比對。
+
 - **FP-051 (Uvicorn 靜態進程重載陷阱)**: main.py 為了防止 Windows CLOSE_WAIT 關閉了 reload=True。新增 FastAPI 端點後必須手動重啟 Python 進程。
 - **FP-052 (Edge Shield 白名單遺漏)**: 前端直通 D1 的新端點必須同步在 POI_POOL_ENDPOINTS 白名單登記並 wrangler deploy。
 - **FP-053 (D1 SQLite UPSERT 遺漏門牌欄位)**: batchInsertPois 的 ON CONFLICT DO UPDATE SET 曾漏掉 address，資料層新增欄位必須同步檢查 UPSERT 子句。

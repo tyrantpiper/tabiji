@@ -66,6 +66,7 @@ const AppShell = dynamic(() => import("@/components/views/app-shell").then(mod =
 
 import { toast } from "sonner"
 import { usersApi } from "@/lib/api"
+import { restoreAccountWithKey } from "@/lib/auth-session"
 import { debugLog, debugWarn } from "@/lib/debug"
 
 import { generateSecureUUID, isValidUUID } from "@/lib/security"
@@ -148,9 +149,11 @@ export function LandingPage() {
             return
         }
 
-        // 🆕 Async fetch profile
+        // 🛡️ Cryptographic account recovery via signed session token
         const toastId = toast.loading("Verifying identity...")
         try {
+            const session = await restoreAccountWithKey(cleanCode)
+
             // Default nickname fallback
             const fallbackName = nickname || "Traveler"
             let fetchedName = fallbackName
@@ -158,14 +161,13 @@ export function LandingPage() {
 
             // Call API via usersApi (Unified)
             try {
-                const data = await usersApi.getProfile(cleanCode)
+                const data = await usersApi.getProfile(session.userId)
                 if (data.name) fetchedName = data.name
                 if (data.avatar_url) fetchedAvatar = data.avatar_url
             } catch (err) {
                 debugWarn("Profile fetch failed, using fallback", err)
             }
 
-            localStorage.setItem("user_uuid", cleanCode)
             localStorage.setItem("user_nickname", fetchedName)
             if (fetchedAvatar) {
                 localStorage.setItem("user_avatar", fetchedAvatar)
@@ -210,37 +212,43 @@ export function LandingPage() {
             // 🏆 [2026 Smooth Handoff] 讓成功訊息顯示 0.8秒後，優雅地換場
             setTimeout(goToApp, 800)
 
-        } catch (e) {
+        } catch (e: unknown) {
             console.error("Recovery Error", e)
             toast.dismiss(toastId)
 
-            // Fallback anyway to allow recovery even if API fails
-            localStorage.setItem("user_uuid", cleanCode)
-            localStorage.setItem("user_nickname", nickname || "Traveler")
-            localStorage.removeItem("active_trip_id")
-            localStorage.removeItem("active_trip_title")
-            try {
-                const rawTripStorage = localStorage.getItem("tabidachi-trip-storage")
-                if (rawTripStorage) {
-                    const parsed = JSON.parse(rawTripStorage)
-                    if (parsed && parsed.state) {
-                        parsed.state.activeTripId = null
-                        parsed.state.activeTripTitle = null
-                        localStorage.setItem("tabidachi-trip-storage", JSON.stringify(parsed))
+            const isOffline = typeof navigator !== "undefined" && !navigator.onLine
+            if (isOffline) {
+                // Allow offline recovery for local-first cached operations
+                localStorage.setItem("user_uuid", cleanCode)
+                localStorage.setItem("user_nickname", nickname || "Traveler")
+                localStorage.removeItem("active_trip_id")
+                localStorage.removeItem("active_trip_title")
+                try {
+                    const rawTripStorage = localStorage.getItem("tabidachi-trip-storage")
+                    if (rawTripStorage) {
+                        const parsed = JSON.parse(rawTripStorage)
+                        if (parsed && parsed.state) {
+                            parsed.state.activeTripId = null
+                            parsed.state.activeTripTitle = null
+                            localStorage.setItem("tabidachi-trip-storage", JSON.stringify(parsed))
+                        }
                     }
+                } catch {}
+                if (typeof window !== "undefined") {
+                    sessionStorage.setItem("tabiji_identity_transition_lock", Date.now().toString())
                 }
-            } catch {}
-            if (typeof window !== "undefined") {
-                sessionStorage.setItem("tabiji_identity_transition_lock", Date.now().toString())
+                toast.success("Account recovered (Offline Mode)")
+                setTimeout(() => {
+                    if (typeof document !== 'undefined' && 'startViewTransition' in document) {
+                        document.startViewTransition(() => setIsLoggedIn(true))
+                    } else {
+                        setIsLoggedIn(true)
+                    }
+                }, 800)
+            } else {
+                const message = e instanceof Error ? e.message : "Failed to verify recovery key"
+                toast.error(message)
             }
-            toast.success("Account recovered (Offline Mode)")
-            setTimeout(() => {
-                if (typeof document !== 'undefined' && 'startViewTransition' in document) {
-                    document.startViewTransition(() => setIsLoggedIn(true))
-                } else {
-                    setIsLoggedIn(true)
-                }
-            }, 800)
         }
     }
 

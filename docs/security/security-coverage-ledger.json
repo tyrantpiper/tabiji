@@ -3,10 +3,10 @@
   "last_audit_date": "2026-10-21T16:15:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 163,
-    "audited_targets": 163,
+    "total_targets": 167,
+    "audited_targets": 167,
     "verified_vulnerabilities": 17,
-    "remediated_vulnerabilities": 21,
+    "remediated_vulnerabilities": 25,
     "dismissed_hypotheses": 125
   },
   "targets": [
@@ -1970,6 +1970,51 @@
       "status": "DISMISSED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
       "validator_details": "Dismissed by Sentinel: Keying by exact protocol string (p.category) is essential for filtering integrity. Collapsing by label would discard distinct categories and drop associated POIs. True duplicates with identical emoji/label/color are safely deduplicated by map.has()."
+    },
+    {
+      "id": "backend/utils/deps.py:unauthenticated_x_user_id_fallback",
+      "target_type": "backend_auth",
+      "trust_boundary": "client_to_api",
+      "vectors_checked": ["broken_authentication_idor", "x_user_id_spoofing"],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
+      "validator_details": "Confirmed by PoC: get_verified_user fell back to client-supplied X-User-ID header, allowing arbitrary identity forgery without cryptographic credentials.",
+      "remediated_at": "2026-10-22T02:00:00Z",
+      "resolution": "Enforced strict local HS256 JWT validation in deps.py with 0.05ms in-memory decoding. Removed X-User-ID fallback completely."
+    },
+    {
+      "id": "backend/routers/trips.py:trip_collaborator_uuid_broadcast",
+      "target_type": "backend_router",
+      "trust_boundary": "collaborator_privacy",
+      "vectors_checked": ["identity_leakage_and_account_takeover", "idor"],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
+      "validator_details": "Confirmed by PoC: get_trip_by_id returned raw created_by UUID and raw member UUIDs to all collaborators, enabling recovery key theft.",
+      "remediated_at": "2026-10-22T02:00:00Z",
+      "resolution": "Implemented server-side dynamic masking in trips.py: created_by set to None for non-owners, and collaborator user_id dynamically hashed to mem_sha256(user_id + trip_id)[:10]."
+    },
+    {
+      "id": "backend/routers/expenses.py:expense_payer_and_creator_uuid_leakage",
+      "target_type": "backend_router",
+      "trust_boundary": "financial_collaborator_privacy",
+      "vectors_checked": ["financial_identity_harvesting", "idor"],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
+      "validator_details": "Confirmed by PoC: get_expenses returned raw created_by and payer_id UUIDs to all shared trip collaborators.",
+      "remediated_at": "2026-10-22T02:00:00Z",
+      "resolution": "Implemented dynamic masking in expenses.py and legacy trips.py expenses endpoint: created_by and payer_id hashed to mem_sha256 for non-owners."
+    },
+    {
+      "id": "backend/routers/trips.py:residual_hardcoded_x_user_id_header",
+      "target_type": "backend_router",
+      "trust_boundary": "client_to_api",
+      "vectors_checked": ["authentication_bypass_island", "x_user_id_spoofing"],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
+      "validator_details": "Confirmed by PoC: leave_trip bypassed get_verified_user and directly accepted Header(None, alias='X-User-ID').",
+      "remediated_at": "2026-10-22T02:00:00Z",
+      "resolution": "Replaced Header with Depends(get_verified_user) in leave_trip endpoint."
     }
   ]
 }
+

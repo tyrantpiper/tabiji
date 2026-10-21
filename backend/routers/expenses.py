@@ -8,9 +8,9 @@ from models.base import (
     ReceiptDiagnostics
 )
 from utils.deps import get_supabase, get_verified_user
-from utils.helpers import ensure_user_exists
 import json
 import uuid
+import hashlib
 
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
 
@@ -338,17 +338,17 @@ async def get_expenses(
                 ),
                 details_schema_version=version,
                 created_at=str(exp.get("created_at")),
-                created_by=str(exp.get("created_by")),
+                created_by=str(exp.get("created_by")) if str(exp.get("created_by")) == user_id else f"mem_{hashlib.sha256((str(exp.get('created_by')) + trip_id).encode()).hexdigest()[:10]}",
                 creator_name=exp.get("creator_name"),
                 image_url=exp.get("image_url"),
                 card_name=exp.get("card_name"),
                 cashback_rate=exp.get("cashback_rate", 0.0),
                 custom_icon=exp.get("custom_icon"),
                 notes=exp.get("notes"),
-                payer_id=exp.get("payer_id"),
+                payer_id=exp.get("payer_id") if exp.get("payer_id") == user_id else (f"mem_{hashlib.sha256((str(exp.get('payer_id')) + trip_id).encode()).hexdigest()[:10]}" if exp.get("payer_id") else None),
                 payer_name=exp.get("payer_name")
             )
-            filtered.append(expense_resp.dict())
+            filtered.append(expense_resp.model_dump())
                 
         return filtered
     except Exception as e:

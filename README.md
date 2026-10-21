@@ -65,7 +65,7 @@
 - **Itinerary Health Check** — AI reviews your daily plan and suggests improvements / AI 行程健檢
 - **Smart Itinerary Editing** — 在對話中透過 Function Calling 智慧刪除或調整景點
 - **Memory Engine** — Auto-summarizes long conversations to maintain context / 記憶壓縮引擎
-- **BYOK (Bring Your Own Key)** — Your API key, your privacy / 自帶金鑰，隱私至上
+- **Zero-Retention BYOK Relay** — AI keys are encrypted locally in the browser, processed strictly in-memory during stateless backend AI proxying, and never persisted to server disk, database, or telemetry logs / 自帶金鑰零持久化轉發
 
 ### 🗺️ Interactive Maps / 互動地圖
 - **Mapterhorn 3D DEM Terrain & Dynamic Pitch** — 開源全球 3D 地形高程（Terrarium 512px 解碼），相機傾角 $\ge 30^\circ$ 自動拉起 1.2 倍真實地貌，$\le 15^\circ$ 自動卸載歸零守護 60 FPS
@@ -101,7 +101,7 @@
 - **Shared & Private Ledgers** — Split expenses with travel buddies / 公帳私帳分離
 
 ### 🔐 Privacy & Security / 隱私安全
-- **BYOK Model** — AI keys stored locally, never on server / 金鑰僅存本地
+- **Zero-Retention BYOK Relay** — Keys stored locally, processed strictly in-memory, never persisted on server / 伺服器零持久化轉發
 - **GDPR Compliance** — Data export & deletion via API / GDPR 資料匯出/刪除
 - **Anonymous Recovery Keys** — No email or phone required / 匿名恢復金鑰
 - **Rate Limiting** — SlowAPI protection / 速率限制保護
@@ -297,10 +297,9 @@ npx playwright test
 | `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | Optional | Cloudinary cloud name (for image uploads) |
 
 > [!NOTE]
-> **Gemini API Key** is configured by each user in the app's Profile page (BYOK model).
-> No server-side AI key is needed.
+> **Gemini API Key** is configured by each user in the app's Profile page (Zero-Retention BYOK Relay model). Keys are processed strictly in-memory and never written to server logs or databases.
 >
-> **Gemini API Key** 由使用者在 App 的 Profile 頁面自行設定（BYOK 模式），伺服器端不需要 AI 金鑰。
+> **Gemini API Key** 由使用者在 App 的 Profile 頁面自行設定（零持久化 BYOK 模式），金鑰僅於後端記憶體無狀態轉發，伺服器零落盤、零儲存。
 
 ---
 
@@ -358,7 +357,10 @@ gcloud run deploy tabidachi-backend \
 
 ## 📄 License & Intellectual Property
 
-- **Software Code**: Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+> [!NOTE]
+> **Source-Available Notice**: In accordance with Open Source Initiative (OSI) guidelines, noncommercial licenses are classified as **Source-Available** rather than traditional OSI-approved Open Source.
+
+- **Software Code**: Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). Free for personal and non-commercial educational use. Commercial deployment or derivation requires explicit permission.
 - **Historical Releases**: Releases up to Git Tag `v1.0.0-mit-final` remain under the MIT License (see [NOTICE.md](NOTICE.md)).
 - **Visual & Brand Assets**: "Backpack Traveler" illustrations, splash screen artwork, and logos are proprietary under [All Rights Reserved](frontend/public/LICENSE-ASSETS.md). Please refer to [TRADEMARK.md](TRADEMARK.md) for brand usage guidelines.
 

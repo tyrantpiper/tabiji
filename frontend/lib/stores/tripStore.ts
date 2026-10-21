@@ -23,6 +23,7 @@ interface TripState {
 }
 
 import { generateSecureUUID } from '@/lib/security'
+import { ensureValidSession } from '@/lib/auth-session'
 
 /**
  * 🔧 FIX: Sync initialize userId from localStorage to fix race condition
@@ -38,6 +39,8 @@ const getInitialUserId = (): string | null => {
             localStorage.setItem('user_uuid', uuid)
             console.log('🆕 Auto-generated secure user_uuid:', uuid)
         }
+        // 🛡️ 啟動自動換票/領票 (非阻塞，離線安全)
+        ensureValidSession().catch(() => {});
         return uuid
     }
     return null

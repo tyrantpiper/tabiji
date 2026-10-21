@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **前端動態代理與單例換票防抖法則 (AD-145)**: 前端包裝全域 fetch 時，嚴禁在模組載入期以 bind(window) 鎖定靜態參照，必須於執行期動態獲取 globalThis.fetch 以確保 Vitest/Node 測試相容性；同時，會話換票必須實施單例 Promise 防抖與離線 short-circuit，防止開機併發風暴。
+
 - **模組單例可測性與狀態隔離重置法則 (Module Throttle Singleton Reset Invariance)**: 凡在組件外部宣告之模組層級單例狀態（如 globalLastRefreshTimestamp），必須顯式導出 __reset...ForTesting() 介面，並於單元測試 beforeEach/afterEach 中強制調用，徹底杜絕跨測試狀態洩漏與 Flaky Tests。
 
 - **雙重核驗型別化自癒架構 (Double-Checked Silent Self-Healing)**: 404 自癒嚴禁憑單次 HTTP 404 就清除快取。必須透過行程總清單二次核驗證實死透後，才在 300ms 內靜默導正至最新行程。
@@ -17,6 +19,8 @@
 - **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Vitest 模組載入期 Fetch 綁定穿透 Mock 陷阱**: 在 api.ts 頂層以 const _rawFetch = typeof window !== 'undefined' ? window.fetch.bind(window) : globalThis.fetch; 儲存引用，導致 Vitest 測試套件的 global.fetch = mockFetch 完全失效，Node 拋出 ERR_INVALID_URL。修復準則：代理函式必須在執行調用當下動態獲取 activeFetch，嚴禁在模組 import 期凍結全域參照。
+
 - **FP-004 (SWR 快取鍵錯位)**: 使用 new Date().toISOString() 在 UTC+8 深夜產生前一天日期。所有日期快取鍵一律採用 new Date().toLocaleDateString('en-CA')。
 - **FP-005 (非同步狀態機解耦)**: Open-Meteo 等長耗時請求嚴禁寫入組件局部 state，必須由獨立模組寫入 Zustand store 並以 in-flight Promise 池去重。
 - **FP-006 (骨架屏死鎖)**: 依賴遠端資料的骨架屏必須內建 4 秒硬逾時定時器，連線中斷自動退回暫無資料並支援手動重試。
