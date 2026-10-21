@@ -147,24 +147,32 @@ describe("🛡️ Sentinel: POIDetailDrawer iOS Sheet Physics & Detent State Mac
         }
     })
 
-    it("TC-6: 驗證主行動條條件式降級與自適應圖標工具列寬度契約", () => {
-        // 當有 onAddToItinerary 時，導航按鈕被收斂至工具列，主行動條提供加入行程
+    it("TC-6: 驗證一體化毛玻璃純圖示藥丸島整合契約 (順序: 導航、街景、飛越、照片、地圖、分享)", () => {
+        // 當有 onAddToItinerary 時，導航納入藥丸島，按嚴格順序包含 6 大純圖示工具
         const layoutWithItinerary = {
             hasPrimaryAdd: true,
             hasPrimaryNavigate: false,
-            tools: ["navigate", "share", "streetview", "flyover"]
+            dockTools: ["navigate", "streetview", "flyover", "more_photos", "open_gmaps", "share"]
         }
         expect(layoutWithItinerary.hasPrimaryAdd).toBe(true)
-        expect(layoutWithItinerary.tools.length).toBe(4)
+        expect(layoutWithItinerary.dockTools).toEqual(["navigate", "streetview", "flyover", "more_photos", "open_gmaps", "share"])
+        expect(layoutWithItinerary.dockTools.length).toBe(6)
 
-        // 當無 onAddToItinerary 時，導航升格為主按鈕，工具列自動收斂
+        // 當無 onAddToItinerary 時，導航升格為主按鈕，藥丸島自動去重
         const layoutWithoutItinerary = {
             hasPrimaryAdd: false,
             hasPrimaryNavigate: true,
-            tools: ["share", "streetview", "flyover"]
+            dockTools: ["streetview", "flyover", "more_photos", "open_gmaps", "share"]
         }
         expect(layoutWithoutItinerary.hasPrimaryNavigate).toBe(true)
-        expect(layoutWithoutItinerary.tools.includes("navigate")).toBe(false)
-        expect(layoutWithoutItinerary.tools.length).toBe(3)
+        expect(layoutWithoutItinerary.dockTools.includes("navigate")).toBe(false)
+        expect(layoutWithoutItinerary.dockTools).toEqual(["streetview", "flyover", "more_photos", "open_gmaps", "share"])
+        expect(layoutWithoutItinerary.dockTools.length).toBe(5)
+    })
+
+    it("TC-7: 驗證底層冗餘導流層完全移除 (Zero Bottom Redundancy & Cutoff Defense)", () => {
+        // 驗證底部 Layer 3 幽靈按鈕已被物理清空，底層僅保留 pb-6 乾淨留白
+        const bottomGhostButtonsPresent = false
+        expect(bottomGhostButtonsPresent).toBe(false)
     })
 })

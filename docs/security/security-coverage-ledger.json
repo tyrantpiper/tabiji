@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-21T10:30:00Z",
+  "last_audit_date": "2026-10-21T10:58:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 145,
-    "audited_targets": 145,
+    "total_targets": 151,
+    "audited_targets": 151,
     "verified_vulnerabilities": 17,
     "remediated_vulnerabilities": 16,
-    "dismissed_hypotheses": 112
+    "dismissed_hypotheses": 118
   },
   "targets": [
     {
@@ -1773,6 +1773,72 @@
       "validator_details": "Verified by Sentinel: Scroll container lacks overflow-x-hidden and touch-pan-y; secondary buttons overflow available width on screens <=390px, causing horizontal shake.",
       "remediated_at": "2026-10-21T10:30:00Z",
       "resolution": "Remediated: Applied overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain with inline touchAction: pan-y; refactored action tools into dynamic 100% width auto-cols-fr grid with vertical icon stacks."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:touch_action_intersection_deadlock",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "ui_gesture_axis_leak"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_dock_and_layout.md",
+      "validator_details": "Dismissed by Sentinel: Micro action dock uses auto-cols-fr fluid layout with touch-pan-x and pointer event containment; tap events execute without WebKit axis deadlocks."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:navigation_cta_duplication",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "ui_component_type_error"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_dock_and_layout.md",
+      "validator_details": "Dismissed by Sentinel: Dock navigation action is conditionally guarded by onAddToItinerary, preventing duplicate navigation CTAs when primary action falls back."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:bottom_redundant_layer_cutoff",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "ui_gesture_axis_leak"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_dock_and_layout.md",
+      "validator_details": "Dismissed by Sentinel: Clean layout removal of legacy bottom ghost buttons eliminates edge cutoff and achieves zero-redundancy bottom space."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:capsule_touch_manipulation_defense",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "ui_gesture_axis_leak"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
+      "validator_details": "Dismissed by Sentinel: Segmented capsule incorporates touch-manipulation and pointer event stop-propagation, effectively eliminating WebKit parent drag gesture hijacking and 300ms tap latency."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:icon_only_a11y_blindness",
+      "target_type": "frontend_component",
+      "trust_boundary": "accessibility_contract",
+      "vectors_checked": [
+        "a11y_screen_reader_silence"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
+      "validator_details": "Dismissed by Sentinel: All 6 icon-only action buttons are equipped with localized title and aria-label attributes, ensuring complete screen reader visibility and WCAG 2.1 AA 4.1.2 compliance."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:capsule_order_and_contract_desync",
+      "target_type": "frontend_component",
+      "trust_boundary": "test_contract_integrity",
+      "vectors_checked": [
+        "ui_component_type_error"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
+      "validator_details": "Dismissed by Sentinel: Button order resequenced to [navigate -> streetview -> flyover -> more_photos -> open_gmaps -> share] and synchronized with TC-6 assertions, preserving strict contract invariants."
     }
   ]
 }

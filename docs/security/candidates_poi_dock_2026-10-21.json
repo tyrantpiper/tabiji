@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:touch_action_intersection_deadlock",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 540,
+    "end_line": 595,
+    "attack_vector": "ui_gesture_axis_leak",
+    "hypothesis": "When embedding an inner horizontal micro action dock inside a scroll container governed by touch-action: pan-y, WebKit gesture intersection suppresses horizontal pan unless inner container explicitly stops pointer propagation and declares touch-action: pan-x."
+  },
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:navigation_cta_duplication",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 535,
+    "end_line": 560,
+    "attack_vector": "ui_component_type_error",
+    "hypothesis": "When onAddToItinerary is omitted, primary action bar falls back to full-width navigation CTA; if micro dock does not conditionally suppress the dock navigation button, duplicate navigation CTAs are rendered simultaneously."
+  },
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:bottom_redundant_layer_cutoff",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 760,
+    "end_line": 790,
+    "attack_vector": "ui_gesture_axis_leak",
+    "hypothesis": "Retaining ghost buttons for photos and Google Maps at the bottom of the drawer consumes 52px vertical height, causing edge cutoff and visual truncation on mobile half-detent viewports."
+  }
+]

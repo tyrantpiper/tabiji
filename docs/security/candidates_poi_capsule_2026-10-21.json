@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:capsule_touch_manipulation_defense",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 545,
+    "end_line": 625,
+    "attack_vector": "ui_gesture_axis_leak",
+    "hypothesis": "When nesting a horizontal segmented capsule inside a motion-drag bottom sheet, omitting touch-manipulation and pointer event stop-propagation allows the parent drag gesture to hijack button taps and induces a 300ms click delay on WebKit mobile browsers."
+  },
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:icon_only_a11y_blindness",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 550,
+    "end_line": 625,
+    "attack_vector": "a11y_screen_reader_silence",
+    "hypothesis": "Removing visible text labels without equipping every button with an accurate, translated title and aria-label blinds screen readers and assistive tech, causing accessibility violations (WCAG 2.1 AA 4.1.2)."
+  },
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:capsule_order_and_contract_desync",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 550,
+    "end_line": 625,
+    "attack_vector": "ui_component_type_error",
+    "hypothesis": "Reordering buttons to [navigate -> streetview -> flyover -> more_photos -> open_gmaps -> share] without updating TC-6 assertions will desynchronize the physics sentinel test suite and allow layout drift."
+  }
+]

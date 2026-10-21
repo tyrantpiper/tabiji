@@ -544,70 +544,98 @@ export default function POIDetailDrawer({
                                     </Button>
                                 )}
 
-                                {/* 🛠️ 精緻圖標工具群 (Action Tools Grid)：縱向微堆疊，自適應 100% 寬度，杜絕撐破與橫向滑動 */}
-                                <div className="grid grid-flow-col auto-cols-fr gap-2 w-full">
+                                {/* 🛠️ Tier 2: 一體化毛玻璃純圖示藥丸島 (Segmented Icon Capsule) */}
+                                <div 
+                                    className="w-full max-w-sm mx-auto h-12 rounded-2xl bg-slate-100/70 dark:bg-slate-800/60 backdrop-blur-md border border-slate-200/50 dark:border-slate-700/50 shadow-xs flex items-center justify-around px-2 touch-manipulation"
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                >
+                                    {/* 1. 導航按鈕 (僅主行動條有「加入行程」時渲染，避免重複) */}
                                     {onAddToItinerary && (
                                         <button
                                             type="button"
                                             onClick={handleNavigate}
-                                            className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 text-slate-700 dark:text-slate-200 transition-all active:scale-95 min-w-0 cursor-pointer"
+                                            title={t('tc_navigate')}
+                                            aria-label={t('tc_navigate')}
+                                            className="flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-150 hover:bg-white/80 dark:hover:bg-slate-700/60 active:scale-90 cursor-pointer"
                                         >
                                             <Navigation className="w-4 h-4 text-indigo-500 shrink-0" />
-                                            <span className="text-[11px] font-semibold tracking-tight truncate w-full text-center">
-                                                {t('tc_navigate')}
-                                            </span>
                                         </button>
                                     )}
 
-                                    <button
-                                        type="button"
-                                        onClick={handleShare}
-                                        className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 text-slate-700 dark:text-slate-200 transition-all active:scale-95 min-w-0 cursor-pointer"
-                                    >
-                                        <Share2 className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
-                                        <span className="text-[11px] font-semibold tracking-tight truncate w-full text-center">
-                                            {t('share')}
-                                        </span>
-                                    </button>
-
+                                    {/* 2. 街景預覽 */}
                                     {isMapillaryAvailable() && onOpenStreetView && (
                                         <button
                                             type="button"
                                             onClick={() => onOpenStreetView(poi.lat, poi.lng)}
-                                            className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/40 border border-emerald-200/60 dark:border-emerald-800/40 text-emerald-700 dark:text-emerald-300 transition-all active:scale-95 min-w-0 cursor-pointer"
+                                            title={t('mapillary_streetview')}
+                                            aria-label={t('mapillary_streetview')}
+                                            className="flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-150 hover:bg-white/80 dark:hover:bg-slate-700/60 active:scale-90 cursor-pointer"
                                         >
-                                            <Camera className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                                            <span className="text-[11px] font-semibold tracking-tight truncate w-full text-center">
-                                                {t('mapillary_streetview')}
-                                            </span>
+                                            <Camera className="w-4 h-4 text-emerald-500 shrink-0" />
                                         </button>
                                     )}
 
+                                    {/* 3. 3D 飛越 */}
                                     {onFlyover && (
                                         <button
                                             type="button"
                                             onClick={() => onFlyover(poi.lat, poi.lng)}
-                                            className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-indigo-50/50 dark:bg-indigo-950/20 hover:bg-indigo-100/50 dark:hover:bg-indigo-900/40 border border-indigo-200/60 dark:border-indigo-800/40 text-indigo-700 dark:text-indigo-300 transition-all active:scale-95 min-w-0 cursor-pointer"
+                                            title={t('flyover_poi')}
+                                            aria-label={t('flyover_poi')}
+                                            className="flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-150 hover:bg-white/80 dark:hover:bg-slate-700/60 active:scale-90 cursor-pointer"
                                         >
-                                            <Plane className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                                            <span className="text-[11px] font-semibold tracking-tight truncate w-full text-center">
-                                                {t('flyover_poi')}
-                                            </span>
+                                            <Plane className="w-4 h-4 text-purple-500 shrink-0" />
                                         </button>
                                     )}
+
+                                    {/* 4. 尋找更多照片 */}
+                                    <button
+                                        type="button"
+                                        onClick={handleViewPhotos}
+                                        title={t('poi_more_photos')}
+                                        aria-label={t('poi_more_photos')}
+                                        className="flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-150 hover:bg-white/80 dark:hover:bg-slate-700/60 active:scale-90 cursor-pointer"
+                                    >
+                                        <ImageIcon className="w-4 h-4 text-amber-500 shrink-0" />
+                                    </button>
+
+                                    {/* 5. 在 Google Maps 打開 (MapPin 具象圖釘) */}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const url = `https://www.google.com/maps/search/?api=1&query=${poi.lat},${poi.lng}`
+                                            openExternalLink(url)
+                                        }}
+                                        title={t('poi_open_gmaps')}
+                                        aria-label={t('poi_open_gmaps')}
+                                        className="flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-150 hover:bg-white/80 dark:hover:bg-slate-700/60 active:scale-90 cursor-pointer"
+                                    >
+                                        <MapPin className="w-4 h-4 text-blue-500 shrink-0" />
+                                    </button>
+
+                                    {/* 6. 分享 */}
+                                    <button
+                                        type="button"
+                                        onClick={handleShare}
+                                        title={t('share')}
+                                        aria-label={t('share')}
+                                        className="flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-150 hover:bg-white/80 dark:hover:bg-slate-700/60 active:scale-90 cursor-pointer"
+                                    >
+                                        <Share2 className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                                    </button>
                                 </div>
 
                                 {/* ========== Layer 2: AI 智慧層 ========== */}
 
-                                <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                                <div className="border-t border-slate-200 dark:border-slate-700 pt-3">
                                     {!aiData && !aiLoading && (
                                         <Button
                                             onClick={handleAIAnalyze}
-                                            variant="ghost"
-                                            className="w-full gap-2 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20"
+                                            variant="outline"
+                                            className="w-full h-10 gap-2 bg-purple-50/60 dark:bg-purple-950/20 hover:bg-purple-100/60 dark:hover:bg-purple-900/30 border-purple-200/60 dark:border-purple-800/40 text-purple-700 dark:text-purple-300 text-xs font-bold rounded-xl transition-all active:scale-[0.98] cursor-pointer"
                                         >
-                                            <Sparkles className="w-4 h-4" />
-                                            ✨ {t('poi_explore')}
+                                            <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                                            <span>✨ {t('poi_explore')}</span>
                                         </Button>
                                     )}
 
@@ -757,33 +785,6 @@ export default function POIDetailDrawer({
                                             </div>
                                         </motion.div>
                                     )}
-                                </div>
-
-                                {/* ========== Layer 3: 導流層 ========== */}
-
-                                <div className="flex gap-2 pt-2">
-                                    <Button
-                                        onClick={handleViewPhotos}
-                                        variant="ghost"
-                                        size="sm"
-                                        className="flex-1 gap-2 text-slate-600"
-                                    >
-                                        <ImageIcon className="w-4 h-4" />
-                                        {t('poi_more_photos')}
-                                    </Button>
-                                    <Button
-                                        onClick={() => {
-                                            // 使用精確坐標開啟 Google Maps
-                                            const url = `https://www.google.com/maps/search/?api=1&query=${poi.lat},${poi.lng}`
-                                            openExternalLink(url)
-                                        }}
-                                        variant="ghost"
-                                        size="sm"
-                                        className="flex-1 gap-2 text-slate-600"
-                                    >
-                                        <ExternalLink className="w-4 h-4" />
-                                        {t('poi_open_gmaps')}
-                                    </Button>
                                 </div>
                             </div>
                         )}
