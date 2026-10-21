@@ -14,7 +14,7 @@ Key Design Decisions:
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from typing import Optional
-from utils.deps import get_supabase
+from utils.deps import get_supabase, get_verified_user
 
 router = APIRouter(prefix="/api", tags=["sample-trip"])
 
@@ -187,7 +187,7 @@ SAMPLE_ITEMS: list[dict] = [
 
 @router.post("/trips/seed-sample")
 async def seed_sample_trip(
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase),
 ):
     """🎓 Seed a sample/demo itinerary for onboarding.
@@ -196,16 +196,13 @@ async def seed_sample_trip(
     The trip is created with created_by="SYSTEM" so it doesn't count
     toward the user's 3-trip quota.
     """
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Missing X-User-ID")
-
     try:
         # ── 1. Dedup Check ────────────────────────────────────────
         # Query: does this user already belong to a sample trip?
         member_res = (
             supabase.table("trip_members")
             .select("itinerary_id")
-            .eq("user_id", x_user_id)
+            .eq("user_id", user_id)
             .execute()
         )
         member_trip_ids = [m["itinerary_id"] for m in (member_res.data or [])]
@@ -220,7 +217,7 @@ async def seed_sample_trip(
                 .execute()
             )
             if sample_check.data and len(sample_check.data) > 0:
-                print(f"⏭️ [Sample Trip] User {x_user_id} already has sample trip, skipping")
+                print(f"⏭️ [Sample Trip] User {user_id} already has sample trip, skipping")
                 return {"status": "skipped", "reason": "already_has_sample"}
 
         # ── 2. Create Itinerary ───────────────────────────────────
@@ -230,7 +227,7 @@ async def seed_sample_trip(
             raise HTTPException(status_code=500, detail="Failed to create sample trip")
 
         trip_id = trip_res.data[0]["id"]
-        print(f"🎓 [Sample Trip] Created trip {trip_id} for user {x_user_id}")
+        print(f"🎓 [Sample Trip] Created trip {trip_id} for user {user_id}")
 
         # ── 3. Create Items ───────────────────────────────────────
         items_payload = []
@@ -245,11 +242,11 @@ async def seed_sample_trip(
         supabase.table("trip_members").insert(
             {
                 "itinerary_id": trip_id,
-                "user_id": x_user_id,
+                "user_id": user_id,
                 "user_name": "Explorer",
             }
         ).execute()
-        print(f"   ✅ Added user {x_user_id} as member")
+        print(f"   ✅ Added user {user_id} as member")
 
         return {"status": "success", "trip_id": trip_id, "is_sample": True}
 

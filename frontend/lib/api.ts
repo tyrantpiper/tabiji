@@ -21,10 +21,13 @@ if (typeof window === "undefined" || process.env.NODE_ENV === "development") {
     console.log("🚀 [API] Connected to:", API_HOST || "(same-origin /api)");
 }
 
-import { getCachedToken } from './auth-session';
+import { getCachedToken, ensureValidSession } from './auth-session';
 
 const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const token = getCachedToken();
+    let token = getCachedToken();
+    if (!token && typeof window !== "undefined") {
+        token = await ensureValidSession().catch(() => null);
+    }
     if (token) {
         if (init?.headers instanceof Headers) {
             if (!init.headers.has("Authorization")) {
@@ -49,7 +52,14 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     if (!activeFetch) {
         throw new Error("No fetch implementation available");
     }
-    return activeFetch(input, init);
+    const res = await activeFetch(input, init);
+    // 🛡️ 401 自動換票與自癒防禦 (Self-Healing Recovery)
+    if (res.status === 401 && typeof window !== "undefined") {
+        console.warn("⚠️ [API] Received 401 Unauthorized, purging cached token...");
+        localStorage.removeItem("tabiji_session_token");
+        ensureValidSession().catch(() => {});
+    }
+    return res;
 };
 
 import { SyncQueue } from './sync-engine';
@@ -650,6 +660,21 @@ export const tripsApi = {
             throw new Error(error.detail || "無法踢出成員")
         }
         return res.json()
+    },
+
+    /** 🧾 Generate shared ledger code */
+    generateLedgerShareCode: async (tripId: string, userId?: string) => {
+        const headers: Record<string, string> = {}
+        if (userId) headers["X-User-ID"] = userId
+        const res = await fetch(`${API.TRIPS}/${tripId}/ledger-share`, {
+            method: "PATCH",
+            headers
+        })
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: "Failed to generate ledger code" }))
+            throw new Error(err.detail || "Failed to generate ledger code")
+        }
+        return res.json() as Promise<{ ledger_share_code: string }>
     },
 
     /** 💾 Save a new itinerary from AI result */
@@ -1326,6 +1351,21 @@ export const usersApi = {
             return data
         }
         return parsed.data
+    },
+
+    /** 🗑️ Delete all user data (GDPR compliant) */
+    deleteUserData: async (userId: string) => {
+        const res = await fetch(`${API_HOST}/api/user/${userId}/data`, {
+            method: "DELETE",
+            headers: {
+                "X-User-ID": userId
+            }
+        })
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: "Failed to delete user data" }))
+            throw new Error(err.detail || "Failed to delete user data")
+        }
+        return res.json()
     },
 
     /** Update user profile */

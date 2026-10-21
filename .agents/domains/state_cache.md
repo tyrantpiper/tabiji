@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **前端無感 Session 自動換發與生命週期自癒法則 (AD-146)**: 前端應用必須於 AppClientLayer 掛載期預檢並靜默換發 Session JWT，並註冊 online 與 visibilitychange 生命週期監聽器於前景喚醒時提前自動刷新憑證；全域 API 代理層必須具備 401 攔截與單次透明換票重試機制，徹底消除用戶因 Token 過期產生的操作中斷。
+
 - **前端動態代理與單例換票防抖法則 (AD-145)**: 前端包裝全域 fetch 時，嚴禁在模組載入期以 bind(window) 鎖定靜態參照，必須於執行期動態獲取 globalThis.fetch 以確保 Vitest/Node 測試相容性；同時，會話換票必須實施單例 Promise 防抖與離線 short-circuit，防止開機併發風暴。
 
 - **模組單例可測性與狀態隔離重置法則 (Module Throttle Singleton Reset Invariance)**: 凡在組件外部宣告之模組層級單例狀態（如 globalLastRefreshTimestamp），必須顯式導出 __reset...ForTesting() 介面，並於單元測試 beforeEach/afterEach 中強制調用，徹底杜絕跨測試狀態洩漏與 Flaky Tests。

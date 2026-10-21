@@ -150,7 +150,7 @@ async def run_single_validator(
             e_line = min(len(lines), int(target["end_line"]))
             code_snippet = "\n".join(lines[s_line:e_line])
         else:
-            code_snippet = full_path.read_text(encoding="utf-8", errors="replace")[:60000]
+            code_snippet = full_path.read_text(encoding="utf-8", errors="replace")[:6000]
     except Exception as e:
         code_snippet = f"# Error reading file: {e}"
 

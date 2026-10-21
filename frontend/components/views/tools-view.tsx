@@ -32,7 +32,7 @@ import { useExpenses, useHaptic, useTripDetail } from "@/lib/hooks"
 import { useTargetExpenseId, useTripStore } from "@/lib/stores/tripStore"
 import { debugLog } from "@/lib/debug"
 import { ExpenseDialog } from "@/components/expense-dialog"
-import { expensesApi, API_HOST } from "@/lib/api"
+import { expensesApi, tripsApi, API_HOST } from "@/lib/api"
 import { ActuaryDialogCard } from "@/components/ActuaryDialogCard"
 import { useOfflineMutation } from "@/lib/sync-hooks"
 import { SyncStatusBadge } from "@/components/ui/SyncStatusBadge"
@@ -290,13 +290,7 @@ export function ToolsView() {
         setIsSharing(true)
         try {
             const userId = localStorage.getItem("user_uuid") || ""
-            const res = await fetch(`${API_HOST}/api/trips/${activeTripId}/ledger-share`, {
-                method: "PATCH",
-                headers: { "x-user-id": userId }
-            })
-            if (!res.ok) throw new Error("Failed to generate code")
-
-            const { ledger_share_code } = await res.json()
+            const { ledger_share_code } = await tripsApi.generateLedgerShareCode(activeTripId, userId)
             const shareUrl = `${window.location.origin}/ledger/${ledger_share_code}`
 
             if (navigator.share) {

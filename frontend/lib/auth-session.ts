@@ -20,15 +20,78 @@ export interface SessionInfo {
 }
 
 /**
+ * 🛡️ 驗證 JWT 格式及有效期限 (exp)
+ * 包含 60 秒的時鐘偏移 (clock-skew) 容錯
+ */
+export function isTokenValid(token: string | null): boolean {
+    if (!token || typeof token !== "string") return false;
+    try {
+        const parts = token.split(".");
+        if (parts.length !== 3) return false;
+        const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const jsonStr = typeof atob !== "undefined"
+            ? decodeURIComponent(
+                atob(base64)
+                    .split("")
+                    .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+                    .join("")
+            )
+            : Buffer.from(base64, "base64").toString("utf-8");
+        const payload = JSON.parse(jsonStr);
+        if (!payload || typeof payload !== "object") return false;
+        if (!payload.exp) return true;
+        const now = Math.floor(Date.now() / 1000);
+        return payload.exp > now + 60;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * 取得當前已緩存的 Session Token (同步快速讀取)
+ * 🛡️ 具備過期與格式自癒能力：若發現已過期或損毀自動自 localStorage 剔除
  */
 export function getCachedToken(): string | null {
     if (typeof window === "undefined") return null;
     try {
-        return localStorage.getItem(TOKEN_KEY);
+        const token = localStorage.getItem(TOKEN_KEY);
+        if (!token) return null;
+        if (!isTokenValid(token)) {
+            console.warn("🛡️ [Auth] Cached session token is expired or corrupted, purging...");
+            localStorage.removeItem(TOKEN_KEY);
+            return null;
+        }
+        return token;
     } catch {
         return null;
     }
+}
+
+/**
+ * 🛰️ 全域連線與前台恢復監聽器 (Online & Visibility Auto-Exchange)
+ * 當 PWA 從完全斷網恢復連線，或自背景喚醒至前台時，
+ * 若當前無有效憑證，自動觸發背景換票以確保所有請求可用。
+ */
+export function initSessionLifecycleListener(): () => void {
+    if (typeof window === "undefined") return () => {};
+
+    const handleReconnectOrResume = () => {
+        if (navigator.onLine && !getCachedToken()) {
+            console.log("🛰️ [Auth] Network restored or resumed, auto-exchanging session token...");
+            ensureValidSession().catch(() => {});
+        }
+    };
+
+    window.addEventListener("online", handleReconnectOrResume);
+    document.addEventListener("visibilitychange", handleReconnectOrResume);
+
+    // Initial check on mount
+    handleReconnectOrResume();
+
+    return () => {
+        window.removeEventListener("online", handleReconnectOrResume);
+        document.removeEventListener("visibilitychange", handleReconnectOrResume);
+    };
 }
 
 /**

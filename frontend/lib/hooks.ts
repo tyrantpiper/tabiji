@@ -14,27 +14,51 @@ export class HttpError extends Error {
     }
 }
 
-export const fetcherWithUserId = ([url, uid]: [string, string]) =>
-    fetch(API_HOST + url, { headers: { "X-User-ID": uid } })
-        .then(async r => {
-            if (!r.ok) {
-                const errorBody = await r.json().catch(() => ({}))
-                if (r.status !== 404) {
-                    toast.error("伺服器連線失敗，請稍後再試 (Server connection failed)")
-                }
-                throw new HttpError(r.status, errorBody?.detail || `HTTP ${r.status}`, errorBody)
+import { getCachedToken, ensureValidSession } from './auth-session'
+
+export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
+    let token = getCachedToken()
+    if (!token && typeof window !== "undefined") {
+        token = await ensureValidSession().catch(() => null)
+    }
+    const headers: Record<string, string> = { "X-User-ID": uid }
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`
+    }
+    const activeFetch = typeof globalThis !== "undefined" && globalThis.fetch ? globalThis.fetch : (typeof window !== "undefined" ? window.fetch : fetch)
+    
+    let r: Response
+    try {
+        r = await activeFetch(API_HOST + url, { headers })
+    } catch (err) {
+        console.warn("[Fetcher] Network degradation or offline:", (err as Error)?.message || err)
+        throw new HttpError(0, (err as Error)?.message || "Network error", { offline: true })
+    }
+
+    // 🛡️ 401 憑證自癒重試機制 (Self-Healing 1-Time Re-exchange & Retry)
+    if (r.status === 401 && typeof window !== "undefined") {
+        console.warn("⚠️ [Fetcher] Received 401 Unauthorized. Purging stale token and attempting 1-time re-exchange...")
+        localStorage.removeItem("tabiji_session_token")
+        const freshToken = await ensureValidSession().catch(() => null)
+        if (freshToken) {
+            const retryHeaders = { ...headers, "Authorization": `Bearer ${freshToken}` }
+            try {
+                r = await activeFetch(API_HOST + url, { headers: retryHeaders })
+            } catch (retryErr) {
+                throw new HttpError(0, (retryErr as Error)?.message || "Network error", { offline: true })
             }
-            return r.json()
-        })
-        .catch(err => {
-            if (err instanceof HttpError) {
-                throw err
-            }
-            // 🌐 網絡抖動或離線斷網（Failed to fetch / Connection Refused）
-            // 降級為 warn，避免 Next.js Turbopack 誤將背景 SWR 離線輪詢當作 Fatal Error Overlay 彈窗阻擋
-            console.warn("[Fetcher] Network degradation or offline:", err?.message || err)
-            throw new HttpError(0, err?.message || "Network error", { offline: true })
-        })
+        }
+    }
+
+    if (!r.ok) {
+        const errorBody = await r.json().catch(() => ({}))
+        if (r.status !== 404 && r.status !== 401) {
+            toast.error("伺服器連線失敗，請稍後再試 (Server connection failed)")
+        }
+        throw new HttpError(r.status, errorBody?.detail || `HTTP ${r.status}`, errorBody)
+    }
+    return r.json()
+}
 
 export function useTrips(userId: string | null) {
     const [idbTrips, setIdbTrips] = useState<Trip[] | null>(() => getTripsListSnapshotSync<Trip[]>(userId))
@@ -90,24 +114,7 @@ export function useTripDetail(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error, mutate, isValidating } = useSWR<any>(
         swrKey,
-        ([url, uid]: [string, string]) =>
-            fetch(API_HOST + url, {
-                headers: { "X-User-ID": uid }
-            }).then(async r => {
-                if (!r.ok) {
-                    const errorBody = await r.json().catch(() => ({}))
-                    // 🛡️ 404 代表行程已被刪除或不存在，不跳出連線失敗 toast，由自癒機制靜默接管
-                    if (r.status !== 404) {
-                        toast.error("伺服器連線失敗，請稍後再試 (Server connection failed)")
-                    }
-                    throw new HttpError(r.status, errorBody?.detail || `HTTP ${r.status}`, errorBody)
-                }
-                return r.json()
-            }).catch(err => {
-                if (err instanceof HttpError) throw err
-                console.warn("🌐 [Fetcher] Offline network suppression:", err?.message || err)
-                throw new HttpError(0, err?.message || "Offline", { offline: true })
-            }),
+        fetcherWithUserId,
         {
             fallbackData: initialSnapshot || undefined,
             revalidateOnFocus: false,

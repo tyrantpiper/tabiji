@@ -860,15 +860,27 @@ async def clear_day_review(
     request: Request,
     trip_id: str,
     day: int,
+    user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
     """🗑️ 清除特定天數的 AI 審核報告"""
     try:
-        trip_res = supabase.table("itineraries").select("content").eq("id", trip_id).single().execute()
+        trip_res = supabase.table("itineraries").select("created_by, content").eq("id", trip_id).execute()
         if not trip_res.data:
             raise HTTPException(status_code=404, detail="找不到行程資料")
             
-        content = trip_res.data.get("content") or {}
+        trip = trip_res.data[0]
+        created_by = str(trip.get("created_by") or "")
+        if created_by != user_id:
+            mem_res = supabase.table("trip_members")\
+                .select("id")\
+                .eq("itinerary_id", trip_id)\
+                .eq("user_id", user_id)\
+                .execute()
+            if not mem_res.data:
+                raise HTTPException(status_code=403, detail="無權限清除此行程的審核報告")
+
+        content = trip.get("content") or {}
         reviews = content.get("day_ai_reviews", {})
         
         if str(day) in reviews:
@@ -877,6 +889,8 @@ async def clear_day_review(
             supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute()
             
         return {"status": "success", "message": "Review cleared"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

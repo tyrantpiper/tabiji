@@ -803,10 +803,12 @@ async def save_itinerary(
         # SQL範例: CREATE TRIGGER check_trip_limit BEFORE INSERT ON itineraries ...
         count_res = supabase.table("itineraries")\
             .select("id", count="exact")\
-            .eq("created_by", request.user_id)\
+            .eq("created_by", user_id)\
             .execute()
         
-        if (count_res.count or 0) >= 3:
+        raw_count = getattr(count_res, "count", None)
+        owned_count = raw_count if isinstance(raw_count, int) else len(count_res.data or [])
+        if owned_count >= 3:
             raise HTTPException(
                 status_code=403, 
                 detail="行程數量已達上限 (最多 3 個)，請先下載 PDF 後刪除舊行程"
@@ -840,7 +842,7 @@ async def save_itinerary(
         trip_data = {
             "title": request.title,
             "creator_name": request.creator_name,
-            "created_by": request.user_id,
+            "created_by": user_id,
             "share_code": room_code,
             "public_id": pub_id,
             "start_date": start_date,
@@ -864,7 +866,7 @@ async def save_itinerary(
         }
         
         # 🆕 Phase 3.1: 確保使用者存在 (滿足外鍵約束)
-        await ensure_user_exists(supabase, request.user_id, request.creator_name)
+        await ensure_user_exists(supabase, user_id, request.creator_name)
         
         trip_res = supabase.table("itineraries").insert(trip_data).execute()
         
@@ -877,7 +879,7 @@ async def save_itinerary(
         # 3. 自動把創建者加入成員列表
         member_data = {
             "itinerary_id": trip_id,
-            "user_id": request.user_id,
+            "user_id": user_id,
             "user_name": request.creator_name
         }
         supabase.table("trip_members").insert(member_data).execute()
@@ -937,7 +939,11 @@ async def save_itinerary(
 
 
 @router.post("/import-to-trip")
-async def import_to_trip(request: ImportToTripRequest, supabase=Depends(get_supabase)):
+async def import_to_trip(
+    request: ImportToTripRequest, 
+    user_id: str = Depends(get_verified_user),
+    supabase=Depends(get_supabase)
+):
     """📥 匯入到現有行程
     
     將新項目合併到現有行程的 content 並新增 items。
@@ -951,6 +957,18 @@ async def import_to_trip(request: ImportToTripRequest, supabase=Depends(get_supa
             raise HTTPException(status_code=404, detail="找不到指定的行程")
             
         existing_trip = trip_res.data[0]
+
+        # 🛡️ 權限檢查：只有行程創建者或成員可以匯入內容
+        created_by = str(existing_trip.get("created_by") or "")
+        if created_by != user_id:
+            mem_res = supabase.table("trip_members")\
+                .select("id")\
+                .eq("itinerary_id", request.trip_id)\
+                .eq("user_id", user_id)\
+                .execute()
+            if not mem_res.data:
+                raise HTTPException(status_code=403, detail="只有行程成員或創建者可以匯入內容")
+
         existing_content = existing_trip.get("content") or {}
         
         # 2. 合併 content 資料
@@ -1106,6 +1124,8 @@ async def import_to_trip(request: ImportToTripRequest, supabase=Depends(get_supa
             "skipped": skipped_count
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 Import Error: {e}")
         print(f"   Traceback: {traceback.format_exc()}")
@@ -1116,21 +1136,20 @@ async def import_to_trip(request: ImportToTripRequest, supabase=Depends(get_supa
 async def update_day_data(
     trip_id: str, 
     request: UpdateDayDataRequest, 
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
     """📝 更新特定天的注意事項、預估花費、交通票券"""
     try:
-        # 🛡️ 權限檢查 (Cautious Authorization Check)
-        if x_user_id:
-            member_check = supabase.table("trip_members")\
-                .select("user_id")\
-                .eq("itinerary_id", trip_id)\
-                .eq("user_id", x_user_id)\
-                .execute()
-            
-            if not member_check.data:
-                raise HTTPException(status_code=403, detail="您沒有權限修改此行程資訊")
+        # 🛡️ 權限檢查 (Strict Authorization Check)
+        member_check = supabase.table("trip_members")\
+            .select("user_id")\
+            .eq("itinerary_id", trip_id)\
+            .eq("user_id", user_id)\
+            .execute()
+        
+        if not member_check.data:
+            raise HTTPException(status_code=403, detail="您沒有權限修改此行程資訊")
         print(f"📝 更新 Day {request.day} 資訊 for Trip {trip_id}")
         
         # 1. 取得現有行程 (包含頂層欄位以進行 Lazy Migration)
@@ -2093,7 +2112,7 @@ async def get_trip_expenses(
 @router.patch("/{trip_id}/ledger-share")
 async def generate_ledger_share_code(
     trip_id: str,
-    x_user_id: str = Header(None, alias="X-User-ID"),
+    user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
     """
@@ -2104,15 +2123,12 @@ async def generate_ledger_share_code(
     2. 生成 6 碼隨機字串 (大寫字母+數字)
     3. 更新 itineraries 表的 ledger_share_code 欄位
     """
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="未提供使用者 ID")
-        
     try:
         # 1. 權限檢查
         member_check = supabase.table("trip_members")\
             .select("user_id")\
             .eq("itinerary_id", trip_id)\
-            .eq("user_id", x_user_id)\
+            .eq("user_id", user_id)\
             .execute()
             
         if not member_check.data:

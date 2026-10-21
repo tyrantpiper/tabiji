@@ -3,6 +3,8 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **Windows Subprocess 命令列衛生與長度防呆法則 (Windows Subprocess Hygiene Invariance)**: 在 Windows 平台調度外部 CLI 程序 (如 agy.exe) 時，傳入命令列長度受 32,767 字元系統硬限制。Harness 傳參時必須在代碼提取端實施 [:6000] 長度防衛或強制指定 start_line 與 end_line 切片，防止 WinError 206 (檔名或副檔名太長) 崩潰。
+
 - **靜態 AST/正則哨兵多行與修飾詞容錯法則 (Sentinel Multiline & Regex Tolerance Invariance)**: CI/CD 靜態安全分析器比對 SQL DDL 時，嚴禁使用單行 .* 與硬編碼角色鄰接。必須統一採用 [\s\S]*? 穿透多行排版，以 [^;]* 容納逗號分隔的角色任意排列，並對 ALTER TABLE 注入 (?:IF\s+EXISTS\s+)?(?:ONLY\s+)? 修飾詞容錯，杜絕 CI 假陽性 (False Positive) 阻斷正常交付管線。
 
 - **Windows CLI 命令列長度防禦法則 (Windows CLI Character Limit Defense)**: 所有調度外部子行程 CLI（如 agy.exe）的維護腳本與 candidates 清單，必須嚴格宣告 start_line/end_line 進行片段切片，嚴禁將未經切片的大型原始檔直接嵌入 -p 參數，防止 Windows WinError 206 溢位崩潰。
@@ -20,6 +22,8 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Windows CreateProcess 命令列長度溢位陷阱 - WinError 206**: 在 Windows 平台使用 asyncio.create_subprocess_exec 傳遞包含未切片代碼字串（60,000+ 字元）之 -p={prompt} 參數給 agy.exe 時，系統拋出 [WinError 206] 檔名或副檔名太長，造成子代理人崩潰。修復準則：外部 Subprocess 調度必須對傳入的代碼片段實施精確行範圍切片或預設上限截斷（如 <= 6000 字元），防止 OS 層級命令列長度溢位。
+
 - **CI 靜態正則缺 re.DOTALL 與角色排列硬編碼誤報陷阱**: CI 靜態掃描測試使用 .* 且寫死 TO (authenticated|service_role)，導致合法的多行 SQL 與 TO anon, authenticated; 被判為未授權，CI 假陽性阻斷。修復準則：靜態代碼分析器正則必須使用 [\s\S]*? 穿透跨行換行符，並以 [^;]* 支援逗號分隔的任意角色排列順序。
 
 - **FP-062 (CI 靜態正則缺 re.DOTALL 與角色排列硬編碼誤報陷阱)**: CI 靜態掃描測試使用 .* 且寫死 TO (authenticated|service_role)，導致合法的多行 SQL 與 TO anon, authenticated; 被判為未授權，CI 假陽性阻斷。修復準則：靜態代碼分析器正則必須使用 [\s\S]*? 穿透跨行換行符，並以 [^;]* 支援逗號分隔的任意角色排列順序。

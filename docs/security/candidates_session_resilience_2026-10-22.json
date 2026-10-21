@@ -1,0 +1,42 @@
+[
+  {
+    "id": "frontend/lib/auth-session.ts:token_expiration_deadlock",
+    "file_path": "frontend/lib/auth-session.ts",
+    "attack_vector": "token_invalidation_and_silent_recovery",
+    "hypothesis": "getCachedToken() blindly trusts localStorage without verifying JWT expiration (exp) or format integrity. An expired or corrupted token halts silent exchange in ensureValidSession, locking the client in a permanent 401 loop.",
+    "start_line": 23,
+    "end_line": 62
+  },
+  {
+    "id": "frontend/lib/api.ts:boot_race_condition_unauthenticated_call",
+    "file_path": "frontend/lib/api.ts",
+    "attack_vector": "race_condition_unauthenticated_request",
+    "hypothesis": "api.ts fetch interceptor only synchronously queries getCachedToken(). If an API request is fired during cold boot before ensureValidSession completes, the request is dispatched without Authorization header, failing with 401.",
+    "start_line": 26,
+    "end_line": 53
+  },
+  {
+    "id": "backend/routers/trips.py:day_data_header_spoofing",
+    "file_path": "backend/routers/trips.py",
+    "attack_vector": "authentication_bypass_island",
+    "hypothesis": "update_day_data (PATCH /{trip_id}/day-data) relies on Header(None, alias='X-User-ID') instead of Depends(get_verified_user). An attacker can spoof another collaborator's user ID without any cryptographic signature to overwrite trip day metadata.",
+    "start_line": 1115,
+    "end_line": 1135
+  },
+  {
+    "id": "backend/routers/trips.py:ledger_share_header_spoofing",
+    "file_path": "backend/routers/trips.py",
+    "attack_vector": "authentication_bypass_island",
+    "hypothesis": "generate_ledger_share_code (PATCH /{trip_id}/ledger-share) directly extracts x_user_id: str = Header(None, alias='X-User-ID') without JWT validation, allowing unauthenticated attackers to generate or reset ledger sharing codes.",
+    "start_line": 2093,
+    "end_line": 2110
+  },
+  {
+    "id": "backend/routers/sample_trip.py:seed_sample_header_spoofing",
+    "file_path": "backend/routers/sample_trip.py",
+    "attack_vector": "authentication_bypass_island",
+    "hypothesis": "seed_sample_trip (POST /trips/seed-sample) accepts unauthenticated X-User-ID header without JWT validation, allowing attackers to trigger sample seeding for arbitrary UUIDs.",
+    "start_line": 188,
+    "end_line": 203
+  }
+]

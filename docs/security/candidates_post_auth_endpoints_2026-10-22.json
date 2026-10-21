@@ -1,0 +1,34 @@
+[
+  {
+    "id": "backend/routers/gdpr.py:delete_user_data_unauthenticated_bola",
+    "file_path": "backend/routers/gdpr.py",
+    "start_line": 14,
+    "end_line": 35,
+    "attack_vector": "bola",
+    "hypothesis": "DELETE /api/user/{user_id}/data lacks caller verification and ownership check, allowing arbitrary caller to delete victim account data."
+  },
+  {
+    "id": "backend/routers/trips.py:import_to_trip_unauthenticated_injection",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 941,
+    "end_line": 975,
+    "attack_vector": "bola",
+    "hypothesis": "POST /api/trips/import-to-trip accepts requests without verifying JWT caller is owner or collaborator of itinerary_id, allowing unauthorized data mutation."
+  },
+  {
+    "id": "backend/routers/trips.py:save_itinerary_identity_substitution",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 785,
+    "end_line": 887,
+    "attack_vector": "identity_substitution",
+    "hypothesis": "POST /api/trips/save-itinerary might rely on client-supplied request.user_id rather than verified token sub, risking created_by spoofing."
+  },
+  {
+    "id": "backend/routers/ai.py:clear_day_review_unauthenticated_deletion",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 858,
+    "end_line": 892,
+    "attack_vector": "bola",
+    "hypothesis": "DELETE /api/ai/trips/{trip_id}/days/{day}/ai-review lacks user_id and membership verification, permitting arbitrary callers to delete day reviews."
+  }
+]

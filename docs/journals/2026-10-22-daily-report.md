@@ -1,18 +1,19 @@
-# 📅 Daily Report - 2026-10-22 (Supabase 2026-10-30 DAC Invariance & P0 Cryptographic Auth / 1Password Secret Key Architecture)
+# 📅 Daily Report - 2026-10-22 (Supabase DAC Invariance, P0 Cryptographic Auth, Silent Session Resilience & Post-Auth Hardening)
 
-> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 81 Suites / 538 Tests Passed; Backend 208 Tests Passed, 5 Skipped; Seams 10/10 Intact), Security Ledger 167 Targets (25 Remediated, 17 Verified, 125 Dismissed).  
+> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 82 Suites / 544 Tests Passed; Backend 215 Tests Passed, 5 Skipped; Seams 10/10 Intact), Security Ledger 175 Targets (33 Remediated, 17 Verified, 125 Dismissed).  
 > **今日關鍵研發範疇 (Core Focus)**：
 > - 🛡️ **Supabase 2026-10-30 破壞性變更防線**：建立顯式 DAC 授權遷移 [`supabase/migrations/20261022_data_api_explicit_grants.sql`](file:///d:/Project/tabiji/travel-pwa/supabase/migrations/20261022_data_api_explicit_grants.sql)，線上生產庫執行成功。
 > - 🔒 **AI 個人偏好表 RLS 補強與型別歸一化**：修復 `user_preferences` 未啟用 RLS 漏洞，落實 `auth.uid()::text = user_id::text` 雙向字串轉型防線（AD-143, FP-061）。
 > - 🤖 **CI 靜態授權哨兵與正則容錯加固**：建立 [`backend/tests/test_supabase_grants_sentinel.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_supabase_grants_sentinel.py)，並經 Security Sentinel 獨立沙盒對抗證偽，完成多行與角色排列容錯升級（FP-062）。
 > - 🛡️ **P0 密碼學身分認證與 X-User-ID 徹底拔除**：實作 FastAPI 記憶體級 HS256 JWT（0.05ms 極速驗簽、免 Supabase MAU 配額），全面拔除 `X-User-ID` 明文信任後門（AD-144）。
 > - 🔑 **1Password 私密金鑰典範與伺服端動態脫敏**：保留 UUID 作為私密引繼碼（Recovery Key），但對行程與記帳之協同旅伴動態脫敏為 `mem_sha256(user_id + trip_id)[:10]`，徹底封死帳號奪舍（ATO）與 IDOR 鏈路。
-> - 📜 **BYOK 零持久化轉發與 PolyForm 授權合規定位**：正式更新文案為「Zero-Retention BYOK Relay」並標明「Source-Available under PolyForm Noncommercial 1.0.0」。
-> - 📊 **資安台帳數學守恆升級**：`security-coverage-ledger.json` 擴充至 167 目標（25 處已修復，17 處列管驗證，125 處已證偽排除）。
+> - ⚡ **前端 Session 無感自動換發與生命週期自癒**：實作開機無感領票/換票、防競態換發單例隊列、過期自動清理、網路恢復 (`online`) 與前台喚醒 (`visibilitychange`) 自動換發（AD-146）。
+> - 🛡️ **後端四大敏感端點物件授權（BOLA）與防身分替換加固**：加固 GDPR 刪除、行程合併匯入、行程自建儲存與 AI 審核報告清除，經 Security Sentinel 物理沙盒證偽（4/4 DISMISSED）（AD-147, FP-065, FP-066）。
+> - 📊 **資安台帳數學守恆升級**：`security-coverage-ledger.json` 擴充至 175 目標（33 處已修復，17 處列管驗證，125 處已證偽排除）。
 
 ---
 
-## 🏆 深度專案復盤：六大工程與資安里程碑 (Six Core Milestones)
+## 🏆 深度專案復盤：九大工程與資安里程碑 (Nine Core Milestones)
 
 ---
 
@@ -73,7 +74,7 @@
 
 ---
 
-### 里程碑五：1Password 恢復金鑰典範與伺服端動態脫敏 (1Password Recovery Key & Zero-Exposure IDOR Defense)
+### 里程碑五：1Password 恢復金鑰典範與伺服端動態脫敏 (1Password Recovery Key & Zero-Exposure Masking Architecture)
 
 1. **UUID 四重超載矛盾與奪舍漏洞**：
    - 原架構中，UUID 同時作為：(1) 行程公開成員 ID、(2) 資料庫外鍵、(3) API 憑證、(4) 首頁還原密碼。
@@ -84,10 +85,6 @@
      - 行程創立者 `created_by`：非團長查看一律回傳 `None`（`is_owner: false`）。
      - 成員列表 `user_id` 與記帳 `payer_id`/`created_by`：非本人一律單向動態雜湊為 `mem_sha256(user_id + trip_id)[:10]`。
    - 協同旅伴在任何網路封包中均無法取得其他人的真實 UUID，奪舍鏈路被物理切斷。
-3. **前端會話管理器與 API 代理 ([frontend/lib/auth-session.ts](file:///d:/Project/tabiji/travel-pwa/frontend/lib/auth-session.ts) & [api.ts](file:///d:/Project/tabiji/travel-pwa/frontend/lib/api.ts))**：
-   - 實作模組級單例防抖（In-Flight Promise Deduplication），10+ 個併發請求共享單次換票。
-   - `navigator.onLine` 離線短路防護，確保 PWA 無網秒開不報警。
-   - 首頁還原流程整合密碼學換票，斷網時安全優雅降級為本地快取存取。
 
 ---
 
@@ -97,6 +94,45 @@
    - 修正文案為「Zero-Retention BYOK Relay — AI keys are encrypted locally in the browser, processed strictly in-memory during stateless backend AI proxying, and never persisted to server disk, database, or telemetry logs」。
 2. **開源與商業授權邊界澄清**：
    - 依據 OSI 開源定義，非商用條款應明確標記為「Source-Available under PolyForm Noncommercial 1.0.0」，保障個人非商業用途，維護原創智財與歷史 MIT 標籤保障。
+
+---
+
+### 里程碑七：前端 Session 無感自動換發與生命週期喚醒防護 (Silent Session Auto-Exchange & Lifecycle Reconnection)
+
+1. **使用者體驗與安全性零妥協設計**：
+   - 使用者一打開 Tabiji PWA，[`frontend/components/app-client-layer.tsx`](file:///d:/Project/tabiji/travel-pwa/frontend/components/app-client-layer.tsx) 於掛載初期自動呼叫 `initSilentSession()`。
+   - 若本地已存有有效的 JWT 憑證，以 0ms 本地記憶體短路返回；若過期或損毀，自動調用 `getCachedToken()` 進行本地清理，並發起無感換票。
+2. **全生命週期事件自癒機制 ([frontend/lib/auth-session.ts](file:///d:/Project/tabiji/travel-pwa/frontend/lib/auth-session.ts))**：
+   - 實作 `initSessionLifecycleListener()`，掛載 `window.addEventListener('online')` 與 `document.addEventListener('visibilitychange')`。
+   - 當使用者手機自地鐵離線恢復網路，或從背景重新喚醒切換回 Tabiji 時，立即在背景靜默預換發 Token，徹底消滅 API 在換頁時遭遇 401 的偶發震盪。
+3. **全鏈路 401 攔截與 SWR 統一治理 ([frontend/lib/api.ts](file:///d:/Project/tabiji/travel-pwa/frontend/lib/api.ts) & [hooks.ts](file:///d:/Project/tabiji/travel-pwa/frontend/lib/hooks.ts))**：
+   - `authenticatedFetch` 具備 1 次性 401 自動刷新重試防衛（Automatic Token Refresh & Re-flight）。
+   - SWR Hook 統一收攏至 `fetcherWithUserId`，SSE 串流連線與 AI 聊天對話亦全面附加 Bearer Token。
+   - 新增前端專項測試 [`frontend/__tests__/auth-session-resilience.test.ts`](file:///d:/Project/tabiji/travel-pwa/frontend/__tests__/auth-session-resilience.test.ts)（6 項測試 100% 通過）。
+
+---
+
+### 里程碑八：後端四大敏感端點物件授權（BOLA）與防身分替換加固 (Post-Auth Endpoints Hardening)
+
+1. **四大潛在漏洞端點全面修復**：
+   - `DELETE /api/user/{user_id}/data` ([`backend/routers/gdpr.py`](file:///d:/Project/tabiji/travel-pwa/backend/routers/gdpr.py)): 強制注入 `caller_user_id: Depends(get_verified_user)`，校驗 `caller_user_id == user_id`，非本人操作一律 403 阻斷。
+   - `POST /api/trips/import-to-trip` ([`backend/routers/trips.py`](file:///d:/Project/tabiji/travel-pwa/backend/routers/trips.py)): 注入 `user_id: Depends(get_verified_user)`，嚴格比對 `created_by` 或查詢 `trip_members` 表，非成員注入 403 阻斷。
+   - `POST /api/trips/save-itinerary` ([`backend/routers/trips.py`](file:///d:/Project/tabiji/travel-pwa/backend/routers/trips.py)): 用戶配額查詢、主行程 `created_by`、`ensure_user_exists` 與成員綁定 100% 強制使用 verified JWT `user_id`，客戶端在 JSON Body 偽造 `user_id` 完全無效。
+   - `DELETE /api/ai/trips/{trip_id}/days/{day}/ai-review` ([`backend/routers/ai.py`](file:///d:/Project/tabiji/travel-pwa/backend/routers/ai.py)): 注入 `user_id: Depends(get_verified_user)`，校驗創立者或旅伴關係，未授權者 403 阻斷。
+2. **後端專項測試擴充 ([`backend/tests/test_p0_auth_sentinel.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_p0_auth_sentinel.py))**：
+   - 擴充至 15 個測試用例，完整覆蓋上述 4 端點的未授權 401 攔截、跨帳號 403 阻斷與身分覆寫防禦。
+
+---
+
+### 里程碑九：Security Sentinel 物理沙盒證偽與 Windows CLI 防呆加固 (Physical Sandbox Verification)
+
+1. **Windows CreateProcess 命令列長度限制突破 (FP-065)**：
+   - 在調度 `agy.exe --sandbox` 時，因 `trips.py` 長達 10 萬字元，命令列長度超過 Windows 32,767 字元上限觸發 `[WinError 206] 檔名或副檔名太長`。
+   - 在 [`.agents/skills/security-sentinel/scripts/runner.py`](file:///d:/Project/tabiji/travel-pwa/.agents/skills/security-sentinel/scripts/runner.py) 中實施預設 6,000 字元上限截斷，並在候選目標中明確指定 `start_line` 與 `end_line` 精確切片，解決 OS 命令列長度極限。
+2. **沙盒對抗證偽判定 (4/4 DISMISSED)**：
+   - 經背景隔離子代理人靜態對抗分析，上述 4 項漏洞假說全數判定為 **DISMISSED (證偽/安全防禦成立)**。
+   - 生成正式報告 [`security_sentinel_report_2026-10-22_post_auth_endpoints.md`](file:///d:/Project/tabiji/travel-pwa/docs/security/reports/security_sentinel_report_2026-10-22_post_auth_endpoints.md)。
+   - 更新安全覆蓋率帳本 [`docs/security/security-coverage-ledger.json`](file:///d:/Project/tabiji/travel-pwa/docs/security/security-coverage-ledger.json) 至 175 項受稽目標。
 
 ---
 
@@ -115,6 +151,16 @@
 - **AD-145: 前端動態代理與單例換票防抖法則 (Active Fetch Dynamic Delegation & In-Flight Deduplication)**:
   - *Context*: 前端在 Vitest / Happy-DOM 環境下，若於模組載入期綁定 `window.fetch`，會導致測試 mock 被旁路跳過（拋出 Node ERR_INVALID_URL）；且 App 啟動時多個 Store 同步初使化會重複觸發換票請求。
   - *Decision*: 全域 API 代理於執行當下動態取用 `globalThis.fetch`；會話管理器採用單例 Promise 防抖與 `process.env.NODE_ENV === "test"` 繞道保護，兼顧生產併發效率與測試隔離。
+
+- **AD-146: 前端無感 Session 自動換發與生命週期自癒法則 (Silent Session Exchange & Online/Visibility Lifecycle Invariance)**:
+  - *Context*: 使用者長時間將 PWA 置於背景或進出無訊號地下鐵，Token 過期後若無自動重連與無感換發機制，切回前端將頻繁觸發 401 報警與資料空轉。
+  - *Decision*: 在 AppClientLayer 初始化靜默換票，並於 `auth-session.ts` 註冊 `online` 與 `visibilitychange` 事件監聽，主動於前景喚醒時提前在背景無感換票；同時全域 `authenticatedFetch` 實作 1 次性 401 攔截換票重發機制。
+  - *Trade-off*: 前端需管理多重事件監聽，但消滅了使用者操作中途斷線的卡頓感與驗證失效。
+
+- **AD-147: 後端端點物件級授權（BOLA）與防身分替換約束法則 (Strict Object Authorization & Token Identity Substitution Defense)**:
+  - *Context*: 既有部分端點依賴前端請求體 JSON 傳入之 `user_id`，或未在操作前檢查調用者是否為行程成員/建立者，存在 BOLA 越權與身分替換漏洞。
+  - *Decision*: 敏感端點（GDPR 刪除、行程匯入、行程保存、AI 審核報告刪除）全面強制以 `Depends(get_verified_user)` 取得 Verified User ID，業務邏輯嚴格核實資料庫物件所有權或旅伴關係，徹底忽視客戶端偽造的請求體參數。
+  - *Trade-off*: 每次修改資料需額外執行一次成員或建立者查詢，但確保了多租戶資料隔離與不可侵犯性。
 
 ---
 
@@ -135,6 +181,14 @@
 - **FP-064 (歷史相容路徑之次級記帳接口未脫敏洩漏陷阱)**:
   - *Symptom*: 雖然加固了主要路由 `/api/expenses`，但 `backend/routers/trips.py` 中掛載的舊版跨模組端點 `GET /{trip_id}/expenses` 仍直接回傳未脫敏的 `created_by` 與 `payer_id`。
   - *Lesson*: 憑證脫敏防護必須透過 AST 或全文檢索進行全域端點路由盤點，覆蓋所有歷史相容性路由別名。
+
+- **FP-065 (Windows CreateProcess 命令列長度溢位陷阱 - WinError 206)**:
+  - *Symptom*: 在 Windows 平台使用 `asyncio.create_subprocess_exec` 傳遞包含未切片代碼字串（60,000+ 字元）之 `-p={prompt}` 參數給 `agy.exe` 時，系統拋出 `[WinError 206] 檔名或副檔名太長`，造成子代理人崩潰。
+  - *Lesson*: Windows 系統底層對命令列長度有 32,767 字元硬限制。Harness 傳參時必須在代碼提取端實施 `[:6000]` 長度防禦，或強制候選清單提供明確的 `start_line` 與 `end_line` 切片。
+
+- **FP-066 (Supabase `select(count="exact")` 在測試 Mock 環境回傳物件結構陷阱)**:
+  - *Symptom*: `count_res = supabase.table("itineraries").select("id", count="exact").eq("created_by", user_id).execute()` 在單元測試 MagicMock 中，`count_res.count` 回傳 MagicMock 物件而非整數，導致 `int >= int` 比較拋出 `TypeError: '>=' not supported between instances of 'MagicMock' and 'int'`。
+  - *Lesson*: 配額統計取值必須具備防禦性型別防護：`raw_count = getattr(count_res, "count", None); owned_count = raw_count if isinstance(raw_count, int) else len(count_res.data or [])`。
 
 ---
 
@@ -178,6 +232,27 @@
     "content": "前端包裝全域 fetch 時，嚴禁在模組載入期以 bind(window) 鎖定靜態參照，必須於執行期動態獲取 globalThis.fetch 以確保 Vitest/Node 測試相容性；同時，會話換票必須實施單例 Promise 防抖與離線 short-circuit，防止開機併發風暴。"
   },
   {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-STATE-034",
+    "title": "前端無感 Session 自動換發與生命週期自癒法則 (AD-146)",
+    "content": "前端應用必須於 AppClientLayer 掛載期預檢並靜默換發 Session JWT，並註冊 online 與 visibilitychange 生命週期監聽器於前景喚醒時提前自動刷新憑證；全域 API 代理層必須具備 401 攔截與單次透明換票重試機制，徹底消除用戶因 Token 過期產生的操作中斷。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-BACKEND-033",
+    "title": "後端端點物件級授權（BOLA）與防身分替換約束法則 (AD-147)",
+    "content": "所有涉及個人資料修改、刪除或行程內容注入之 API 端點，一律強制注入 Depends(get_verified_user)，嚴禁信任請求體傳入之 user_id；所有資源變更必須在資料庫層級驗證調用者為建立者 (created_by == user_id) 或行程協同成員 (trip_members 表存在)，不符者一律回傳 403 Forbidden。"
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEVOPS-033",
+    "title": "Windows Subprocess 命令列衛生與長度防呆法則 (Windows Subprocess Hygiene Invariance)",
+    "content": "在 Windows 平台調度外部 CLI 程序 (如 agy.exe) 時，傳入命令列長度受 32,767 字元系統硬限制。Harness 傳參時必須在代碼提取端實施 [:6000] 長度防衛或強制指定 start_line 與 end_line 切片，防止 WinError 206 (檔名或副檔名太長) 崩潰。"
+  },
+  {
     "domain": "backend_concurrency",
     "type": "FAILED_PATH",
     "id": "FP-061",
@@ -204,6 +279,20 @@
     "id": "FP-064",
     "title": "歷史相容路徑之次級記帳接口未脫敏洩漏陷阱",
     "content": "雖然修復了 /api/expenses，但 backend/routers/trips.py 中保留的舊式相容接口 /{trip_id}/expenses 仍直接回傳原始 created_by 與 payer_id。修復準則：敏感憑證脫敏必須對所有路由別名與歷史跨模組端點進行全路徑拓撲掃描，杜絕次級通道洩漏。"
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-065",
+    "title": "Windows CreateProcess 命令列長度溢位陷阱 - WinError 206",
+    "content": "在 Windows 平台使用 asyncio.create_subprocess_exec 傳遞包含未切片代碼字串（60,000+ 字元）之 -p={prompt} 參數給 agy.exe 時，系統拋出 [WinError 206] 檔名或副檔名太長，造成子代理人崩潰。修復準則：外部 Subprocess 調度必須對傳入的代碼片段實施精確行範圍切片或預設上限截斷（如 <= 6000 字元），防止 OS 層級命令列長度溢位。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "FAILED_PATH",
+    "id": "FP-066",
+    "title": "Supabase select(count=exact) 在測試 Mock 環境回傳物件結構陷阱",
+    "content": "count_res = supabase.table('itineraries').select('id', count='exact').eq('created_by', user_id).execute() 在單元測試 MagicMock 中，count_res.count 回傳 MagicMock 物件而非整數，導致 int >= int 比較拋出 TypeError。修復準則：配額統計取值必須具備防禦性型別防護：raw_count = getattr(count_res, 'count', None); owned_count = raw_count if isinstance(raw_count, int) else len(count_res.data or [])。"
   }
 ]
 ```

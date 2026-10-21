@@ -1,8 +1,18 @@
 import pytest
 import httpx
+import time
+import jwt
 from unittest.mock import MagicMock
 from main import app
-from utils.deps import get_supabase
+from utils.deps import get_supabase, get_session_secret
+
+def make_auth_header(uid: str):
+    token = jwt.encode(
+        {"sub": uid, "iat": int(time.time()), "exp": int(time.time()) + 3600},
+        get_session_secret(),
+        algorithm="HS256"
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 class MockQueryBuilder:
     def __init__(self, data=None):
@@ -49,13 +59,13 @@ class MockSupabaseClient:
 
 @pytest.mark.asyncio
 async def test_seed_sample_trip_missing_user_id_returns_401():
-    """Security Sentinel: Missing X-User-ID header must be rejected with 401."""
+    """Security Sentinel: Missing Bearer JWT must be rejected with 401."""
     app.dependency_overrides[get_supabase] = lambda: MockSupabaseClient()
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
             response = await client.post("/api/trips/seed-sample")
             assert response.status_code == 401
-            assert "Missing X-User-ID" in response.json()["detail"]
+            assert "token" in response.json()["detail"].lower()
     finally:
         app.dependency_overrides.pop(get_supabase, None)
 
@@ -69,7 +79,7 @@ async def test_seed_sample_trip_dedup_skips_duplicate_seed():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
             response = await client.post(
                 "/api/trips/seed-sample",
-                headers={"X-User-ID": "user-explorer-777"}
+                headers=make_auth_header("user-explorer-777")
             )
             assert response.status_code == 200
             data = response.json()
@@ -88,7 +98,7 @@ async def test_seed_sample_trip_success_for_new_user():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
             response = await client.post(
                 "/api/trips/seed-sample",
-                headers={"X-User-ID": "user-fresh-888"}
+                headers=make_auth_header("user-fresh-888")
             )
             assert response.status_code == 200
             data = response.json()

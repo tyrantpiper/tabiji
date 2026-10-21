@@ -11,6 +11,8 @@ export interface SSEEvent {
     data: string
 }
 
+import { getCachedToken, ensureValidSession } from './auth-session'
+
 export interface SSEHandlers {
     onStart?: () => void
     onThinking?: (status: string, meta?: { query?: string; url?: string; thought?: string }) => void
@@ -167,13 +169,23 @@ export async function streamChat(
     const defaultTime = clientTime || new Date().toISOString()
     const defaultTz = clientTimezone || (typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei")
 
+    let token = getCachedToken()
+    if (!token && typeof window !== "undefined") {
+        token = await ensureValidSession().catch(() => null)
+    }
+
+    const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "X-Gemini-API-Key": apiKey,
+        "X-User-ID": userId || ""
+    }
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`
+    }
+
     const response = await fetch(`${apiUrl}/api/chat/stream`, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-Gemini-API-Key": apiKey,
-            "X-User-ID": userId || ""
-        },
+        headers,
         body: JSON.stringify({
             message,
             history: history.map(msg => ({

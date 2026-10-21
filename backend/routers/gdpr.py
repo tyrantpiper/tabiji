@@ -6,13 +6,17 @@ Handles GDPR compliance endpoints for user data deletion.
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from utils.deps import get_supabase
+from utils.deps import get_supabase, get_verified_user
 
 router = APIRouter(prefix="/api", tags=["gdpr"])
 
 
 @router.delete("/user/{user_id}/data")
-async def delete_user_data(user_id: str, supabase=Depends(get_supabase)):
+async def delete_user_data(
+    user_id: str, 
+    caller_user_id: str = Depends(get_verified_user),
+    supabase=Depends(get_supabase)
+):
     """
     🗑️ 刪除用戶的所有資料 (GDPR 合規)
     
@@ -22,6 +26,9 @@ async def delete_user_data(user_id: str, supabase=Depends(get_supabase)):
     3. trip_members (成員關係)
     4. itineraries (主行程)
     """
+    if caller_user_id != user_id:
+        raise HTTPException(status_code=403, detail="只能刪除自己的資料")
+
     try:
         print(f"🗑️ GDPR 刪除請求: user_id = {user_id}")
         deleted_counts = {}
@@ -61,6 +68,8 @@ async def delete_user_data(user_id: str, supabase=Depends(get_supabase)):
             "deleted": deleted_counts
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 GDPR Delete Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

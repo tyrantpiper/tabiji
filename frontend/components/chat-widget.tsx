@@ -27,6 +27,7 @@ import { useWeatherStore } from "@/lib/stores/weatherStore"
 import { debugLog } from "@/lib/debug"
 import { useLanguage, type TranslationKey } from "@/lib/LanguageContext"
 import { type ParsedItinerary, type ParsedItineraryItem } from "@/lib/itinerary-types"
+import { getCachedToken, ensureValidSession } from "@/lib/auth-session"
 
 // 🆕 Part 結構 (與 Gemini API 對應)
 interface Part {
@@ -509,13 +510,18 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
 
             const toSummarize = messages.slice(0, messages.length - KEEP_RECENT)
             const targetUserId = contextUserId || localStorage.getItem("user_uuid") || ""
+            const token = getCachedToken()
+            const headers: Record<string, string> = {
+                "Content-Type": "application/json",
+                "X-Gemini-API-Key": apiKey,
+                "X-User-ID": targetUserId
+            }
+            if (token) {
+                headers["Authorization"] = `Bearer ${token}`
+            }
             fetch(`${API_HOST}/api/chat/summarize`, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-Gemini-API-Key": apiKey,
-                    "X-User-ID": targetUserId
-                },
+                headers,
                 body: JSON.stringify({
                     history: toSummarize.map((m: Message) => ({
                         role: m.role,
@@ -790,13 +796,21 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
         // 🔄 Fallback: 如果 streaming 失敗或有圖片，使用原有 API
         if (!streamingSuccess) {
             try {
+                let token = getCachedToken()
+                if (!token && typeof window !== "undefined") {
+                    token = await ensureValidSession().catch(() => null)
+                }
+                const headers: Record<string, string> = {
+                    "Content-Type": "application/json",
+                    "X-Gemini-API-Key": apiKey,
+                    "X-User-ID": contextUserId || localStorage.getItem("user_uuid") || ""
+                }
+                if (token) {
+                    headers["Authorization"] = `Bearer ${token}`
+                }
                 const res = await fetch(`${API_HOST}/api/chat`, {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-Gemini-API-Key": apiKey,
-                        "X-User-ID": contextUserId || localStorage.getItem("user_uuid") || ""
-                    },
+                    headers,
                     body: JSON.stringify({
                         message: userMsg,
                         history: history,

@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-21T16:15:00Z",
+  "last_audit_date": "2026-10-21T19:25:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 167,
-    "audited_targets": 167,
+    "total_targets": 175,
+    "audited_targets": 175,
     "verified_vulnerabilities": 17,
-    "remediated_vulnerabilities": 25,
+    "remediated_vulnerabilities": 33,
     "dismissed_hypotheses": 125
   },
   "targets": [
@@ -14,7 +14,11 @@
       "id": "backend/tests/test_supabase_grants_sentinel.py:multiline_and_role_order_false_positive",
       "target_type": "ci_sentinel_test",
       "trust_boundary": "internal_developer_tooling",
-      "vectors_checked": ["ci_pipeline_denial_of_service", "regex_dotall_omission", "role_order_rigidity"],
+      "vectors_checked": [
+        "ci_pipeline_denial_of_service",
+        "regex_dotall_omission",
+        "role_order_rigidity"
+      ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_regex_hardening.md",
       "validator_details": "Confirmed by Sentinel: Missing re.DOTALL and rigid role placement causes valid multiline or multi-role GRANT statements to fail match and break CI builds.",
@@ -25,7 +29,10 @@
       "id": "backend/tests/test_supabase_grants_sentinel.py:rls_pattern_syntax_rigidity",
       "target_type": "ci_sentinel_test",
       "trust_boundary": "internal_developer_tooling",
-      "vectors_checked": ["static_analysis_false_rejection", "optional_clauses_omission"],
+      "vectors_checked": [
+        "static_analysis_false_rejection",
+        "optional_clauses_omission"
+      ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_regex_hardening.md",
       "validator_details": "Confirmed by Sentinel: RLS pattern rejects defensive SQL clauses (IF EXISTS, ONLY), falsely flagging valid migrations.",
@@ -36,7 +43,10 @@
       "id": "backend/migrations/20260120_user_preferences.sql:missing_rls_data_exposure",
       "target_type": "database_migration",
       "trust_boundary": "authenticated_to_internal",
-      "vectors_checked": ["unauthenticated_data_exposure", "missing_row_level_security"],
+      "vectors_checked": [
+        "unauthenticated_data_exposure",
+        "missing_row_level_security"
+      ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
       "validator_details": "Confirmed by Sentinel: user_preferences lacks ENABLE ROW LEVEL SECURITY, allowing anonymous PostgREST queries to extract all users' personal AI preferences.",
@@ -47,7 +57,10 @@
       "id": "supabase/migrations/20261014_trip_capsules.sql:missing_explicit_data_api_grants",
       "target_type": "database_migration",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": ["permission_denied_on_fresh_environment", "dac_precedes_rls"],
+      "vectors_checked": [
+        "permission_denied_on_fresh_environment",
+        "dac_precedes_rls"
+      ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
       "validator_details": "Confirmed by Sentinel: DAC evaluation precedes RLS in PostgreSQL; omitting GRANT causes 42501 permission denied in PostgREST on clean environments.",
@@ -58,7 +71,9 @@
       "id": "backend/migrations/20260120_consolidated_trips_view.sql:view_permission_boundary",
       "target_type": "database_migration",
       "trust_boundary": "browser_to_edge",
-      "vectors_checked": ["view_privilege_denial"],
+      "vectors_checked": [
+        "view_privilege_denial"
+      ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
       "validator_details": "Confirmed by Sentinel: View user_trips_view lacks explicit GRANT SELECT to API roles, failing Data API queries upon reconstruction.",
@@ -69,7 +84,9 @@
       "id": "cloudflare/poi-service/schema.sql:cross_engine_sqlite_false_positive",
       "target_type": "database_schema",
       "trust_boundary": "edge_to_storage",
-      "vectors_checked": ["cross_engine_parser_confusion"],
+      "vectors_checked": [
+        "cross_engine_parser_confusion"
+      ],
       "status": "DISMISSED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
       "validator_details": "Dismissed by Sentinel architecture: D1 SQLite schemas reside strictly in cloudflare/ directory and are isolated from PostgreSQL migration gates."
@@ -1132,7 +1149,7 @@
       ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "validator_details": "Physical Sentinel verified: translations.ts and remaining.ts synchronized with '旅路 ｜ 旅行提案' (zh) and 'Tabiji | Travel Planner' (en)."
+      "validator_details": "Physical Sentinel verified: translations.ts and remaining.ts synchronized with '\u65c5\u8def \uff5c \u65c5\u884c\u63d0\u6848' (zh) and 'Tabiji | Travel Planner' (en)."
     },
     {
       "id": "frontend/components/views/landing-page.tsx:backpack_brand_upgrade",
@@ -1975,7 +1992,10 @@
       "id": "backend/utils/deps.py:unauthenticated_x_user_id_fallback",
       "target_type": "backend_auth",
       "trust_boundary": "client_to_api",
-      "vectors_checked": ["broken_authentication_idor", "x_user_id_spoofing"],
+      "vectors_checked": [
+        "broken_authentication_idor",
+        "x_user_id_spoofing"
+      ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
       "validator_details": "Confirmed by PoC: get_verified_user fell back to client-supplied X-User-ID header, allowing arbitrary identity forgery without cryptographic credentials.",
@@ -1986,7 +2006,10 @@
       "id": "backend/routers/trips.py:trip_collaborator_uuid_broadcast",
       "target_type": "backend_router",
       "trust_boundary": "collaborator_privacy",
-      "vectors_checked": ["identity_leakage_and_account_takeover", "idor"],
+      "vectors_checked": [
+        "identity_leakage_and_account_takeover",
+        "idor"
+      ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
       "validator_details": "Confirmed by PoC: get_trip_by_id returned raw created_by UUID and raw member UUIDs to all collaborators, enabling recovery key theft.",
@@ -1997,7 +2020,10 @@
       "id": "backend/routers/expenses.py:expense_payer_and_creator_uuid_leakage",
       "target_type": "backend_router",
       "trust_boundary": "financial_collaborator_privacy",
-      "vectors_checked": ["financial_identity_harvesting", "idor"],
+      "vectors_checked": [
+        "financial_identity_harvesting",
+        "idor"
+      ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
       "validator_details": "Confirmed by PoC: get_expenses returned raw created_by and payer_id UUIDs to all shared trip collaborators.",
@@ -2008,13 +2034,136 @@
       "id": "backend/routers/trips.py:residual_hardcoded_x_user_id_header",
       "target_type": "backend_router",
       "trust_boundary": "client_to_api",
-      "vectors_checked": ["authentication_bypass_island", "x_user_id_spoofing"],
+      "vectors_checked": [
+        "authentication_bypass_island",
+        "x_user_id_spoofing"
+      ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
       "validator_details": "Confirmed by PoC: leave_trip bypassed get_verified_user and directly accepted Header(None, alias='X-User-ID').",
       "remediated_at": "2026-10-22T02:00:00Z",
       "resolution": "Replaced Header with Depends(get_verified_user) in leave_trip endpoint."
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:token_expiration_deadlock",
+      "target_type": "frontend_session_auth",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "token_expiration_deadlock",
+        "token_format_corruption"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "validator_details": "Confirmed by Sentinel: getCachedToken() blind return prevents ensureValidSession from rotating expired tokens, locking client in perpetual 401.",
+      "verified_at": "2026-10-21T18:51:05Z",
+      "remediated_at": "2026-10-21T18:58:36Z",
+      "resolution": "Remediated in auth-session.ts: Added isTokenValid() verifying exp with 60s skew margin; getCachedToken() automatically discards and purges expired/corrupted tokens from localStorage, enabling smooth background exchange."
+    },
+    {
+      "id": "frontend/lib/api.ts:boot_race_condition_unauthenticated_call",
+      "target_type": "frontend_api_interceptor",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "race_condition_unauthenticated_request",
+        "cold_boot_miss"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "validator_details": "Confirmed by Sentinel: Synchronous getCachedToken() in fetch interceptor fires requests before background session exchange completes.",
+      "verified_at": "2026-10-21T18:51:05Z",
+      "remediated_at": "2026-10-21T18:58:36Z",
+      "resolution": "Remediated in api.ts: Custom fetch interceptor awaits ensureValidSession() before dispatching when token is absent on boot; auto-purges token on 401."
+    },
+    {
+      "id": "backend/routers/trips.py:day_data_header_spoofing",
+      "target_type": "fastapi_route_auth",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "header_spoofing",
+        "authentication_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "validator_details": "Confirmed by Sentinel: update_day_data accepts unverified X-User-ID header without JWT token, allowing unauthorized metadata updates.",
+      "verified_at": "2026-10-21T18:51:05Z",
+      "remediated_at": "2026-10-21T18:58:36Z",
+      "resolution": "Remediated in trips.py: update_day_data replaces x_user_id Header with user_id: str = Depends(get_verified_user), enforcing cryptographic Bearer JWT."
+    },
+    {
+      "id": "backend/routers/trips.py:ledger_share_header_spoofing",
+      "target_type": "fastapi_route_auth",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "header_spoofing",
+        "authentication_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "validator_details": "Confirmed by Sentinel: generate_ledger_share_code extracts X-User-ID directly from Header without JWT signature verification.",
+      "verified_at": "2026-10-21T18:51:05Z",
+      "remediated_at": "2026-10-21T18:58:36Z",
+      "resolution": "Remediated in trips.py: generate_ledger_share_code replaces x_user_id Header with user_id: str = Depends(get_verified_user), enforcing cryptographic Bearer JWT."
+    },
+    {
+      "id": "backend/routers/sample_trip.py:seed_sample_header_spoofing",
+      "target_type": "fastapi_route_auth",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "header_spoofing",
+        "authentication_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "validator_details": "Confirmed by Sentinel: seed_sample_trip allows arbitrary UUID seeding via client-controlled X-User-ID header.",
+      "verified_at": "2026-10-21T18:51:05Z",
+      "remediated_at": "2026-10-21T18:58:36Z",
+      "resolution": "Remediated in sample_trip.py: seed_sample_trip replaces x_user_id Header with user_id: str = Depends(get_verified_user), enforcing cryptographic Bearer JWT."
+    },
+    {
+      "id": "backend/routers/gdpr.py:unauthenticated_data_deletion_idor",
+      "target_type": "fastapi_route_auth",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "unauthenticated_deletion",
+        "idor",
+        "bola"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "validator_details": "Confirmed by Sentinel: DELETE /api/user/{user_id}/data lacked caller authentication and ownership verification, allowing arbitrary caller to wipe victim accounts.",
+      "verified_at": "2026-10-21T19:20:00Z",
+      "remediated_at": "2026-10-21T19:25:00Z",
+      "resolution": "Remediated in gdpr.py: Added caller_user_id: str = Depends(get_verified_user) and enforced caller_user_id == user_id ownership check."
+    },
+    {
+      "id": "backend/routers/trips.py:import_to_trip_unauthenticated_injection",
+      "target_type": "fastapi_route_auth",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "unauthorized_trip_modification",
+        "bola"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "validator_details": "Confirmed by Sentinel: POST /api/trips/import-to-trip allowed arbitrary callers to append items and overwrite content without verifying trip ownership or membership.",
+      "verified_at": "2026-10-21T19:20:00Z",
+      "remediated_at": "2026-10-21T19:25:00Z",
+      "resolution": "Remediated in trips.py: Enforced user_id: str = Depends(get_verified_user) and verified caller is creator or member of itinerary_id."
+    },
+    {
+      "id": "backend/routers/ai.py:clear_day_review_unauthenticated_deletion",
+      "target_type": "fastapi_route_auth",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "unauthorized_ai_review_deletion",
+        "bola"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "validator_details": "Confirmed by Sentinel: DELETE /api/ai/trips/{trip_id}/days/{day}/ai-review lacked user verification and trip membership check.",
+      "verified_at": "2026-10-21T19:20:00Z",
+      "remediated_at": "2026-10-21T19:25:00Z",
+      "resolution": "Remediated in ai.py: Enforced user_id: str = Depends(get_verified_user) and verified caller is creator or member before deleting reviews."
     }
   ]
 }
-
