@@ -1,6 +1,6 @@
 # 📅 Daily Report - 2026-10-21 (Stanford CS 329Z Field Note Official Merge, Two-Stage Hybrid Tool Gating & Radical Engineering Grounding)
 
-> **系統狀態**：🟢 Production Ready & Synced (`2e452b0`), 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Backend 171 tests passed, 5 skipped; Frontend 513 tests passed), Working Tree Clean, GitHub PR #84 Approved & Merged into Stanford CS 329Z main branch.  
+> **系統狀態**：🟢 Production Ready & Synced (`94efa0a`), 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Backend 171 tests passed, 5 skipped; Frontend 513 tests passed), Working Tree Clean, GitHub PR #84 Approved & Merged into Stanford CS 329Z main branch.  
 > **今日關鍵提交串列 (Full Day Commit Stream)**：
 > - [`1ccf514`](https://github.com/tyrantpiper/tabiji/commit/1ccf514) `feat(router): extend fast-path intent classifier with english vocabulary and redos guards` (2026-10-21 01:15:28 +0800)
 > - [`2e452b0`](https://github.com/tyrantpiper/tabiji/commit/2e452b0) `docs(research): add cs329z field note on two-stage intent routing and dynamic tool gating` (2026-10-21 01:15:37 +0800)
@@ -165,6 +165,16 @@
 
 ---
 
+- **AD-140：底抽滾動容器四重軸向硬鎖定法則 (Fourfold Axis-Lock & Touch-Pan-Y Invariance)**
+  - *Context*：使用者在手機端點開每日景點或總覽地圖景點抽屜時，垂直滑動內容常伴隨非意圖的左右搖晃，體驗生硬且易誤觸地圖平移。
+  - *Decision*：滾動容器必須顯式宣告 `overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain`，並掛載內聯樣式 `style={{ touchAction: "pan-y" }}`，在 WebKit 與 Blink 引擎層級徹底銷毀斜向手勢分配至 X 軸的可能性。
+- **AD-141：動態圖標工具列等寬流體拓撲架構 (Fluid Auto-Cols-Fr Grid & Icon Stack Architecture)**
+  - *Context*：原次要按鈕列使用 `flex gap-2` 橫向塞入「分享」、「街景視圖」、「3D 飛越」，在 360px~390px 螢幕（可用寬度 312px~342px）下被字元長度強制撐破（>340px），產生實質水平溢出。
+  - *Decision*：重構為 CSS Grid 自適應架構 `grid grid-flow-col auto-cols-fr gap-2 w-full`，圖標與微文字縱向堆疊排列，子項嚴格約束 `min-w-0 truncate`，不論 2 顆、3 顆或 4 顆按鈕皆均勻自適應 100% 寬度且絕不爆版。
+- **AD-142：主行動條條件降級與語意完整性原則 (Primary CTA Conditional Degradation)**
+  - *Context*：當未傳入 `onAddToItinerary` 回調時（純瀏覽模式），若硬性呈現時間選擇器會產生孤立無效的 UI 破綻。
+  - *Decision*：僅在 `onAddToItinerary` 存在時整合時間微調輸入與「＋ 加入行程」；無回調時自動由全寬「導航」按鈕接管主行動列，維持介面語意完全閉環。
+
 ## 🛡️ Failed Paths
 
 - **FP-047：Hook 宣告順序造成 TDZ 白屏**
@@ -180,6 +190,10 @@
   - *Lesson*：候選假說要用中性的品質審查措辭（例如「狀態在重新掛載後被重設」），避免攻擊性詞彙，否則該項就沒有獨立驗證結果。
 
 ---
+
+- **FP-060：Windows CLI 命令列字元上限溢位陷阱 (Windows WinError 206 via agy.exe -p Flag)**
+  - *Symptom*：在 Windows 終端執行 `runner.py` 調度 `agy.exe -p="..."` 時，因未設定行數切片直接將 45KB 代碼嵌入命令列參數，觸發 Windows API `CreateProcess` 32767 字元上限報錯 `[WinError 206] 檔名或副檔名太長`。
+  - *Lesson*：所有調用 `agy.exe` 的維護腳本與測試 candidates 必須具備程式碼切片機制（強制限定 `start_line` 與 `end_line` 或透過 stdin 串流傳遞），嚴禁在命令列參數塞入 >8KB 的文字。
 
 ## 🔴 Technical Debt
 
@@ -419,6 +433,8 @@
    - `security-coverage-ledger.json` 已清除所有 `target_id`，數值校準至 142 項精準守恆，並由 Python 腳本納入 CI/CD 強制守門。
 3. **[RESOLVED in 39fbb21] 地圖景點抽屜手勢與二元檔位生硬問題結案**：
    - `POIDetailDrawer` 已升級為三檔位與 Apple Spring 手勢物理學，手感流暢現代化。
+3. **[RESOLVED in 94efa0a] 景點抽屜上下滑動左右晃動與窄屏次要按鈕撐破問題結案**：
+   - `POIDetailDrawer` 已注入四重軸向鎖定，重構為自適應主行動條與圖標工具群，通過 Sentinel TC-5 與 TC-6 回歸測試。
 4. **Google Maps RPC 分頁迭代支援（Pagination Tokens）**（延續自 Session 3 & 4）：
    - 當前 Placelist 抓取第一批次（~50 筆），超長清單未來可擴充翻頁抓取。
 5. **單一分頁內的通知連動重新整理請求突發**（延續自 Session 2）：
@@ -479,6 +495,27 @@
     "id": "INV-DEVOPS-020",
     "title": "記憶 3-Tier 微核心與領域按需載入原則 (3-Tier Sharded Memory Routing)",
     "content": "memory.md 必須保持 <50 行微核心憲法，包含領域路由表與全域詞彙；具體決策按業務維度下放至 .agents/domains/*.md，透過 AGENTS.md 路由指引按需延遲載入，嚴禁重構為單體大檔案。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-IOS-021",
+    "title": "底抽滾動容器四重軸向硬鎖定法則 (Fourfold Axis-Lock & Touch-Pan-Y Invariance)",
+    "content": "底抽內部所有可滾動容器必須顯式宣告 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain 並掛載 style={{ touchAction: 'pan-y' }}，徹底在瀏覽器底層阻斷斜向滑動引發之水平晃動。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-IOS-022",
+    "title": "動態圖標工具列等寬流體拓撲架構 (Fluid Auto-Cols-Fr Grid & Icon Stack Architecture)",
+    "content": "底抽次要功能工具列必須採用 grid grid-flow-col auto-cols-fr gap-2 w-full 與縱向 Icon 微堆疊排列，子項一律約束 min-w-0 truncate，徹底消滅橫向撐破容器寬度之物理缺陷。"
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEVOPS-023",
+    "title": "Windows CLI 命令列長度防禦法則 (Windows CLI Character Limit Defense)",
+    "content": "所有調度外部子行程 CLI（如 agy.exe）的維護腳本與 candidates 清單，必須嚴格宣告 start_line/end_line 進行片段切片，嚴禁將未經切片的大型原始檔直接嵌入 -p 參數，防止 Windows WinError 206 溢位崩潰。"
   }
 ]
 ```
