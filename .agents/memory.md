@@ -163,6 +163,13 @@
 - **編輯與檢視態字級原子一致性 (Edit/View State Typographic Symmetry)**: 檢視態與編輯態輸入框必須使用相同的字級階梯（`text-3xl sm:text-5xl md:text-6xl`）與高度（`h-10 sm:h-14`），根除模式切換時的 CLS (Cumulative Layout Shift) 佈局跳動。
 - **iOS Safari 原生日期輸入框本質寬度防衛 (iOS Safari Date Picker Intrinsic Width Guard)**: iOS Safari 對 `<input type="date">` 的 Shadow DOM 內部元件具有最低本質寬度（約 120px~130px）。在 Grid/Flex 容器內必須顯式宣告 `min-w-0 w-full`，抵禦原生日期選擇器撐破格線邊界。
 
+### 14. 自訂地點類別協定、Emoji 色票與零成本 Place RPC 架構 (Custom Categories, Emoji Picker & Zero-Cost Place RPC)
+- **自包含純字串自訂類別協定架構 (Self-Contained POI Category Protocol Invariance: `custom:<emoji>:<name>:<colorHex>`)**: 類別的圖標、名稱與主題色票完全自封裝於 `category` 字串中（如 `custom:🍜:拉麵:#F59E0B`），與 Cloudflare D1 及前端 IndexedDB 既有欄位 100% 相容。達成 0 Schema 遷移、0 跨表關聯查詢開銷與天然離線持久化。
+- **冒號轉義與邊界安全切片防注入律 (Colon Injection Defense & Boundary Safe Splice)**: 輸入時過濾半形冒號，序列化時以 `name.replaceAll(":", "：")` 轉義為全形冒號；解碼時採用 `parts.slice(2, -1).join(":")` 提取名稱，顏色固定取 `parts[parts.length - 1]`，徹底根除冒號碰撞引發的色票索引位移與 UI 崩潰。
+- **跨 POI 動態收割去重原則 (Dynamic POI Category Harvesting over Centralized Registry)**: 實作純函式 `harvestCustomCategories(pois)`。在渲染時直接遍歷現存景點的 `custom:` 標籤，以 `Map<key, ParsedCategory>` 依字串唯一鍵自動收割去重。無任何中心化額外狀態儲存，當所有使用該類別的地點被刪除時該類別自然退場，生命週期極致純淨。
+- **外部 Place Web RPC 零金鑰高精解析架構 (Zero-Cost Public Place RPC over Paid Google APIs)**: 後端萃取短網址中的 `ftid` 轉為十進位 CID，直接發起公開 Google Maps Web 端點請求（`google.com/maps?cid=...`），藉由轉向的 `preview/place` 內部 Web RPC 一次獲取純店家名稱、真實門牌地址、精準座標與 `ChIJ...` place_id，達成 0 成本、免付費 API Key 的工業級精確定位。
+- **台灣門牌與店家名稱決定性分離防線 (Taiwan Address-POI Deterministic Splitter)**: 透過正則邊界 `ADDRESS_POI_PATTERN`（精確捕捉郵遞區號、縣市、鄉鎮市區、村里與路街號樓），將混雜店名的單一字串 100% 精準分離為純門牌與純店名，無店家名時安全回退，根除 Google Maps 標題混雜門牌郵遞區號缺陷。
+
 ---
 
 ## [Failed Paths]
@@ -278,6 +285,11 @@
 ### 15. 高字級自適應佈局與動態視圖踩坑
 - **CSS Grid auto 欄位子節點誤用 `flex-1` 反模式 (`Grid Auto Cell flex-1 No-Op Trap`)**: 試圖在 CSS Grid 的 `grid-cols-[1fr_auto_1fr]` 的 `auto` 欄位子節點使用 `flex-1` 實現自動彈性收縮。CSS Grid 規範中 `flex-1` 僅在 `display: flex` 父容器內生效，在 Grid `auto` 軌道中是無效宣告，無法阻止 140px 文字與中央裝飾線重疊碰撞。教訓：Grid `auto` 欄位必須使用確定性的響應式寬度（如 `w-8 sm:w-14`）。
 - **Framer Motion 內使用 window.innerWidth 視窗偵測動效位移引發水合失效 (`Framer Motion SSR Hydration Mismatch Trap`)**: 試圖在 Framer Motion `animate={{ x: ... }}` 中使用 `window.innerWidth` 動態決定飛機位移。這會引發 SSR 水合首幀與客戶端不匹配的 Hydration Mismatch 警告。教訓：動效位移必須使用靜態幾何標稱位移 `x: [-18, 18]`，交由 GPU 合成層處理。
+
+### 16. POI 自訂類別、邊緣白名單與 Place RPC 踩坑
+- **Cloudflare Worker 邊緣硬編碼白名單阻斷 (`Worker Hardcoded Category Whitelist Trap`)**: Worker 內部的 `validCategories` 寫死 7 大預設類別，將自訂類別字串以三元運算子無差別覆寫為 `"attraction"`。教訓：任何協議層擴充必須同步檢視全鏈路各級微服務的邊緣白名單過濾器。
+- **React 19 Effect 內部同步 setState 觸發 cascading renders (`Custom Category Modal Cascading Renders Trap`)**: 在彈窗內部若使用 `useEffect` 監聽 `isOpen` 進行狀態重設，被 React Compiler 判定為串聯重新渲染引發報警。教訓：移除元件內部 Effect 重設，改在父層呼叫端賦予動態 `key={modalTargetPoiId || "closed"}`，利用 React 自然的 Unmount/Mount 生命週期實現無副作用的狀態重設。
+- **Tailwind CSS v4 任意值描邊語法告警 (`Tailwind Arbitrary Stroke Width Warning`)**: 使用任意值 `stroke-[3]` 被 Tailwind Linter 警告 `The class stroke-[3] can be written as stroke-3`。教訓：Tailwind CSS v4 已收錄數值型的標準工具類別，優先使用標準語意類別。
 
 ---
 
@@ -578,6 +590,17 @@
 - **Sentinel 驗證器被安全過濾器阻擋 (FP-050)**: 候選假說含「flood / attacker」等攻擊性措辭時，`agy.exe --sandbox` 可能被 Gemini filter 擋下而回 `INCONCLUSIVE`。改用中性品質審查措辭；`INCONCLUSIVE` 不得在報告中記為 `HARDENED`/已驗證。
 - **模擬 PoC 不等於元件測試 (FP-051)**: 在測試檔內重寫一份邏輯再斷言，無法偵測真實元件退化。Sentinel PoC 必須 import 並渲染/呼叫產品程式碼（RTL `render` + fake timers），或明確標註為「規格模擬」。
 - **靜默 `except: pass` 遮蔽缺表 (FP-052)**: `backend/routers/poi.py` 對 Supabase `poi_items`（表不存在，PostgREST 404）吞例外並退回 process 記憶體 dict，API 仍回 200，資料於容器重啟遺失。持久層失敗必須 `logger.warning` 並可觀測。
+
+### 36. 自訂地點類別協定、Emoji 色票與零成本 Place RPC (Custom POI Categories, Emoji Picker & Zero-Cost Place RPC) [Commit 3979450]
+- **自包含純字串自訂類別協定 (AD-132)**: 以 `custom:<emoji>:<name>:<colorHex>` 純字串封裝自訂標籤，100% 向後相容 Cloudflare D1 與 IndexedDB 既有結構，達成 0 Schema Migration、0 跨表關聯查詢與天然離線持久化。
+- **冒號轉義與正則分段解碼防注入 (AD-133)**: 協定分隔符使用 `:`，輸入端過濾半形冒號，序列化以 `name.replaceAll(":", "：")` 轉為全形；解碼以 `parts.slice(2, -1).join(":")` 提取名稱，固定取最後一項為顏色，根除色票位移。
+- **跨 POI 動態收割去重 (AD-134)**: 透過純函式 `harvestCustomCategories(pois)` 從景點池現存 POI 中動態聚合使用中的自訂標籤，無額外中心化儲存，地點刪除後標籤自動退場。
+- **外部 Place Web RPC 零金鑰高精解析 (AD-135)**: 自短網址 ftid 提取 CID，直連 Google Maps Web 端點（`preview/place` RPC）獲取真實門牌、座標與 place_id，0 成本且免 API Key。
+- **台灣門牌與店家名稱決定性分離防線**: 透過 `ADDRESS_POI_PATTERN` 正則嚴格分離門牌與店家名稱，徹底杜絕標題混雜門牌與郵遞區號。
+- **Worker 邊緣硬編碼白名單阻斷 (FP-054)**: 邊緣 Worker 內部 `validCategories` 寫死 7 大類別會無差別覆寫自訂協定。擴充協定必須同步放行微服務閘門。
+- **React 19 Effect 內部同步 setState 串聯渲染 (FP-055)**: 彈窗內部監聽 `isOpen` 呼叫 setState 觸發 React Compiler 告警。改在父層呼叫端賦予 `key={targetPoiId || "closed"}`，由 React 自然 Mount/Unmount 週期完成無副作用狀態重設。
+- **Tailwind CSS v4 任意值描邊語法告警 (FP-056)**: 避免任意值 `stroke-[3]`，優先使用標準工具類別 `stroke-3`。
+
 
 
 

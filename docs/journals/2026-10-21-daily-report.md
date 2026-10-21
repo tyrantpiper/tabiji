@@ -269,8 +269,84 @@
 
 ---
 
-## 🎯 Next Steps
-
-1. 針對超長清單進行壓力測試與 RPC 分頁迭代評估。
-2. 進行前端使用者體驗巡檢，確認口袋庫沉浸式地圖、門牌顯示與抽屜拖曳手感。
-3. 推進既有技術債項（Supabase `poi_items` 與資安帳本狀態更新）。
+272: ## 🎯 Next Steps
+273: 
+274: 1. 針對超長清單進行壓力測試與 RPC 分頁迭代評估。
+275: 2. 進行前端使用者體驗巡檢，確認口袋庫沉浸式地圖、門牌顯示與抽屜拖曳手感。
+276: 3. 推進既有技術債項（Supabase `poi_items` 與資安帳本狀態更新）。
+277: 
+278: ---
+279: ---
+280: 
+281: # 🌆 Session 4 Addendum（15:00–16:05）：自訂地點類別協定 (Custom POI Categories)、48 款 Emoji 選擇器與主題色票、Place RPC 零成本精確防漂移解析、Security Sentinel 對抗審計與全鏈路發布
+282: 
+283: > **系統狀態**：🟢 Production Ready & Synced ([`3979450`](https://github.com/tyrantpiper/tabiji/commit/3979450))，Working Tree Clean。TypeScript 0 錯誤、ESLint 0 錯誤/0 警告、Vitest 80 檔 / 531 測試通過、Pytest 191 通過 / 5 略過、Neural Seam 10/10 不變量完好、Root Hygiene 通過、Telemetry 訊號發送完畢。
+284: > **提交串列**：
+285: > - [`3979450`](https://github.com/tyrantpiper/tabiji/commit/3979450) `feat(poi): add custom categories with emoji picker and harden zero-cost link resolver`（25 files, +2944 / −217）
+286: 
+287: ---
+288: 
+289: ## 🟢 Features & Fixes
+290: 
+291: | # | 交付項 | 關鍵檔案 | 效益與技術落地 |
+292: | :-- | :-- | :-- | :-- |
+293: | 1 | **自訂地點類別自包含協定** | `frontend/lib/poi-category-protocol.ts` | 建立 `custom:<emoji>:<name>:<colorHex>` 自包含協定字串（如 `custom:🍜:拉麵:#F59E0B`）。**無需變更 Cloudflare D1 資料庫結構**，天然相容離線 IndexedDB 快取與跨裝置自動聚合。 |
+294: | 2 | **自訂類別彈窗與 48 款 Emoji 網格** | `frontend/components/poi/CustomCategoryModal.tsx` | 基於 Radix UI Dialog 打造高質感毛玻璃彈窗，提供「美食推薦、景點觀光、購物生活、戶外交通」4 大群組共 48 款精選 Emoji、原生鍵盤自訂輸入槽（取末碼字元）、10 字長度即時計算、8 款和風主題色票與動態預覽徽章。 |
+295: | 3 | **POI Pool 卡片與選單全景整合** | `frontend/components/poi/PoiPoolView.tsx` | 卡片左側分類按鈕即時動態呈現自訂 Emoji 與專屬色票背景；下拉選單動態聚合自訂類別清單、支援個別「✕」刪除（自動平滑降級為預設）與「＋ 自訂新類別...」入口；頂部 Filter 標籤列支援自訂類別獨立單選篩選。 |
+296: | 4 | **MapLibre 地圖動態 Pin 渲染** | `frontend/components/poi/PoiPoolMap.tsx` | 地圖 Marker 圓標居中動態呈現自訂 Emoji，外框與倒三角光暈即時套用專屬色票；Popup 資訊卡頂部同步呈現色票文字膠囊。 |
+297: | 5 | **Cloudflare D1 邊緣服務白名單放行** | `cloudflare/poi-service/worker.js` | 修復原本將非預設 7 大類別強制覆寫為 `"attraction"` 的硬編碼白名單缺陷，實作 `isValidCategory` 函式放行 `custom:` 協定；已透過 Wrangler 部署至邊緣（Version ID: `479e2a49-1a4a-44de-8718-e576dfe44d1a`）。 |
+298: | 6 | **Google Maps Place RPC 零成本精確解析** | `backend/services/link_resolver.py` | 實作 `fetch_place_from_google_rpc(cid_hex)`，自 URL ftid 提取 CID 十六進位，直連 Google Maps Web 端點提取 `ChIJ...` place_id、精確門牌與真實經緯度（0 成本、免付費 API Key）。 |
+299: | 7 | **台灣地址與景點名稱決定性分離器** | `backend/services/link_resolver.py` | 實作 `split_taiwan_address_and_poi(raw_text)`，以嚴格邊界正則 `ADDRESS_POI_PATTERN` 精準分離台灣門牌與店家名稱（如將「807高雄市三民區十美里漢口街103號君腿庫飯」分離為「高雄市三民區漢口街103號」與「君腿庫飯」），徹底根除標題混雜門牌郵遞區號缺陷。 |
+300: | 8 | **Nebraska 美中偽座標熔斷機制** | `backend/services/link_resolver.py` | 在 `fetch_og_metadata` 封殺純 `?q=` 網址的 staticmap center，並過濾 `zoom <= 10` 的國家級概覽中心，徹底免疫美中 Nebraska 座標漂移。 |
+301: | 9 | **Security Sentinel 物理沙盒證偽驗收** | `backend/tests/test_poi_zero_cost_resolver_sentinel.py` | 建立 16 項記憶體內沙盒 PoC 對抗測試，全數 100% 通過；資安覆蓋帳本擴充至 142 項。 |
+302: | 10 | **Tailwind CSS v4 語意規範微創修復** | `frontend/components/poi/CustomCategoryModal.tsx` | 針對 IDE Linter 提出的任意值語法警告，將 `stroke-[3]` 規範化為標準 `stroke-3`，消滅所有 Linter 警告。 |
+303: 
+304: ---
+305: 
+306: ## 🏛️ Architecture Decisions
+307: 
+308: - **AD-132：自包含純字串自訂類別協定架構 (Self-Contained POI Category Protocol Invariance)**
+309:   - *Context*：若為自訂類別建立獨立的資料庫資料表（如 `user_custom_categories`），需執行 SQL migration、額外維護關聯查詢、處理外鍵串聯刪除以及本機 IndexedDB 快取同步成本。
+310:   - *Decision*：確立自包含協定 `custom:<emoji>:<name>:<colorHex>`。類別的圖標、名稱與顏色完全自封裝於 `category` 字串欄位中，與 D1 既有 `VARCHAR` 欄位 100% 向後相容，達成 0 Schema Migration、0 跨表查詢開銷與自然離線持久化。
+311: - **AD-133：冒號轉義與正則分段解碼防注入律 (Colon Injection Defense & Boundary Safe Splice)**
+312:   - *Context*：協定以 `:` 作為分隔符。若使用者在類別名稱中輸入冒號（如「下午茶:鬆餅」），傳統 `split(":")` 會導致陣列被切割為 5 段，引發尾端顏色 Hex 索引錯位甚至破壞 UI 渲染。
+313:   - *Decision*：輸入與序列化端實施強制防衛：輸入時過濾半形冒號，序列化時以 `name.replaceAll(":", "：")` 轉義為全形冒號；解析端採用安全切片 `parts.slice(2, -1).join(":")` 提取名稱，顏色固定取 `parts[parts.length - 1]`，徹底根除位移風險。
+314: - **AD-134：跨 POI 動態收割去重原則 (Dynamic POI Category Harvesting over Centralized Registry)**
+315:   - *Context*：如何讓使用者已建立的自訂類別出現在頂部 Filter 標籤列與其他地點的卡片下拉選單？
+316:   - *Decision*：實作純函式 `harvestCustomCategories(pois)`。在渲染時直接動態遍歷目前景點清單中的 `custom:` 標籤，以 `Map<key, ParsedCategory>` 依類別字串唯一鍵自動收割去重。無任何中心化額外狀態儲存，當所有使用該類別的地點被刪除或改為其他分類時，該類別自然退場，生命週期極致純淨。
+317: - **AD-135：外部 Place Web RPC 零金鑰高精解析架構 (Zero-Cost Public Place RPC over Paid Google APIs)**
+318:   - *Context*：Google Maps 短網址常缺少精確經緯度；直接調用 Google Places API (New) 每次請求需支付高昂費用且需硬編碼金鑰。
+319:   - *Decision*：後端萃取 URL 中的 `ftid` 參數轉為十進位 CID，直接發起公開 Google Maps Web 端點請求（`google.com/maps?cid=...`），藉由轉向的 `preview/place` 內部 Web RPC 一次獲取純店家名稱、真實門牌地址、精準座標與 `ChIJ...` place_id，達成 0 成本、免 API Key 的工業級精確定位。
+320: 
+321: ---
+322: 
+323: ## 🛡️ Failed Paths
+324: 
+325: - **FP-054：Cloudflare Worker 邊緣硬編碼白名單阻斷陷阱 (Worker Hardcoded Category Whitelist Trap)**
+326:   - *Symptom*：前端自訂類別成功發送 `PATCH /api/poi/pool/{id}/category`，回傳 200 OK，但卡片與資料庫依然顯示預設 `"attraction"`。
+327:   - *Lesson*：Worker 程式碼寫死了 `validCategories = ["attraction", ...]` 白名單陣列，並以三元運算子無差別覆寫非名單字串。任何協議層擴充必須同步檢視全鏈路各級微服務的邊緣白名單過濾器。
+328: - **FP-055：React 19 Effect 內部同步 setState 引發連鎖渲染報警 (React Cascading Renders Trap)**
+329:   - *Symptom*：在 `CustomCategoryModal` 內若使用 `useEffect` 監聽 `isOpen` 進行重設，觸發 React Compiler `react-hooks/set-state-in-effect` 嚴格告警。
+330:   - *Lesson*：移除元件內部的重設 Effect，改在父層呼叫端賦予 `key={customModalTargetPoiId || "closed"}`，利用 React 自然的 Unmount/Mount 生命週期實現完全無副作用的狀態重設。
+331: - **FP-056：Tailwind CSS v4 任意值描邊語法告警 (Tailwind Arbitrary Stroke Width Warning)**
+332:   - *Symptom*：使用任意值 `stroke-[3]` 被 Tailwind Linter 警告 `The class stroke-[3] can be written as stroke-3`。
+333:   - *Lesson*：Tailwind CSS v4 已收錄數值型的 `stroke-0`, `stroke-1`, `stroke-2`, `stroke-3` 標準工具類別，優先使用標準語意類別。
+334: 
+335: ---
+336: 
+337: ## 🔴 Technical Debt
+338: 
+339: 1. **`poi_items` Supabase 持久化方案拍板**（延續自 Session 2 & 3）：
+340:    - 需於後續架構會商決定是走 Migration 建立資料表，還是全面收斂至 Cloudflare D1。
+341: 2. **Google Maps RPC 分頁迭代支援（Pagination Tokens）**（延續自 Session 3）：
+342:    - 當前 Placelist 抓取第一批次（~50 筆），超長清單未來可擴充翻頁抓取。
+343: 3. **自訂類別顏色客製化調色盤 (Custom Color Hex Input)**：
+344:    - 當前提供 8 款高對比和風色票，未來可評估是否開放由原生 `<input type="color">` 自由挑選 Hex 顏色碼。
+345: 
+346: ---
+347: 
+348: ## 🎯 Next Steps
+349: 
+350: 1. 實機操作景點池（POI Pool Drawer），驗證自訂 Emoji、主題色票與動態篩選標籤之跟手性與視覺反饋。
+351: 2. 進行日曆與跨應用匯出（.ics、GPX、Google Maps 清單反向匯出）架構規劃。
+352: 3. 收斂既有技術債項（Supabase `poi_items` 與資安帳本過期項校準）。
