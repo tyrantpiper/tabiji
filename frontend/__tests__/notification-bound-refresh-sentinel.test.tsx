@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import fs from "fs"
 import path from "path"
+import {
+    dispatchGlobalRefreshThrottled,
+    __resetGlobalRefreshTimestampForTesting,
+    globalLastRefreshTimestamp
+} from "@/components/notifications/notification-bell"
 
 /**
  * 🛡️ Security Sentinel In-Memory PoC Test Suite: Notification-Bound Refresh
@@ -11,14 +16,18 @@ import path from "path"
  * PoC 3: Animation state reset prevents stagnation across multiple open/close cycles
  * PoC 4: ItineraryHeaderProps backward compatibility preserves TripMembersSheet callback
  * PoC 5: Promise.allSettled error shield prevents unhandled rejections during network outage
+ * PoC 6: Module-scoped singleton throttle prevents bypass across component unmount/remount (Real Module)
+ * PoC 7: Sequence counter key guarantees animation keyframe restart on rapid reopen (<550ms)
  */
 
 describe("🛡️ Security Sentinel: Notification-Bound Refresh & Header Decluttering", () => {
     beforeEach(() => {
         vi.useFakeTimers()
+        __resetGlobalRefreshTimestampForTesting()
     })
 
     afterEach(() => {
+        __resetGlobalRefreshTimestampForTesting()
         vi.useRealTimers()
     })
 
@@ -140,35 +149,42 @@ describe("🛡️ Security Sentinel: Notification-Bound Refresh & Header Declutt
         }
     })
 
-    it("PoC 6: Module-scoped singleton throttle prevents bypass across component unmount/remount", () => {
-        const dispatchSpy = vi.fn()
-        const THROTTLE_MS = 2000
-
-        // Simulation of module-level singleton state
-        let moduleScopedLastRefresh = 0
-        const dispatchModuleThrottled = (now: number) => {
-            if (now - moduleScopedLastRefresh < THROTTLE_MS) {
-                return false
-            }
-            moduleScopedLastRefresh = now
-            dispatchSpy({ timestamp: now, source: "notification-bell" })
-            return true
+    it("PoC 6: Module-scoped singleton throttle prevents bypass across component unmount/remount (Real Module)", () => {
+        __resetGlobalRefreshTimestampForTesting()
+        const eventSpy = vi.fn()
+        const listener = (e: Event) => {
+            const customEvent = e as CustomEvent
+            eventSpy(customEvent.detail)
         }
+        window.addEventListener("tabidachi-trigger-refresh", listener)
 
-        // 1. Mount 1: User clicks bell at t=10000ms
-        const t0 = 10000
-        expect(dispatchModuleThrottled(t0)).toBe(true)
-        expect(dispatchSpy).toHaveBeenCalledTimes(1)
+        try {
+            // 1. Initial invocation: allowed, dispatches global event and updates module timestamp
+            dispatchGlobalRefreshThrottled()
+            expect(eventSpy).toHaveBeenCalledTimes(1)
+            const firstTimestamp = globalLastRefreshTimestamp
+            expect(firstTimestamp).toBeGreaterThan(0)
+            expect(eventSpy).toHaveBeenCalledWith({
+                timestamp: firstTimestamp,
+                source: "notification-bell"
+            })
 
-        // 2. Component unmounts (route change / modal open) and re-mounts at t=10500ms (500ms elapsed)
-        // With component-local useRef(0), a new instance would reset to 0 and allow click at 10500ms.
-        // With module-scoped singleton, the 2000ms cooldown is preserved!
-        expect(dispatchModuleThrottled(t0 + 500)).toBe(false)
-        expect(dispatchSpy).toHaveBeenCalledTimes(1) // Blocked!
+            // 2. Component unmounts (route change / modal close) and re-mounts at 500ms
+            // Even though new component instances mount, the module-scoped singleton variable holds!
+            vi.advanceTimersByTime(500)
+            dispatchGlobalRefreshThrottled()
+            expect(eventSpy).toHaveBeenCalledTimes(1) // Blocked by 2000ms cooldown!
+            expect(globalLastRefreshTimestamp).toBe(firstTimestamp)
 
-        // 3. After 2000ms cooldown expires (t=12100ms)
-        expect(dispatchModuleThrottled(t0 + 2100)).toBe(true) // Allowed!
-        expect(dispatchSpy).toHaveBeenCalledTimes(2)
+            // 3. After 2000ms cooldown expires (total elapsed: 2100ms)
+            vi.advanceTimersByTime(1600)
+            dispatchGlobalRefreshThrottled()
+            expect(eventSpy).toHaveBeenCalledTimes(2) // Successfully allowed!
+            expect(globalLastRefreshTimestamp).toBeGreaterThan(firstTimestamp)
+        } finally {
+            window.removeEventListener("tabidachi-trigger-refresh", listener)
+            __resetGlobalRefreshTimestampForTesting()
+        }
     })
 
     it("PoC 7: Sequence counter key guarantees animation keyframe restart on rapid reopen (<550ms)", () => {

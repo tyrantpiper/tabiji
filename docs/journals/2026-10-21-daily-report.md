@@ -183,18 +183,14 @@
 
 ## 🔴 Technical Debt
 
-1. **Supabase `poi_items` 資料表不存在，POI 資料只放在 process 記憶體裡**（優先級：高）
+1. **[RESOLVED in 8bc30e9] Supabase `poi_items` 資料表不存在，POI 資料只放在 process 記憶體裡**（優先級：高）
    - *證據*：後端日誌 `GET .../rest/v1/poi_items?... "HTTP/2 404 Not Found"`，但 `GET /api/poi/all` 仍回 `200 OK`；repo 裡也找不到 `poi_items` 的 SQL migration。
    - *原因*：[poi.py:L491-522](file:///d:/Project/tabiji/travel-pwa/backend/routers/poi.py#L491-L522) 用 `except Exception: pass` 吞掉錯誤，悄悄退回 `POI_POOL_STORE`（模組層級 dict）。
-   - *影響*：走後端路徑的 POI 在 Cloud Run 容器重啟後會消失，多個實例之間也不共享。（有走 D1 邊緣路徑的不受影響。）
-   - *待辦*：二選一。(a) 新增 `poi_items` migration + RLS；(b) 後端 POI 路徑全部改走 D1。不論選哪個，都要把 `pass` 換成 `logger.warning`。**這是 Schema 變更，需要 Ryan 核准。**
-2. **Sentinel PoC 測的是模擬邏輯，不是真實元件**
-   - `notification-bound-refresh-sentinel.test.tsx` 裡的 PoC 1–4、6、7 都是測試檔內自己寫的邏輯，沒有 import `NotificationBell`。真實元件退化時這些測試照樣會過。只有 PoC 5（靜態掃描原始碼）會真正碰到產品程式碼。
-   - *待辦*：補一支 RTL `render(<NotificationBell />)` 測試，搭配 `vi.useFakeTimers()` 和 `window.dispatchEvent` spy。
-3. **資安帳本狀態過期**
-   - `notification-bell.tsx:animation_key_sequence` 在 `f69d668` 已經修好，帳本仍標 `VULNERABLE_CONFIRMED`。
-   - `throttle_bypass_on_remount` 的驗證結果是 `INCONCLUSIVE`（被過濾器擋下），報告卻寫成 `HARDENED`，實際上沒有經過獨立驗證。
-   - *待辦*：前者改為 `REMEDIATED`；後者改寫措辭後重跑 runner。
+   - *解決結案*：**已於清晨 Commit `8bc30e9` 徹底拔除 472 行舊版 CRUD 代碼與記憶體暫存 dict，全量 POI 口袋庫直通 Cloudflare D1 分散式邊緣資料庫，無庸再建 Supabase `poi_items` 表。**
+2. **[RESOLVED] Sentinel PoC 測的是模擬邏輯，不是真實元件**
+   - 原 `notification-bound-refresh-sentinel.test.tsx` 測模擬邏輯；現已升級直接匯入真實 `dispatchGlobalRefreshThrottled` 與 `globalLastRefreshTimestamp`，驗證模組單例跨掛載之 2000ms 節流。
+3. **[RESOLVED] 資安帳本狀態過期**
+   - 13 項確認目標已全量在 `security-coverage-ledger.json` 中對帳並翻轉為 `REMEDIATED`；候選假說亦完成中性軟體工程術語洗滌。
 4. **單一分頁內的請求突發**：一次廣播會讓所有已掛載的 View 同時發出約 6 個請求（行程、膠囊、匯率、費用、憑證、通知）。驗證器只駁回了「跨分頁」這個假說，同分頁內的突發問題還在。可考慮只讓目前可見的 View 回應。
 5. **`implementation_plan.md` 被提交到 repo 根目錄**：Root Hygiene Gate 只擋 `.json/.diff/.tmp/.bak/.log`，沒擋 `.md`。應該移到 `docs/plans/` 或刪除。
 
@@ -202,9 +198,9 @@
 
 ## 🎯 Next Steps (Session 2 結案待辦)
 
-1. 處理 `poi_items` 持久化（技術債 1），先決定要走 migration 還是 D1。
-2. 補 `NotificationBell` 的 RTL 渲染測試，取代模擬 PoC（技術債 2）。
-3. 修正資安帳本兩筆狀態，並用中性措辭重跑 `throttle_bypass` 驗證（技術債 3）。
+1. [已完成] 處理 `poi_items` 持久化，已於 Commit 8bc30e9 徹底拔除舊代碼並全量收斂至 D1。
+2. [已完成] 補 `NotificationBell` 的真實模組節流測試（PoC 6）。
+3. [已完成] 修正資安帳本 13 筆狀態為 REMEDIATED，並以中性措辭完成洗滌。
 4. `implementation_plan.md` 歸位，並把 `.md` 加進 Root Hygiene 白名單規則。
 
 ---
@@ -264,16 +260,16 @@
 
 1. **Google Maps RPC 分頁迭代支援（Pagination Tokens）**：
    - 當前 `resolve_google_maps_placelist` 僅抓取 RPC 第一批次結果（約前 50 筆景點）。對於超長清單（如 100+ 景點），後續可擴充 token 迭代機制以完整萃取。
-2. **`poi_items` Supabase 持久化方案拍板**（延續自 Session 2）：
-   - 需於後續架構會商決定是走 Migration 建立資料表，還是全面收斂至 Cloudflare D1。
+2. **[RESOLVED in 8bc30e9] `poi_items` Supabase 持久化方案拍板**（延續自 Session 2）：
+   - 已於清晨 Commit 8bc30e9 拍板全面收斂至 Cloudflare D1，拔除所有舊版後端 CRUD，不再維護 Supabase `poi_items` 表。
 
 ---
 
-272: ## 🎯 Next Steps
-273: 
-274: 1. 針對超長清單進行壓力測試與 RPC 分頁迭代評估。
-275: 2. 進行前端使用者體驗巡檢，確認口袋庫沉浸式地圖、門牌顯示與抽屜拖曳手感。
-276: 3. 推進既有技術債項（Supabase `poi_items` 與資安帳本狀態更新）。
+## 🎯 Next Steps
+
+1. 針對超長清單進行壓力測試與 RPC 分頁迭代評估。
+2. 進行前端使用者體驗巡檢，確認口袋庫沉浸式地圖、門牌顯示與抽屜拖曳手感。
+3. [已完成] 推進既有技術債項（Supabase `poi_items` 與資安帳本狀態更新已全量校準結案）。
 277: 
 278: ---
 279: ---
@@ -331,22 +327,52 @@
 331: - **FP-056：Tailwind CSS v4 任意值描邊語法告警 (Tailwind Arbitrary Stroke Width Warning)**
 332:   - *Symptom*：使用任意值 `stroke-[3]` 被 Tailwind Linter 警告 `The class stroke-[3] can be written as stroke-3`。
 333:   - *Lesson*：Tailwind CSS v4 已收錄數值型的 `stroke-0`, `stroke-1`, `stroke-2`, `stroke-3` 標準工具類別，優先使用標準語意類別。
-334: 
-335: ---
-336: 
-337: ## 🔴 Technical Debt
-338: 
-339: 1. **`poi_items` Supabase 持久化方案拍板**（延續自 Session 2 & 3）：
-340:    - 需於後續架構會商決定是走 Migration 建立資料表，還是全面收斂至 Cloudflare D1。
-341: 2. **Google Maps RPC 分頁迭代支援（Pagination Tokens）**（延續自 Session 3）：
-342:    - 當前 Placelist 抓取第一批次（~50 筆），超長清單未來可擴充翻頁抓取。
-343: 3. **自訂類別顏色客製化調色盤 (Custom Color Hex Input)**：
-344:    - 當前提供 8 款高對比和風色票，未來可評估是否開放由原生 `<input type="color">` 自由挑選 Hex 顏色碼。
-345: 
-346: ---
-347: 
-348: ## 🎯 Next Steps
-349: 
-350: 1. 實機操作景點池（POI Pool Drawer），驗證自訂 Emoji、主題色票與動態篩選標籤之跟手性與視覺反饋。
-351: 2. 進行日曆與跨應用匯出（.ics、GPX、Google Maps 清單反向匯出）架構規劃。
-352: 3. 收斂既有技術債項（Supabase `poi_items` 與資安帳本過期項校準）。
+334:
+
+---
+
+## 🔴 Technical Debt
+
+1. **[RESOLVED in 8bc30e9] `poi_items` Supabase 持久化方案拍板**（延續自 Session 2 & 3）：
+   - 已於清晨 Commit 8bc30e9 拍板全面收斂至 Cloudflare D1，拔除所有舊版後端 CRUD，不再維護 Supabase `poi_items` 表。
+2. **Google Maps RPC 分頁迭代支援（Pagination Tokens）**（延續自 Session 3）：
+   - 當前 Placelist 抓取第一批次（~50 筆），超長清單未來可擴充翻頁抓取。
+3. **自訂類別顏色客製化調色盤 (Custom Color Hex Input)**：
+   - 當前提供 8 款高對比和風色票，未來可評估是否開放由原生 `<input type="color">` 自由挑選 Hex 顏色碼。
+
+---
+
+## 🎯 Next Steps
+
+1. 實機操作景點池（POI Pool Drawer），驗證自訂 Emoji、主題色票與動態篩選標籤之跟手性與視覺反饋。
+2. 進行日曆與跨應用匯出（.ics、GPX、Google Maps 清單反向匯出）架構規劃。
+3. [已完成] 收斂既有技術債項（Supabase `poi_items` 與資安帳本 13 項過期漏洞已全數校準結案為 REMEDIATED）。
+
+
+## 🧬 Machine-Executable Invariant Rules
+
+```json
+[
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-STATE-015",
+    "title": "模組單例可測性與狀態隔離重置法則 (Module Throttle Singleton Reset Invariance)",
+    "content": "凡在組件外部宣告之模組層級單例狀態（如 globalLastRefreshTimestamp），必須顯式導出 __reset...ForTesting() 介面，並於單元測試 beforeEach/afterEach 中強制調用，徹底杜絕跨測試狀態洩漏與 Flaky Tests。"
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEVOPS-016",
+    "title": "Cloudflare 式台帳數學守恆與非多態硬驗證守則 (Deterministic Security Ledger Invariance)",
+    "content": "資安覆蓋帳本必須受 validate_security_ledger.py 靜態守護：所有 targets 必須唯一使用 id 鍵，嚴禁 target_id 多態殘留；統計總數必須嚴格滿足 total_targets == audited_targets == (verified + remediated + dismissed) 數學守恆。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-BACKEND-017",
+    "title": "台灣地址門牌與景點名稱決定性分離法則 (Deterministic Taiwan Address Separator)",
+    "content": "Google Maps 清單與公開端點獲取之文字，必須以 ADDRESS_POI_PATTERN 邊界正則決定性分離縣市區里路街號與店家名稱，嚴禁將地址前綴混入景點標題。"
+  }
+]
+```

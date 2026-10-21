@@ -49,9 +49,14 @@ function timeAgo(dateStr: string, zh: boolean): string {
 }
 
 // 🛡️ 模組層級全域單例戳記：跨組件卸載與路由跳轉依然保持 2000ms 物理節流
-let globalLastRefreshTimestamp = 0
+export let globalLastRefreshTimestamp = 0
 
-function dispatchGlobalRefreshThrottled() {
+/** 僅供單元測試隔離重置模組狀態使用 */
+export function __resetGlobalRefreshTimestampForTesting() {
+    globalLastRefreshTimestamp = 0
+}
+
+export function dispatchGlobalRefreshThrottled() {
     const now = Date.now()
     if (now - globalLastRefreshTimestamp >= 2000) {
         globalLastRefreshTimestamp = now

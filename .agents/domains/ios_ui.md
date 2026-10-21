@@ -1,0 +1,23 @@
+# 領域知識庫：iOS 原生體驗、微動效與 UI 元件 (ios_ui)
+
+> **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
+
+## 🏛️ 架構決策 (Decisions)
+- **WebKit 匿名文字節點隔離 (Text-Node Isolation Architecture)**: Flex 容器中裸露文字搭配 truncate 會在 WebKit 下產生匿名文字方塊壓縮同級標籤。動態文本必須封裝於獨立 <span className="truncate">。
+- **iOS 原生雙擊鑽取心智模型 (Tap-to-Focus, Tap-again-to-Drilldown)**: 窄屏地圖頂部初次點擊聚焦軌跡，再次點擊觸發平滑滾動直達卡片。
+- **解耦按鈕 DOM 架構**: HTML5 嚴禁 <button> 嵌套 <button>。卡片點擊與操作列按鈕在 DOM 層級解耦為同級 Sibling 節點。
+- **無狀態銷毀的視圖動畫架構 (Zero-Remount Architecture)**: motion.div 採靜態標識搭配屬性位移，主頁面常駐不銷毀，達成 0 重複請求與 100% 滾動記憶。
+- **iOS 全域雙向滑動轉場與觸控防衛**: app-shell.tsx 導入方向感知索引與彈簧滑入 (x: ±28px)；全域注入 select-none，底部導航搭配 haptic.selection()。
+- **合成點擊與拖曳手勢競態防衛**: hasMovedRef 追蹤位移並在 handleDragEnd 設置 80ms 延遲釋放閥，徹底杜絕拖曳放開手指誤開面板。
+- **輸入法組合態攔截 (IME Composition Guard)**: 中日文選字時在 onKeyDown 嚴格掛載 if (e.nativeEvent.isComposing) return，防止提前發送。
+- **導覽列原生 CSS 暗黑適配優先**: 核心控制項背景邊框以 Tailwind dark: 類別接管，杜絕 Hydration 前色彩跳動。
+- **Touch-Safe 指針偽類隔離**: 按鈕 Hover 邏輯以 e.pointerType === 'mouse' 隔離，防止觸控螢幕偽類黏滯。
+- **跨層彈窗 Radix Portal 物理隔離**: 巢狀容器喚醒彈窗必須透過 Radix Dialog Portal 掛載至 document.body，防 overflow 裁切。
+- **Zero-FOUC 前置同步腳本**: head 注入微型同步腳本，首幀直接設定 :root { --font-scale: ... }，阻斷字體放大閃爍。
+- **Framer Motion 一次性動畫遞增 key 重播**: 鈴鐺動畫以 key={ringCount} 重播，取代布林狀態重設，消除快速連點卡死。
+
+## 🛡️ 踩坑記錄 (Failed Paths)
+- **FP-047 (Hook TDZ 順序)**: useEffect 依賴陣列在 render 當下求值，effect 必須放在它引用的所有 useState 宣告之後，否則 ReferenceError 白屏。
+- **FP-049 (布林動畫卡住)**: 550ms 內快速開關開時，布林值仍為 true 導致重設無效。改用遞增序號 key={ringCount}。
+- **FP-055 (React 19 連鎖渲染)**: CustomCategoryModal 內若使用 useEffect 監聽 isOpen 重設觸發 react-hooks/set-state-in-effect。改由父層 key={id || 'closed'} 自動重置。
+- **FP-056 (Tailwind v4 工具類別)**: stroke-[3] 任意值被 Linter 告警，改用標準語意 stroke-3。

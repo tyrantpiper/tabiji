@@ -1,0 +1,20 @@
+# 領域知識庫：圖形、地圖與 WebGL (map_webgl)
+
+> **所屬領域**: MapLibre GL JS, WebGL Canvas, 3D Globe, 大圓航線, 手勢隔離, CSP Worker
+
+## 🏛️ 架構決策 (Decisions)
+- **MapLibre 宣告式圖層拓撲優先原則**: JSX 必須依物理由底至頂排列。禁止 beforeId 指向未宣告同級圖層。
+- **CSP Web Worker 同源靜態管線標準化**: 透過 copy-maplibre-worker.mjs 同步至 public/，宣告 maplibregl.workerUrl = '/maplibre-gl-csp-worker.js'。
+- **WebGL Canvas 與浮動手勢雙向硬體隔離**: 容器使用 transform-gpu will-change-transform，拖曳節點宣告 willChange 動態切換，杜絕主執行緒 Layout Reflow。
+- **景點抽屜容器內錨定原則**: isInternal={true} 模式將抽屜錨定於地圖內部 (absolute bottom-0)，不破壞全域 Header。
+- **大圓航線球面線性插值 (Slerp)**: 跨天長途移動以 geo-multi-day.ts 進行球面插值，色彩池映射天數。
+- **雙套件原子升級鎖**: react-map-gl 與 maplibre-gl 綁定內部 transform 實例，嚴禁獨立升級單一套件。
+- **多日總覽 2D 平面 Mercator 預設守則**: 預設 isGlobe = false，杜絕球面拖曳拉扯。
+- **Globe 投影射線穿透奇異點防禦**: 3D Globe 靠近地平線外圍觸發法向量點積轉負反向滑動，單日地圖同樣 2D 優先。
+- **3D 地形拖曳高程凍結與貼地吸附**: DEM 地形啟用時相機暫時凍結，手放開時平滑化消除微幅跳動。
+- **地圖控制膠囊呼吸降敏架構**: 靜止 3 秒進入 25% 晶透幽靈態，觸控或拖曳瞬間喚醒至 100%。
+
+## 🛡️ 踩坑記錄 (Failed Paths)
+- **FP-001 (圖形與地圖渲染)**: 雙 WebGL Context (Liquid Glass + MapLibre) 導致 iOS Safari 拋出 WebGL Context Lost 崩潰。改以純 CSS backdrop-blur 交付。
+- **FP-002 (MapLibre 相機排程競爭)**: 連續呼叫 easeTo 與 fitBounds 導致後者掐斷前者。必須在 fitBounds options 顯式注入 bearing: 0, pitch: 0。
+- **FP-003 (離散生命週期)**: 禁止在 onMove 中綁定 React state，改以 onMoveStart / onMoveEnd 接管。

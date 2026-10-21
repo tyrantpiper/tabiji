@@ -6,9 +6,15 @@
 > **必讀**: `.agents/CONSTITUTION.md`
 > 定義核心原則：安全第一、人類主權、資料完整性。
 
-## 🧠 記憶掛載 (Memory Mount)
-- 每次對話開始時，若 `.agents/memory.md` 存在，請優先讀取其內容作為上下文基礎。
-- 該檔案包含系統自動產生的 [Decisions]、[Failed Paths] 與 [Vocabulary]，用於避免指令腐爛 (Instruction Rot) 與防止重蹈覆轍。
+## 🧠 記憶掛載 (Memory Mount - 3-Tier Architecture)
+- 每次對話開始時，優先讀取 `.agents/memory.md`（Tier 1 微核心憲法，包含最高鐵律、領域路由表與全域詞彙）。
+- **領域延遲載入 (On-Demand Domain Ingestion)**：當任務涉及具體業務領域時，必須依 `memory.md` 路由表按需讀取對應的領域知識庫：
+  - 🌐 圖形、地圖、WebGL、手勢、CSP Worker ➔ `.agents/domains/map_webgl.md`
+  - ⚡ SWR、快取、自癒、路由、深層連結 ➔ `.agents/domains/state_cache.md`
+  - 🎨 動畫、觸控、iOS UI、WebKit 防衛 ➔ `.agents/domains/ios_ui.md`
+  - 📱 Service Worker、IndexedDB、離線 PWA ➔ `.agents/domains/offline_pwa.md`
+  - 🚀 FastAPI、Cloudflare D1、Supabase、探針 ➔ `.agents/domains/backend_concurrency.md`
+  - 🛡️ CI/CD、PowerShell 熔斷、Sentinel 攻防 ➔ `.agents/domains/devops_security.md`
 
 ## 🛡️ Graph 狀態與停滯偵測 (防護機制)
 

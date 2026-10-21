@@ -99,3 +99,12 @@ def test_push_gate_whitelist_filtering():
         ext = os.path.splitext(fname)[1].lower()
         flagged = (ext in [".diff", ".tmp", ".bak", ".log"]) or (ext == ".json" and fname not in whitelist)
         assert flagged == is_offender, f"File {fname} expected offender={is_offender}, got {flagged}"
+
+
+def test_deterministic_security_ledger_invariants():
+    """TC-6: Cloudflare-style deterministic verification for security-coverage-ledger.json."""
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from scripts.validate_security_ledger import validate_ledger_file
+    success, message = validate_ledger_file()
+    assert success, f"Security coverage ledger deterministic invariant violated: {message}"

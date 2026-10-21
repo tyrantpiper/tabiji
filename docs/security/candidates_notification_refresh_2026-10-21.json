@@ -1,9 +1,9 @@
 [
   {
-    "id": "frontend/components/notifications/notification-bell.tsx:dos_flood_unauthenticated_refresh",
+    "id": "frontend/components/notifications/notification-bell.tsx:rapid_click_rate_limit_throttle",
     "file_path": "frontend/components/notifications/notification-bell.tsx",
-    "attack_vector": "dos_flood_unauthenticated_refresh",
-    "hypothesis": "Rapid clicking on the notification bell without debouncing can flood the backend with Supabase notification queries and trigger broadcast cascades, resulting in client thread blocking or API rate-limit exhaustion."
+    "attack_vector": "rapid_click_rate_limit_throttle",
+    "hypothesis": "Rapid clicking on the notification bell without debouncing or throttling can saturate the backend with redundant Supabase notification queries and trigger broadcast cascades, resulting in client thread blocking or API rate-limit exhaustion."
   },
   {
     "id": "frontend/components/notifications/notification-bell.tsx:animation_state_stagnation",
