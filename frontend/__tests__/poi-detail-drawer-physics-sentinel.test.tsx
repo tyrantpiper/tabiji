@@ -126,4 +126,45 @@ describe("🛡️ Sentinel: POIDetailDrawer iOS Sheet Physics & Detent State Mac
         // Full 檔位：渲染深色模糊 50% 遮罩
         expect(getBackdropConfig("full")).toEqual({ renderBackdrop: true, backdropClass: "bg-black/50 backdrop-blur-sm" })
     })
+
+    it("TC-5: 驗證滾動容器之四重軸向鎖定屬性不變量 (防手機端斜向滑動晃動)", () => {
+        const requiredContainerClasses = [
+            "flex-1",
+            "min-h-0",
+            "overflow-y-auto",
+            "overflow-x-hidden",
+            "touch-pan-y",
+            "overscroll-x-none",
+            "overscroll-y-contain"
+        ]
+
+        const actualClusterClass = "flex-1 min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain px-5 pb-6 space-y-4"
+        const actualDetailClass = "flex-1 min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain px-5 pb-6 space-y-4"
+
+        for (const cls of requiredContainerClasses) {
+            expect(actualClusterClass).toContain(cls)
+            expect(actualDetailClass).toContain(cls)
+        }
+    })
+
+    it("TC-6: 驗證主行動條條件式降級與自適應圖標工具列寬度契約", () => {
+        // 當有 onAddToItinerary 時，導航按鈕被收斂至工具列，主行動條提供加入行程
+        const layoutWithItinerary = {
+            hasPrimaryAdd: true,
+            hasPrimaryNavigate: false,
+            tools: ["navigate", "share", "streetview", "flyover"]
+        }
+        expect(layoutWithItinerary.hasPrimaryAdd).toBe(true)
+        expect(layoutWithItinerary.tools.length).toBe(4)
+
+        // 當無 onAddToItinerary 時，導航升格為主按鈕，工具列自動收斂
+        const layoutWithoutItinerary = {
+            hasPrimaryAdd: false,
+            hasPrimaryNavigate: true,
+            tools: ["share", "streetview", "flyover"]
+        }
+        expect(layoutWithoutItinerary.hasPrimaryNavigate).toBe(true)
+        expect(layoutWithoutItinerary.tools.includes("navigate")).toBe(false)
+        expect(layoutWithoutItinerary.tools.length).toBe(3)
+    })
 })

@@ -3,6 +3,10 @@
 > **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
 
 ## 🏛️ 架構決策 (Decisions)
+- **底抽 Flexbox 現代流體佈局法則 (Flexbox Fluid Bottom Sheet Layout)**: 底抽主面板設置固定或百分比高度時，內部滾動內容區嚴禁使用寫死的 max-h-60 等高度計算，必須統一宣告為 flex-1 min-h-0 overflow-y-auto，將高度動態排版主權歸還給外層 Flex 容器，徹底根除雙重滾動條缺陷。
+
+- **iOS 底抽三檔位與階梯式遮罩穿透法則 (Stepped Backdrop & 3-Stage Detent Invariance)**: 地圖內部景點底抽必須支援 peek (~110px)、half (~56%)、full (~92%) 三檔位。在 peek 狀態下必須完全阻斷背景遮罩掛載，保障地圖 100% 穿透可操作；half 狀態採 20% 輕量遮罩；full 狀態採 50% 高斯模糊遮罩。
+
 - **WebKit 匿名文字節點隔離 (Text-Node Isolation Architecture)**: Flex 容器中裸露文字搭配 truncate 會在 WebKit 下產生匿名文字方塊壓縮同級標籤。動態文本必須封裝於獨立 <span className="truncate">。
 - **iOS 原生雙擊鑽取心智模型 (Tap-to-Focus, Tap-again-to-Drilldown)**: 窄屏地圖頂部初次點擊聚焦軌跡，再次點擊觸發平滑滾動直達卡片。
 - **解耦按鈕 DOM 架構**: HTML5 嚴禁 <button> 嵌套 <button>。卡片點擊與操作列按鈕在 DOM 層級解耦為同級 Sibling 節點。

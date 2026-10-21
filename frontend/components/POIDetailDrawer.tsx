@@ -320,6 +320,7 @@ export default function POIDetailDrawer({
                             dragConstraints={{ top: 0, bottom: 0 }}
                             dragElastic={{ top: 0.1, bottom: 0.6 }}
                             onDragEnd={handleDragEnd}
+                            style={{ touchAction: "pan-y" }}
                             className="w-full pt-2.5 pb-2 px-4 flex flex-col items-center cursor-grab active:cursor-grabbing select-none shrink-0"
                         >
                             {/* iOS Drag Pill - 點擊可在 peek 與 half 之間快速切換 */}
@@ -403,8 +404,11 @@ export default function POIDetailDrawer({
                                 </span>
                             </div>
                         ) : poi.type === 'cluster' ? (
-                            /* 🆕 CLUSTER LIST VIEW (群聚清單流式滾動) */
-                            <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-4">
+                            /* 🆕 CLUSTER LIST VIEW (群聚清單流式滾動 - 軸向嚴格鎖定) */
+                            <div 
+                                className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain px-5 pb-6 space-y-4"
+                                style={{ touchAction: "pan-y" }}
+                            >
                                 <div className="flex items-center gap-2 mb-2">
                                     <div className="w-1.5 h-6 bg-indigo-500 rounded-full" />
                                     <h3 className="text-lg font-black text-slate-900 dark:text-white">{poi.name}</h3>
@@ -447,8 +451,11 @@ export default function POIDetailDrawer({
                                 <p className="text-[10px] text-slate-400 text-center italic">{t('poi_tap_to_view')}</p>
                             </div>
                         ) : (
-                            /* 🆕 POI DETAIL VIEW (景點詳情流式滾動) */
-                            <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-4">
+                            /* 🆕 POI DETAIL VIEW (景點詳情流式滾動 - 四重軸向鎖定) */
+                            <div 
+                                className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain px-5 pb-6 space-y-4"
+                                style={{ touchAction: "pan-y" }}
+                            >
                                 {/* ========== Layer 1: OSM 骨架層 ========== */}
 
                                 {/* Header */}
@@ -470,11 +477,11 @@ export default function POIDetailDrawer({
                                     </div>
                                 </div>
 
-                                {/* 基礎資訊 */}
-                                <div className="space-y-2 text-sm">
+                                {/* 基礎資訊 (具備視覺呼吸感) */}
+                                <div className="space-y-2.5 text-sm">
                                     {poi.address && (
                                         <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                                            <MapPin className="w-4 h-4 shrink-0" />
+                                            <MapPin className="w-4 h-4 shrink-0 text-slate-400" />
                                             <span className="line-clamp-2">{poi.address}</span>
                                         </div>
                                     )}
@@ -488,86 +495,105 @@ export default function POIDetailDrawer({
                                         </a>
                                     )}
                                     {poi.website && (
-                                        <a
-                                            href={poi.website}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:underline"
+                                        <button
+                                            type="button"
+                                            onClick={() => openExternalLink(poi.website)}
+                                            className="flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:underline text-left cursor-pointer w-full min-w-0"
                                         >
                                             <Globe className="w-4 h-4 shrink-0" />
-                                            <span className="truncate">{poi.website}</span>
-                                            <ExternalLink className="w-3 h-3" />
-                                        </a>
+                                            <span className="truncate flex-1">{poi.website}</span>
+                                            <ExternalLink className="w-3 h-3 shrink-0" />
+                                        </button>
                                     )}
                                     {poi.opening_hours && (
                                         <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                                            <Clock className="w-4 h-4 shrink-0" />
+                                            <Clock className="w-4 h-4 shrink-0 text-slate-400" />
                                             <span>{poi.opening_hours}</span>
                                         </div>
                                     )}
                                 </div>
 
-                                {/* 🆕 時間選擇器 */}
-                                <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800 rounded-xl p-3">
-                                    <Clock className="w-5 h-5 text-indigo-500" />
-                                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">{t('poi_add_time')}</span>
-                                    <input
-                                        type="time"
-                                        value={selectedTime}
-                                        onChange={(e) => setSelectedTime(e.target.value)}
-                                        className="ml-auto px-3 py-1.5 text-sm font-bold bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                                    />
-                                </div>
-
-                                {/* 主要操作按鈕 */}
-                                <div className="flex gap-2">
-                                    <Button
-                                        onClick={handleNavigate}
-                                        variant="outline"
-                                        className="flex-1 gap-2"
-                                    >
-                                        <Navigation className="w-4 h-4" />
-                                        {t('tc_navigate')}
-                                    </Button>
-                                    {onAddToItinerary && (
+                                {/* 🎯 主行動條 (Primary Action Bar)：整合時間輸入與加入行程，無行程回調時優雅降級為全寬導航 */}
+                                {onAddToItinerary ? (
+                                    <div className="flex items-center gap-2 p-1.5 bg-slate-100/90 dark:bg-slate-800/90 rounded-2xl border border-slate-200/70 dark:border-slate-700/70 shadow-inner">
+                                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-700 rounded-xl shadow-xs shrink-0">
+                                            <Clock className="w-4 h-4 text-indigo-500 shrink-0" />
+                                            <input
+                                                type="time"
+                                                value={selectedTime}
+                                                onChange={(e) => setSelectedTime(e.target.value)}
+                                                className="text-xs font-bold text-slate-800 dark:text-slate-100 bg-transparent border-none outline-none p-0 cursor-pointer w-16"
+                                                aria-label={t('poi_add_time')}
+                                            />
+                                        </div>
                                         <Button
                                             onClick={handleAddToItinerary}
-                                            className="flex-1 gap-2 bg-linear-to-r from-indigo-500 to-purple-500 text-white"
+                                            className="flex-1 h-10 gap-2 bg-linear-to-r from-indigo-500 via-indigo-600 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-500/20 active:scale-[0.98] transition-all min-w-0 cursor-pointer"
                                         >
-                                            <Plus className="w-4 h-4" />
-                                            {t('poi_add_to_trip')}
+                                            <Plus className="w-4 h-4 shrink-0" />
+                                            <span className="truncate">{t('poi_add_to_trip')}</span>
                                         </Button>
-                                    )}
-                                </div>
-                                {/* 次要操作按鈕 */}
-                                <div className="flex gap-2 mt-2">
+                                    </div>
+                                ) : (
                                     <Button
-                                        onClick={handleShare}
-                                        variant="outline"
-                                        className="flex-1 gap-2"
+                                        onClick={handleNavigate}
+                                        className="w-full h-11 gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-2xl shadow-md shadow-indigo-600/20 active:scale-[0.98] transition-all cursor-pointer"
                                     >
-                                        <Share2 className="w-4 h-4" />
-                                        {t('share')}
+                                        <Navigation className="w-4 h-4 shrink-0" />
+                                        <span>{t('tc_navigate')}</span>
                                     </Button>
-                                    {isMapillaryAvailable() && onOpenStreetView && (
-                                        <Button
-                                            onClick={() => onOpenStreetView(poi.lat, poi.lng)}
-                                            variant="outline"
-                                            className="flex-1 gap-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-900/50 dark:hover:bg-emerald-900/20"
+                                )}
+
+                                {/* 🛠️ 精緻圖標工具群 (Action Tools Grid)：縱向微堆疊，自適應 100% 寬度，杜絕撐破與橫向滑動 */}
+                                <div className="grid grid-flow-col auto-cols-fr gap-2 w-full">
+                                    {onAddToItinerary && (
+                                        <button
+                                            type="button"
+                                            onClick={handleNavigate}
+                                            className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 text-slate-700 dark:text-slate-200 transition-all active:scale-95 min-w-0 cursor-pointer"
                                         >
-                                            <Camera className="w-4 h-4" />
-                                            {t('mapillary_streetview')}
-                                        </Button>
+                                            <Navigation className="w-4 h-4 text-indigo-500 shrink-0" />
+                                            <span className="text-[11px] font-semibold tracking-tight truncate w-full text-center">
+                                                {t('tc_navigate')}
+                                            </span>
+                                        </button>
                                     )}
-                                    {onFlyover && (
-                                        <Button
-                                            onClick={() => onFlyover(poi.lat, poi.lng)}
-                                            variant="outline"
-                                            className="flex-1 gap-2 text-indigo-600 border-indigo-200 hover:bg-indigo-50 dark:text-indigo-400 dark:border-indigo-900/50 dark:hover:bg-indigo-900/20"
+
+                                    <button
+                                        type="button"
+                                        onClick={handleShare}
+                                        className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 text-slate-700 dark:text-slate-200 transition-all active:scale-95 min-w-0 cursor-pointer"
+                                    >
+                                        <Share2 className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                                        <span className="text-[11px] font-semibold tracking-tight truncate w-full text-center">
+                                            {t('share')}
+                                        </span>
+                                    </button>
+
+                                    {isMapillaryAvailable() && onOpenStreetView && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onOpenStreetView(poi.lat, poi.lng)}
+                                            className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/40 border border-emerald-200/60 dark:border-emerald-800/40 text-emerald-700 dark:text-emerald-300 transition-all active:scale-95 min-w-0 cursor-pointer"
                                         >
-                                            <Plane className="w-4 h-4" />
-                                            {t('flyover_poi')}
-                                        </Button>
+                                            <Camera className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                            <span className="text-[11px] font-semibold tracking-tight truncate w-full text-center">
+                                                {t('mapillary_streetview')}
+                                            </span>
+                                        </button>
+                                    )}
+
+                                    {onFlyover && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onFlyover(poi.lat, poi.lng)}
+                                            className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl bg-indigo-50/50 dark:bg-indigo-950/20 hover:bg-indigo-100/50 dark:hover:bg-indigo-900/40 border border-indigo-200/60 dark:border-indigo-800/40 text-indigo-700 dark:text-indigo-300 transition-all active:scale-95 min-w-0 cursor-pointer"
+                                        >
+                                            <Plane className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                                            <span className="text-[11px] font-semibold tracking-tight truncate w-full text-center">
+                                                {t('flyover_poi')}
+                                            </span>
+                                        </button>
                                     )}
                                 </div>
 

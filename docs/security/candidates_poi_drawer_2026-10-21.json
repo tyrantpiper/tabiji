@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:external_link_xss_protocol_bypass",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 472,
+    "end_line": 510,
+    "attack_vector": "xss_protocol_injection",
+    "hypothesis": "In POIDetailDrawer.tsx lines 481-502, poi.website and poi.phone are rendered directly in <a href={...}> tags without protocol validation (openExternalLink or regex check), exposing users to javascript: protocol execution if upstream OSM data contains unsanitized links."
+  },
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:horizontal_axis_gesture_leak_and_burst",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 450,
+    "end_line": 575,
+    "attack_vector": "ui_gesture_axis_leak",
+    "hypothesis": "In POIDetailDrawer.tsx lines 451 and 543, scroll container lacks overflow-x-hidden, touch-pan-y, overscroll-x-none, and three secondary buttons with flex-1 exceed container width on screens <=390px, causing horizontal content burst and bidirectional gesture shake on mobile touch devices."
+  },
+  {
+    "id": "frontend/components/POIDetailDrawer.tsx:orphan_time_picker_without_itinerary_callback",
+    "file_path": "frontend/components/POIDetailDrawer.tsx",
+    "start_line": 510,
+    "end_line": 545,
+    "attack_vector": "ui_conditional_orphan_state",
+    "hypothesis": "If onAddToItinerary is omitted, binding time picker to non-existent action creates an unusable orphan UI state and degrades navigation CTA accessibility."
+  }
+]

@@ -348,6 +348,91 @@
 2. 進行日曆與跨應用匯出（.ics、GPX、Google Maps 清單反向匯出）架構規劃。
 3. [已完成] 收斂既有技術債項（Supabase `poi_items` 與資安帳本 13 項過期漏洞已全數校準結案為 REMEDIATED）。
 
+---
+---
+
+# 🌙 Session 5 Addendum（17:00–18:10）：御三家大腦演化 (Mantis ✕ Cloudflare ✕ Harness²)、記憶 3-Tier 解耦、景點口袋庫導航列極簡化與 POIDetailDrawer iOS 手勢物理學
+
+> **系統狀態**：🟢 Production Ready & Synced ([`39fbb21`](https://github.com/tyrantpiper/tabiji/commit/39fbb21))，Working Tree Clean。TypeScript 0 錯誤、ESLint 0 錯誤/0 警告、Vitest 81 檔 / 535 測試全數通過、Pytest 198 通過 / 5 略過、Neural Seam 10/10 不變量完好、Root Hygiene 6/6 通過、Telemetry 訊號發送完畢。
+> **提交串列**：
+> - [`fb6e37e`](https://github.com/tyrantpiper/tabiji/commit/fb6e37e) `feat(harness): integrate mantis-cloudflare-harness2 trinity for 3-tier memory and deterministic ledger`（23 files, +1232 / −884）
+> - [`bb4bd80`](https://github.com/tyrantpiper/tabiji/commit/bb4bd80) `feat(poi): compact poi pool header by removing redundant subtitle`（3 files, +100 / −12）
+> - [`39fbb21`](https://github.com/tyrantpiper/tabiji/commit/39fbb21) `feat(poi): introduce iOS sheet physics and 3-stage detents for map POI drawer`（4 files, +451 / −40）
+
+---
+
+## 🟢 Features & Fixes
+
+| # | 交付項 | 關鍵檔案 | 效益與技術落地 |
+| :-- | :-- | :-- | :-- |
+| 1 | **3-Tier 領域記憶架構解耦** | `.agents/memory.md`、`.agents/domains/*.md`、`.agents/AGENTS.md` | 將原本 608 行 (168KB) 單體膨脹的 `memory.md` 瘦身為 33 行微核心憲法，建立 6 大獨立領域庫（圖形地圖、狀態快取、iOS UI、離線 PWA、後端並發、DevOps 資安），並在 `AGENTS.md` 建立延遲載入路由，節省 85%+ Prompt 快取空間。 |
+| 2 | **Cloudflare 式確定性台帳靜態守衛** | `scripts/validate_security_ledger.py`、`backend/tests/test_root_hygiene_sentinel.py` | 實作零依賴純 Python 驗證器，嚴格確保 142 個目標 `id` 唯一、無 `target_id` 多態殘留，且嚴格守恆 `total_targets == audited_targets == (verified + remediated + dismissed)`；掛載至根目錄衛生 TC-6，日常 pytest 強制守護。 |
+| 3 | **Auto Dream 2.0 經驗反射器與確定性 GC** | `scripts/auto_dream.py`、`.agents/workflows/daily-report.md` | 升級夢境引擎為領域感知路由器（Domain Invariant Router），解析日誌中的結構化不變量，自動 0ms 直通分流更新對應 `domains/*.md`；實作確定性 GC，自動清除標記 `[RESOLVED]` 的過期技術債。 |
+| 4 | **專案根目錄衛生硬核治理 (Root Hygiene)** | `docs/specs/archive/2026-10-21-trinity-harness-implementation-plan.md` | 將原本殘留於根目錄的 `implementation_plan.md` 依專案慣例歸檔至 `docs/specs/archive/`，使根目錄無任何未白名單中繼檔案洩漏。 |
+| 5 | **景點口袋庫導航列極簡化 (Header Refinement)** | `frontend/components/poi/PoiPoolView.tsx`、`docs/specs/features/poi-pool-header-refinement-spec.md` | 依據 `/Idea to Spec` 與 `/grill-me` 訪談，徹底移除導航列副標題冗餘文字，將返回按鈕、標題（書籤 Icon）與統計徽章整合成單一水平軸心（`items-center`），擴大行動端可用視域。 |
+| 6 | **POIDetailDrawer iOS 手勢物理學與三檔位架構** | `frontend/components/POIDetailDrawer.tsx`、`docs/specs/features/poi-detail-drawer-ios-sheet-physics-spec.md` | 將每日智慧看板的 Apple 彈簧手勢物理學（`stiffness: 380, damping: 32`）完整移植至景點抽屜，保留原收起特色打造「Peek (110px) ➔ Half (56%) ➔ Full (92%)」三檔位狀態機，支援向上吸附、向下回退、快甩關閉與階梯式遮罩；每日景點地圖與總覽地圖全景生效。 |
+| 7 | **地圖抽屜 Sentinel 手勢物理測試套件** | `frontend/__tests__/poi-detail-drawer-physics-sentinel.test.tsx` | 建立 4 項專屬 Sentinel 單元測試，嚴格驗證三檔位高度映射、手勢吸附閾值、快甩關閉判定與階梯式遮罩穿透邏輯，測試全數綠燈（全前端 535 測試 100% 通過）。 |
+| 8 | **Tailwind CSS v4 語意工具類別修復** | `frontend/components/POIDetailDrawer.tsx` | 針對 IDE Linter 提出的任意值語法警告，將 `max-w-[140px]` 與 `sm:max-w-[200px]` 規範化為標準 `max-w-35` 與 `sm:max-w-50`，消滅所有 Linter 警告。 |
+
+---
+
+## 🏛️ Architecture Decisions
+
+- **AD-136：記憶 3-Tier 微核心與延遲按需載入架構 (3-Tier Sharded Memory Architecture)**
+  - *Context*：原 `memory.md` 累積 608 行 (168KB)，每次對話啟動全量載入嚴重消耗 Prompt Prefix 快取；且全文覆寫極易造成歷史決策被稀釋遺忘。
+  - *Decision*：拆分為 3 層架構：Tier 1 微核心憲法（<50 行，全域最高鐵律與領域路由表）；Tier 2 六大領域知識庫（`.agents/domains/*.md`，按任務領域按需延遲載入）；Tier 3 每日報告流水與歷史存檔。節省 85%+ 初始快取空間。
+- **AD-137：台帳純 Python 零依賴靜態校驗律 (Zero-Dependency Deterministic Ledger Guard)**
+  - *Context*：`security-coverage-ledger.json` 曾因手動維護出現多態鍵名（`target_id` vs `id`）與統計數值失衡（總數不等於狀態總和）。
+  - *Decision*：實作獨立腳本 `scripts/validate_security_ledger.py`，不依賴任何外部第三方套件，以嚴格斷言驗證數值守恆（142 = 13 + 17 + 112），並掛載至 `test_root_hygiene_sentinel.py`，每次執行測試必強行驗證。
+- **AD-138：地圖抽屜三檔位狀態機與階梯式遮罩架構 (3-Stage Detent & Stepped Backdrop Architecture)**
+  - *Context*：地圖景點抽屜原採二元狀態（展開/最小化），展開時 85vh 完全遮擋地圖路線，最小化時資訊又過少；且缺乏手勢拖曳。
+  - *Decision*：確立三檔位系統：
+    1. `peek` (~110px)：保留原本收起特色，無遮罩，地圖 100% 穿透可操作。
+    2. `half` (~56%)：預設開啟檔位，20% 輕量遮罩，上方保留地圖定位與圖釘，下方呈現核心資訊與快速排程按鈕。
+    3. `full` (~92%)：高斯模糊遮罩，深度閱讀維基典故與評論。
+    手勢綁定頂部 Handle Bar，內容區採用 Flexbox 流體佈局（`flex-1 min-h-0 overflow-y-auto`），徹底杜絕雙重滾動條。
+- **AD-139：Tailwind v4 標準間距類別收斂 (Utility Token Convergence)**
+  - *Context*：使用任意值 `max-w-[140px]` 觸發 Linter 告警。
+  - *Decision*：收斂為 Tailwind v4 官方內建之 `max-w-35` (35×4px=140px) 與 `sm:max-w-50` (50×4px=200px)，維持語意設計系統純淨度。
+
+---
+
+## 🛡️ Failed Paths
+
+- **FP-057：Windows 終端 stdout 預設 CP950 編碼 emoji 崩潰陷阱**
+  - *Symptom*：Python 腳本在 Windows PowerShell 輸出 `🟢`、`🧠` 時拋出 `UnicodeEncodeError: 'cp950' codec can't encode character`。
+  - *Lesson*：所有新增的 Python 維護腳本（`validate_security_ledger.py`、`auto_dream.py`），開頭必須強制注入 `if sys.stdout and hasattr(sys.stdout, 'reconfigure'): sys.stdout.reconfigure(encoding='utf-8')`。
+- **FP-058：POIBasicData 型別屬性假設偏誤陷阱**
+  - *Symptom*：在實作 Peek 標籤時誤寫 `poi.notes`，導致 `tsc --noEmit` 報錯 `Property 'notes' does not exist on type 'POIBasicData'`。
+  - *Lesson*：`POIBasicData` 代表來自 OSM 圖層的基礎景點資料，其型別只定義了 `name`、`type`、`address`；`notes` 屬於行程項目 (`Activity` / `ClusterItem`)。屬性存取前必須比對型別介面宣告，改用 `poi.address || poi.type`。
+- **FP-059：雙重滾動條與硬編碼高度衝突陷阱**
+  - *Symptom*：在地圖抽屜中若外層面板設置了彈簧高度，內部又設置 `max-h-60 overflow-y-auto`，會導致使用者滑動時出現內外兩條滾動條且滑動停滯。
+  - *Lesson*：抽屜內部內容容器必須使用標準 Flexbox `flex-1 min-h-0 overflow-y-auto`，將高度主權歸還給外層 Flex 容器，由瀏覽器引擎自動計算可用滾動高度。
+
+---
+
+## 🔴 Technical Debt
+
+1. **[RESOLVED in fb6e37e] `implementation_plan.md` 根目錄殘留問題結案**：
+   - 歷史遺留之根目錄計畫檔已全量歸檔至 `docs/specs/archive/2026-10-21-trinity-harness-implementation-plan.md`，專案根目錄衛生達 100%。
+2. **[RESOLVED in fb6e37e] 資安台帳多態鍵名與統計數值失衡結案**：
+   - `security-coverage-ledger.json` 已清除所有 `target_id`，數值校準至 142 項精準守恆，並由 Python 腳本納入 CI/CD 強制守門。
+3. **[RESOLVED in 39fbb21] 地圖景點抽屜手勢與二元檔位生硬問題結案**：
+   - `POIDetailDrawer` 已升級為三檔位與 Apple Spring 手勢物理學，手感流暢現代化。
+4. **Google Maps RPC 分頁迭代支援（Pagination Tokens）**（延續自 Session 3 & 4）：
+   - 當前 Placelist 抓取第一批次（~50 筆），超長清單未來可擴充翻頁抓取。
+5. **單一分頁內的通知連動重新整理請求突發**（延續自 Session 2）：
+   - 一次廣播會讓所有已掛載的 View 同時發出請求，未來可考慮只讓目前可見（Active）的 View 回應。
+
+---
+
+## 🎯 Next Steps
+
+1. 進行跨裝置與實機瀏覽器（iOS Safari / Android Chrome PWA）手勢驗收，確認景點抽屜在三檔位間之拖曳阻尼與跟手度。
+2. 評估超長 Google Maps 清單之翻頁 RPC 迭代機制。
+3. 持續保持 Quality Gate 100% 綠燈與 3-Tier 領域記憶庫之自動進化。
+
+---
 
 ## 🧬 Machine-Executable Invariant Rules
 
@@ -373,6 +458,27 @@
     "id": "INV-BACKEND-017",
     "title": "台灣地址門牌與景點名稱決定性分離法則 (Deterministic Taiwan Address Separator)",
     "content": "Google Maps 清單與公開端點獲取之文字，必須以 ADDRESS_POI_PATTERN 邊界正則決定性分離縣市區里路街號與店家名稱，嚴禁將地址前綴混入景點標題。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-IOS-018",
+    "title": "iOS 底抽三檔位與階梯式遮罩穿透法則 (Stepped Backdrop & 3-Stage Detent Invariance)",
+    "content": "地圖內部景點底抽必須支援 peek (~110px)、half (~56%)、full (~92%) 三檔位。在 peek 狀態下必須完全阻斷背景遮罩掛載，保障地圖 100% 穿透可操作；half 狀態採 20% 輕量遮罩；full 狀態採 50% 高斯模糊遮罩。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-IOS-019",
+    "title": "底抽 Flexbox 現代流體佈局法則 (Flexbox Fluid Bottom Sheet Layout)",
+    "content": "底抽主面板設置固定或百分比高度時，內部滾動內容區嚴禁使用寫死的 max-h-60 等高度計算，必須統一宣告為 flex-1 min-h-0 overflow-y-auto，將高度動態排版主權歸還給外層 Flex 容器，徹底根除雙重滾動條缺陷。"
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEVOPS-020",
+    "title": "記憶 3-Tier 微核心與領域按需載入原則 (3-Tier Sharded Memory Routing)",
+    "content": "memory.md 必須保持 <50 行微核心憲法，包含領域路由表與全域詞彙；具體決策按業務維度下放至 .agents/domains/*.md，透過 AGENTS.md 路由指引按需延遲載入，嚴禁重構為單體大檔案。"
   }
 ]
 ```

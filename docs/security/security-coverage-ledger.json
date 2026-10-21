@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-21T07:15:00Z",
+  "last_audit_date": "2026-10-21T10:30:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 142,
-    "audited_targets": 142,
+    "total_targets": 145,
+    "audited_targets": 145,
     "verified_vulnerabilities": 17,
-    "dismissed_hypotheses": 112,
-    "remediated_vulnerabilities": 13
+    "remediated_vulnerabilities": 16,
+    "dismissed_hypotheses": 112
   },
   "targets": [
     {
@@ -1734,6 +1734,45 @@
       "status": "SECURE",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
       "validator_details": "Dismissed by sandbox validator: standard regression detection. Remediation decouples test to directly assert on is_safe_url core."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:orphan_time_picker_without_itinerary_callback",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "ui_conditional_orphan_state"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_drawer_gesture_and_hygiene.md",
+      "validator_details": "Confirmed by Sentinel: When onAddToItinerary is omitted, time picker remains visible as an unusable orphan input with no submission CTA.",
+      "remediated_at": "2026-10-21T10:30:00Z",
+      "resolution": "Remediated: Time picker input is conditionally bound within onAddToItinerary block; falls back to full-width primary navigation CTA when callback is omitted."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:external_link_xss_protocol_bypass",
+      "target_type": "frontend_component",
+      "trust_boundary": "input_sanitization",
+      "vectors_checked": [
+        "xss_protocol_injection"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_drawer_gesture_and_hygiene.md",
+      "validator_details": "Verified by Sentinel: Direct rendering of poi.website in <a href> without protocol whitelist allows potential javascript: URI execution if OSM metadata is tainted.",
+      "remediated_at": "2026-10-21T10:30:00Z",
+      "resolution": "Remediated: Raw <a> link replaced with openExternalLink whitelist sanitizer (https, http, maps, etc.) preventing javascript: URI execution."
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:horizontal_axis_gesture_leak_and_burst",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "ui_gesture_axis_leak"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_drawer_gesture_and_hygiene.md",
+      "validator_details": "Verified by Sentinel: Scroll container lacks overflow-x-hidden and touch-pan-y; secondary buttons overflow available width on screens <=390px, causing horizontal shake.",
+      "remediated_at": "2026-10-21T10:30:00Z",
+      "resolution": "Remediated: Applied overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain with inline touchAction: pan-y; refactored action tools into dynamic 100% width auto-cols-fr grid with vertical icon stacks."
     }
   ]
 }
