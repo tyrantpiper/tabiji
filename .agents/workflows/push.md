@@ -19,6 +19,7 @@ triggers:
 $whitelist = @("package.json", "package-lock.json", "tsconfig.json", "components.json", "NOTICE.md", "README.md", "next.config.ts")
 $offenders = Get-ChildItem -Path . -File | Where-Object { 
     ($_.Extension -match '^\.(diff|tmp|bak|log)$') -or 
+    ($_.Name -eq 'implementation_plan.md') -or
     ($_.Extension -eq '.json' -and $whitelist -notcontains $_.Name)
 }
 if ($offenders) {

@@ -89,6 +89,7 @@ def test_push_gate_whitelist_filtering():
         ("patch_candidate.diff", True),# Offender
         ("temp.tmp", True),            # Offender
         ("error.log", True),           # Offender
+        ("implementation_plan.md", True), # Offender
         ("package.json", False),       # Whitelisted
         ("tsconfig.json", False),      # Whitelisted
         ("components.json", False),    # Whitelisted
@@ -97,7 +98,7 @@ def test_push_gate_whitelist_filtering():
 
     for fname, is_offender in test_files:
         ext = os.path.splitext(fname)[1].lower()
-        flagged = (ext in [".diff", ".tmp", ".bak", ".log"]) or (ext == ".json" and fname not in whitelist)
+        flagged = (ext in [".diff", ".tmp", ".bak", ".log"]) or (fname == "implementation_plan.md") or (ext == ".json" and fname not in whitelist)
         assert flagged == is_offender, f"File {fname} expected offender={is_offender}, got {flagged}"
 
 

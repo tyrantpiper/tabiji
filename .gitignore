@@ -48,6 +48,7 @@ blob-report/
 # AI Agent Workspace
 .agent/
 /.agents/*.log
+/implementation_plan.md
 
 backend/migrations/20260308_security_hardening.sql
 *.json

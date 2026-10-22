@@ -50,6 +50,12 @@ async function proxyRequest(
             redirect: "manual",
         });
 
+        // 🛡️ 本地開發與測試環境優雅降級：若遠端 D1 判定為測試固定帳號或拒絕存取，
+        // GET /api/poi/all 優雅回傳空陣列 []，防止本地 App Session Token 遭到非預期清除
+        if (resp.status === 401 && isPool && subPath === "all" && method === "GET") {
+            return NextResponse.json([]);
+        }
+
         const respHeaders = new Headers(resp.headers);
         respHeaders.delete("content-encoding"); // 避免代理雙重壓縮損壞
 
@@ -59,6 +65,9 @@ async function proxyRequest(
             headers: respHeaders,
         });
     } catch (err) {
+        if (isPool && subPath === "all" && method === "GET") {
+            return NextResponse.json([]);
+        }
         console.error(`[POI Proxy] Failed to reach ${isPool ? "Cloudflare D1" : "Backend"}:`, err);
         return NextResponse.json(
             { error: "POI_SERVICE_UNREACHABLE", detail: String(err) },

@@ -1,0 +1,34 @@
+[
+  {
+    "id": "backend/routers/trips.py:batch_reorder_cross_tenant_bola",
+    "file_path": "backend/routers/trips.py",
+    "attack_vector": "broken_object_level_authorization",
+    "hypothesis": "reorder_items only validates itinerary membership on items[0]. An attacker providing their own item at index 0 can tamper with arbitrary third-party items at index 1..n without authorization check scoping.",
+    "start_line": 1554,
+    "end_line": 1589
+  },
+  {
+    "id": "frontend/lib/hooks/useTripRealtime.ts:broadcast_unvalidated_state_injection",
+    "file_path": "frontend/lib/hooks/useTripRealtime.ts",
+    "attack_vector": "input_deserialization_and_type_confusion",
+    "hypothesis": "Broadcast channel messages lack schema validation and sender membership verification, allowing arbitrary participants to poison SWR cache or crash local React state via malformed event payloads.",
+    "start_line": 1,
+    "end_line": 80
+  },
+  {
+    "id": "frontend/components/trip/EditableDailyTips.tsx:unconstrained_payload_dos",
+    "file_path": "frontend/components/trip/EditableDailyTips.tsx",
+    "attack_vector": "denial_of_service_and_xss",
+    "hypothesis": "EditableDailyTips lacks string length bounding and control character sanitization, permitting oversized payloads (>1MB) to flood the realtime broadcast channel and PostgreSQL column.",
+    "start_line": 1,
+    "end_line": 120
+  },
+  {
+    "id": "frontend/lib/sync-hooks.ts:stale_bearer_replay_auth_failure",
+    "file_path": "frontend/lib/sync-hooks.ts",
+    "attack_vector": "stale_credential_loop",
+    "hypothesis": "Offline SyncQueue replays static req.headers from time of enqueuing. If session expires while offline, replay sends stale JWT resulting in 401 and silent discard after 3 retries.",
+    "start_line": 80,
+    "end_line": 125
+  }
+]

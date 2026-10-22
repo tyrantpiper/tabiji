@@ -151,7 +151,8 @@ export async function ensureValidSession(): Promise<string | null> {
             const data = await res.json();
             if (data?.access_token) {
                 localStorage.setItem(TOKEN_KEY, data.access_token);
-                if (data.user_id && !storedKey) {
+                // 🛡️ 金鑰同步防衛：若初次無 key 或後端強制換發新使用者 (is_new === true)，同步覆寫 localStorage
+                if (data.user_id && (!storedKey || data.is_new)) {
                     localStorage.setItem(RECOVERY_KEY, data.user_id);
                 }
                 return data.access_token as string;

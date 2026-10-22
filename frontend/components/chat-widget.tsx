@@ -808,21 +808,38 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                 if (token) {
                     headers["Authorization"] = `Bearer ${token}`
                 }
-                const res = await fetch(`${API_HOST}/api/chat`, {
+                const chatPayload = JSON.stringify({
+                    message: userMsg,
+                    history: history,
+                    image: currentImage,
+                    location: tripLocation,
+                    // 🆕 注入精簡版行程上下文與即時時間
+                    current_itinerary: leanItinerary,
+                    focused_day: focusedDay,
+                    client_time: new Date().toISOString(),
+                    client_timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei"
+                })
+
+                let res = await fetch(`${API_HOST}/api/chat`, {
                     method: "POST",
                     headers,
-                    body: JSON.stringify({
-                        message: userMsg,
-                        history: history,
-                        image: currentImage,
-                        location: tripLocation,
-                        // 🆕 注入精簡版行程上下文與即時時間
-                        current_itinerary: leanItinerary,
-                        focused_day: focusedDay,
-                        client_time: new Date().toISOString(),
-                        client_timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei"
-                    })
+                    body: chatPayload
                 })
+
+                // 🛡️ 401 自癒重試防禦
+                if (res.status === 401 && typeof window !== "undefined") {
+                    console.warn("⚠️ [Chat] Received 401 Unauthorized in fallback chat, refreshing session token...")
+                    localStorage.removeItem("tabiji_session_token")
+                    const freshToken = await ensureValidSession().catch(() => null)
+                    if (freshToken) {
+                        headers["Authorization"] = `Bearer ${freshToken}`
+                        res = await fetch(`${API_HOST}/api/chat`, {
+                            method: "POST",
+                            headers,
+                            body: chatPayload
+                        })
+                    }
+                }
 
                 const data = await res.json()
 

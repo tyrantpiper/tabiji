@@ -1,0 +1,42 @@
+[
+  {
+    "id": "backend/utils/deps.py:gemini_key_jwt_collision_and_index_error",
+    "file_path": "backend/utils/deps.py",
+    "start_line": 6,
+    "end_line": 43,
+    "attack_vector": "token_confusion",
+    "hypothesis": "get_gemini_key blindly splits Authorization header, risking IndexError on malformed Bearer values and erroneously treating Session JWT tokens as Gemini API keys."
+  },
+  {
+    "id": "frontend/lib/api.ts:unhandled_401_disconnection_and_auth_recursion",
+    "file_path": "frontend/lib/api.ts",
+    "start_line": 26,
+    "end_line": 65,
+    "attack_vector": "denial_of_service",
+    "hypothesis": "api.ts module fetch wrapper returns 401 response directly without retry causing client mutation failures, and lacks auth-path filter risking infinite retry recursion."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:recovery_key_stale_uuid_desync",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 137,
+    "end_line": 167,
+    "attack_vector": "session_desync",
+    "hypothesis": "ensureValidSession only updates RECOVERY_KEY if !storedKey, preventing local storage from updating when the backend mints a new UUID for an invalid legacy key."
+  },
+  {
+    "id": "frontend/app/sw.ts:auth_endpoints_service_worker_interception",
+    "file_path": "frontend/app/sw.ts",
+    "start_line": 121,
+    "end_line": 130,
+    "attack_vector": "cache_poisoning",
+    "hypothesis": "Service Worker NetworkOnly matcher omits /api/auth/* endpoints, risking Service Worker caching or background mutation queue interference with authentication exchange."
+  },
+  {
+    "id": "frontend/lib/sse-parser.ts:stream_handshake_401_disconnection",
+    "file_path": "frontend/lib/sse-parser.ts",
+    "start_line": 172,
+    "end_line": 210,
+    "attack_vector": "connection_drop",
+    "hypothesis": "streamChat throws immediately on 401 stream response without attempting 1-time token re-exchange, terminating chat/generation and requiring manual retry."
+  }
+]

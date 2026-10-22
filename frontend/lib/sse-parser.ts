@@ -183,26 +183,44 @@ export async function streamChat(
         headers["Authorization"] = `Bearer ${token}`
     }
 
-    const response = await fetch(`${apiUrl}/api/chat/stream`, {
+    const requestPayload = JSON.stringify({
+        message,
+        history: history.map(msg => ({
+            role: msg.role,
+            rawParts: msg.rawParts,
+            displayContent: msg.displayContent
+        })),
+        thought_signatures: [],  // Round-trip signatures if needed
+        // 🆕 帶入行程上下文與焦點天數
+        current_itinerary: itinerary,
+        focused_day: focused_day,
+        // 🆕 即時時間與時區感知
+        client_time: defaultTime,
+        client_timezone: defaultTz
+    });
+
+    let response = await fetch(`${apiUrl}/api/chat/stream`, {
         method: "POST",
         headers,
-        body: JSON.stringify({
-            message,
-            history: history.map(msg => ({
-                role: msg.role,
-                rawParts: msg.rawParts,
-                displayContent: msg.displayContent
-            })),
-            thought_signatures: [],  // Round-trip signatures if needed
-            // 🆕 帶入行程上下文與焦點天數
-            current_itinerary: itinerary,
-            focused_day: focused_day,
-            // 🆕 即時時間與時區感知
-            client_time: defaultTime,
-            client_timezone: defaultTz
-        }),
+        body: requestPayload,
         signal
-    })
+    });
+
+    // 🛡️ 401 自癒重試防禦 (Self-Healing Re-handshake)
+    if (response.status === 401 && typeof window !== "undefined" && !signal?.aborted) {
+        console.warn("⚠️ [SSE] Received 401 Unauthorized during stream handshake, refreshing session token...");
+        localStorage.removeItem("tabiji_session_token");
+        const freshToken = await ensureValidSession().catch(() => null);
+        if (freshToken && !signal?.aborted) {
+            headers["Authorization"] = `Bearer ${freshToken}`;
+            response = await fetch(`${apiUrl}/api/chat/stream`, {
+                method: "POST",
+                headers,
+                body: requestPayload,
+                signal
+            });
+        }
+    }
 
     if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)

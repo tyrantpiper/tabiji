@@ -74,4 +74,51 @@ describe('Auth Session Resilience & Token Life-Cycle Tests', () => {
         cleanup()
         expect(removeEventSpy).toHaveBeenCalledWith('online', expect.any(Function))
     })
+
+    it('TC-7: ensureValidSession updates RECOVERY_KEY when backend mints a new user (is_new === true)', async () => {
+        const { ensureValidSession } = await import('@/lib/auth-session')
+        process.env.TEST_AUTH_EXCHANGE = 'true'
+        mockStorage['user_uuid'] = 'stale-legacy-key'
+        const futureExp = Math.floor(Date.now() / 1000) + 3600
+        const freshJwt = createMockJwt({ sub: 'brand-new-user-456', exp: futureExp })
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                access_token: freshJwt,
+                user_id: 'brand-new-user-456',
+                is_new: true
+            })
+        } as unknown as Response)
+
+        const token = await ensureValidSession()
+        expect(token).toBe(freshJwt)
+        expect(mockStorage['tabiji_session_token']).toBe(freshJwt)
+        expect(mockStorage['user_uuid']).toBe('brand-new-user-456')
+        delete process.env.TEST_AUTH_EXCHANGE
+    })
+
+    it('TC-8: ensureValidSession retains existing user_uuid when is_new is false', async () => {
+        const { ensureValidSession } = await import('@/lib/auth-session')
+        process.env.TEST_AUTH_EXCHANGE = 'true'
+        mockStorage['user_uuid'] = 'existing-user-123'
+        const futureExp = Math.floor(Date.now() / 1000) + 3600
+        const freshJwt = createMockJwt({ sub: 'existing-user-123', exp: futureExp })
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                access_token: freshJwt,
+                user_id: 'existing-user-123',
+                is_new: false
+            })
+        } as unknown as Response)
+
+        const token = await ensureValidSession()
+        expect(token).toBe(freshJwt)
+        expect(mockStorage['user_uuid']).toBe('existing-user-123')
+        delete process.env.TEST_AUTH_EXCHANGE
+    })
 })

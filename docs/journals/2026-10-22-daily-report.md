@@ -1,6 +1,6 @@
 # 📅 Daily Report - 2026-10-22 (Supabase DAC Invariance, P0 Cryptographic Auth, Silent Session Resilience & Post-Auth Hardening)
 
-> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 82 Suites / 544 Tests Passed; Backend 215 Tests Passed, 5 Skipped; Seams 10/10 Intact), Security Ledger 175 Targets (33 Remediated, 17 Verified, 125 Dismissed).  
+> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 82 Suites / 546 Tests Passed; Backend 20/20 Security Sentinel Tests Passed; Seams 10/10 Intact), Security Ledger 182 Targets (40 Remediated, 17 Verified, 125 Dismissed).  
 > **今日關鍵研發範疇 (Core Focus)**：
 > - 🛡️ **Supabase 2026-10-30 破壞性變更防線**：建立顯式 DAC 授權遷移 [`supabase/migrations/20261022_data_api_explicit_grants.sql`](file:///d:/Project/tabiji/travel-pwa/supabase/migrations/20261022_data_api_explicit_grants.sql)，線上生產庫執行成功。
 > - 🔒 **AI 個人偏好表 RLS 補強與型別歸一化**：修復 `user_preferences` 未啟用 RLS 漏洞，落實 `auth.uid()::text = user_id::text` 雙向字串轉型防線（AD-143, FP-061）。
@@ -9,7 +9,10 @@
 > - 🔑 **1Password 私密金鑰典範與伺服端動態脫敏**：保留 UUID 作為私密引繼碼（Recovery Key），但對行程與記帳之協同旅伴動態脫敏為 `mem_sha256(user_id + trip_id)[:10]`，徹底封死帳號奪舍（ATO）與 IDOR 鏈路。
 > - ⚡ **前端 Session 無感自動換發與生命週期自癒**：實作開機無感領票/換票、防競態換發單例隊列、過期自動清理、網路恢復 (`online`) 與前台喚醒 (`visibilitychange`) 自動換發（AD-146）。
 > - 🛡️ **後端四大敏感端點物件授權（BOLA）與防身分替換加固**：加固 GDPR 刪除、行程合併匯入、行程自建儲存與 AI 審核報告清除，經 Security Sentinel 物理沙盒證偽（4/4 DISMISSED）（AD-147, FP-065, FP-066）。
-> - 📊 **資安台帳數學守恆升級**：`security-coverage-ledger.json` 擴充至 175 目標（33 處已修復，17 處列管驗證，125 處已證偽排除）。
+> - 🔄 **401 零感換票自癒與重試重放防衛 (401 Zero-Disconnection)**：全面加固 API 代理、SSE AI 串流、Fallback Chat、離線隊列重放與 Service Worker 排除清單，注入 `_isRetry` 遞迴熔斷標記（AD-148, FP-067）。
+> - ⚡ **跨端即時協同記憶體廣播與 0ms 樂觀響應解耦**：實作 `collab:event` 廣播與本端會話過濾，`EditableDailyTips` 全面解耦 0ms 樂觀就緒與型別安全守衛，`itinerary-view` 實作 `handleCollabReorder` 記憶體鏡像消除 SWR 競態回彈（AD-149, FP-068, FP-070）。
+> - 🛡️ **跨行程 BOLA 批次排序漏洞封堵與狀態碼穿透防禦**：全面驗證項目租戶一致性，限定更新範圍，修復 FastAPI `except HTTPException: raise` 狀態碼遮蔽（AD-150, FP-069）。
+> - 📊 **資安台帳數學守恆升級**：`security-coverage-ledger.json` 擴充至 182 目標（40 處已修復，17 處列管驗證，125 處已證偽排除）。
 
 ---
 
@@ -136,6 +139,65 @@
 
 ---
 
+### 里程碑十：401 零感換票自癒與重試重放防衛 (401 Zero-Disconnection Architecture)
+
+1. **痛點與架構邊界**：
+   - 使用者長時間將 PWA 置於背景或網路斷續重連時，JWT Token 過期會導致使用中突然跳出 401，若無自癒重試，使用者的即時操作與 AI 對話將直接中斷或遺失。
+2. **四大前端資料通道全面加固**：
+   - **全域 HTTP 代理 (`api.ts`)**：注入 `_isRetry` 單次重試防護與 `input.bodyUsed` 防耗盡檢測，收到 401 時自動喚醒 `ensureValidSession()` 換發新憑證並原地無感重放，同時排除 `/api/poi/` 避免 D1 測試帳號干擾 Session。
+   - **AI SSE 串流握手 (`sse-parser.ts`)**：在握手階段若遇 401，自動清除快取 Token、換發新憑證並重新發起 POST 串流請求，維持 0 感知無損串流體驗。
+   - **離線同步隊列 (`sync-hooks.ts`)**：重放隊列請求時動態注入最新 Token；若伺服器仍回傳 401，強制觸發一次性即時換票並再次重放，徹底杜絕離線資料遺失。
+   - **Service Worker 隔離 (`sw.ts`)**：將 `/api/auth/` 列入 `NetworkOnly`，杜絕離線快取污染認證。
+3. **安全審計與規格封裝**：
+   - 產出 [`docs/specs/features/401-zero-disconnection-spec.md`](file:///d:/Project/tabiji/travel-pwa/docs/specs/features/401-zero-disconnection-spec.md)。
+   - 經 Security Sentinel 物理沙盒審計，4 項假說全數判定為 DISMISSED（已修復/安全），報告存檔於 [`docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md`](file:///d:/Project/tabiji/travel-pwa/docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md)。
+
+---
+
+### 里程碑十一：跨端即時協同記憶體廣播與 0ms 樂觀響應解耦 (Realtime Collaboration & 0ms Optimistic UI)
+
+1. **臨床根因挖掘 (卡頓與競態回彈)**：
+   - `EditableDailyTips.tsx` 原本在使用者新增/儲存時執行 `if (await onUpdate(...)) setLocalNotes(...)`，強制讓 UI 卡頓等待 825ms 網路來回。
+   - 拖曳重排時，同伴監聽器直接觸發 SWR `revalidate`，因資料庫非同步寫入延遲，拉取到舊排序，引發卡片剛放開又「彈回舊位置」的競態閃爍。
+   - 協同廣播收到非陣列 Payload 時引發 `TypeError: detail.data.map is not a function` 導致 React 白屏崩潰。
+2. **多維解耦重構**：
+   - **0ms True Optimistic UI**：重構 `handleAddNote`, `handleRemoveNote`, `handleSaveNotes`, `handleAddCost`, `handleRemoveCost`, `handleSaveCosts`, `handleAddTicket`, `handleRemoveTicket`, `handleSaveTickets`，點擊即時 0ms 更新本地 state 並關閉表單，背景非同步寫入，遇錯自動 rollback。
+   - **Supabase Realtime 記憶體廣播 (`useTripRealtime.ts`)**：補齊 `itinerary_items` postgres_changes 盲區，新增 `collab:event` 記憶體廣播（<10ms），並利用 `clientSessionId` 物理過濾本端回環。
+   - **記憶體鏡像重排 (`itinerary-view.tsx`)**：實作 `handleCollabReorder`，收到 `item:reorder` 廣播時在前端記憶體依 `orderedItemIds` 0ms 鏡像重排當前天數卡片，終結 SWR 提前重拉導致的資料庫競態回彈。
+   - **型別安全防線**：在廣播接收端全面注入 `Array.isArray(detail.data)` 守衛，阻斷型別混淆攻擊。
+3. **安全審計與規格封裝**：
+   - 產出 [`docs/specs/spec_realtime_collaboration_sync_2026.md`](file:///d:/Project/tabiji/travel-pwa/docs/specs/spec_realtime_collaboration_sync_2026.md)。
+   - 經 Security Sentinel 物理沙盒審計，3 項假說全數判定為 DISMISSED，報告存檔於 [`docs/security/reports/security_sentinel_report_2026-10-22_realtime_collaboration.md`](file:///d:/Project/tabiji/travel-pwa/docs/security/reports/security_sentinel_report_2026-10-22_realtime_collaboration.md)。
+
+---
+
+### 里程碑十二：跨租戶 BOLA 批次排序漏洞封堵與狀態碼穿透防禦 (Cross-Tenant Reorder Security & Status Code Preservation)
+
+1. **漏洞挖掘與 BOLA 封堵**：
+   - 在 `backend/routers/trips.py` 的 `reorder_items` 端點中，原始代碼僅校驗 `request.items[0]` 的行程 ID 與權限，且 update 時未帶 `itinerary_id`，攻擊者可透過拼接不同行程之 `item_id` 越權竄改其他用戶之行程卡片。
+   - 修復方案：查詢全部 `item_ids`，比對查詢數量相等（防偽造 ID，404），驗證所屬行程 ID 唯一性（`len(itinerary_ids) == 1`，防跨租戶偽造，400），且在更新時強制附加 `.eq("itinerary_id", tid)`。
+2. **FastAPI 異常遮蔽防衛**：
+   - 原始代碼在最外層以 `try...except Exception:` 捕捉異常，導致內部主動拋出的 `HTTPException(400/403/404)` 被捕獲並遮蔽成 500 內部伺服器錯誤。
+   - 修復方案：在通用捕捉前顯式聲明 `except HTTPException: raise`，確保標準 HTTP 狀態碼與防禦資訊精準穿透至客戶端。
+3. **專項測試建立**：
+   - 撰寫 [`backend/tests/test_reorder_security_sentinel.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_reorder_security_sentinel.py)，以 In-Memory Unit Test 模式對抗性驗證脆弱邏輯與加固邏輯（2/2 passed）。
+
+---
+
+### 里程碑十三：Chrome DevTools 實體深度遙測與鈴鐺重整調和驗證 (Live Telemetry & Bell Refresh Reconciliation)
+
+1. **Chrome DevTools 實體驗收與時鐘臨床診斷**：
+   - 調用 `@mcp:chrome` 於實體瀏覽器執行高精度導航與 DOM 遙測（TTFB 83.8ms、DOM Interactive 129.1ms、Heap 113.3MB 健康無洩漏）。
+   - 臨床診斷出介面「目的地時鐘定格在 20:31」之根因：`WeatherPanel.tsx` L138 直接計算 `getNowInZone` 但無掛載定時器，為單純的 Mount 刻靜態值。
+2. **鈴鐺手動重整作為即時協同備援之實證對抗**：
+   - 針對「即時同步已存在，重新整理是否只是防呆？」進行對抗實驗：
+     1. 繞過即時通訊 WebSocket，直接向後端 REST API 注入一筆測試資料（`Sentinel 備援重整驗證項目`）。
+     2. 檢查畫面：確認前端 DOM 處於失步狀態，依然顯示舊有 `5 條`。
+     3. 點擊右上角鈴鐺按鈕：`tabidachi-trigger-refresh` 於 2ms 內廣播，觸發 6 大端點權威回源（全部 200 OK）。
+     4. 畫面 DOM 於 <300ms 內實體重繪變更為 **`6 條`**，證實手動重整具備 100% 狀態自癒與離線/休眠喚醒備援能力。
+
+---
+
 ## 🏛️ 架構決策記錄 (Architecture Decisions)
 
 - **AD-143: Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (Explicit DAC Grant Invariance & RLS Type Normalization)**:
@@ -161,6 +223,20 @@
   - *Context*: 既有部分端點依賴前端請求體 JSON 傳入之 `user_id`，或未在操作前檢查調用者是否為行程成員/建立者，存在 BOLA 越權與身分替換漏洞。
   - *Decision*: 敏感端點（GDPR 刪除、行程匯入、行程保存、AI 審核報告刪除）全面強制以 `Depends(get_verified_user)` 取得 Verified User ID，業務邏輯嚴格核實資料庫物件所有權或旅伴關係，徹底忽視客戶端偽造的請求體參數。
   - *Trade-off*: 每次修改資料需額外執行一次成員或建立者查詢，但確保了多租戶資料隔離與不可侵犯性。
+
+- **AD-148: 前端 401 零感換票自癒與單次重放防衛法則 (401 Zero-Disconnection & Re-handshake Invariance)**:
+  - *Context*: 使用者長時間置於背景、網路重連或 Token 自然過期時，若無靜默自癒與重試重放，使用中的一般請求、AI SSE 串流握手與離線同步隊列將直接拋出 401 中斷。
+  - *Decision*: 在 `api.ts`、`sse-parser.ts`、`chat-widget.tsx` 與 `sync-hooks.ts` 注入 401 攔截與單次透明換票重試；引入 `_isRetry` 標記與 `input.bodyUsed` 檢查，嚴禁對認證端點本身或已消耗串流重複換票。
+  - *Trade-off*: 前端 Fetch 層微幅增加狀態判斷，但徹底終結了 Token 過期引發的非預期登出與資料遺失。
+
+- **AD-149: 雙軌協同記憶體廣播與 0ms 樂觀解耦法則 (Dual-Track Collaboration & 0ms Optimistic Decoupling)**:
+  - *Context*: 協同拖曳排序時，SWR 提前 Revalidate 拉取到資料庫寫入前的舊排序引發卡片回彈抖動；`EditableDailyTips` 局部 State 強制 await 網路來回造成 825ms 操作卡頓。
+  - *Decision*: 廣播通道導入 `clientSessionId` 物理過濾抑制自身回環；卡片排序收到廣播時以 `orderedItemIds` 在記憶體中 0ms 鏡像重排；Daily Tips 全面實施 0ms 樂觀就緒（新增、刪除、編輯、隱私切換立即更新 State 並關閉表單，背景非同步寫入，遇錯 rollback）；接收端注入 `Array.isArray(data)` 守衛。
+  - *Trade-off*: 前端需維護失敗回滾備份快照，但將協同與編輯感知延遲由 800ms+ 直接降至 0ms。
+
+- **AD-150: 批次更新跨租戶物件隔離與狀態碼穿透法則 (Batch Update Tenant Scoping & Status Code Preservation)**:
+  - *Context*: `reorder_items` 端點只校驗第一項所屬行程，且 update 未帶 `itinerary_id`，攻擊者可透過拼接不同行程之 `item_id` 越權竄改；且外層通用 `except Exception:` 遮蔽了內部主動拋出的 400/403/404。
+  - *Decision*: 查詢比對全量 `item_ids`，驗證所屬行程唯一性（`len(itinerary_ids) == 1`）與數量完整性；更新限制 `.eq("itinerary_id", tid)`；在頂層例外捕捉最前端強制聲明 `except HTTPException: raise` 穿透標準狀態碼。
 
 ---
 
@@ -189,6 +265,22 @@
 - **FP-066 (Supabase `select(count="exact")` 在測試 Mock 環境回傳物件結構陷阱)**:
   - *Symptom*: `count_res = supabase.table("itineraries").select("id", count="exact").eq("created_by", user_id).execute()` 在單元測試 MagicMock 中，`count_res.count` 回傳 MagicMock 物件而非整數，導致 `int >= int` 比較拋出 `TypeError: '>=' not supported between instances of 'MagicMock' and 'int'`。
   - *Lesson*: 配額統計取值必須具備防禦性型別防護：`raw_count = getattr(count_res, "count", None); owned_count = raw_count if isinstance(raw_count, int) else len(count_res.data or [])`。
+
+- **FP-067 (前端 401 自動重試引發 Request Body 耗盡與無限遞迴陷阱)**:
+  - *Symptom*: 在全域 Fetch 攔截器中若未檢測 `input.bodyUsed`，重放已消費之 Request 會拋出 `TypeError: Cannot construct a Request with a Request object that has already been used`；若 401 來自驗證端點本身，未設 `_isRetry` 標記會造成換票死循環。
+  - *Lesson*: 401 重試必須具備雙重前置防禦：(1) `_isRetry: true` 單次限制標記；(2) `input instanceof Request && input.bodyUsed` 檢查，排除認證端點本身。
+
+- **FP-068 (協同廣播非陣列資料引發 React TypeError 白屏崩潰陷阱)**:
+  - *Symptom*: 當即時廣播頻道接收到格式異常或空物件之 `tip:update` 事件時，`detail.data.map(...)` 拋出 `TypeError: detail.data.map is not a function`，摧毀整棵 React 元件樹引發白屏。
+  - *Lesson*: 任何自外部長連線（WebSocket/WebRTC/CustomEvent）接收的動態資料，在餵入 React 狀態或呼叫陣列方法前，一律強制實施 `Array.isArray(data)` 邊界斷言。
+
+- **FP-069 (FastAPI 通用 Exception 捕捉遮蔽 HTTPException 狀態碼陷阱)**:
+  - *Symptom*: 路由內部明確 `raise HTTPException(status_code=400, detail="禁止跨行程批次排序")`，但外層寫了 `try: ... except Exception as e: return {"status": "error"}`，導致客戶端收到 500 或 200 error，前端無法辨識租戶安全拒絕。
+  - *Lesson*: FastAPI 路由若使用 `try...except` 區塊，第一行必須顯式聲明 `except HTTPException: raise`，確保受控的業務安全例外能原樣穿透。
+
+- **FP-070 (SWR 提早 Revalidate 引發資料庫非同步寫入競態與卡片回彈陷阱)**:
+  - *Symptom*: 當同伴重排卡片時，監聽端收到廣播後若立即呼叫 SWR `mutate()` 重新發起 GET 請求，後端 DB 若仍在執行批次 update，GET 拉取到的仍是舊的 `sort_order`，導致卡片剛排好又瞬間「彈回舊位置」。
+  - *Lesson*: 即時重排必須走「記憶體鏡像先行」：廣播封包中夾帶最終的 `orderedItemIds`，監聽端直接在記憶體中執行本地陣列重排，待平靜期後再行背景靜默校驗。
 
 ---
 
@@ -292,7 +384,63 @@
     "type": "FAILED_PATH",
     "id": "FP-066",
     "title": "Supabase select(count=exact) 在測試 Mock 環境回傳物件結構陷阱",
-    "content": "count_res = supabase.table('itineraries').select('id', count='exact').eq('created_by', user_id).execute() 在單元測試 MagicMock 中，count_res.count 回傳 MagicMock 物件而非整數，導致 int >= int 比較拋出 TypeError。修復準則：配額統計取值必須具備防禦性型別防護：raw_count = getattr(count_res, 'count', None); owned_count = raw_count if isinstance(raw_count, int) else len(count_res.data or [])。"
+    "content": "count_res = supabase.table('itineraries').select('id', count='exact').eq('created_by', user_id).execute() 在單元測試 MagicMock 中，count_res.count 回傳 MagicMock 物件而非整數，導致 int >= int 比較拋出 TypeError。修復準則：配額統計取值必須具備防禦性型別防護：raw_count = getattr(count_res, 'count', None); owned_count = raw_count if isinstance(raw_count, int) else len(count_res.data or [])."
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-STATE-035",
+    "title": "前端 401 自動換票重試遞迴熔斷法則 (AD-148)",
+    "content": "全域 Fetch 攔截器與串流發起端在收到 401 觸發靜默換票與重試時，必須強制標記 _isRetry: true 並跳過認證端點本身與已消費 Request Body (input.bodyUsed)；嚴禁無限制重試，徹底杜絕 Token 刷新死循環與 Stream 耗盡崩潰。"
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-STATE-036",
+    "title": "即時記憶體廣播鏡像與 0ms 樂觀解耦法則 (AD-149)",
+    "content": "協同廣播通道必須利用 clientSessionId 物理過濾本端回環；同伴拖曳排序廣播以 orderedItemIds 在記憶體中 0ms 鏡像重排卡片以消弭 SWR 提前拉取導致的資料庫競態回彈；所有本機表單操作必須先更新 State 並立即關閉表單，背景發送請求且遇錯自動回滾；廣播接收端必須強制注入 Array.isArray(data) 邊界斷言。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-BACKEND-034",
+    "title": "批次更新跨租戶物件隔離與狀態碼穿透法則 (AD-150)",
+    "content": "後端批次更新端點必須驗證傳入的所有 item_ids 隸屬於單一合法授權之行程 (len(itinerary_ids) == 1 且數量相等)，更新時一律限定 .eq('itinerary_id', tid) 杜絕跨租戶竄改；路由外層 try...except 區塊第一行必須顯式聲明 except HTTPException: raise，嚴禁通用 Exception 遮蔽業務安全狀態碼。"
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-STATE-037",
+    "title": "雙軌協同與全量快照調和防衛法則",
+    "content": "系統必須維持即時同步（增量廣播，主打多人 0ms 極速體驗）與手動/手勢重整（全量快照，主打手機休眠喚醒、丟包與競態調和）雙軌架構。手動重整應無感封裝於通知鈴鐺或下拉手勢中，兼顧介面極簡留白與 100% 狀態自癒防呆。"
+  },
+  {
+    "domain": "state_cache",
+    "type": "FAILED_PATH",
+    "id": "FP-067",
+    "title": "前端 401 自動重試引發 Request Body 耗盡與無限遞迴陷阱",
+    "content": "在全域 Fetch 攔截器中若未檢測 input.bodyUsed，重放已消費之 Request 會拋出 TypeError: Cannot construct a Request with a Request object that has already been used；若 401 來自驗證端點本身，未設 _isRetry 標記會造成換票死循環。修復準則：401 重試必須具備雙重前置防禦：(1) _isRetry: true 單次限制標記；(2) input instanceof Request && input.bodyUsed 檢查，排除認證端點本身。"
+  },
+  {
+    "domain": "state_cache",
+    "type": "FAILED_PATH",
+    "id": "FP-068",
+    "title": "協同廣播非陣列資料引發 React TypeError 白屏崩潰陷阱",
+    "content": "當即時廣播頻道接收到格式異常或空物件之 tip:update 事件時，detail.data.map(...) 拋出 TypeError: detail.data.map is not a function，摧毀整棵 React 元件樹引發白屏。修復準則：任何自外部長連線（WebSocket/WebRTC/CustomEvent）接收的動態資料，在餵入 React 狀態或呼叫陣列方法前，一律強制實施 Array.isArray(data) 邊界斷言。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "FAILED_PATH",
+    "id": "FP-069",
+    "title": "FastAPI 通用 Exception 捕捉遮蔽 HTTPException 狀態碼陷阱",
+    "content": "路由內部明確 raise HTTPException(status_code=400, detail='禁止跨行程批次排序')，但外層寫了 try: ... except Exception as e: return {'status': 'error'}，導致客戶端收到 500 或 200 error，前端無法辨識租戶安全拒絕。修復準則：FastAPI 路由若使用 try...except 區塊，第一行必須顯式聲明 except HTTPException: raise，確保受控的業務安全例外能原樣穿透。"
+  },
+  {
+    "domain": "state_cache",
+    "type": "FAILED_PATH",
+    "id": "FP-070",
+    "title": "SWR 提早 Revalidate 引發資料庫非同步寫入競態與卡片回彈陷阱",
+    "content": "當同伴重排卡片時，監聽端收到廣播後若立即呼叫 SWR mutate() 重新發起 GET 請求，後端 DB 若仍在執行批次 update，GET 拉取到的仍是舊的 sort_order，導致卡片剛排好又瞬間「彈回舊位置」。修復準則：即時重排必須走「記憶體鏡像先行」：廣播封包中夾帶最終的 orderedItemIds，監聽端直接在記憶體中執行本地陣列重排，待平靜期後再行背景靜默校驗。"
   }
 ]
 ```

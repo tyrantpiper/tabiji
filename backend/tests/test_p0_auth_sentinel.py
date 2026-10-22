@@ -420,3 +420,43 @@ def test_auth_sentinel_clear_ai_review_requires_jwt_and_membership(test_client, 
     assert res_owner.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_auth_sentinel_get_gemini_key_excludes_jwt():
+    """[VERIFICATION 16]: get_gemini_key strictly ignores session JWTs in Authorization header."""
+    from utils.deps import get_gemini_key
+    from fastapi import HTTPException
+
+    session_jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHpunv_vRebL_bNmW_example"
+    with pytest.raises(HTTPException) as exc_info:
+        await get_gemini_key(x_gemini_api_key=None, auth_header=f"Bearer {session_jwt}")
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_sentinel_get_gemini_key_handles_malformed_bearer():
+    """[VERIFICATION 17]: get_gemini_key safely handles malformed Bearer headers without IndexError."""
+    from utils.deps import get_gemini_key
+    from fastapi import HTTPException
+
+    for malformed in ["Bearer", "Bearer ", "Bearer    ", ""]:
+        with pytest.raises(HTTPException) as exc_info:
+            await get_gemini_key(x_gemini_api_key=None, auth_header=malformed)
+        assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_sentinel_get_gemini_key_accepts_valid_gemini_key():
+    """[VERIFICATION 18]: get_gemini_key accepts genuine Gemini API key (>=39 chars non-JWT)."""
+    from utils.deps import get_gemini_key
+
+    valid_key = "AIzaSy" + "A" * 33  # 39 chars
+    # Via X-Gemini-API-Key
+    res1 = await get_gemini_key(x_gemini_api_key=valid_key, auth_header=None)
+    assert res1 == valid_key
+
+    # Via Authorization fallback
+    res2 = await get_gemini_key(x_gemini_api_key=None, auth_header=f"Bearer {valid_key}")
+    assert res2 == valid_key
+
+
+

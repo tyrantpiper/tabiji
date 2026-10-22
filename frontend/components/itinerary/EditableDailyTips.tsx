@@ -151,7 +151,7 @@ const DEFAULT_CURRENCY = "TWD"
 
 export default function EditableDailyTips({
     tripId: _tripId,  // eslint-disable-line @typescript-eslint/no-unused-vars
-    day: _day,        // eslint-disable-line @typescript-eslint/no-unused-vars
+    day: _day,
     notes,
     costs,
     tickets,
@@ -178,19 +178,53 @@ export default function EditableDailyTips({
     const [addingCost, setAddingCost] = useState(false)
     const [addingTicket, setAddingTicket] = useState(false)
 
+    // 🆕 編輯模式狀態
+    const [editingNotes, setEditingNotes] = useState(false)
+    const [editingCosts, setEditingCosts] = useState(false)
+    const [editingTickets, setEditingTickets] = useState(false)
+
+    // 🆕 編輯中的資料副本
+    const [editNotesData, setEditNotesData] = useState<NoteItem[]>([])
+    const [editCostsData, setEditCostsData] = useState<CostItem[]>([])
+    const [editTicketsData, setEditTicketsData] = useState<TicketItem[]>([])
+
     // 🔧 FIX: Sync local state when props update (async data loading)
-    // 🛡️ L4 Protection: Skip sync if user is currently adding an item to prevent "Renew Overwrite"
+    // 🛡️ L4 Protection: Skip sync if user is currently adding OR editing an item to prevent "Renew Overwrite"
     useEffect(() => {
-        if (!addingNote) setLocalNotes((notes || []).map(normalizeNote))
-    }, [notes, addingNote])
+        if (!addingNote && !editingNotes) setLocalNotes((notes || []).map(normalizeNote))
+    }, [notes, addingNote, editingNotes])
 
     useEffect(() => {
-        if (!addingCost) setLocalCosts(costs || [])
-    }, [costs, addingCost])
+        if (!addingCost && !editingCosts) setLocalCosts(costs || [])
+    }, [costs, addingCost, editingCosts])
 
     useEffect(() => {
-        if (!addingTicket) setLocalTickets(tickets || [])
-    }, [tickets, addingTicket])
+        if (!addingTicket && !editingTickets) setLocalTickets(tickets || [])
+    }, [tickets, addingTicket, editingTickets])
+
+    // ⚡ 即時協同：接收廣播事件，毫秒級反映同伴新增或修改的內容
+    useEffect(() => {
+        const handleCollab = (e: Event) => {
+            const detail = (e as CustomEvent).detail
+            if (detail?.event === "tip:update" && detail?.dayIndex === _day) {
+                if (detail.type === "notes" && !editingNotes && !addingNote) {
+                    if (Array.isArray(detail.data)) {
+                        setLocalNotes(detail.data.map(normalizeNote))
+                    }
+                } else if (detail.type === "costs" && !editingCosts && !addingCost) {
+                    if (Array.isArray(detail.data)) {
+                        setLocalCosts(detail.data as CostItem[])
+                    }
+                } else if (detail.type === "tickets" && !editingTickets && !addingTicket) {
+                    if (Array.isArray(detail.data)) {
+                        setLocalTickets(detail.data as TicketItem[])
+                    }
+                }
+            }
+        }
+        window.addEventListener("tabiji:collab-event", handleCollab)
+        return () => window.removeEventListener("tabiji:collab-event", handleCollab)
+    }, [_day, editingNotes, addingNote, editingCosts, addingCost, editingTickets, addingTicket])
 
     // Forms
     const [newNote, setNewNote] = useState<NoteItem>({ icon: "⚠️", title: "", content: "" })
@@ -203,16 +237,6 @@ export default function EditableDailyTips({
     const [processingNotes, setProcessingNotes] = useState<Set<number>>(new Set())
     const [processingCosts, setProcessingCosts] = useState<Set<number>>(new Set())
     const [processingTickets, setProcessingTickets] = useState<Set<number>>(new Set())
-
-    // 🆕 編輯模式狀態
-    const [editingNotes, setEditingNotes] = useState(false)
-    const [editingCosts, setEditingCosts] = useState(false)
-    const [editingTickets, setEditingTickets] = useState(false)
-
-    // 🆕 編輯中的資料副本
-    const [editNotesData, setEditNotesData] = useState<NoteItem[]>([])
-    const [editCostsData, setEditCostsData] = useState<CostItem[]>([])
-    const [editTicketsData, setEditTicketsData] = useState<TicketItem[]>([])
 
     // 🆕 Exchange rates for conversion display
     const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({ JPY: 0.22 }) // Default JPY→TWD
@@ -280,15 +304,24 @@ export default function EditableDailyTips({
     const handleAddNote = async () => {
         if (saving) return
         if (!newNote.title.trim()) { toast.error(zh ? "請輸入標題" : "Please enter a title"); return }
-        setSaving(true); haptic.tap()
+        const prevNotes = localNotes
+        const updated = [...localNotes, newNote]
+        // ⚡ 0ms 樂觀立即更新 (Google Docs 級響應，不等待網路)
+        setLocalNotes(updated)
+        setNewNote({ icon: "⚠️", title: "", content: "" })
+        setAddingNote(false)
+        haptic.tap()
+        setSaving(true)
         try {
-            const updated = [...localNotes, newNote]
             if (await onUpdate("notes", updated)) {
-                setLocalNotes(updated)
-                setNewNote({ icon: "⚠️", title: "", content: "" })
-                setAddingNote(false)
                 toast.success(zh ? "已新增提醒" : "Reminder added")
+            } else {
+                setLocalNotes(prevNotes)
+                toast.error(zh ? "新增失敗" : "Failed to add")
             }
+        } catch {
+            setLocalNotes(prevNotes)
+            toast.error(zh ? "新增失敗" : "Failed to add")
         } finally {
             setSaving(false)
         }
@@ -297,16 +330,22 @@ export default function EditableDailyTips({
     const handleRemoveNote = async (idx: number) => {
         // 🛡️ Anti-spam: skip if already processing
         if (processingNotes.has(idx)) return
-
         haptic.tap()
         setProcessingNotes(prev => new Set(prev).add(idx))
-
+        const prevNotes = localNotes
+        const updated = localNotes.filter((_, i) => i !== idx)
+        // ⚡ 0ms 樂觀移除
+        setLocalNotes(updated)
         try {
-            const updated = localNotes.filter((_, i) => i !== idx)
             if (await onUpdate("notes", updated)) {
-                setLocalNotes(updated)
                 toast.success(zh ? "已移除" : "Removed")
+            } else {
+                setLocalNotes(prevNotes)
+                toast.error(zh ? "移除失敗" : "Failed to remove")
             }
+        } catch {
+            setLocalNotes(prevNotes)
+            toast.error(zh ? "移除失敗" : "Failed to remove")
         } finally {
             setProcessingNotes(prev => {
                 const next = new Set(prev)
@@ -326,17 +365,23 @@ export default function EditableDailyTips({
 
     const handleSaveNotes = async () => {
         if (saving) return
-        setSaving(true)
+        const prevNotes = localNotes
+        // ⚡ 0ms 樂觀儲存
+        setLocalNotes(editNotesData)
+        setEditingNotes(false)
         haptic.tap()
+        setSaving(true)
         try {
             if (await onUpdate("notes", editNotesData)) {
-                setLocalNotes(editNotesData)
-                setEditingNotes(false)
                 setEditNotesData([])
                 toast.success(zh ? "已儲存修改" : "Changes saved")
             } else {
+                setLocalNotes(prevNotes)
                 toast.error(zh ? "儲存失敗" : "Save failed")
             }
+        } catch {
+            setLocalNotes(prevNotes)
+            toast.error(zh ? "儲存失敗" : "Save failed")
         } finally {
             setSaving(false)
         }
@@ -357,33 +402,45 @@ export default function EditableDailyTips({
     const handleAddCost = async () => {
         if (saving) return
         if (!newCost.item.trim() || !newCost.amount.trim()) { toast.error(zh ? "請輸入項目和金額" : "Please enter item and amount"); return }
-        setSaving(true); haptic.tap()
+        const prevCosts = localCosts
+        const updated = [...localCosts, newCost]
+        // ⚡ 0ms 樂觀新增花費
+        setLocalCosts(updated)
+        setNewCost({ item: "", amount: "", currency: effectiveCurrency, note: "" })
+        setAddingCost(false)
+        haptic.tap()
+        setSaving(true)
         try {
-            const updated = [...localCosts, newCost]
             if (await onUpdate("costs", updated)) {
-                setLocalCosts(updated)
-                setNewCost({ item: "", amount: "", currency: effectiveCurrency, note: "" })
-                setAddingCost(false)
                 toast.success(zh ? "已新增花費" : "Cost added")
+            } else {
+                setLocalCosts(prevCosts)
+                toast.error(zh ? "新增失敗" : "Failed to add")
             }
+        } catch {
+            setLocalCosts(prevCosts)
+            toast.error(zh ? "新增失敗" : "Failed to add")
         } finally {
             setSaving(false)
         }
     }
 
     const handleRemoveCost = async (idx: number) => {
-        // 🛡️ Anti-spam: skip if already processing
         if (processingCosts.has(idx)) return
-
         haptic.tap()
         setProcessingCosts(prev => new Set(prev).add(idx))
-
+        const prevCosts = localCosts
+        const updated = localCosts.filter((_, i) => i !== idx)
+        // ⚡ 0ms 樂觀移除花費
+        setLocalCosts(updated)
         try {
-            const updated = localCosts.filter((_, i) => i !== idx)
             if (await onUpdate("costs", updated)) {
-                setLocalCosts(updated)
                 toast.success("已移除")
+            } else {
+                setLocalCosts(prevCosts)
             }
+        } catch {
+            setLocalCosts(prevCosts)
         } finally {
             setProcessingCosts(prev => {
                 const next = new Set(prev)
@@ -395,25 +452,27 @@ export default function EditableDailyTips({
 
     // 🆕 Toggle privacy for costs
     const handleTogglePrivacyCost = async (idx: number) => {
-        // 🛡️ Anti-spam: skip if already processing
         if (processingCosts.has(idx)) return
-
         haptic.tap()
         setProcessingCosts(prev => new Set(prev).add(idx))
-
+        const prevCosts = localCosts
+        const updated: CostItem[] = localCosts.map((c, i) =>
+            i === idx ? {
+                ...c,
+                is_private: !c.is_private,
+                private_owner_id: !c.is_private ? (userId || localStorage.getItem("user_uuid") || undefined) : undefined
+            } : c
+        )
+        // ⚡ 0ms 樂觀切換隱私
+        setLocalCosts(updated)
         try {
-            const updated: CostItem[] = localCosts.map((c, i) =>
-                i === idx ? {
-                    ...c,
-                    is_private: !c.is_private,
-                    // 🧠 Secure ID Assignment: Must use stable UUID
-                    private_owner_id: !c.is_private ? (userId || localStorage.getItem("user_uuid") || undefined) : undefined
-                } : c
-            )
             if (await onUpdate("costs", updated)) {
-                setLocalCosts(updated)
                 toast.success(updated[idx].is_private ? (zh ? "已設為私人" : "Set to private") : (zh ? "已設為公開" : "Set to public"))
+            } else {
+                setLocalCosts(prevCosts)
             }
+        } catch {
+            setLocalCosts(prevCosts)
         } finally {
             setProcessingCosts(prev => {
                 const next = new Set(prev)
@@ -433,17 +492,23 @@ export default function EditableDailyTips({
 
     const handleSaveCosts = async () => {
         if (saving) return
-        setSaving(true)
+        const prevCosts = localCosts
+        // ⚡ 0ms 樂觀儲存修改
+        setLocalCosts(editCostsData)
+        setEditingCosts(false)
         haptic.tap()
+        setSaving(true)
         try {
             if (await onUpdate("costs", editCostsData)) {
-                setLocalCosts(editCostsData)
-                setEditingCosts(false)
                 setEditCostsData([])
                 toast.success(zh ? "已儲存修改" : "Changes saved")
             } else {
+                setLocalCosts(prevCosts)
                 toast.error(zh ? "儲存失敗" : "Save failed")
             }
+        } catch {
+            setLocalCosts(prevCosts)
+            toast.error(zh ? "儲存失敗" : "Save failed")
         } finally {
             setSaving(false)
         }
@@ -465,33 +530,45 @@ export default function EditableDailyTips({
     const handleAddTicket = async () => {
         if (saving) return
         if (!newTicket.name.trim() || !newTicket.price.trim()) { toast.error(zh ? "請輸入票券名稱和價格" : "Please enter ticket name and price"); return }
-        setSaving(true); haptic.tap()
+        const prevTickets = localTickets
+        const updated = [...localTickets, newTicket]
+        // ⚡ 0ms 樂觀新增票券
+        setLocalTickets(updated)
+        setNewTicket({ name: "", price: "", currency: effectiveCurrency, note: "" })
+        setAddingTicket(false)
+        haptic.tap()
+        setSaving(true)
         try {
-            const updated = [...localTickets, newTicket]
             if (await onUpdate("tickets", updated)) {
-                setLocalTickets(updated)
-                setNewTicket({ name: "", price: "", currency: effectiveCurrency, note: "" })
-                setAddingTicket(false)
                 toast.success(zh ? "已新增票券" : "Ticket added")
+            } else {
+                setLocalTickets(prevTickets)
+                toast.error(zh ? "新增失敗" : "Failed to add")
             }
+        } catch {
+            setLocalTickets(prevTickets)
+            toast.error(zh ? "新增失敗" : "Failed to add")
         } finally {
             setSaving(false)
         }
     }
 
     const handleRemoveTicket = async (idx: number) => {
-        // 🛡️ Anti-spam: skip if already processing
         if (processingTickets.has(idx)) return
-
         haptic.tap()
         setProcessingTickets(prev => new Set(prev).add(idx))
-
+        const prevTickets = localTickets
+        const updated = localTickets.filter((_, i) => i !== idx)
+        // ⚡ 0ms 樂觀移除票券
+        setLocalTickets(updated)
         try {
-            const updated = localTickets.filter((_, i) => i !== idx)
             if (await onUpdate("tickets", updated)) {
-                setLocalTickets(updated)
                 toast.success("已移除")
+            } else {
+                setLocalTickets(prevTickets)
             }
+        } catch {
+            setLocalTickets(prevTickets)
         } finally {
             setProcessingTickets(prev => {
                 const next = new Set(prev)
@@ -503,25 +580,27 @@ export default function EditableDailyTips({
 
     // 🆕 Toggle privacy for tickets
     const handleTogglePrivacyTicket = async (idx: number) => {
-        // 🛡️ Anti-spam: skip if already processing
         if (processingTickets.has(idx)) return
-
         haptic.tap()
         setProcessingTickets(prev => new Set(prev).add(idx))
-
+        const prevTickets = localTickets
+        const updated: TicketItem[] = localTickets.map((t, i) =>
+            i === idx ? {
+                ...t,
+                is_private: !t.is_private,
+                private_owner_id: !t.is_private ? (userId || localStorage.getItem("user_uuid") || undefined) : undefined
+            } : t
+        )
+        // ⚡ 0ms 樂觀切換隱私
+        setLocalTickets(updated)
         try {
-            const updated: TicketItem[] = localTickets.map((t, i) =>
-                i === idx ? {
-                    ...t,
-                    is_private: !t.is_private,
-                    // 🧠 Secure ID Assignment: Must use stable UUID
-                    private_owner_id: !t.is_private ? (userId || localStorage.getItem("user_uuid") || undefined) : undefined
-                } : t
-            )
             if (await onUpdate("tickets", updated)) {
-                setLocalTickets(updated)
                 toast.success(updated[idx].is_private ? (zh ? "已設為私人" : "Set to private") : (zh ? "已設為公開" : "Set to public"))
+            } else {
+                setLocalTickets(prevTickets)
             }
+        } catch {
+            setLocalTickets(prevTickets)
         } finally {
             setProcessingTickets(prev => {
                 const next = new Set(prev)
@@ -541,17 +620,23 @@ export default function EditableDailyTips({
 
     const handleSaveTickets = async () => {
         if (saving) return
-        setSaving(true)
+        const prevTickets = localTickets
+        // ⚡ 0ms 樂觀儲存修改
+        setLocalTickets(editTicketsData)
+        setEditingTickets(false)
         haptic.tap()
+        setSaving(true)
         try {
             if (await onUpdate("tickets", editTicketsData)) {
-                setLocalTickets(editTicketsData)
-                setEditingTickets(false)
                 setEditTicketsData([])
                 toast.success(zh ? "已儲存修改" : "Changes saved")
             } else {
+                setLocalTickets(prevTickets)
                 toast.error(zh ? "儲存失敗" : "Save failed")
             }
+        } catch {
+            setLocalTickets(prevTickets)
+            toast.error(zh ? "儲存失敗" : "Save failed")
         } finally {
             setSaving(false)
         }

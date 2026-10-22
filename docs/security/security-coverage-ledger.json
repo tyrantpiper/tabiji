@@ -1,15 +1,116 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-21T19:25:00Z",
+  "last_audit_date": "2026-10-22T07:25:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 175,
-    "audited_targets": 175,
+    "total_targets": 182,
+    "audited_targets": 182,
     "verified_vulnerabilities": 17,
-    "remediated_vulnerabilities": 33,
+    "remediated_vulnerabilities": 40,
     "dismissed_hypotheses": 125
   },
   "targets": [
+    {
+      "id": "backend/routers/trips.py:batch_reorder_cross_tenant_bola",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "broken_object_level_authorization",
+        "cross_tenant_item_tampering",
+        "batch_mutation_scoping"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_realtime_collaboration.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: reorder_items only validated membership on items[0] and updated by item_id without itinerary_id scoping, permitting cross-tenant tampering.",
+      "remediated_at": "2026-10-22T07:45:00Z",
+      "resolution": "Remediated in backend/routers/trips.py: Query all item_ids to assert single-itinerary ownership, verify membership against the resolved itinerary, scope update with eq('itinerary_id', tid), and pass HTTPException without 500 masking."
+    },
+    {
+      "id": "frontend/lib/sync-hooks.ts:stale_bearer_replay_auth_failure",
+      "target_type": "frontend_hook",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "stale_credential_loop",
+        "offline_data_drop_on_401"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_realtime_collaboration.md",
+      "validator_details": "Confirmed by Sentinel: SyncQueue processGroup replayed static Authorization headers without refreshing expired JWTs, causing 401 and permanent dequeue data drop.",
+      "remediated_at": "2026-10-22T07:45:00Z",
+      "resolution": "Remediated in frontend/lib/sync-hooks.ts: Injected dynamic active token via getCachedToken() and ensureValidSession() before replay, with 401 token refresh retry loop before counting towards MAX_RETRIES."
+    },
+    {
+      "id": "backend/utils/deps.py:gemini_key_jwt_collision_and_index_error",
+      "target_type": "backend_dependency",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "token_confusion",
+        "index_error",
+        "session_hijacking"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "validator_details": "Confirmed by Sentinel: get_gemini_key extracted session JWTs exceeding 39 characters from Bearer headers and risked IndexError on malformed tokens.",
+      "remediated_at": "2026-10-21T20:00:00Z",
+      "resolution": "Remediated in backend/utils/deps.py: Safely parsed auth_header with split(' ', 1) guarded by length and prefix checks, and explicitly excluded dot-separated JWT tokens."
+    },
+    {
+      "id": "frontend/lib/api.ts:unhandled_401_disconnection_and_auth_recursion",
+      "target_type": "frontend_api_wrapper",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "denial_of_service",
+        "unhandled_disconnection",
+        "infinite_recursion"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "validator_details": "Confirmed by Sentinel: Module fetch returned 401 directly without retry, and lacked URL filter preventing infinite auth recursion loops.",
+      "remediated_at": "2026-10-21T20:00:00Z",
+      "resolution": "Remediated in frontend/lib/api.ts: Added isAuthEndpoint recursion breaker, and implemented 1-time 401 retry with freshly exchanged session token."
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:recovery_key_stale_uuid_desync",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "session_desync",
+        "stale_credential_loop"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "validator_details": "Confirmed by Sentinel: ensureValidSession only updated RECOVERY_KEY if !storedKey, retaining stale keys when backend minted new accounts.",
+      "remediated_at": "2026-10-21T20:00:00Z",
+      "resolution": "Remediated in frontend/lib/auth-session.ts: Updated condition to (!storedKey || data.is_new), synchronizing newly minted user IDs to localStorage."
+    },
+    {
+      "id": "frontend/app/sw.ts:auth_endpoints_service_worker_interception",
+      "target_type": "service_worker",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "cache_poisoning",
+        "sw_credential_capture"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "validator_details": "Confirmed by Sentinel: Service Worker NetworkOnly matcher omitted /api/auth/* endpoints, risking caching and background sync interference.",
+      "remediated_at": "2026-10-21T20:00:00Z",
+      "resolution": "Remediated in frontend/app/sw.ts: Injected url.pathname.startsWith('/api/auth/') into NetworkOnly matcher."
+    },
+    {
+      "id": "frontend/lib/sse-parser.ts:stream_handshake_401_disconnection",
+      "target_type": "frontend_stream_client",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "connection_drop",
+        "stream_auth_failure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "validator_details": "Confirmed by Sentinel: streamChat aborted immediately on 401 HTTP response without refreshing expired credentials.",
+      "remediated_at": "2026-10-21T20:00:00Z",
+      "resolution": "Remediated in frontend/lib/sse-parser.ts: Added 401 interception to purge stale token, exchange fresh session token, and re-handshake stream once."
+    },
     {
       "id": "backend/tests/test_supabase_grants_sentinel.py:multiline_and_role_order_false_positive",
       "target_type": "ci_sentinel_test",

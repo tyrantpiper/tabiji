@@ -17,13 +17,15 @@ async def get_gemini_key(
     """
     final_key = x_gemini_api_key
     
-    # 🔄 Fallback: 如果標準 Header 為空，試著從 Authorization 提取
+    # 🔄 Fallback: 如果標準 Header 為空，試著從 Authorization 提取 (排除 JWT 格式之 session token)
     if not final_key and auth_header:
-        if auth_header.startswith("Bearer "):
-            final_key = auth_header.split(" ")[1]
-            print(f"📡 [Auth] API Key extracted from Authorization header")
-        else:
-            final_key = auth_header
+        parts = auth_header.strip().split(" ", 1)
+        token_cand = parts[1].strip() if len(parts) == 2 and parts[0].lower() == "bearer" else auth_header.strip()
+        # 🛡️ 嚴格排除 JWT 格式 (典型三個以點分隔之 base64 區段，例如 eyJhbGci...)
+        is_jwt = token_cand.count(".") == 2 and token_cand.startswith("ey")
+        if token_cand and not is_jwt:
+            final_key = token_cand
+            print("📡 [Auth] API Key extracted from Authorization header")
             
     # 調試日誌
     if final_key:
@@ -32,7 +34,7 @@ async def get_gemini_key(
     
     # 🚫 沒有 Key 或格式不對，直接拒絕
     if not final_key or len(final_key) < 39:
-        print(f"❌ API Key 驗證失敗：未提供或格式無效")
+        print("❌ API Key 驗證失敗：未提供或格式無效")
         from utils.constants import GEMINI_KEY_REQUIRED_MSG
         raise HTTPException(
             status_code=401, 

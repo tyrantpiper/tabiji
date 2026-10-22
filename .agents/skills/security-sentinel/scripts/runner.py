@@ -319,7 +319,10 @@ def main():
             json.dump(output_data, f, indent=2, ensure_ascii=False)
         print(f"[+] Findings written to {out_path}", file=sys.stderr)
 
-    print(json.dumps(output_data, indent=2, ensure_ascii=False))
+    try:
+        print(json.dumps(output_data, indent=2, ensure_ascii=False))
+    except UnicodeEncodeError:
+        print(json.dumps(output_data, indent=2, ensure_ascii=True))
 
 
 if __name__ == "__main__":

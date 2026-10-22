@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { useTripDetail, useOnlineStatus, useHaptic, useTripCapsules } from "@/lib/hooks"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { useLanguage } from "@/lib/LanguageContext"
 import { ItineraryItemState, Trip, Activity, DailyLocation, DayWeather, ChecklistItem } from "@/lib/itinerary-types"
 import { ActivityEditModal } from "@/components/itinerary/ActivityEditModal"
@@ -212,14 +213,6 @@ export function ItineraryView() {
 
     // 🆕 DND State
     const [activeId, setActiveId] = useState<string | null>(null)
-    const [pendingReorder, setPendingReorder] = useState<{
-        itemId: string
-        oldIndex: number
-        newIndex: number
-        newOrder: Activity[]
-    } | null>(null)
-    const [isReordering, setIsReordering] = useState(false)
-    const [isReorderDialogOpen, setIsReorderDialogOpen] = useState(false)
     const [leavingTripId, setLeavingTripId] = useState<string | null>(null)
     const itnVirtuosoRef = useRef<VirtuosoHandle | null>(null)
     // 🔧 v2.5: Use State callback to ensure ref propagation to Virtuoso
@@ -350,7 +343,11 @@ export function ItineraryView() {
         setActiveId(event.active.id as string)
     }, [])
 
-    const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const handleDragCancel = useCallback(() => {
+        setActiveId(null)
+    }, [])
+
+    const handleDragEnd = useCallback(async (event: DragEndEvent) => {
         const { active, over } = event
         setActiveId(null)
 
@@ -367,51 +364,164 @@ export function ItineraryView() {
 
         if (oldIndex === -1 || newIndex === -1) return
 
+        const previousOrder = [...currentDayData]
         const newOrder = arrayMove([...currentDayData], oldIndex, newIndex)
 
-        setPendingReorder({
-            itemId: active.id as string,
-            oldIndex,
-            newIndex,
-            newOrder
-        })
-        setIsReorderDialogOpen(true)
-    }, [currentDayData, isOnline, t])
+        // ⚡ 1. 0ms 本地樂觀更新 UI (Notion/Trello 順滑度，完全免確認對話框)
+        if (currentTrip && currentTrip.days) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const optimisticTrip: any = {
+                ...currentTrip,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                days: currentTrip.days.map((d: any) => {
+                    if (Number(d.day) === Number(day)) {
+                        return { ...d, activities: newOrder }
+                    }
+                    return d
+                })
+            }
+            reloadTripDetail(optimisticTrip, false)
+        }
 
-    const handleDragCancel = useCallback(() => {
-        setActiveId(null)
-    }, [])
+        // ⚡ 2. 5ms 記憶體廣播給同伴
+        if (activeTripId) {
+            broadcastTripEvent(activeTripId, "item:reorder", {
+                dayNumber: day,
+                orderedItemIds: newOrder.map(a => a.id)
+            })
+        }
 
-    const handleReorderConfirm = useCallback(async (adjustTimes: boolean) => {
-        if (!pendingReorder || !activeTripId) return
-        if (isReordering) return // 🛡️ Prevent double click
-        setIsReordering(true)
-
-        try {
-            const items = pendingReorder.newOrder.map((activity, index) => {
-                const baseTime = adjustTimes ? `${String(9 + Math.floor(index * 1.5)).padStart(2, '0')}:00` : null
-                return {
+        // ⚡ 3. 5 秒 Undo 復原 Toast
+        const handleUndo = async () => {
+            if (!activeTripId) return
+            if (currentTrip && currentTrip.days) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const revertedTrip: any = {
+                    ...currentTrip,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    days: currentTrip.days.map((d: any) => {
+                        if (Number(d.day) === Number(day)) {
+                            return { ...d, activities: previousOrder }
+                        }
+                        return d
+                    })
+                }
+                reloadTripDetail(revertedTrip, false)
+            }
+            try {
+                const revertItems = previousOrder.map((activity, index) => ({
                     item_id: activity.id,
                     sort_order: index * 10,
-                    time_slot: baseTime
-                }
+                    time_slot: activity.time_slot || null
+                }))
+                await itemsApi.reorder(revertItems, false, userId || "")
+                toast.success(zh ? "已復原排序" : "Order restored")
+            } catch {
+                toast.error(t('iv_reorder_failed'))
+                reloadTripDetail()
+            }
+        }
+
+        toast.success(t('iv_reorder_done'), {
+            duration: 5000,
+            action: {
+                label: zh ? "復原" : "Undo",
+                onClick: handleUndo
+            }
+        })
+
+        // ⚡ 4. 背景持久化寫入資料庫
+        try {
+            const items = newOrder.map((activity, index) => ({
+                item_id: activity.id,
+                sort_order: index * 10,
+                time_slot: activity.time_slot || null
+            }))
+            await itemsApi.reorder(items, false, userId || "")
+        } catch (e) {
+            console.error("Reorder background error:", e)
+            toast.error(t('iv_reorder_failed'))
+            reloadTripDetail()
+        }
+    }, [currentDayData, isOnline, currentTrip, day, reloadTripDetail, activeTripId, userId, t, zh])
+
+    // ⚡ 每日重點、費用與票券 0ms 樂觀更新與協同廣播
+    const handleDayDataUpdate = useCallback(async (type: "notes" | "costs" | "tickets", data: unknown) => {
+        if (!activeTripId) return false
+        try {
+            const updatePayload: Record<string, unknown> = {}
+            if (type === "notes") updatePayload.day_notes = { [day]: data }
+            if (type === "costs") updatePayload.day_costs = { [day]: data }
+            if (type === "tickets") updatePayload.day_tickets = { [day]: data }
+
+            // ⚡ 1. 0ms SWR 樂觀快照更新 (立即反應在當前視圖)
+            if (currentTrip) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const optimisticTrip: any = { ...currentTrip }
+                if (type === "notes") optimisticTrip.day_notes = { ...(optimisticTrip.day_notes || {}), [day]: data }
+                if (type === "costs") optimisticTrip.day_costs = { ...(optimisticTrip.day_costs || {}), [day]: data }
+                if (type === "tickets") optimisticTrip.day_tickets = { ...(optimisticTrip.day_tickets || {}), [day]: data }
+                reloadTripDetail(optimisticTrip, false)
+            }
+
+            // ⚡ 2. 5ms 記憶體廣播給同行程其他成員
+            broadcastTripEvent(activeTripId, "tip:update", {
+                dayIndex: day,
+                type,
+                data
             })
 
-            // 🔒 Standardized: Use itemsApi.reorder with userId
-            await itemsApi.reorder(items, adjustTimes, userId || "")
-
-            toast.success(adjustTimes ? t('iv_reorder_with_time') : t('iv_reorder_done'))
-            await reloadTripDetail()
-
+            // ⚡ 3. 背景持久化寫入資料庫
+            await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
+            return true
         } catch (e) {
-            console.error("Reorder error:", e)
-            toast.error(t('iv_reorder_failed'))
-        } finally {
-            setPendingReorder(null)
-            setIsReorderDialogOpen(false)
-            setIsReordering(false)
+            console.error("Failed to update day data:", e)
+            toast.error(t('iv_update_failed_short'))
+            reloadTripDetail()
+            return false
         }
-    }, [pendingReorder, activeTripId, reloadTripDetail, isReordering, userId, t])
+    }, [activeTripId, day, currentTrip, reloadTripDetail, userId, t])
+
+    // ⚡ 接收旅伴即時拖曳排序廣播 (<10ms 鏡像重排)
+    useEffect(() => {
+        const handleCollabReorder = (e: Event) => {
+            const detail = (e as CustomEvent).detail
+            if (detail?.event === "item:reorder" && Number(detail?.dayNumber) === Number(day) && Array.isArray(detail?.orderedItemIds)) {
+                if (!currentTrip || !currentTrip.days) return
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const currentDayObj = currentTrip.days.find((d: any) => Number(d.day) === Number(day))
+                if (!currentDayObj || !Array.isArray(currentDayObj.activities)) return
+
+                const idMap = new Map(currentDayObj.activities.map((a: Activity) => [a.id, a]))
+                const reordered: Activity[] = []
+                for (const id of detail.orderedItemIds) {
+                    const act = idMap.get(id)
+                    if (act) {
+                        reordered.push(act)
+                        idMap.delete(id)
+                    }
+                }
+                for (const remaining of idMap.values()) {
+                    reordered.push(remaining)
+                }
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const optimisticTrip: any = {
+                    ...currentTrip,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    days: currentTrip.days.map((d: any) => {
+                        if (Number(d.day) === Number(day)) {
+                            return { ...d, activities: reordered }
+                        }
+                        return d
+                    })
+                }
+                reloadTripDetail(optimisticTrip, false)
+            }
+        }
+        window.addEventListener("tabiji:collab-event", handleCollabReorder)
+        return () => window.removeEventListener("tabiji:collab-event", handleCollabReorder)
+    }, [day, currentTrip, reloadTripDetail])
 
 
     // 🆕 2026: Store-based GC is now handled by the weatherStore itself
@@ -1790,23 +1900,7 @@ export function ItineraryView() {
                                     costs={getDayData(currentTrip?.day_costs, day) || []}
                                     tickets={getDayData(currentTrip?.day_tickets, day) || []}
                                     userId={userId || undefined}
-                                    onUpdate={async (type, data) => {
-                                        if (!activeTripId) return false
-                                        try {
-                                            const updatePayload: Record<string, unknown> = {}
-                                            if (type === "notes") updatePayload.day_notes = { [day]: data }
-                                            if (type === "costs") updatePayload.day_costs = { [day]: data }
-                                            if (type === "tickets") updatePayload.day_tickets = { [day]: data }
-
-                                            await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
-                                            await reloadTripDetail()
-                                            return true
-                                        } catch (e) {
-                                            console.error("Failed to update day data:", e)
-                                            toast.error(t('iv_update_failed_short'))
-                                            return false
-                                        }
-                                    }}
+                                    onUpdate={handleDayDataUpdate}
                                 />
                             )}
 
@@ -1821,23 +1915,7 @@ export function ItineraryView() {
                                     costs={getDayData(currentTrip?.day_costs, day) || []}
                                     tickets={getDayData(currentTrip?.day_tickets, day) || []}
                                     userId={userId || undefined}
-                                    onUpdate={async (type, data) => {
-                                        if (!activeTripId) return false
-                                        try {
-                                            const updatePayload: Record<string, unknown> = {}
-                                            if (type === "notes") updatePayload.day_notes = { [day]: data }
-                                            if (type === "costs") updatePayload.day_costs = { [day]: data }
-                                            if (type === "tickets") updatePayload.day_tickets = { [day]: data }
-
-                                            await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
-                                            await reloadTripDetail()
-                                            return true
-                                        } catch (e) {
-                                            console.error("Failed to update day data:", e)
-                                            toast.error(t('iv_update_failed_short'))
-                                            return false
-                                        }
-                                    }}
+                                    onUpdate={handleDayDataUpdate}
                                 />
                             )}
 
@@ -1852,23 +1930,7 @@ export function ItineraryView() {
                                     costs={getDayData(currentTrip?.day_costs, day) || []}
                                     tickets={getDayData(currentTrip?.day_tickets, day) || []}
                                     userId={userId || undefined}
-                                    onUpdate={async (type, data) => {
-                                        if (!activeTripId) return false
-                                        try {
-                                            const updatePayload: Record<string, unknown> = {}
-                                            if (type === "notes") updatePayload.day_notes = { [day]: data }
-                                            if (type === "costs") updatePayload.day_costs = { [day]: data }
-                                            if (type === "tickets") updatePayload.day_tickets = { [day]: data }
-
-                                            await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
-                                            await reloadTripDetail()
-                                            return true
-                                        } catch (e) {
-                                            console.error("Failed to update day data:", e)
-                                            toast.error(t('iv_update_failed_short'))
-                                            return false
-                                        }
-                                    }}
+                                    onUpdate={handleDayDataUpdate}
                                 />
                             )}
 
@@ -1959,36 +2021,6 @@ export function ItineraryView() {
                 tripTitle={currentTrip?.title}
                 biasLoc={calculateBiasLocation(day)}
             />
-
-            {/* Reorder Confirmation Dialog */}
-            <AlertDialog open={isReorderDialogOpen} onOpenChange={setIsReorderDialogOpen}>
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>{t('iv_reorder_title')}</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            {t('iv_reorder_desc')}
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter className="flex-col gap-2 sm:flex-col">
-                        <Button
-                            className="w-full"
-                            onClick={() => handleReorderConfirm(false)}
-                            disabled={isReordering}
-                        >
-                            {isReordering ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "🕐"} {t('iv_keep_time')}
-                        </Button>
-                        <Button
-                            variant="secondary"
-                            className="w-full"
-                            onClick={() => handleReorderConfirm(true)}
-                            disabled={isReordering}
-                        >
-                            {isReordering ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "⏱️"} {t('iv_auto_time')}
-                        </Button>
-                        <AlertDialogCancel className="w-full" disabled={isReordering}>{t('cancel')}</AlertDialogCancel>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
 
             {/* 📅 iOS Calendar Range Picker Sheet */}
             <CalendarRangeSheet

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { SyncQueue, MAX_RETRIES, SyncRequest } from './sync-engine';
 import { toast } from "sonner";
 import { useSyncStatusStore } from './stores/syncStatusStore';
+import { getCachedToken, ensureValidSession } from './auth-session';
 
 /**
  * 🛠️ React Hook: useOfflineMutation
@@ -94,11 +95,36 @@ export function useBackgroundSync() {
 
                             console.log(`[SyncEngine] ▶️ Replaying: ${req.url}`);
                             useSyncStatusStore.getState().updateStatus(req.id, 'syncing');
-                            const res = await fetch(req.url, {
+
+                            // 🛡️ 注入最新有效 Token，防止離線過期引發 401 誤判並丟失資料
+                            let activeToken = getCachedToken();
+                            if (!activeToken && typeof window !== 'undefined') {
+                                activeToken = await ensureValidSession().catch(() => null);
+                            }
+                            const headers: Record<string, string> = { ...(req.headers || {}) };
+                            if (activeToken) {
+                                headers['Authorization'] = `Bearer ${activeToken}`;
+                            }
+
+                            let res = await fetch(req.url, {
                                 method: req.method,
-                                headers: req.headers,
+                                headers,
                                 body: JSON.stringify(req.body)
                             });
+
+                            // 🛡️ 若仍收到 401，嘗試強制刷新一次憑證自癒
+                            if (res.status === 401 && typeof window !== 'undefined') {
+                                console.warn('[SyncEngine] 🔄 401 detected during replay, refreshing session...');
+                                const freshToken = await ensureValidSession().catch(() => null);
+                                if (freshToken) {
+                                    headers['Authorization'] = `Bearer ${freshToken}`;
+                                    res = await fetch(req.url, {
+                                        method: req.method,
+                                        headers,
+                                        body: JSON.stringify(req.body)
+                                    });
+                                }
+                            }
 
                             if (res.ok) {
                                 await SyncQueue.dequeue(req.id);

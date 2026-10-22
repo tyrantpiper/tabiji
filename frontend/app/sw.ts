@@ -119,10 +119,13 @@ const serwist: Serwist = new Serwist({
       }),
     },
     {
-      // 🔒 排除 Supabase 認證與高敏感 API (NetworkOnly)
+      // 🔒 排除 Supabase 認證、本地 Session 認證與高敏感 API (NetworkOnly)
       matcher: ({ url }) => {
         const isSupabaseAuth = url.hostname.includes("supabase.co") && url.pathname.includes("/auth/v1/");
-        const isSensitiveApi = url.pathname.startsWith("/api/sign-cloudinary") || url.pathname.startsWith("/api/parse-receipt");
+        const isSensitiveApi = 
+          url.pathname.startsWith("/api/auth/") ||
+          url.pathname.startsWith("/api/sign-cloudinary") || 
+          url.pathname.startsWith("/api/parse-receipt");
         return isSupabaseAuth || isSensitiveApi;
       },
       handler: new NetworkOnly(),

@@ -24,8 +24,12 @@ if (typeof window === "undefined" || process.env.NODE_ENV === "development") {
 import { getCachedToken, ensureValidSession } from './auth-session';
 
 const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const urlStr = typeof input === "string" ? input : (input instanceof URL ? input.toString() : (input as Request)?.url || "");
+    const isAuthEndpoint = urlStr.includes("/api/auth/");
+    const isRetry = Boolean((init as { _isRetry?: boolean })?._isRetry);
+
     let token = getCachedToken();
-    if (!token && typeof window !== "undefined") {
+    if (!token && typeof window !== "undefined" && !isAuthEndpoint) {
         token = await ensureValidSession().catch(() => null);
     }
     if (token) {
@@ -53,11 +57,33 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
         throw new Error("No fetch implementation available");
     }
     const res = await activeFetch(input, init);
-    // 🛡️ 401 自動換票與自癒防禦 (Self-Healing Recovery)
-    if (res.status === 401 && typeof window !== "undefined") {
+    // 🛡️ 401 自動換票與自癒重試防禦 (Self-Healing Recovery & 1-time Re-execution)
+    if (res.status === 401 && typeof window !== "undefined" && !urlStr.includes("/api/poi/")) {
         console.warn("⚠️ [API] Received 401 Unauthorized, purging cached token...");
         localStorage.removeItem("tabiji_session_token");
-        ensureValidSession().catch(() => {});
+
+        // 🛑 遞迴熔斷防護：認證端點本身或已重試過的請求禁止再次觸發換票重試
+        const isBodyConsumed = typeof Request !== "undefined" && input instanceof Request && input.bodyUsed;
+        if (!isAuthEndpoint && !isRetry && !isBodyConsumed) {
+            const freshToken = await ensureValidSession().catch(() => null);
+            if (freshToken) {
+                let nextHeaders: Headers;
+                if (init?.headers instanceof Headers) {
+                    nextHeaders = new Headers(init.headers);
+                } else if (Array.isArray(init?.headers)) {
+                    nextHeaders = new Headers(init.headers);
+                } else {
+                    nextHeaders = new Headers((init?.headers as Record<string, string>) || {});
+                }
+                nextHeaders.set("Authorization", `Bearer ${freshToken}`);
+                const retryInit = {
+                    ...init,
+                    headers: nextHeaders,
+                    _isRetry: true
+                } as RequestInit & { _isRetry?: boolean };
+                return activeFetch(input, retryInit);
+            }
+        }
     }
     return res;
 };

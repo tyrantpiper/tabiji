@@ -1561,27 +1561,37 @@ async def reorder_items(
     print(f"🔄 批次排序: {len(request.items)} 項目, user={user_id}")
     try:
         if request.items:
-            # 🛡️ 權限檢查：拿第一個項目的行程 ID 來檢查身分
-            first_item = supabase.table("itinerary_items").select("itinerary_id").eq("id", request.items[0].item_id).single().execute()
-            if first_item.data:
-                tid = first_item.data["itinerary_id"]
-                member_check = supabase.table("trip_members").select("user_id").eq("itinerary_id", tid).eq("user_id", user_id).execute()
-                if not member_check.data:
-                    raise HTTPException(status_code=403, detail="您沒有權限排序此行程")
+            # 🛡️ 權限檢查 (BOLA Defense)：驗證所有排序項目皆隸屬於同一合法行程，徹底杜絕跨租戶注入
+            item_ids = [i.item_id for i in request.items]
+            items_query = supabase.table("itinerary_items").select("id, itinerary_id").in_("id", item_ids).execute()
+            db_items = items_query.data or []
+            if len(db_items) != len(item_ids):
+                raise HTTPException(status_code=404, detail="部分行程項目不存在")
+            
+            itinerary_ids = {row["itinerary_id"] for row in db_items}
+            if len(itinerary_ids) != 1:
+                raise HTTPException(status_code=400, detail="禁止跨行程批次排序")
+            
+            tid = itinerary_ids.pop()
+            member_check = supabase.table("trip_members").select("user_id").eq("itinerary_id", tid).eq("user_id", user_id).execute()
+            if not member_check.data:
+                raise HTTPException(status_code=403, detail="您沒有權限排序此行程")
 
-        results = []
-        for item in request.items:
-            data = {"sort_order": item.sort_order}
-            
-            # 如果選擇自動調整時間
-            if request.adjust_times and item.time_slot:
-                data["time_slot"] = item.time_slot
-            
-            res = supabase.table("itinerary_items").update(data).eq("id", item.item_id).execute()
-            results.append({"id": item.item_id, "updated": bool(res.data)})
+            results = []
+            for item in request.items:
+                data = {"sort_order": item.sort_order}
+                
+                # 如果選擇自動調整時間
+                if request.adjust_times and item.time_slot:
+                    data["time_slot"] = item.time_slot
+                
+                res = supabase.table("itinerary_items").update(data).eq("id", item.item_id).eq("itinerary_id", tid).execute()
+                results.append({"id": item.item_id, "updated": bool(res.data)})
         
         print(f"✅ 排序更新完成: {len(results)} 項目")
         return {"status": "success", "results": results}
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         print(f"🔥 Reorder Error: {e}")
