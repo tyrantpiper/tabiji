@@ -3,6 +3,10 @@
 > **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
 
 ## 🏛️ 架構決策 (Decisions)
+- **UX 機能融合與雙軌自癒備援法則 (AD-151)**: 極簡行動端 UI 應避免突兀的孤立重整控制項。在即時長連線（增量廣播）與快照拉取（全量權威）的雙軌架構中，手動重整應無痕依附於使用者既有高頻操作（如點擊通知鈴鐺、下拉手勢），兼顧介面極致留白美感與 100% 狀態自癒備援。
+
+- **UX 機能融合與雙軌自癒備援法則 (INV-UI-024 / Dual-Purpose UI)**: 極簡行動端 UI 應避免突兀的孤立重整控制項。在即時長連線（增量廣播）與快照拉取（全量權威）的雙軌架構中，手動重整應無痕依附於使用者既有高頻操作（如點擊通知鈴鐺、下拉手勢），兼顧介面極致留白美感與 100% 狀態自癒備援。
+
 - **POI 抽屜 2×3 微膠囊雙排矩陣與極限寬度防護法則 (Two-Row Grid Matrix & Viewport Clamping Invariance)**: 底抽二級快捷操作列採用 2 排 × 3 列網格矩陣 (grid grid-cols-3 gap-1.5 sm:gap-2) 常駐 6 顆微卡片；圖示規格統一為 20px (w-5 h-5)，文字標籤嚴格使用精簡雙字短詞 (繁中雙字 / 英文 <=6 字母)；容器與卡片全面配置 min-w-0 與 truncate，並宣告 touch-manipulation 與 onPointerDown stopPropagation，保證 iPhone SE 320px 螢幕下字串零截斷且手勢互不干擾。
 
 - **抽屜一體化毛玻璃純圖示藥丸島法則 (Segmented Frosted Glass Icon Capsule Invariance)**: 抽屜第一屏快捷工具列必須採用單一毛玻璃圓角膠囊底座 (rounded-2xl max-w-sm mx-auto h-12 backdrop-blur-md)，內部按鈕採用純圖示一字排開零滾動，嚴禁在固定窄卡片內堆疊文字導致 truncate 截斷；每個純圖示按鈕必須配備 localized title 與 aria-label，容器宣告 touch-manipulation 防止 WebKit 300ms 點擊延遲。

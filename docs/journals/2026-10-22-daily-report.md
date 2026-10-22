@@ -238,6 +238,11 @@
   - *Context*: `reorder_items` 端點只校驗第一項所屬行程，且 update 未帶 `itinerary_id`，攻擊者可透過拼接不同行程之 `item_id` 越權竄改；且外層通用 `except Exception:` 遮蔽了內部主動拋出的 400/403/404。
   - *Decision*: 查詢比對全量 `item_ids`，驗證所屬行程唯一性（`len(itinerary_ids) == 1`）與數量完整性；更新限制 `.eq("itinerary_id", tid)`；在頂層例外捕捉最前端強制聲明 `except HTTPException: raise` 穿透標準狀態碼。
 
+- **AD-151: 人機協同元工程三層立體固化與痛點防禦縱深法則 (Meta-Engineering & Defense in Depth Invariance)**:
+  - *Context*: AI 協同開發常伴隨「隱性刪除防衛邏輯 (Silent Regression)」、「口頭自信幻覺 (Oral Assurance Fallacy)」與「環境痛點未根治 (中繼檔案屢次污染根目錄)」等系統性摩擦。
+  - *Decision*: 確立三層固化體系：(1) 全域 `~/.gemini/GEMINI.md` 注入 Deletion Audit 與 Tool-Driven Grounding；(2) 專案領域記憶庫沉澱四層防禦縱深（規格歸檔 + .gitignore + Push Gate + 單元測試）；(3) 規格庫收錄 `docs/specs/core-architecture/meta-engineering-and-driver-insights-spec.md`。
+  - *Trade-off*: 開發與審查流程增加微量驗收步驟，但徹底消除 AI 隱性降級與環境重複污染。
+
 ---
 
 ## 🛡️ 踩坑記錄與經驗結晶 (Failed Paths)
@@ -441,6 +446,20 @@
     "id": "FP-070",
     "title": "SWR 提早 Revalidate 引發資料庫非同步寫入競態與卡片回彈陷阱",
     "content": "當同伴重排卡片時，監聽端收到廣播後若立即呼叫 SWR mutate() 重新發起 GET 請求，後端 DB 若仍在執行批次 update，GET 拉取到的仍是舊的 sort_order，導致卡片剛排好又瞬間「彈回舊位置」。修復準則：即時重排必須走「記憶體鏡像先行」：廣播封包中夾帶最終的 orderedItemIds，監聽端直接在記憶體中執行本地陣列重排，待平靜期後再行背景靜默校驗。"
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEVOPS-018",
+    "title": "痛點根治的四層防禦縱深法則 (AD-151)",
+    "content": "面對工程中反覆發生的環境與中繼檔案痛點（如暫存檔洩漏、未列管檔案殘留），禁止單純手動刪除；必須同時建立「規格庫正規歸檔、.gitignore 永久忽略、push.md Root Hygiene Gate 硬阻斷、test_*_sentinel.py 單元測試固化」四道縱深防線，達成物理級杜絕。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-UI-024",
+    "title": "UX 機能融合與雙軌自癒備援法則 (AD-151)",
+    "content": "極簡行動端 UI 應避免突兀的孤立重整控制項。在即時長連線（增量廣播）與快照拉取（全量權威）的雙軌架構中，手動重整應無痕依附於使用者既有高頻操作（如點擊通知鈴鐺、下拉手勢），兼顧介面極致留白美感與 100% 狀態自癒備援。"
   }
 ]
 ```
