@@ -52,7 +52,7 @@ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
 
     if (!r.ok) {
         const errorBody = await r.json().catch(() => ({}))
-        if (r.status !== 404 && r.status !== 401) {
+        if (r.status !== 404 && r.status !== 401 && r.status !== 403) {
             toast.error("伺服器連線失敗，請稍後再試 (Server connection failed)")
         }
         throw new HttpError(r.status, errorBody?.detail || `HTTP ${r.status}`, errorBody)
@@ -79,7 +79,10 @@ export function useTrips(userId: string | null) {
         fetcherWithUserId,
         {
             fallbackData: initialSnapshot || undefined,
-            revalidateOnFocus: false,
+            onErrorRetry: (err) => {
+                // 🛡️ 401 / 403 / 404 徹底禁止無效重試，保護伺服器與防震盪
+                if (err instanceof HttpError && (err.status === 401 || err.status === 403 || err.status === 404)) return
+            },
             onSuccess: (freshData) => {
                 if (userId && freshData) {
                     saveTripsListSnapshot(userId, freshData)
@@ -128,8 +131,8 @@ export function useTripDetail(
                 }
             },
             onErrorRetry: (err) => {
-                // 🛡️ 404 資源不存在，徹底禁止無效重試，保護 Cloud Run 冷啟動與頻寬
-                if (err instanceof HttpError && err.status === 404) return
+                // 🛡️ 401 未授權 / 403 BOLA 阻斷 / 404 資源不存在，徹底禁止無效重試
+                if (err instanceof HttpError && (err.status === 401 || err.status === 403 || err.status === 404)) return
             },
             onError: (err) => {
                 if (err instanceof HttpError && err.status === 404 && tripId && onTripNotFound) {

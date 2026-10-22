@@ -1,0 +1,66 @@
+[
+  {
+    "id": "backend/routers/trips.py:delete_before_authorization",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 471,
+    "end_line": 520,
+    "attack_vector": "delete_before_authorization",
+    "hypothesis": "delete_trip executes supabase.table('expenses').delete().eq('itinerary_id', trip_id) before validating whether caller user_id matches trip.created_by, allowing any authenticated user knowing a trip_id to destroy all associated expenses before receiving 403."
+  },
+  {
+    "id": "backend/routers/trips.py:public_share_member_elevation",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 69,
+    "end_line": 145,
+    "attack_vector": "privilege_escalation_via_share_code",
+    "hypothesis": "get_public_trip_by_public_id includes share_code and reservation_code in unauthenticated public JSON response, allowing any visitor to read the join credentials and elevate to an editable trip member via /join-trip."
+  },
+  {
+    "id": "backend/routers/auth.py:session_recovery_bypass",
+    "file_path": "backend/routers/auth.py",
+    "start_line": 53,
+    "end_line": 80,
+    "attack_vector": "rate_limit_bypass_and_unverified_jwt_issuance",
+    "hypothesis": "create_or_exchange_session accepts arbitrary UUID recovery_key without rate limiting and without verifying if user exists in database, signing 365-day device_session JWTs and bypassing /recover protections."
+  },
+  {
+    "id": "backend/routers/trips.py:trip_detail_bola",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 246,
+    "end_line": 345,
+    "attack_vector": "broken_object_level_authorization",
+    "hypothesis": "get_trip_by_id checks is_member but fails to return 403 when false, returning trip metadata, daily places, flights, and masked member rosters to non-members."
+  },
+  {
+    "id": "backend/routers/trips.py:global_latest_trip_disclosure",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 689,
+    "end_line": 755,
+    "attack_vector": "information_disclosure_cross_user",
+    "hypothesis": "get_latest_itinerary executes order('created_at', desc=True).limit(1) without filtering by user_id or membership, disclosing the system-wide newest trip and itinerary items to any caller."
+  },
+  {
+    "id": "backend/routers/expenses.py:expense_membership_bola",
+    "file_path": "backend/routers/expenses.py",
+    "start_line": 290,
+    "end_line": 345,
+    "attack_vector": "broken_object_level_authorization",
+    "hypothesis": "get_expenses filters by is_public or owner but fails to verify if caller is a member of the trip, leaking all public expenses to non-member authenticated users."
+  },
+  {
+    "id": "backend/routers/trips.py:opaque_member_kick_type_error",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 425,
+    "end_line": 470,
+    "attack_vector": "functional_regression_and_sql_type_error",
+    "hypothesis": "kick_member compares member_user_id directly against database UUID or fails when receiving mem_* masked identifier, preventing trip owner from kicking members or throwing 404/500."
+  },
+  {
+    "id": "backend/utils/deps.py:jwt_claim_and_secret_fallback",
+    "file_path": "backend/utils/deps.py",
+    "start_line": 50,
+    "end_line": 99,
+    "attack_vector": "cryptographic_weakness_and_missing_claims",
+    "hypothesis": "get_verified_user decodes HS256 without enforcing iss, aud, type, or UUID format, and get_session_secret relies on a hardcoded dev fallback string when env vars are absent."
+  }
+]

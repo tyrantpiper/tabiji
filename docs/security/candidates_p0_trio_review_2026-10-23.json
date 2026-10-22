@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/routers/trips.py:delete_trip_verify_before_delete",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 482,
+    "end_line": 535,
+    "attack_vector": "delete_before_authorization",
+    "hypothesis": "delete_trip verifies caller ownership before executing any child deletions (expenses, items, members), completely blocking unauthorized callers with 403 and preventing victim expense records from being cleared."
+  },
+  {
+    "id": "backend/routers/trips.py:kick_member_masked_lookup",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 430,
+    "end_line": 480,
+    "attack_vector": "functional_regression_and_sql_type_error",
+    "hypothesis": "kick_member safely resolves member references by matching in-memory against member record ID or mask_member_id(user_id, trip_id), preventing PostgreSQL 22P02 type mismatch when receiving masked mem_* identifiers."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:recovery_key_overwrite_prevention",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 140,
+    "end_line": 175,
+    "attack_vector": "local_first_identity_overwrite",
+    "hypothesis": "ensureValidSession strictly refuses to overwrite an existing localStorage recovery key if session response user_id differs from storedKey, preventing silent account hijacking or key desynchronization."
+  }
+]

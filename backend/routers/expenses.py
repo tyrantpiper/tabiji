@@ -81,6 +81,24 @@ async def sanitize_payer(
     return None, target_name
 
 
+def check_trip_access(supabase, itinerary_id: str, user_id: str) -> bool:
+    """🛡️ 檢查使用者是否為該行程之創立者或成員"""
+    if not itinerary_id or not user_id:
+        return False
+    try:
+        trip_res = supabase.table("itineraries").select("created_by").eq("id", itinerary_id).execute()
+        if not trip_res.data:
+            return False
+        if str(trip_res.data[0].get("created_by") or "") == user_id:
+            return True
+        member_check = supabase.table("trip_members").select("id").eq("itinerary_id", itinerary_id).eq("user_id", user_id).execute()
+        return bool(member_check.data)
+    except Exception as e:
+        print(f"⚠️ check_trip_access error: {e}")
+        return False
+
+
+
 def normalize_items(details: Any, version: int) -> List[ExpenseItem]:
     """將 DB details 轉換為標準化的 ExpenseItem 列表 (v1 -> v2)"""
     if not details:
@@ -180,14 +198,8 @@ async def add_expense(
 ):
     """建立新費用記錄 (v23.1)"""
     try:
-        if user_id and request.itinerary_id:
-            member_check = supabase.table("trip_members")\
-                .select("user_id")\
-                .eq("itinerary_id", request.itinerary_id)\
-                .eq("user_id", user_id)\
-                .execute()
-            
-            if not member_check.data:
+        if request.itinerary_id:
+            if not check_trip_access(supabase, request.itinerary_id, user_id):
                 raise HTTPException(status_code=403, detail="您沒有權限為此行程新增費用")
 
         # 🛡️ 真相源校驗
@@ -297,6 +309,10 @@ async def get_expenses(
 ):
     """獲取行程的費用列表 (v23.1 Normalization)"""
     try:
+        # 🛡️ BOLA 物件授權防衛：檢查呼叫者是否為行程成員或建立者
+        if not check_trip_access(supabase, trip_id, user_id):
+            raise HTTPException(status_code=403, detail="您不是此行程的成員，無法存取費用列表")
+
         res = supabase.table("expenses").select("*").eq("itinerary_id", trip_id).execute()
         
         filtered = []
@@ -351,6 +367,8 @@ async def get_expenses(
             filtered.append(expense_resp.model_dump())
                 
         return filtered
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Get Expenses Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

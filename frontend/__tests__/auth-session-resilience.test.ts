@@ -75,10 +75,10 @@ describe('Auth Session Resilience & Token Life-Cycle Tests', () => {
         expect(removeEventSpy).toHaveBeenCalledWith('online', expect.any(Function))
     })
 
-    it('TC-7: ensureValidSession updates RECOVERY_KEY when backend mints a new user (is_new === true)', async () => {
+    it('TC-7: ensureValidSession sets RECOVERY_KEY when initial visitor has no stored key', async () => {
         const { ensureValidSession } = await import('@/lib/auth-session')
         process.env.TEST_AUTH_EXCHANGE = 'true'
-        mockStorage['user_uuid'] = 'stale-legacy-key'
+        delete mockStorage['user_uuid']
         const futureExp = Math.floor(Date.now() / 1000) + 3600
         const freshJwt = createMockJwt({ sub: 'brand-new-user-456', exp: futureExp })
 
@@ -119,6 +119,29 @@ describe('Auth Session Resilience & Token Life-Cycle Tests', () => {
         const token = await ensureValidSession()
         expect(token).toBe(freshJwt)
         expect(mockStorage['user_uuid']).toBe('existing-user-123')
+        delete process.env.TEST_AUTH_EXCHANGE
+    })
+
+    it('TC-9: ensureValidSession refuses to overwrite existing user_uuid on identity mismatch', async () => {
+        const { ensureValidSession } = await import('@/lib/auth-session')
+        process.env.TEST_AUTH_EXCHANGE = 'true'
+        mockStorage['user_uuid'] = 'permanent-owner-key'
+        const futureExp = Math.floor(Date.now() / 1000) + 3600
+        const freshJwt = createMockJwt({ sub: 'alien-user-789', exp: futureExp })
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                access_token: freshJwt,
+                user_id: 'alien-user-789',
+                is_new: true
+            })
+        } as unknown as Response)
+
+        const token = await ensureValidSession()
+        expect(token).toBeNull()
+        expect(mockStorage['user_uuid']).toBe('permanent-owner-key')
         delete process.env.TEST_AUTH_EXCHANGE
     })
 })

@@ -3,6 +3,12 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Native Pydantic v2 Rust Serialization Pipeline**: Do not declare default_response_class=ORJSONResponse in FastAPI v0.115+. Rely on native pydantic-core Rust serialization to eliminate double-conversion overhead and suppress deprecation warnings.
+
+- **Application Layer Memory Lookup for Masked Member References**: When an endpoint accepts an opaque or masked reference (e.g. mem_*), it must never query a PostgreSQL UUID column directly. Lookup must be conducted in memory against native ID and masked hash, and mutations must use the native UUID primary key.
+
+- **Strict Authorization-Before-Deletion for Cascading Resources**: Any destructive endpoint (e.g. delete_trip) must verify caller ownership before executing ANY child table deletions (expenses, itinerary_items, trip_members). Unauthorized callers must be rejected immediately with 403 to prevent cross-tenant asset wiping.
+
 - **批次更新跨租戶物件隔離與狀態碼穿透法則 (AD-150)**: 後端批次更新端點必須驗證傳入的所有 item_ids 隸屬於單一合法授權之行程 (len(itinerary_ids) == 1 且數量相等)，更新時一律限定 .eq('itinerary_id', tid) 杜絕跨租戶竄改；路由外層 try...except 區塊第一行必須顯式聲明 except HTTPException: raise，嚴禁通用 Exception 遮蔽業務安全狀態碼。
 
 - **後端端點物件級授權（BOLA）與防身分替換約束法則 (AD-147)**: 所有涉及個人資料修改、刪除或行程內容注入之 API 端點，一律強制注入 Depends(get_verified_user)，嚴禁信任請求體傳入之 user_id；所有資源變更必須在資料庫層級驗證調用者為建立者 (created_by == user_id) 或行程協同成員 (trip_members 表存在)，不符者一律回傳 403 Forbidden。
@@ -27,6 +33,8 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **PostgreSQL 22P02 on Masked Reference SQL Query**: Passing mem_* masked strings into PostgreSQL UUID columns triggers 22P02 type mismatch. Isolate masked lookups in Python application memory.
+
 - **FastAPI 通用 Exception 捕捉遮蔽 HTTPException 狀態碼陷阱**: 路由內部明確 raise HTTPException(status_code=400, detail='禁止跨行程批次排序')，但外層寫了 try: ... except Exception as e: return {'status': 'error'}，導致客戶端收到 500 或 200 error，前端無法辨識租戶安全拒絕。修復準則：FastAPI 路由若使用 try...except 區塊，第一行必須顯式聲明 except HTTPException: raise，確保受控的業務安全例外能原樣穿透。
 
 - **Supabase select(count=exact) 在測試 Mock 環境回傳物件結構陷阱**: count_res = supabase.table('itineraries').select('id', count='exact').eq('created_by', user_id).execute() 在單元測試 MagicMock 中，count_res.count 回傳 MagicMock 物件而非整數，導致 int >= int 比較拋出 TypeError。修復準則：配額統計取值必須具備防禦性型別防護：raw_count = getattr(count_res, 'count', None); owned_count = raw_count if isinstance(raw_count, int) else len(count_res.data or [])。

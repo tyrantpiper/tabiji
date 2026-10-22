@@ -151,8 +151,14 @@ export async function ensureValidSession(): Promise<string | null> {
             const data = await res.json();
             if (data?.access_token) {
                 localStorage.setItem(TOKEN_KEY, data.access_token);
-                // 🛡️ 金鑰同步防衛：若初次無 key 或後端強制換發新使用者 (is_new === true)，同步覆寫 localStorage
-                if (data.user_id && (!storedKey || data.is_new)) {
+                // 🛡️ 金鑰防覆寫鐵律：若本機已有 recovery key，絕不可被非預期之 user_id 覆寫，守護永久金鑰主權
+                if (storedKey) {
+                    if (data.user_id && data.user_id !== storedKey) {
+                        console.error("🚨 [Auth] Security Sentinel Alert: Session response user_id differs from stored recovery key! Refusing to overwrite key.");
+                        throw new Error("Identity mismatch — refusing to overwrite recovery key");
+                    }
+                } else if (data.user_id) {
+                    // 全新訪客初次造訪：首次固化 Recovery Key
                     localStorage.setItem(RECOVERY_KEY, data.user_id);
                 }
                 return data.access_token as string;

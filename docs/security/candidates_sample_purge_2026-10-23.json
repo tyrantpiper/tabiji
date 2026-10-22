@@ -1,0 +1,26 @@
+[
+  {
+    "id": "scripts/purge_sample_explorers_safely.py:accidental_data_destruction_cascade",
+    "file_path": "scripts/purge_sample_explorers_safely.py",
+    "attack_vector": "accidental_data_destruction_cascade",
+    "hypothesis": "inspect_and_filter_candidates might accidentally qualify real users if their username contains 'Explorer' or case variations, or fail to abort if an account possesses expenses or capsules."
+  },
+  {
+    "id": "scripts/purge_sample_explorers_safely.py:postgrest_uri_length_and_chunking",
+    "file_path": "scripts/purge_sample_explorers_safely.py",
+    "attack_vector": "postgrest_uri_length_dos",
+    "hypothesis": "Batch deletion without chunking or with chunk size > 100 exceeds PostgREST URL query limits causing HTTP 414 errors."
+  },
+  {
+    "id": "scripts/purge_sample_explorers_safely.py:foreign_key_deletion_order",
+    "file_path": "scripts/purge_sample_explorers_safely.py",
+    "attack_vector": "foreign_key_constraint_violation",
+    "hypothesis": "Deleting public.users or itineraries before child tables (itinerary_items, trip_members) triggers PostgreSQL foreign key constraint violations."
+  },
+  {
+    "id": "backend/routers/sample_trip.py:seed_sample_idempotency_and_quota",
+    "file_path": "backend/routers/sample_trip.py",
+    "attack_vector": "quota_bypass_and_race_condition",
+    "hypothesis": "seed_sample_trip fails to ensure idempotency when called concurrently, potentially polluting the database with multiple duplicate sample trips per user."
+  }
+]

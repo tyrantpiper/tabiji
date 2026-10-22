@@ -1,4 +1,5 @@
 import os
+import re
 from fastapi import Header, HTTPException, Request
 from supabase import create_client, Client
 
@@ -48,20 +49,39 @@ import hashlib
 import jwt
 
 
+UUID_V4_REGEX = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 
+    re.IGNORECASE
+)
+
+
 def get_session_secret() -> str:
-    """獲取 JWT 簽章密鑰，若未設置則衍生自 SUPABASE_KEY 安全雜湊保底"""
+    """
+    獲取 JWT 簽章密鑰：
+    1. 優先取用 SESSION_SECRET_KEY
+    2. 回落自 SUPABASE_KEY 鹽值衍生雜湊
+    3. 生產環境若完全缺失直接 Fail-Closed 中斷啟動
+    """
     secret = os.getenv("SESSION_SECRET_KEY")
     if secret and len(secret) >= 16:
         return secret
+
     supabase_key = os.getenv("SUPABASE_KEY", "")
     if supabase_key:
         return hashlib.sha256(f"tabiji-session-salt-{supabase_key}".encode()).hexdigest()
-    return "tabiji-default-dev-fallback-secret-key-32chars!!"
+
+    # 🛡️ 生產環境 Fail-Closed 防衛：嚴禁使用脆弱預設密鑰
+    is_prod = os.getenv("ENV") == "production" or os.getenv("NODE_ENV") == "production" or os.getenv("PROD") == "1"
+    if is_prod:
+        raise RuntimeError("🚨 [CRITICAL SECURITY] SESSION_SECRET_KEY is required in production environment!")
+
+    return hashlib.sha256(b"tabiji-dev-deterministic-salt-2026").hexdigest()
 
 
 def get_supabase(request: Request) -> Client:
     """從 app.state 獲取全域 Supabase 客戶端 (使用 Service Role Key)"""
     return request.app.state.supabase
+
 
 async def get_verified_user(
     request: Request,
@@ -69,7 +89,12 @@ async def get_verified_user(
 ) -> str:
     """
     🛡️ 嚴格密碼學身分驗證依賴 (JWT-Only)
-    徹底拔除 X-User-ID 明文 Header 回退信任漏洞。
+    強制校驗：
+    - Bearer Token 格式
+    - iss == "tabiji-core"
+    - type == "device_session"
+    - sub 必須為合法 UUID
+    - exp 有效期限
     """
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
@@ -79,10 +104,18 @@ async def get_verified_user(
 
     # 1. 本地高速記憶體驗證 (0.05ms)
     try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
-        verified_uid = payload.get("sub")
-        if verified_uid:
-            return str(verified_uid)
+        payload = jwt.decode(
+            token, 
+            secret, 
+            algorithms=["HS256"],
+            issuer="tabiji-core",
+            options={"require": ["sub", "iss", "iat", "exp", "type"]}
+        )
+        token_type = payload.get("type")
+        sub = str(payload.get("sub") or "").strip()
+
+        if token_type == "device_session" and UUID_V4_REGEX.match(sub):
+            return sub
     except jwt.PyJWTError:
         pass
 
@@ -90,7 +123,7 @@ async def get_verified_user(
     try:
         supabase: Client = request.app.state.supabase
         user_res = supabase.auth.get_user(token)
-        if user_res and user_res.user:
+        if user_res and user_res.user and UUID_V4_REGEX.match(str(user_res.user.id)):
             return str(user_res.user.id)
     except Exception:
         pass

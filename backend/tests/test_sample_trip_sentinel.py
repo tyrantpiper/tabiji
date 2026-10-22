@@ -8,7 +8,13 @@ from utils.deps import get_supabase, get_session_secret
 
 def make_auth_header(uid: str):
     token = jwt.encode(
-        {"sub": uid, "iat": int(time.time()), "exp": int(time.time()) + 3600},
+        {
+            "sub": uid,
+            "iss": "tabiji-core",
+            "type": "device_session",
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 3600
+        },
         get_session_secret(),
         algorithm="HS256"
     )
@@ -79,7 +85,7 @@ async def test_seed_sample_trip_dedup_skips_duplicate_seed():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
             response = await client.post(
                 "/api/trips/seed-sample",
-                headers=make_auth_header("user-explorer-777")
+                headers=make_auth_header("77777777-7777-7777-7777-777777777777")
             )
             assert response.status_code == 200
             data = response.json()
@@ -98,7 +104,7 @@ async def test_seed_sample_trip_success_for_new_user():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
             response = await client.post(
                 "/api/trips/seed-sample",
-                headers=make_auth_header("user-fresh-888")
+                headers=make_auth_header("88888888-8888-8888-8888-888888888888")
             )
             assert response.status_code == 200
             data = response.json()

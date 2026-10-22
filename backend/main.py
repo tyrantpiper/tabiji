@@ -162,7 +162,6 @@ async def lifespan(app: FastAPI):
 # 0. Initialize App
 app = FastAPI(
     title="Ryan's AI Travel Tool (BYOK Edition)",
-    default_response_class=ORJSONResponse,
     lifespan=lifespan
 )
 app.state.limiter = limiter

@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **Strict Local-First Recovery Key Anti-Overwrite Invariant**: In client auth-session handling, if a local recovery key exists in localStorage, it must never be overwritten if a session response returns a mismatched user_id. Such occurrences must trigger an alert and throw an error to preserve account ownership.
+
 - **雙軌協同與全量快照調和防衛法則**: 系統必須維持即時同步（增量廣播，主打多人 0ms 極速體驗）與手動/手勢重整（全量快照，主打手機休眠喚醒、丟包與競態調和）雙軌架構。手動重整應無感封裝於通知鈴鐺或下拉手勢中，兼顧介面極簡留白與 100% 狀態自癒防呆。
 
 - **UX 機能融合與雙軌自癒備援法則 (INV-UI-024 / INV-STATE-037 / Dual-Purpose UI)**: 系統必須維持即時同步（增量廣播，主打多人 0ms 極速體驗）與手動/手勢重整（全量快照，主打手機休眠喚醒、丟包與競態調和）雙軌架構。手動重整應無感封裝於通知鈴鐺或下拉手勢中，兼顧介面極簡留白與 100% 狀態自癒防呆。

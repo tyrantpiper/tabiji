@@ -1,15 +1,72 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-22T07:25:00Z",
+  "last_audit_date": "2026-10-23T03:54:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 182,
-    "audited_targets": 182,
-    "verified_vulnerabilities": 17,
+    "total_targets": 194,
+    "audited_targets": 194,
+    "verified_vulnerabilities": 24,
     "remediated_vulnerabilities": 40,
-    "dismissed_hypotheses": 125
+    "dismissed_hypotheses": 130
   },
   "targets": [
+    {
+      "id": "scripts/purge_sample_explorers_safely.py:accidental_data_destruction_cascade",
+      "target_type": "migration_script",
+      "trust_boundary": "internal_administrative",
+      "vectors_checked": [
+        "accidental_data_destruction_cascade",
+        "real_user_tampering",
+        "activity_invariant_violation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_sample_purge.md",
+      "validator_details": "Confirmed by Sentinel & Dry-Run: Exact match eq('name', 'Explorer') prevents pattern/prefix mismatch. Multi-tier invariants check expenses and trip_capsule_entries, aborting if any non-zero activity exists.",
+      "remediated_at": "2026-10-23T03:54:00Z",
+      "resolution": "Enforced in scripts/purge_sample_explorers_safely.py and verified via backend/tests/test_purge_explorers_sentinel.py."
+    },
+    {
+      "id": "scripts/purge_sample_explorers_safely.py:postgrest_uri_length_and_chunking",
+      "target_type": "migration_script",
+      "trust_boundary": "internal_administrative",
+      "vectors_checked": [
+        "postgrest_uri_length_dos",
+        "batch_deletion_overflow"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_sample_purge.md",
+      "validator_details": "Confirmed by Sentinel: Strict CHUNK_SIZE = 50 eliminates PostgREST HTTP 414 URI Too Long limits across all bulk query and deletion operations.",
+      "remediated_at": "2026-10-23T03:54:00Z",
+      "resolution": "Enforced CHUNK_SIZE = 50 in scripts/purge_sample_explorers_safely.py."
+    },
+    {
+      "id": "scripts/purge_sample_explorers_safely.py:foreign_key_deletion_order",
+      "target_type": "migration_script",
+      "trust_boundary": "internal_administrative",
+      "vectors_checked": [
+        "foreign_key_constraint_violation",
+        "orphaned_state_lockout"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_sample_purge.md",
+      "validator_details": "Confirmed by Sentinel & SQL migration audit: Strict 5-stage deletion order (itinerary_items -> trip_members -> itineraries -> user_preferences -> users) satisfies all PostgreSQL cascade and REST foreign key dependencies.",
+      "remediated_at": "2026-10-23T03:54:00Z",
+      "resolution": "Implemented in execute_purge() within scripts/purge_sample_explorers_safely.py."
+    },
+    {
+      "id": "backend/routers/sample_trip.py:seed_sample_idempotency_and_quota",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "quota_bypass_and_race_condition",
+        "sample_trip_idempotency"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_sample_purge.md",
+      "validator_details": "Confirmed by Sentinel: seed_sample_trip checks existing member_trip_ids with created_by='SYSTEM' prior to creation, returning skipped. Verified via backend/tests/test_sample_trip_sentinel.py.",
+      "remediated_at": "2026-10-23T03:54:00Z",
+      "resolution": "Audited in backend/routers/sample_trip.py and covered by test_seed_sample_trip_dedup_skips_duplicate_seed."
+    },
     {
       "id": "backend/routers/trips.py:batch_reorder_cross_tenant_bola",
       "target_type": "backend_router",
@@ -1250,7 +1307,7 @@
       ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "validator_details": "Physical Sentinel verified: translations.ts and remaining.ts synchronized with '\u65c5\u8def \uff5c \u65c5\u884c\u63d0\u6848' (zh) and 'Tabiji | Travel Planner' (en)."
+      "validator_details": "Physical Sentinel verified: translations.ts and remaining.ts synchronized with '旅路 ｜ 旅行提案' (zh) and 'Tabiji | Travel Planner' (en)."
     },
     {
       "id": "frontend/components/views/landing-page.tsx:backpack_brand_upgrade",
@@ -2265,6 +2322,98 @@
       "verified_at": "2026-10-21T19:20:00Z",
       "remediated_at": "2026-10-21T19:25:00Z",
       "resolution": "Remediated in ai.py: Enforced user_id: str = Depends(get_verified_user) and verified caller is creator or member before deleting reviews."
+    },
+    {
+      "id": "backend/routers/trips.py:delete_before_authorization",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "delete_before_authorization",
+        "unauthorized_data_destruction"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "validator_details": "CONFIRMED by Sentinel & In-Memory PoC: delete_trip deletes all associated expenses before validating if caller is trip creator, allowing arbitrary callers to wipe expenses prior to 403."
+    },
+    {
+      "id": "backend/routers/trips.py:public_share_member_elevation",
+      "target_type": "backend_router",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "privilege_escalation_via_share_code",
+        "credential_leakage"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "validator_details": "CONFIRMED by Sentinel & In-Memory PoC: get_public_trip_by_public_id includes share_code and reservation_code in unauthenticated response, allowing visitors to elevate to editable members."
+    },
+    {
+      "id": "backend/routers/trips.py:trip_detail_bola",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "broken_object_level_authorization",
+        "information_disclosure"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "validator_details": "DISMISSED by Sentinel: Docstring explicitly designated endpoint for non-member view with privacy filtering. Flagged for architectural 403 enforcement per human governance."
+    },
+    {
+      "id": "backend/routers/auth.py:session_recovery_bypass",
+      "target_type": "backend_router",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "rate_limit_bypass_and_unverified_jwt_issuance"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "validator_details": "VERIFIED by In-Memory PoC: create_or_exchange_session accepts arbitrary UUID recovery_key without rate limiting and without verifying database existence."
+    },
+    {
+      "id": "backend/routers/trips.py:global_latest_trip_disclosure",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "information_disclosure_cross_user"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "validator_details": "VERIFIED by In-Memory PoC: get_latest_itinerary executes order(created_at, desc=True).limit(1) without filtering by user_id or membership, disclosing newest system trip."
+    },
+    {
+      "id": "backend/routers/expenses.py:expense_membership_bola",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "broken_object_level_authorization",
+        "cross_tenant_expense_read"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "validator_details": "VERIFIED by In-Memory PoC: get_expenses fails to verify if caller is member of trip before returning public expenses."
+    },
+    {
+      "id": "backend/routers/trips.py:opaque_member_kick_type_error",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "functional_regression_and_sql_type_error"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "validator_details": "VERIFIED by In-Memory PoC: kick_member triggers 22P02 error when comparing mem_* string against UUID primary key."
+    },
+    {
+      "id": "backend/utils/deps.py:jwt_claim_and_secret_fallback",
+      "target_type": "backend_dependency",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "cryptographic_weakness_and_missing_claims"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "validator_details": "VERIFIED by In-Memory PoC: get_verified_user decodes HS256 without enforcing iss or type, and fallback string exists."
     }
   ]
 }

@@ -223,53 +223,62 @@ def test_auth_sentinel_leave_trip_requires_jwt(test_client):
 
 def test_auth_sentinel_day_data_requires_jwt(test_client, mock_supabase):
     """[VERIFICATION 9]: PATCH /day-data without Bearer token is rejected with 401."""
+    alice_id = "11111111-1111-1111-1111-111111111111"
+    attacker_id = "22222222-2222-2222-2222-222222222222"
+
     # 1. Unauthenticated / spoofed Header rejected
     res = test_client.patch(
         "/api/trips/trip-123/day-data",
         json={"day": 1, "notes": "test note"},
-        headers={"X-User-ID": "attacker-id"}
+        headers={"X-User-ID": attacker_id}
     )
     assert res.status_code == 401
 
     # 2. Authenticated with Bearer token accepted
-    mock_supabase.table().select().eq().eq().execute.return_value = MagicMock(data=[{"user_id": "alice-id"}])
+    mock_supabase.table().select().eq().eq().execute.return_value = MagicMock(data=[{"user_id": alice_id}])
     mock_supabase.table().select().eq().execute.return_value = MagicMock(data=[{"id": "trip-123", "content": {"daily_locations": {}}}])
     mock_supabase.table().update().eq().execute.return_value = MagicMock(data=[{"id": "trip-123"}])
 
     auth_res = test_client.patch(
         "/api/trips/trip-123/day-data",
         json={"day": 1, "notes": "test note"},
-        headers=make_auth_headers("alice-id")
+        headers=make_auth_headers(alice_id)
     )
     assert auth_res.status_code == 200
 
 
 def test_auth_sentinel_ledger_share_requires_jwt(test_client, mock_supabase):
     """[VERIFICATION 10]: PATCH /ledger-share without Bearer token is rejected with 401."""
+    alice_id = "11111111-1111-1111-1111-111111111111"
+    attacker_id = "22222222-2222-2222-2222-222222222222"
+
     # 1. Unauthenticated / spoofed Header rejected
     res = test_client.patch(
         "/api/trips/trip-123/ledger-share",
-        headers={"X-User-ID": "attacker-id"}
+        headers={"X-User-ID": attacker_id}
     )
     assert res.status_code == 401
 
     # 2. Authenticated with Bearer token accepted
-    mock_supabase.table().select().eq().eq().execute.return_value = MagicMock(data=[{"user_id": "alice-id"}])
+    mock_supabase.table().select().eq().eq().execute.return_value = MagicMock(data=[{"user_id": alice_id}])
     mock_supabase.table().update().eq().execute.return_value = MagicMock(data=[{"id": "trip-123"}])
 
     auth_res = test_client.patch(
         "/api/trips/trip-123/ledger-share",
-        headers=make_auth_headers("alice-id")
+        headers=make_auth_headers(alice_id)
     )
     assert auth_res.status_code == 200
 
 
 def test_auth_sentinel_seed_sample_requires_jwt(test_client, mock_supabase):
     """[VERIFICATION 11]: POST /trips/seed-sample without Bearer token is rejected with 401."""
+    alice_id = "11111111-1111-1111-1111-111111111111"
+    attacker_id = "22222222-2222-2222-2222-222222222222"
+
     # 1. Unauthenticated / spoofed Header rejected
     res = test_client.post(
         "/api/trips/seed-sample",
-        headers={"X-User-ID": "attacker-id"}
+        headers={"X-User-ID": attacker_id}
     )
     assert res.status_code == 401
 
@@ -279,21 +288,25 @@ def test_auth_sentinel_seed_sample_requires_jwt(test_client, mock_supabase):
 
     auth_res = test_client.post(
         "/api/trips/seed-sample",
-        headers=make_auth_headers("alice-id")
+        headers=make_auth_headers(alice_id)
     )
     assert auth_res.status_code == 200
 
 
 def test_auth_sentinel_gdpr_delete_requires_jwt_and_ownership(test_client, mock_supabase):
     """[VERIFICATION 12]: DELETE /api/user/{user_id}/data strictly requires Bearer JWT and ownership."""
+    alice_id = "11111111-1111-1111-1111-111111111111"
+    victim_id = "33333333-3333-3333-3333-333333333333"
+    attacker_id = "22222222-2222-2222-2222-222222222222"
+
     # 1. Unauthenticated -> 401
-    res = test_client.delete("/api/user/victim-id/data")
+    res = test_client.delete(f"/api/user/{victim_id}/data")
     assert res.status_code == 401
 
     # 2. Attacker trying to delete victim's data -> 403 Forbidden
     res_attacker = test_client.delete(
-        "/api/user/victim-id/data",
-        headers=make_auth_headers("attacker-id")
+        f"/api/user/{victim_id}/data",
+        headers=make_auth_headers(attacker_id)
     )
     assert res_attacker.status_code == 403
 
@@ -301,14 +314,17 @@ def test_auth_sentinel_gdpr_delete_requires_jwt_and_ownership(test_client, mock_
     mock_supabase.table().select().eq().execute.return_value = MagicMock(data=[])
     mock_supabase.table().delete().eq().execute.return_value = MagicMock(data=[])
     res_owner = test_client.delete(
-        "/api/user/alice-id/data",
-        headers=make_auth_headers("alice-id")
+        f"/api/user/{alice_id}/data",
+        headers=make_auth_headers(alice_id)
     )
     assert res_owner.status_code == 200
 
 
 def test_auth_sentinel_import_to_trip_requires_jwt_and_membership(test_client, mock_supabase):
     """[VERIFICATION 13]: POST /api/trips/import-to-trip strictly requires Bearer JWT and membership."""
+    charlie_id = "44444444-4444-4444-4444-444444444444"
+    attacker_id = "22222222-2222-2222-2222-222222222222"
+
     # 1. Unauthenticated -> 401
     res = test_client.post(
         "/api/trips/import-to-trip",
@@ -321,7 +337,7 @@ def test_auth_sentinel_import_to_trip_requires_jwt_and_membership(test_client, m
         mock_t = MagicMock()
         if table_name == "itineraries":
             mock_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
-                data=[{"id": "trip-123", "created_by": "charlie-id", "content": {}}]
+                data=[{"id": "trip-123", "created_by": charlie_id, "content": {}}]
             )
         elif table_name == "trip_members":
             mock_t.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
@@ -331,7 +347,7 @@ def test_auth_sentinel_import_to_trip_requires_jwt_and_membership(test_client, m
     res_forbidden = test_client.post(
         "/api/trips/import-to-trip",
         json={"trip_id": "trip-123", "items": []},
-        headers=make_auth_headers("attacker-id")
+        headers=make_auth_headers(attacker_id)
     )
     assert res_forbidden.status_code == 403
 
@@ -340,7 +356,7 @@ def test_auth_sentinel_import_to_trip_requires_jwt_and_membership(test_client, m
         mock_t = MagicMock()
         if table_name == "itineraries":
             mock_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
-                data=[{"id": "trip-123", "created_by": "charlie-id", "content": {}}]
+                data=[{"id": "trip-123", "created_by": charlie_id, "content": {}}]
             )
             mock_t.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "trip-123"}])
         elif table_name == "itinerary_items":
@@ -352,13 +368,15 @@ def test_auth_sentinel_import_to_trip_requires_jwt_and_membership(test_client, m
     res_owner = test_client.post(
         "/api/trips/import-to-trip",
         json={"trip_id": "trip-123", "items": []},
-        headers=make_auth_headers("charlie-id")
+        headers=make_auth_headers(charlie_id)
     )
     assert res_owner.status_code == 200
 
 
 def test_auth_sentinel_save_itinerary_binds_verified_jwt_user(test_client, mock_supabase):
     """[VERIFICATION 14]: POST /api/trips/save-itinerary enforces verified user_id over body request.user_id."""
+    alice_id = "11111111-1111-1111-1111-111111111111"
+    victim_id = "33333333-3333-3333-3333-333333333333"
     recorded_inserts = []
 
     def table_router(table_name):
@@ -384,30 +402,33 @@ def test_auth_sentinel_save_itinerary_binds_verified_jwt_user(test_client, mock_
         json={
             "title": "Tokyo Trip",
             "creator_name": "Alice",
-            "user_id": "spoofed-victim-id",
+            "user_id": victim_id,
             "items": []
         },
-        headers=make_auth_headers("verified-alice-id")
+        headers=make_auth_headers(alice_id)
     )
     assert res.status_code == 200
     # Verify the created_by sent to Supabase was the verified JWT user_id
-    assert any(c.get("created_by") == "verified-alice-id" for c in recorded_inserts)
+    assert any(c.get("created_by") == alice_id for c in recorded_inserts)
 
 
 def test_auth_sentinel_clear_ai_review_requires_jwt_and_membership(test_client, mock_supabase):
     """[VERIFICATION 15]: DELETE /api/ai/trips/{trip_id}/days/{day}/ai-review requires JWT and membership."""
+    owner_id = "55555555-5555-5555-5555-555555555555"
+    stranger_id = "66666666-6666-6666-6666-666666666666"
+
     # 1. Unauthenticated -> 401
     res = test_client.delete("/api/ai/trips/trip-123/days/1/ai-review")
     assert res.status_code == 401
 
     # 2. Non-member -> 403
     mock_supabase.table().select().eq().execute.return_value = MagicMock(
-        data=[{"id": "trip-123", "created_by": "owner-id", "content": {}}]
+        data=[{"id": "trip-123", "created_by": owner_id, "content": {}}]
     )
     mock_supabase.table().select().eq().eq().execute.return_value = MagicMock(data=[])
     res_forbidden = test_client.delete(
         "/api/ai/trips/trip-123/days/1/ai-review",
-        headers=make_auth_headers("stranger-id")
+        headers=make_auth_headers(stranger_id)
     )
     assert res_forbidden.status_code == 403
 
@@ -415,7 +436,7 @@ def test_auth_sentinel_clear_ai_review_requires_jwt_and_membership(test_client, 
     mock_supabase.table().update().eq().execute.return_value = MagicMock(data=[{"id": "trip-123"}])
     res_owner = test_client.delete(
         "/api/ai/trips/trip-123/days/1/ai-review",
-        headers=make_auth_headers("owner-id")
+        headers=make_auth_headers(owner_id)
     )
     assert res_owner.status_code == 200
 
@@ -457,6 +478,229 @@ async def test_auth_sentinel_get_gemini_key_accepts_valid_gemini_key():
     # Via Authorization fallback
     res2 = await get_gemini_key(x_gemini_api_key=None, auth_header=f"Bearer {valid_key}")
     assert res2 == valid_key
+
+
+def test_delete_trip_before_authorization_prevented(test_client, mock_supabase):
+    """[VERIFICATION 19]: Non-owner DELETE /api/trips/{trip_id} is rejected with 403 BEFORE any expenses are deleted."""
+    owner_id = "11111111-1111-1111-1111-111111111111"
+    attacker_id = "22222222-2222-2222-2222-222222222222"
+    trip_id = "target-trip-123"
+
+    mock_itineraries = MagicMock()
+    mock_itineraries.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[{"id": trip_id, "created_by": owner_id}]
+    )
+
+    mock_expenses = MagicMock()
+    
+    def table_router(table_name):
+        if table_name == "itineraries":
+            return mock_itineraries
+        if table_name == "expenses":
+            return mock_expenses
+        return MagicMock()
+
+    mock_supabase.table.side_effect = table_router
+
+    # Attacker attempts to delete victim's trip
+    res = test_client.delete(
+        f"/api/trips/{trip_id}",
+        headers=make_auth_headers(attacker_id)
+    )
+    assert res.status_code == 403
+    assert "只有行程創立者可以刪除行程" in res.json()["detail"]
+
+    # CRITICAL: Verify expenses.delete() was NEVER called!
+    assert not mock_expenses.delete.called
+
+
+def test_public_trip_omits_join_secrets(test_client, mock_supabase):
+    """[VERIFICATION 20]: GET /api/trips/share/{public_id} strictly omits share_code and reservation_code."""
+    mock_itineraries = MagicMock()
+    mock_items = MagicMock()
+
+    mock_itineraries.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[{
+            "id": "trip-pub-123",
+            "public_id": "pub_abcdef12",
+            "title": "Public Tokyo Trip",
+            "created_by": "secret-owner-uuid",
+            "creator_name": "Host",
+            "start_date": "2026-11-01",
+            "share_code": "SECRET-JOIN-123",
+            "content": {}
+        }]
+    )
+
+    mock_items.select.return_value.eq.return_value.order.return_value.order.return_value.order.return_value.execute.return_value = MagicMock(
+        data=[{
+            "id": "item-1",
+            "place_name": "Tokyo Tower",
+            "day_number": 1,
+            "sort_order": 0,
+            "time_slot": "10:00:00",
+            "cost_amount": 1000,
+            "notes": "Tokyo Tower observation deck",
+            "category": "sightseeing",
+            "location_lat": 35.6586,
+            "location_lng": 139.7454,
+            "reservation_code": "SECRET-RESERVATION-CODE-999",
+            "is_private": False
+        }]
+    )
+
+    def table_router(table_name):
+        if table_name == "itineraries":
+            return mock_itineraries
+        if table_name == "itinerary_items":
+            return mock_items
+        return MagicMock()
+
+    mock_supabase.table.side_effect = table_router
+
+    res = test_client.get("/api/trips/share/pub_abcdef12")
+    assert res.status_code == 200
+    data = res.json()
+
+    # Verify join/reservation secrets are stripped from public consumption
+    assert "share_code" not in data or data.get("share_code") == ""
+    activities = data["days"][0]["activities"]
+    assert activities[0].get("reservation_code") is None
+
+
+def test_trip_detail_bola_prevented(test_client, mock_supabase):
+    """[VERIFICATION 21]: Non-member cannot access GET /api/trips/{trip_id} (BOLA 403)."""
+    owner_id = "11111111-1111-1111-1111-111111111111"
+    stranger_id = "33333333-3333-3333-3333-333333333333"
+    trip_id = "confidential-trip"
+
+    mock_supabase.table().select().eq().execute.side_effect = [
+        # Trip
+        MagicMock(data=[{
+            "id": trip_id,
+            "title": "Secret Trip",
+            "created_by": owner_id,
+            "public_id": "pub-123"
+        }]),
+        # Members (Stranger is NOT in the list)
+        MagicMock(data=[
+            {"id": "mem-row-1", "user_id": owner_id, "user_name": "Owner", "user_avatar": ""}
+        ])
+    ]
+
+    res = test_client.get(
+        f"/api/trips/{trip_id}",
+        headers=make_auth_headers(stranger_id)
+    )
+    assert res.status_code == 403
+    assert "您不是此行程的成員" in res.json()["detail"]
+
+
+def test_latest_itinerary_scoped_to_user(test_client, mock_supabase):
+    """[VERIFICATION 22]: GET /api/trips/itinerary/latest queries user_trips_view filtered by authenticated user_id."""
+    user_id = "00000000-0000-0000-0000-000000000001"
+    trip_id = "user-own-trip"
+
+    view_mock = MagicMock()
+    items_mock = MagicMock()
+
+    def table_router(table_name):
+        if table_name == "user_trips_view":
+            return view_mock
+        if table_name == "itinerary_items":
+            return items_mock
+        return MagicMock()
+
+    mock_supabase.table.side_effect = table_router
+    view_mock.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[{"id": trip_id, "title": "My Latest Trip", "created_by": user_id, "start_date": "2026-11-01"}]
+    )
+    items_mock.select.return_value.eq.return_value.order.return_value.order.return_value.order.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
+
+    res = test_client.get(
+        "/api/trips/itinerary/latest",
+        headers=make_auth_headers(user_id)
+    )
+    assert res.status_code == 200
+    assert res.json()["id"] == trip_id
+    # Assert query was filtered by user_id
+    view_mock.select.return_value.eq.assert_called_with("user_id", user_id)
+
+
+def test_expense_membership_bola_prevented(test_client, mock_supabase):
+    """[VERIFICATION 23]: GET /api/expenses/{trip_id}/expenses rejects non-members with 403."""
+    owner_id = "11111111-1111-1111-1111-111111111111"
+    stranger_id = "33333333-3333-3333-3333-333333333333"
+    trip_id = "trip-locked"
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "itineraries":
+            mock_t.select.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=[{"created_by": owner_id}]
+            )
+        elif table_name == "trip_members":
+            mock_t.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=[]
+            )
+        return mock_t
+
+    mock_supabase.table.side_effect = table_router
+
+    res = test_client.get(
+        f"/api/expenses/{trip_id}/expenses",
+        headers=make_auth_headers(stranger_id)
+    )
+    assert res.status_code == 403
+    assert "您不是此行程的成員" in res.json()["detail"]
+
+
+def test_kick_member_masked_lookup_and_delete(test_client, mock_supabase):
+    """[VERIFICATION 24]: DELETE /api/trips/{trip_id}/members/{ref} matches masked member_id and deletes by primary key id."""
+    from routers.trips import mask_member_id
+
+    owner_id = "11111111-1111-1111-1111-111111111111"
+    victim_user_id = "22222222-2222-2222-2222-222222222222"
+    trip_id = "trip-shared-999"
+    member_record_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    masked_ref = mask_member_id(victim_user_id, trip_id)
+
+    mock_members = MagicMock()
+    mock_itineraries = MagicMock()
+
+    mock_itineraries.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[{"id": trip_id, "created_by": owner_id}]
+    )
+    mock_members.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[
+            {"id": member_record_id, "user_id": victim_user_id, "user_name": "Bob"}
+        ]
+    )
+
+    def table_router(table_name):
+        if table_name == "itineraries":
+            return mock_itineraries
+        if table_name == "trip_members":
+            return mock_members
+        return MagicMock()
+
+    mock_supabase.table.side_effect = table_router
+
+    # Owner kicks member using the masked reference "mem_..."
+    res = test_client.delete(
+        f"/api/trips/{trip_id}/members/{masked_ref}",
+        headers=make_auth_headers(owner_id)
+    )
+    assert res.status_code == 200
+    assert res.json()["status"] == "success"
+
+    # CRITICAL: Verify deletion targeted the native primary key UUID id!
+    # Chain is: .delete().eq("itinerary_id", trip_id).eq("id", member_record_id)
+    mock_members.delete.return_value.eq.return_value.eq.assert_called_with("id", member_record_id)
+
+
 
 
 

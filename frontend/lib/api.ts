@@ -676,10 +676,12 @@ export const tripsApi = {
     },
 
     /** 🚫 Kick a member from trip (only creator can do this) */
-    kickMember: async (tripId: string, memberUserId: string, currentUserId: string) => {
+    kickMember: async (tripId: string, memberUserId: string, currentUserId?: string) => {
+        const headers: Record<string, string> = {}
+        if (currentUserId) headers["X-User-ID"] = currentUserId
         const res = await fetch(`${API.TRIPS}/${tripId}/members/${memberUserId}`, {
             method: "DELETE",
-            headers: { "X-User-ID": currentUserId }
+            headers
         })
         if (!res.ok) {
             const error = await res.json().catch(() => ({ detail: "無法踢出成員" }))

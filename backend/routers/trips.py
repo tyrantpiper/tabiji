@@ -18,7 +18,7 @@ import copy
 import hashlib
 import traceback
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Any
 from fastapi import APIRouter, Depends, HTTPException, Header
 
 from models.base import (
@@ -59,6 +59,10 @@ def resolve_trip_currency(trip: Optional[dict], content: Optional[dict]) -> str:
     title = safe_trip.get("title") or ""
     return infer_currency_from_destination(title, declared_currency=None)
 
+def mask_member_id(user_id: Any, trip_id: str) -> str:
+    """🛡️ 伺服端單向脫敏：非本人 UUID 單向雜湊，杜絕奪舍"""
+    return f"mem_{hashlib.sha256((str(user_id) + str(trip_id)).encode()).hexdigest()[:10]}"
+
 # ensure_user_exists moved to utils.helpers
 
 
@@ -74,7 +78,7 @@ async def get_public_trip_by_public_id(
     """🌐 公開行程分享 (無需認證, 支援 ISR)
     
     用於 Next.js ISR 頁面的 Server-side fetch。
-    注意：這是公開 API，隱私資料會被過濾。
+    注意：這是公開 API，絕不包含加入碼 (share_code) 或訂房代號 (reservation_code)。
     
     Rate Limit: 10 requests/minute per IP (防暴力枚舉)
     """
@@ -122,7 +126,7 @@ async def get_public_trip_by_public_id(
                     "link_url": item.get("link_url"),
                     "website_link": item.get("website_link"),
                     "preview_metadata": item.get("preview_metadata"),
-                    "reservation_code": item.get("reservation_code"),
+                    # 🛡️ 機密防衛：公開端點絕不洩漏 reservation_code
                     "hide_navigation": item.get("hide_navigation", False),
                     "is_highlight": item.get("is_highlight", False)
                 })
@@ -136,7 +140,7 @@ async def get_public_trip_by_public_id(
             "start_date": trip["start_date"],
             "end_date": trip.get("end_date"),
             "cover_image": trip.get("cover_image"),
-            "share_code": trip.get("share_code", ""),
+            # 🛡️ 憑證防衛：公開端點絕不洩漏 share_code，徹底杜絕訪客自主升權
             "creator_name": trip.get("creator_name", "Guest"),
             "currency": resolve_trip_currency(trip, content),
             "daily_locations": content.get("daily_locations", {}),
@@ -277,19 +281,18 @@ async def get_trip_by_id(
             except Exception as e:
                 print(f"⚠️ Failed to auto-migrate public_id: {e} (Maybe column missing?)")
 
-        # 🆕 取得所有成員 (整合查詢：一次性抓取全員，並在記憶體完成「成員 + 創立者」雙重核驗，節省 1 次海外 HTTP RTT)
-        all_members_res = supabase.table("trip_members").select("user_id, user_name, user_avatar").eq("itinerary_id", trip_id).execute()
+        # 🆕 取得所有成員 (整合查詢：一次性抓取全員包含記錄主鍵 id，並在記憶體完成「成員 + 創立者」雙重核驗)
+        all_members_res = supabase.table("trip_members").select("id, user_id, user_name, user_avatar").eq("itinerary_id", trip_id).execute()
         members = all_members_res.data or []
-        created_by = trip.get("created_by", "")
+        created_by = str(trip.get("created_by") or "")
         
-        is_member = False
-        is_owner = False
-        if user_id:
-            is_owner = (user_id == created_by)
-            is_member = is_owner or any(m.get("user_id") == user_id for m in members)
-            print(f"🔍 [Trips] user_id={user_id}, is_creator={is_owner}, is_member={is_member}")
-        else:
-            print(f"🔍 [Trips] No user_id provided, treating as non-member")
+        is_owner = (user_id == created_by)
+        is_member = is_owner or any(str(m.get("user_id") or "") == user_id for m in members)
+        print(f"🔍 [Trips] user_id={user_id}, is_creator={is_owner}, is_member={is_member}")
+        
+        # 🛡️ BOLA 物件授權防衛：非成員一律嚴格 403 阻斷，陌生人絕不可窺探整趟行程
+        if not is_member:
+            raise HTTPException(status_code=403, detail="您不是此行程的成員，無法存取詳細資訊")
         
         # 2. 抓該行程的所有細項 (按 time_slot 排序，確保符合時間軸)
         items_res = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip["id"]).order("day_number").order("time_slot").order("sort_order").execute()
@@ -409,7 +412,8 @@ async def get_trip_by_id(
             "members": [
                 {
                     **m,
-                    "user_id": m["user_id"] if m.get("user_id") == user_id else f"mem_{hashlib.sha256((str(m.get('user_id')) + trip_id).encode()).hexdigest()[:10]}"
+                    "member_id": str(m.get("id") or ""),
+                    "user_id": m["user_id"] if m.get("user_id") == user_id else mask_member_id(m.get("user_id"), trip_id)
                 }
                 for m in members
             ],
@@ -424,10 +428,10 @@ async def get_trip_by_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{trip_id}/members/{member_user_id}")
+@router.delete("/{trip_id}/members/{member_ref}")
 async def kick_member(
     trip_id: str,
-    member_user_id: str,
+    member_ref: str,
     current_user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
@@ -438,28 +442,35 @@ async def kick_member(
         if not trip_res.data:
             raise HTTPException(status_code=404, detail="找不到該行程")
             
-        created_by = str(trip_res.data[0].get("created_by"))
+        owner_id = str(trip_res.data[0].get("created_by") or "")
         
         # 🛡️ 權限檢查 1：只有行程建立者可以剔除成員
-        if current_user_id != created_by:
+        if current_user_id != owner_id:
             raise HTTPException(status_code=403, detail="只有行程建立者可以剔除成員")
             
+        # 2. 🛡️ 伺服端記憶體比對：安全比對記錄主鍵 id 或 mem_* 遮罩，絕不拿字串查詢 UUID 欄位 (防 22P02 崩潰)
+        members = supabase.table("trip_members").select("id, user_id").eq("itinerary_id", trip_id).execute().data or []
+        target = next((m for m in members if str(m.get("id")) == member_ref or mask_member_id(m.get("user_id"), trip_id) == member_ref), None)
+        
+        if not target:
+            raise HTTPException(status_code=404, detail="找不到此成員")
+            
         # 🛡️ 權限檢查 2：建立者不能剔除自己
-        if member_user_id == created_by:
+        if str(target.get("user_id")) == owner_id:
             raise HTTPException(status_code=400, detail="建立者不能將自己從行程中剔除")
         
-        # 2. 執行刪除
+        # 3. 精確以記錄主鍵 id 執行刪除
         del_res = supabase.table("trip_members")\
             .delete()\
             .eq("itinerary_id", trip_id)\
-            .eq("user_id", member_user_id)\
+            .eq("id", target["id"])\
             .execute()
             
         if not del_res.data:
-             raise HTTPException(status_code=404, detail="找不到此成員")
+            raise HTTPException(status_code=404, detail="找不到此成員")
 
-        print(f"🚫 已踢出成員 {member_user_id} from trip {trip_id}")
-        return {"status": "success", "message": "成員已成功移除", "kicked_user_id": member_user_id}
+        print(f"🚫 已踢出成員記錄 {target['id']} from trip {trip_id}")
+        return {"status": "success", "message": "成員已成功移除", "kicked_member_id": str(target["id"])}
         
     except HTTPException:
         raise
@@ -474,7 +485,7 @@ async def delete_trip(
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
-    """🗑️ 刪除整趟行程 (誠實版)"""
+    """🗑️ 刪除整趟行程 (安全先驗後刪版)"""
     try:
         print(f"🗑️ 嘗試刪除行程 ID: {trip_id}, 由使用者: {user_id}")
         
@@ -482,33 +493,34 @@ async def delete_trip(
         trip_check = supabase.table("itineraries").select("created_by").eq("id", trip_id).execute()
         if not trip_check.data:
             raise HTTPException(status_code=404, detail="找不到此行程")
+            
+        owner_id = str(trip_check.data[0].get("created_by") or "")
         
-        # 🛡️ FK Cleanup: Delete associated expenses FIRST to avoid constraint violation
+        # 1. 🛡️ 先驗後刪：創立者驗證必須在任何物理刪除之前！未授權者立即 403 阻斷，保護受害者帳本
+        if owner_id != user_id:
+            raise HTTPException(status_code=403, detail="只有行程創立者可以刪除行程")
+        
+        # 2. 🛡️ 授權確認後，才執行關聯費用清除 (FK Cleanup)
         try:
             supabase.table("expenses").delete().eq("itinerary_id", trip_id).execute()
             print(f"🧹 Cleared expenses for trip {trip_id}")
         except Exception as fk_err:
             print(f"⚠️ FK Cleanup Warning (expenses): {fk_err}")
-
-        # 1. 創立者驗證
-        if trip_check.data[0]['created_by'] != user_id:
-            raise HTTPException(status_code=403, detail="只有行程創立者可以刪除行程")
         
-        # 1. 先刪除所有細項
+        # 3. 刪除所有細項
         supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).execute()
         print("   ✅ 細項已刪除")
         
-        # 2. 刪除所有成員關係
+        # 4. 刪除所有成員關係
         supabase.table("trip_members").delete().eq("itinerary_id", trip_id).execute()
         print("   ✅ 成員關係已刪除")
         
-        # 3. 最後刪除主行程
+        # 5. 最後刪除主行程
         res = supabase.table("itineraries").delete().eq("id", trip_id).execute()
         
         # 關鍵檢查：如果 data 是空的，代表根本沒刪到東西
         if not res.data:
             print(f"❌ 刪除失敗：資料庫回傳空值 (ID: {trip_id})")
-            # 可能原因：ID 不存在，或是 RLS 權限擋住了
             raise HTTPException(status_code=404, detail="刪除失敗：找不到該行程或無權限")
         
         print(f"   ✅ 主行程已刪除: {res.data}")
@@ -693,13 +705,34 @@ async def get_latest_itinerary(
 ):
     """🔥 讀取最新行程 (給主畫面用)"""
     try:
-        # 1. 抓最新的一個行程
-        trip_res = supabase.table("itineraries").select("*").order("created_at", desc=True).limit(1).execute()
-        
-        if not trip_res.data:
-            return None
+        # 1. 抓該使用者最新的一個行程 (依賴 user_trips_view，並具備容錯 fallback，防止全域行程洩漏)
+        trip = None
+        try:
+            view_res = supabase.table("user_trips_view")\
+                .select("*")\
+                .eq("user_id", user_id)\
+                .order("created_at", desc=True)\
+                .limit(1)\
+                .execute()
+            if view_res.data:
+                trip = view_res.data[0]
+        except Exception as view_err:
+            print(f"⚠️ [Resilience Fallback] user_trips_view error in latest: {view_err}")
+            # Fallback: 查詢成員與創立表
+            members_res = supabase.table("trip_members").select("itinerary_id").eq("user_id", user_id).execute()
+            member_ids = [m['itinerary_id'] for m in members_res.data] if members_res.data else []
             
-        trip = trip_res.data[0]
+            owned_res = supabase.table("itineraries").select("id").eq("created_by", user_id).execute()
+            owned_ids = [i['id'] for i in owned_res.data] if owned_res.data else []
+            
+            all_ids = list(set(member_ids + owned_ids))
+            if all_ids:
+                fallback_res = supabase.table("itineraries").select("*").in_("id", all_ids).order("created_at", desc=True).limit(1).execute()
+                if fallback_res.data:
+                    trip = fallback_res.data[0]
+        
+        if not trip:
+            return None
         
         # 2. 抓該行程的所有細項 (按 sort_order 排序，支援拖曳)
         items_res = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip["id"]).order("day_number").order("sort_order").order("time_slot").execute()
