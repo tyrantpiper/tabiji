@@ -26,6 +26,8 @@
 ---
 
 ## 📖 [Core Vocabulary] 全域核心術語
+- **Storage-Transmission Decoupling**: 存儲身分永固（資料庫外鍵不輪換）與傳輸身分時效（30 天 JWT + 單向脫敏）之分離典範。
+- **CI CWD Isolation**: CI 測試目錄切換防斷線，以動態 `REPO_ROOT` 注入確保跨層引用永不失效。
 - **Double-Checked Healing**: 清單二次核驗後 300ms 靜默導正，杜絕誤殺。
 - **Great-Circle Slerp**: 跨天長途城際移動之球面幾何線性插值。
 - **Opaque Response**: Safari 外部圖片快取配額防膨脹與 CORS 穿透。

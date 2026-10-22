@@ -3,6 +3,12 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **CI 工作目錄隔離與測試跨根路徑解析法則 (CI CWD Isolation & Cross-Root Import Invariance)**: 當測試檔案（如 `backend/tests/`）需要引用專案根目錄的腳本（如 `scripts/`）時，嚴禁假定執行環境當前工作目錄為專案根目錄（因為 CI 通常會執行 `cd backend && pytest`）。測試檔頭必須顯式注入動態路徑 `REPO_ROOT = Path(__file__).resolve().parent.parent.parent; sys.path.insert(0, str(REPO_ROOT))`，且 `backend/pytest.ini` 必須設定 `pythonpath = . ..`，徹底杜絕 CI 中的 `ModuleNotFoundError`。
+
+- **1Password 式私鑰存儲與動態傳輸身分解耦法則 (Storage Identity vs Transmission Identity Invariance)**: 在關聯式資料庫中，使用者 UUID 作為跨表外鍵（Foreign Key）具有物理不可變性，嚴禁為了「時效性」在資料庫層級輪換 Primary Key（會引發災難級資料庫改寫）；正確典範是將資料庫 UUID 定義為 1Password 私密引繼碼（永久存於客戶端 LocalStorage），傳輸層疊加 30 天密碼學 JWT，協同端點伺服端單向脫敏為 `mem_sha256(uid + trip_id)[:10]`，徹底達成「存儲層永固、傳輸層時效、公開層脫敏」。
+
+- **奧坎剃刀與資料庫歷史測試垃圾物理清理法則 (Occam's Razor vs Premature Abstraction Invariance)**: 當資料庫發現大量重複範例資料時，應先進行法醫學溯源。若為歷史一次性爬蟲/測試累積，且範本資料已硬編碼於記憶體中，嚴禁過早抽象引入複雜的「單一範本 + Fork on Edit + 唯讀狀態機」等分散式複雜度。直接執行安全備份與分批清理，維持無狀態的記憶體生成器，達到「零代碼修改、零架構回歸」的最高工程境界。
+
 - **Strict CHUNK_SIZE=50 for PostgREST Dynamic IN Queries**: All batch queries and deletions taking dynamic lists of UUIDs must partition requests using CHUNK_SIZE <= 50 to prevent HTTP 414 URI Too Long errors in Supabase PostgREST.
 
 - **痛點根治的四層防禦縱深法則 (AD-151)**: 面對工程中反覆發生的環境與中繼檔案痛點（如暫存檔洩漏、未列管檔案殘留），禁止單純手動刪除；必須同時建立「規格庫正規歸檔、.gitignore 永久忽略、push.md Root Hygiene Gate 硬阻斷、test_*_sentinel.py 單元測試固化」四道縱深防線，達成物理級杜絕。
