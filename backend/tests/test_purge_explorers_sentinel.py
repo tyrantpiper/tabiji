@@ -5,8 +5,16 @@ Verifies that the purge script's candidate filtering logic is mathematically sou
 strictly prevents accidental deletion of real users, and upholds all invariants.
 """
 
-import pytest
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock
+import pytest
+
+# Ensure repository root is in sys.path when pytest runs from backend/
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from scripts.purge_sample_explorers_safely import (
     inspect_and_filter_candidates,
     PROTECTED_NAMES,
