@@ -1319,35 +1319,73 @@ export function ProfileView() {
                                 <div className="w-10" />
                             </div>
 
-                            {/* 2. iOS Group 1: 帳號身分與復原碼 (Tabiji Paper Card) */}
-                            <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl p-4 mb-4 shadow-xs border border-[#0B3026]/10 dark:border-white/10">
-                                <div className="text-xs font-bold text-[#0B3026]/60 dark:text-[#88A29A] uppercase tracking-wider mb-2">
-                                    {t('account_uuid') || '帳號識別碼 (UUID)'}
+                            {/* 2. iOS Group 1: 帳號身分與專屬引繼碼 (Tabiji Paper Card) */}
+                            <div className="bg-white/80 dark:bg-[#1E2927]/80 backdrop-blur-md rounded-2xl p-4 mb-4 shadow-xs border border-[#0B3026]/10 dark:border-white/10 relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-3 opacity-10 text-[#0B3026] dark:text-white pointer-events-none select-none">
+                                    <Shield className="w-16 h-16" />
                                 </div>
-                                <div className="p-3 bg-[#F6F5EE] dark:bg-[#121A18] rounded-xl font-mono text-xs text-[#1E2927] dark:text-[#E5EBEA] break-all border border-[#0B3026]/10 dark:border-white/10 mb-2 select-all">
-                                    {typeof window !== 'undefined' ? localStorage.getItem("user_uuid") || "guest-session" : "guest-session"}
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Shield className="w-4 h-4 text-[#E56E25]" />
+                                    <div className="text-xs font-bold text-[#0B3026]/60 dark:text-[#88A29A] uppercase tracking-wider">
+                                        {t('account_recovery_key') || '帳號專屬引繼碼 (RECOVERY KEY)'}
+                                    </div>
                                 </div>
                                 <p className="text-[11px] text-[#0B3026]/70 dark:text-[#88A29A] mb-3 leading-relaxed">
-                                    {t('account_uuid_hint') || '用於在不同裝置復原帳號或備份資料'}
+                                    {t('recovery_key_desc') || '類似 1Password 私密金鑰，更換手機或還原帳號專用。請妥善私密保存，切勿分享給同伴。'}
                                 </p>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="w-full h-10 rounded-xl text-xs font-medium border-[#0B3026]/10 dark:border-white/10 active:scale-98"
-                                    onClick={async () => {
-                                        const uuid = localStorage.getItem("user_uuid")
-                                        if (uuid) {
-                                            await navigator.clipboard.writeText(uuid)
-                                            haptic.tap()
-                                            setCopiedUuid(true)
-                                            toast.success(t('account_copied') || '已複製識別碼！')
-                                            setTimeout(() => setCopiedUuid(false), 2000)
-                                        }
-                                    }}
-                                >
-                                    {copiedUuid ? <Check className="w-3.5 h-3.5 mr-1.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
-                                    {copiedUuid ? (t('account_copied') || '已複製') : (t('account_copy_uuid') || '複製識別碼')}
-                                </Button>
+                                <div className="bg-[#F6F5EE] dark:bg-[#121A18] rounded-xl p-3 flex items-center justify-between border border-[#0B3026]/10 dark:border-white/10 gap-2">
+                                    <code className="text-xs font-mono text-[#E56E25] truncate max-w-45 sm:max-w-60 font-semibold">
+                                        {recoveryKeyDisplay || (typeof window !== 'undefined' ? localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "guest-session" : "guest-session")}
+                                    </code>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            disabled={isRotatingKey}
+                                            className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg px-2"
+                                            onClick={async () => {
+                                                setIsRotatingKey(true)
+                                                try {
+                                                    const newKey = await rotateAccountRecoveryKey()
+                                                    setRecoveryKeyDisplay(newKey)
+                                                    toast.success(zh ? "新引繼碼已生成，舊引繼碼已失效！" : "New recovery key issued. Old key revoked!")
+                                                } catch (err: unknown) {
+                                                    const msg = err instanceof Error ? err.message : "Failed to rotate key"
+                                                    toast.error(msg)
+                                                } finally {
+                                                    setIsRotatingKey(false)
+                                                }
+                                            }}
+                                            title={zh ? "作廢舊金鑰並換發新金鑰" : "Revoke old key and issue new"}
+                                        >
+                                            <RefreshCw className={cn("w-3.5 h-3.5 mr-1 text-[#E56E25]", isRotatingKey && "animate-spin")} /> {zh ? "輪替" : "Rotate"}
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg px-2"
+                                            onClick={() => {
+                                                const keyToCopy = recoveryKeyDisplay || (typeof window !== "undefined" ? (localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "") : "");
+                                                if (navigator.clipboard && navigator.clipboard.writeText) {
+                                                    navigator.clipboard.writeText(keyToCopy);
+                                                    haptic.tap();
+                                                    toast.success(t('code_copied') || '已複製代碼！');
+                                                } else {
+                                                    const textArea = document.createElement("textarea");
+                                                    textArea.value = keyToCopy;
+                                                    document.body.appendChild(textArea);
+                                                    textArea.select();
+                                                    document.execCommand('copy');
+                                                    document.body.removeChild(textArea);
+                                                    haptic.tap();
+                                                    toast.success(t('code_copied') || '已複製代碼！');
+                                                }
+                                            }}
+                                        >
+                                            <Copy className="w-3.5 h-3.5 mr-1 text-[#0B3026]/70 dark:text-[#88A29A]" /> {t('copy')}
+                                        </Button>
+                                    </div>
+                                </div>
                             </div>
 
                             {/* 3. iOS Group 2: 資料與快取維護 (Tabiji Paper Card) */}
