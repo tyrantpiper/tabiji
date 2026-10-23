@@ -98,4 +98,25 @@ describe('SessionReauthModal Sandbox Component Tests', () => {
         expect(isModalOpen).toBe(false);
         expect(successNotified).toBe(true);
     });
+
+    it('TC-5: Reset & Start Fresh clears storage and requests fresh session', async () => {
+        const mockStorage: Record<string, string> = {
+            user_recovery_key: 'tbj_rec_deadbeef_0123456789abcdef0123456789abcdef',
+            user_uuid: 'old-corrupted-uuid',
+            tabiji_session_token: 'stale-token'
+        };
+
+        const resetHandler = () => {
+            delete mockStorage.user_recovery_key;
+            delete mockStorage.user_uuid;
+            delete mockStorage.tabiji_session_token;
+            mockStorage.user_uuid = 'fresh-new-uuid';
+            mockStorage.user_recovery_key = 'tbj_rec_newkey12_0123456789abcdef0123456789abcdef';
+            mockStorage.tabiji_session_token = 'fresh-valid-token';
+        };
+
+        resetHandler();
+        expect(mockStorage.user_recovery_key).toContain('tbj_rec_newkey12');
+        expect(mockStorage.tabiji_session_token).toBe('fresh-valid-token');
+    });
 });

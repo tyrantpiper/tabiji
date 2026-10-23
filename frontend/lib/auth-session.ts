@@ -16,6 +16,11 @@ const RECOVERY_KEY = "user_uuid";
 let inFlightSessionPromise: Promise<string | null> | null = null;
 let isReauthBroadcasting = false;
 let lastRestoredAt = 0;
+let lastExchangeFailedAt = 0;
+
+export function __resetExchangeFailedForTesting() {
+    lastExchangeFailedAt = 0;
+}
 
 export const UNIFORM_REAUTH_ERROR = "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。";
 
@@ -143,6 +148,11 @@ export async function ensureValidSession(): Promise<string | null> {
     const existingToken = getCachedToken();
     if (existingToken) return existingToken;
 
+    // 🛡️ 換票冷卻保護：若上次換票已確認 401 失敗，10 秒內阻斷重複轟炸後端
+    if (Date.now() - lastExchangeFailedAt < 10000) {
+        return null;
+    }
+
     // 🧪 測試環境防護：單元測試環境下若無主動換票需求則直接返回現有狀態，防止 unhandled network fetch
     if (process.env.NODE_ENV === "test" && !process.env.TEST_AUTH_EXCHANGE) {
         return existingToken;
@@ -177,12 +187,16 @@ export async function ensureValidSession(): Promise<string | null> {
             if (!res.ok) {
                 console.warn(`⚠️ [Auth] Session exchange returned HTTP ${res.status}`);
                 if (res.status === 401) {
+                    lastExchangeFailedAt = Date.now();
                     const err = await res.json().catch(() => ({}));
                     if (typeof err.detail === "string" && err.detail.toLowerCase().includes("upgraded")) {
                         console.info("ℹ️ [Auth] Account upgraded on another device. Dispatching upgrade event...");
                         if (typeof window !== "undefined") {
                             window.dispatchEvent(new CustomEvent("tabiji:credential_upgrade_required"));
                         }
+                    } else if (storedKey) {
+                        // 🛡️ 伺服器拒絕本機引繼碼 (401)，主動喚起重認證視窗，阻斷 SWR 盲目重試風暴
+                        triggerReauthPrompt();
                     }
                 }
                 return null;
@@ -312,7 +326,12 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
                 "Authorization": `Bearer ${token}`
             }
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+            if (res.status === 401 && typeof window !== "undefined") {
+                localStorage.removeItem(TOKEN_KEY);
+            }
+            return null;
+        }
         const data = await res.json();
         if (data?.recovery_key) {
             const currentKey = localStorage.getItem("user_recovery_key");
@@ -376,6 +395,7 @@ export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<st
     localStorage.setItem("user_recovery_key", cleanKey);
     localStorage.setItem(RECOVERY_KEY, data.user_id);
     lastRestoredAt = Date.now();
+    lastExchangeFailedAt = 0;
 
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", { detail: { recoveryKey: cleanKey } }));
@@ -386,3 +406,43 @@ export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<st
     SyncEngineControl.resume();
     return data.access_token;
 }
+
+/**
+ * 🛡️ 清除失效引繼金鑰並重新建立全新訪客會話 (Fresh Anonymous Session Reset)
+ */
+export async function resetAndStartFreshSession(): Promise<SessionInfo | null> {
+    if (typeof window === "undefined") return null;
+    localStorage.removeItem("user_recovery_key");
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(RECOVERY_KEY);
+    lastExchangeFailedAt = 0;
+
+    try {
+        const res = await fetch("/api/auth/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({})
+        });
+
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (data?.access_token && data?.user_id) {
+            localStorage.setItem(TOKEN_KEY, data.access_token);
+            localStorage.setItem(RECOVERY_KEY, data.user_id);
+            if (data.recovery_key) {
+                localStorage.setItem("user_recovery_key", data.recovery_key);
+            }
+            lastRestoredAt = Date.now();
+            SyncEngineControl.resume();
+            return {
+                accessToken: data.access_token,
+                userId: data.user_id,
+                isNew: true
+            };
+        }
+    } catch (err) {
+        console.warn("⚠️ [Auth] Failed to start fresh session:", err);
+    }
+    return null;
+}
+

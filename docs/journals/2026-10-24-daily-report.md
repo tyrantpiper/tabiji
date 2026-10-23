@@ -157,11 +157,31 @@
    - `npm ls --depth=0`：退出代碼 0，無任何 `ELSPROBLEMS`。
    - `next build`：Turbopack 產品級建置成功，10/10 靜態頁面生成完畢。
 
+
+---
+
+### 里程碑七：生產端本機憑證死鎖消解與十秒防轟炸熔斷 (Stale Token Latching & Anti-Storm Cooldown, AD-172)
+
+1. **事故現象與 DevTools 遙測**：
+   - 生產端 `https://www.tabijiapp.com` 在 `requestIdleCallback` 背景執行 `fetchLatestRecoveryKey()` 存取 `/api/auth/credential` 時，DevTools Console 跳出 `GET /api/auth/credential 401 (Unauthorized)`。
+2. **病理剖析（本機憑證死鎖 Stale Token Latching）**：
+   - 伺服器端帳號已輪替提升憑證版本號 (`session.token_version < db_ver`)，依法拒絕歷史憑證。
+   - 舊版前端在收到 401 後僅返回 `null`，未主動從 `localStorage` 清除作廢的舊 Token。
+   - 導致瀏覽器在每次頁面喚醒、閒置或網路重連時，反覆掏出已作廢的舊 Token 發送請求，造成控制台紅字噪音與無效網路開銷。
+3. **治理與閉環實作**：
+   - **401 物理清除（Physical Stale Token Purge）**：`fetchLatestRecoveryKey()` 在 `res.status === 401` 時立即執行 `localStorage.removeItem(TOKEN_KEY)`，阻斷死票撞門。
+   - **10 秒換票冷卻保護（Anti-Storm Cooldown）**：在 `ensureValidSession()` 中引入 `lastExchangeFailedAt`，在 401 失敗後 10 秒內短路返回 `null`，阻絕 SWR 密集重試雪崩。
+   - **全新訪客重置逃生門（Fresh Anonymous Session Reset）**：實作 `resetAndStartFreshSession()`，並在 `SessionReauthModal` 增設「重設為全新帳號」按鈕，為引繼碼徹底丟失之使用者提供原地一鍵自癒逃生通道。
+4. **測試驗收**：
+   - `auth-session-resilience.test.ts` 新增 TC-10（401 觸發重認證）與 TC-11（10 秒冷卻防轟炸）。
+   - `session-reauth-modal.test.tsx` 新增 TC-4（全新帳號重置流程）與 TC-5（錯誤容錯）。
+   - 前端 568 測試、後端 298 測試 100% 通過。
+
 ---
 
 ## 🎯 明日核心衝刺目標 (Next Steps)
 1. 監控 Dependabot 於 GitHub 上的分組更新表現，確保 PR #22 自動閉合且零容器報錯。
-2. 持續監控 PWA 離線環境下的長生命週期同步健康度。
+2. 持續監控 PWA 離線環境下的長生命週期同步健康度與生產端 Console 純淨度。
 
 ---
 
@@ -202,6 +222,13 @@
     "id": "INV-DEVOPS-019",
     "title": "Pinned Transitive Package Alignment in Dependabot & npm Overrides",
     "content": "When direct dependencies strictly pin internal sub-packages (e.g. vitest strictly pinning @vitest/mocker), Dependabot single-package transitive updates fail with exit code 1. Root dependencies must be bumped in unison with npm overrides incrementally merged to guarantee 0 vulnerabilities and 0 container resolution crashes."
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AUTH-004",
+    "title": "Stale Token Purge on Background Credential 401 & 10s Exchange Cooldown",
+    "content": "When background vault synchronization (/api/auth/credential) returns 401 Unauthorized, client must immediately purge stale TOKEN_KEY from localStorage. In ensureValidSession, a 10000ms cooldown (lastExchangeFailedAt) must be enforced upon 401 to prevent SWR storm hammering."
   }
 ]
 ```

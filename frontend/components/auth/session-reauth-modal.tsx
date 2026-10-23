@@ -11,9 +11,9 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { reanchorSessionWithKey } from "@/lib/auth-session"
+import { reanchorSessionWithKey, resetAndStartFreshSession } from "@/lib/auth-session"
 import { useLanguage } from "@/lib/LanguageContext"
-import { ShieldAlert, KeyRound, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react"
+import { ShieldAlert, KeyRound, RefreshCw, CheckCircle2, AlertTriangle, UserPlus } from "lucide-react"
 import { toast } from "sonner"
 
 const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
@@ -137,6 +137,31 @@ export function SessionReauthModal() {
                 </div>
 
                 <DialogFooter className="flex flex-col-reverse sm:flex-row gap-2 pt-2">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={async () => {
+                            if (typeof window !== "undefined" && window.confirm(zh ? "確定要清除本機失效引繼碼並建立全新訪客帳號嗎？" : "Clear invalid recovery key and create a new account?")) {
+                                setIsSubmitting(true);
+                                try {
+                                    await resetAndStartFreshSession();
+                                    toast.success(zh ? "已建立全新訪客帳號，雲端連線已復原。" : "Created fresh account, sync restored.");
+                                    setIsOpen(false);
+                                    window.location.reload();
+                                } catch {
+                                    toast.error(zh ? "重設失敗，請重試" : "Failed to reset");
+                                } finally {
+                                    setIsSubmitting(false);
+                                }
+                            }
+                        }}
+                        disabled={isSubmitting || isSuccess}
+                        className="w-full sm:w-auto text-xs text-red-500/80 hover:text-red-600 hover:bg-red-500/10 rounded-xl h-10"
+                    >
+                        <UserPlus className="w-3.5 h-3.5 mr-1.5" />
+                        {zh ? "重設為全新帳號" : "Reset & Start Fresh"}
+                    </Button>
+                    <div className="flex-1" />
                     <Button
                         type="button"
                         variant="ghost"

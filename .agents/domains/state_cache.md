@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **Stale Token Purge on Background Credential 401 & 10s Exchange Cooldown**: When background vault synchronization (/api/auth/credential) returns 401 Unauthorized, client must immediately purge stale TOKEN_KEY from localStorage. In ensureValidSession, a 10000ms cooldown (lastExchangeFailedAt) must be enforced upon 401 to prevent SWR storm hammering.
+
 - **Post-Restoration Grace Window Against Modal Thrashing**: Client-side triggerReauthPrompt must enforce a 5000ms grace cooldown based on lastRestoredAt timestamp to absorb in-flight stale 401 responses fired before re-anchoring, preventing modal reopening thrashing.
 
 - **Root Layer Realtime Subscription & Event Bus Invariant**: Account-level Realtime broadcast channels must be subscribed exclusively at the top-level client layer and communicate to deep views via DOM CustomEvents to avoid blindspots and redundant connections.
