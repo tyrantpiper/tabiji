@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Server-Side Credential Vault AES-256-GCM Invariant**: To support cross-device recovery key synchronization, the plaintext recovery key must be encrypted using AES-256-GCM derived via PBKDF2 from a server secret. Retrieval endpoints (/api/auth/credential) must strictly enforce caller JWT subject equality.
+
 - **Anti-Tampering Soft Unlock for Revealed Time Capsules**: When a trip capsule is unlocked early on the final day, existing submitted entries are permanently frozen against updates (403 Forbidden) to prevent post-unveil tampering, while unsubmitted members may append their first entry until destination midnight.
 
 - **Destination IANA Timezone Temporal Boundary Invariant**: All multi-day trip temporal boundaries (capsule locks, daily expenses, daily weather) must be evaluated against the destination IANA timezone [00:00:00, 23:59:59] converted to UTC. Never hardcode client or server local offsets.

@@ -32,3 +32,6 @@
 - **Great-Circle Slerp**: 跨天長途城際移動之球面幾何線性插值。
 - **Opaque Response**: Safari 外部圖片快取配額防膨脹與 CORS 穿透。
 - **Deterministic Guard**: 零依賴靜態腳本實施的不可妥協數學級品質門禁。
+- **Dual-Track Credential**: 資料身分永固（UUID 內部主鍵）與存取憑證（`tbj_rec_*` 現代引繼碼）之解耦模型。
+- **Opaque Realtime Signal**: WebSocket 廣播僅傳遞無狀態失效訊號（timestamp），敏感資料一律強制透過鑑權 HTTPS 拉取。
+

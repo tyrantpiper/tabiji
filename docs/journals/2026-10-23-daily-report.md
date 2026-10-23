@@ -1,17 +1,21 @@
-# 📅 Daily Report - 2026-10-23 (P0 Auth & BOLA Sentinel Hardening, Explorer Zombie Purge & Pydantic v2 Rust Serialization)
+# 📅 Daily Report - 2026-10-23 (P0 Auth & BOLA Hardening, Dual-Track Credential Vault, Realtime Sync & Security Sentinel)
 
-> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 82 Suites / 547 Tests Passed; Backend 231/231 Tests Passed; Seams 10/10 Intact), Security Ledger 194 Targets (40 Remediated, 24 Verified, 130 Dismissed).  
+> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 83 Suites / 551 Tests Passed; Backend 283 Items: 278 Passed, 5 Skipped, 0 Failures; Vercel Live Ready & Promoted), Security Ledger 212 Targets (40 Remediated, 36 Verified, 136 Dismissed).  
 > **今日關鍵研發範疇 (Core Focus)**：
 > - 🛡️ **P0 密碼學身分認證與物件授權（BOLA）深度加固**：修復行程先驗後刪漏洞（防範費用惡意清空）、實作成員脫敏 ID 記憶體安全比對（徹底消除 PostgreSQL 22P02 型別崩潰）、以及費用表成員存取校驗。
 > - 🔑 **1Password 私鑰主權與本地防覆寫鐵律**：在 `auth-session.ts` 注入身分不一致拒絕覆寫守衛，守護 Local-First 永久引繼碼，杜絕帳號被非預期 Session 覆蓋洗白（AD-153）。
 > - 🧹 **417 位歷史殭屍帳號法醫學審計與物理安全清空**：深度調查 10/22 回填遺留之 417 位 Explorer 帳號，以 100% 物理零活動證明為基礎，建立具備乾跑（Dry-Run）、全量 JSON 快照備份與分批（Chunk 50）防禦之清理工具，安全移除 5,005 筆細項與 417 筆重複行程，資料庫成功瘦身 96%（AD-151, AD-152）。
 > - 🚀 **現代 Pydantic v2 Rust 零拷貝序列化升級**：拔除 `backend/main.py` 廢棄之 `default_response_class=ORJSONResponse`，切換至 FastAPI 原生 Rust `pydantic-core` 位元組流管線，測試執行加速約 10% 並達成全棧 0 Warnings 乾淨輸出（AD-154, FP-074）。
 > - 📮 **旅伴時光膠囊破印盛典與全鏈路防篡改守衛**：動態目的地真實 IANA 時區邊界換算（杜絕西半球提前 13 小時硬凍結之地理偏見，AD-159）、告別晚宴最後一天守衛 (Last-Day Gate) 與防篡改軟解鎖（未填者寬限補交至午夜，已揭曉者禁止竄改，AD-160）、本機 L0 快照 `tripId_userId` 雙鍵防窺探隔離（AD-161）、WebSocket 脫敏協同與 Chrome DevTools 物理遙測端到端驗收。
-> - 📊 **資安總台帳數學守恆擴充**：`security-coverage-ledger.json` 自 182 擴充至 212 標的，通過 `validate_security_ledger.py` 與 `neural_seam_harness.py` 雙重嚴格校驗。
+> - 🔐 **雙軌引繼憑證與永久資料身分解耦架構 (AD-162)**：將內部資料主權（UUID 戶籍號）與登入憑證（`tbj_rec_*` 現代引繼碼）徹底解耦，金鑰支援平滑靜默升級與隨時輪替，舊資料關聯零改動、零中斷。
+> - 🛡️ **CI/CD 與 Cloud Run 部署環境機密物理脫耦 (AD-163 & FP-082)**：拔除 GitHub Action 部署命令中硬編碼的敏感環境變數，機密物理留存於 GCP Cloud Run 主控台，達成開源倉庫 0 憑證洩漏，並修復 CI 依賴漏列。
+> - ⚡ **伺服器端 AES-256-GCM 金鑰保險箱與跨裝置即時同步 (AD-164)**：建立受 JWT 身分嚴格保護之 `/api/auth/credential` 端點與 AES-256-GCM 資料庫加密保險箱，實現多端登入時金鑰變動 `<50ms` 自動鏡像。
+> - 📡 **不透明無狀態廣播失效訊號與 Security Sentinel 沙盒對抗驗收 (AD-165, FP-083, FP-084)**：徹底根除 WebSocket 明文廣播與本地狀態投毒隱患，廣播僅攜帶時間戳記失效訊號，強制走鑑權 HTTPS 拉取，產出 In-Memory PoC 通過所有沙盒測試。
+> - 📊 **資安總台帳數學守恆擴充**：`security-coverage-ledger.json` 維持 212 標的數學守恆，通過 `validate_security_ledger.py` 嚴格校驗。
 
 ---
 
-## 🏆 深度專案復盤：四大工程與資安里程碑 (Four Core Milestones)
+## 🏆 深度專案復盤：十一項工程與資安里程碑 (Eleven Core Milestones)
 
 ---
 
@@ -102,6 +106,65 @@
 
 ---
 
+### 里程碑八：雙軌引繼憑證體系與老用戶平滑靜默升級 (AD-162)
+
+1. **核心痛點與安全矛盾**：
+   - 使用者伙伴提出關鍵疑慮：若將使用者的資料庫主鍵 `user_uuid` 作為永久引繼碼，協作者在查看行程清單或公開 API 時，一旦取得建立者的真實 UUID，即可利用該 UUID 作為金鑰換取 JWT 接管整個帳號。
+   - 若直接廢除或在資料庫輪替 UUID，關聯式資料庫中數十張表的外鍵（Foreign Keys）、歷史數據、以及所有使用者的離線 IndexedDB 快取將面臨災難級斷裂與重構代價。
+2. **雙軌解耦與密碼學設計 (AD-162)**：
+   - **身分證（UUID）**：維持純粹內部資料主鍵（戶籍號碼），不兼任登入祕密；協作出口一律單向脫敏為 `mem_<hash>`。
+   - **家門鑰匙（Recovery Key）**：新增獨立高熵憑證，格式為 `tbj_rec_<8hex_key_id>_<24hex_secret>`。
+   - 資料庫僅持久化 `recovery_key_id`（B-Tree 索引查詢）與 `recovery_secret_hash`（加鹽 SHA-256 / HMAC），伺服器即使被拖庫也不外洩原始金鑰明文。
+3. **老用戶平滑靜默升級 (Silent Upgrade)**：
+   - 既有老用戶持舊版 UUID 呼叫 `/api/auth/recover` 登入時，後端驗證通過後自動生成新格式 `tbj_rec_*` 寫入資料庫，並將新鑰匙下發客戶端，完成 0 感知無痛過渡。
+   - 強化韌性：若雲端資料庫在靜默升級時寫入失敗，端點嚴格拋出 HTTP 500 終止升級，堅決杜絕客戶端存了新金鑰但伺服器未持久化導致的永久鎖死（Lockout）。
+
+---
+
+### 里程碑九：CI/CD 部署工作流與雲端環境機密物理脫耦 (AD-163 & FP-082)
+
+1. **GitHub Actions 部署漏洞排查**：
+   - 檢查 `.github/workflows/deploy-backend.yml`，發現舊版部署步驟在 `gcloud run deploy` 時直接透過 `--set-env-vars` 注入了後端多個核心環境變數。
+   - 這導致開源公開倉庫或 Fork 倉庫可能在 Actions 執行日誌、環境快照或歷史 Commit 中暴露機密。
+2. **物理脫耦與安全收攏 (AD-163)**：
+   - 將工作流重構為 `--update-env-vars` 模式，移除所有敏感機密參數；核心金鑰（`SUPABASE_KEY`、`CREDENTIAL_PEPPER`、`VAULT_SECRET`）物理留存於 GCP Cloud Run 控制台或 Secret Manager。
+   - GitHub Actions 僅負責無狀態 Docker 映像檔之建置、測試守門與部署觸發。
+3. **測試依賴環境隔離防護 (FP-082)**：
+   - 修復 `test_workflow_security_sentinel_poc.py` 引進 `yaml` 導致 CI 缺少 `pyyaml` 爆出 `ModuleNotFoundError` 的問題。
+   - 將 `pyyaml` 補入 `requirements-test.txt`，並在測試腳本加入 import 容錯保護，保證跨平台 CI 穩定運行。
+
+---
+
+### 里程碑十：AES-256-GCM 伺服端金鑰保險箱與跨裝置即時鏡像 (AD-164)
+
+1. **跨裝置登入一致性缺陷追查**：
+   - 實機測試發現：老用戶在裝置 A 登入後靜默升級產生了新金鑰，但裝置 B 依然顯示舊 UUID；若裝置 A 輪替換發金鑰，裝置 B 無法感知。
+   - 單純存儲雜湊（Hash）導致伺服器無法向已登入之合法同帳號設備提供金鑰明文。
+2. **密碼學保險箱架構 (Server-Side Credential Vault)**：
+   - 引入 PBKDF2 自伺服器環境密鑰導出 256 位元 Vault Key。
+   - 登入或輪替時，將明文 Recovery Key 經 AES-256-GCM 加密，以 Base64 密文（包含 12-byte Nonce 與 16-byte Auth Tag）安全封存於資料庫 `users.recovery_vault_ciphertext`。
+   - 開設受保護端點 `GET /api/auth/credential`，嚴格校驗請求者 Bearer JWT 之 `sub` 必須等於目標 UUID，防範 BOLA / IDOR 橫向越權。
+3. **前端雙介面同步與即時輪替支援**：
+   - 前端 Profile 主畫面與 Account Settings 子視圖（`profile-view.tsx`）雙向鏡像引繼卡片與一鍵輪替功能，登入後自動透過 Vault 端點解密拉取最新金鑰呈現。
+
+---
+
+### 里程碑十一：不透明廣播訊號、SSR 水合消除與 Security Sentinel 對抗推演 (AD-165, FP-083, FP-084)
+
+1. **沙盒對抗推演與高危洩漏發現**：
+   - 啟動 `/security-sentinel` 深度審查，推演初版跨設備即時廣播流程：發現廣播載荷若直接夾帶 `{ key: newKey }`，任何處於 `user-sync:<uuid>` 通道或攔截 WebSocket 幀的第三方均可明文竊聽金鑰；且攻擊者可發送偽造廣播封包投毒受害者的本機 `localStorage`。
+2. **不透明無狀態失效訊號架構 (Opaque Invalidation Signal)**：
+   - 廣播事件載荷全面脫敏，嚴格僅傳送 `{ timestamp: Date.now() }`，不帶任何金鑰熵值。
+   - 客戶端接收端一概忽略廣播內容，強制透過安全的 HTTPS 協議向後端保險箱發起授權拉取，徹底達成「廣播只傳失效、機密強制鑑權」的零洩漏不變量。
+3. **消除 React 19 SSR 水合跳動 (Hydration Mismatch)**：
+   - 移除在 JSX 渲染期直接同步讀取 `localStorage` 的危險反模式，全面由 React 狀態變數 `recoveryKeyDisplay` 安全承接。
+4. **登入頁全鏈路正則對齊 (FP-084)**：
+   - 修正 `landing-view.tsx` 登入按鈕僅驗證 36 字元 UUID 的缺陷，對齊新版 `tbj_rec_*` 格式正則，確保全鏈路流通無阻。
+5. **Sentinel In-Memory PoC 實證**：
+   - 產出 `backend/tests/test_realtime_credential_sentinel_poc.py`，TC-1（零洩漏廣播）、TC-2（防投毒拉取）、TC-3（BOLA 防禦）全數通過。
+
+---
+
 ## 🏛️ 架構決策記錄 (Architecture Decisions)
 
 - **AD-151: 示範行程資料治理維持記憶體範本獨立複製模式 (YAGNI & Zero-Regression)**
@@ -148,6 +211,23 @@
   - **Decision**: 涉及私密資料之 L0 儲存強制採用 `tabiji_capsule_sync_${tripId}_${userId}`。
   - **Consequence**: 實現設備級多租戶實體隔離，冷啟動零洩漏。
 
+- **AD-162: 雙軌引繼憑證與永久資料身分解耦架構 (Dual-Track Credential & Permanent Identity Decoupling)**
+  - **Context**: 舊版直接將資料庫 `user_uuid` 作為永久引繼金鑰。若將 UUID 暴露在協作行程或 API 中，有被竊取導致整帳號被接管的風險；但若全面廢除或在資料庫輪替 UUID，又會摧毀關聯式資料庫的外鍵完整性與離線 IndexedDB 快取。
+  - **Decision**: 將「資料主權」與「登入憑證」解耦：`user_uuid` 維持純粹內部資料主鍵（戶籍號碼），對外協作一律脫敏為 `mem_<hash>`；`recovery_key` 為獨立現代憑證（`tbj_rec_<8hex_key_id>_<24hex_secret>`），資料庫只存加鹽雜湊與公鑰索引，並支援老用戶平滑靜默升級。
+  - **Consequence**: 金鑰可隨時輪替（Revoke & Rotate），兼顧極致安全性與 100% 既有外鍵資料關聯完整性。
+- **AD-163: CI/CD 與 Cloud Run 部署工作流環境機密物理脫耦 (Cloud Run CI Secret Decoupling)**
+  - **Context**: 過去 `.github/workflows/deploy-backend.yml` 在部署時直接透過 `--set-env-vars` 注入機密，存在開源倉庫外洩、歷史 Commit 殘留痕跡與 Actions Runner Log 洩漏風險。
+  - **Decision**: 工作流重構為 `--update-env-vars` 模式，移除敏感環境變數；真正核心金鑰物理留存於 GCP Cloud Run 控制台，GitHub 僅負責無狀態容器映像檔打包與部署觸發。
+  - **Consequence**: 開源代碼庫達成 0 憑證外洩風險，CI 部署流程精簡且安全邊界清晰。
+- **AD-164: 伺服器端 AES-256-GCM 金鑰保險箱與跨裝置即時同步架構 (Server-Side Credential Vault & Realtime Sync)**
+  - **Context**: 單向依賴客戶端 `localStorage` 會導致多裝置登入時「一處輪替金鑰，他處金鑰不同步失聯」；但金鑰若在後端僅存雜湊，伺服器亦無法提供明文供同帳號合法裝置檢視。
+  - **Decision**: 伺服器端使用 PBKDF2 導出 Vault Key，於 `users.recovery_vault_ciphertext` 以 AES-256-GCM 密文封存明文金鑰；開設受 JWT 嚴格保護之 `GET /api/auth/credential` 端點，配合 Supabase Realtime 推播實現多終端 `<50ms` 即時鏡像。
+  - **Consequence**: 多裝置登入使用者隨時可獲取最新正確金鑰，杜絕因設備不同步產生的帳號斷聯。
+- **AD-165: 不透明無狀態廣播失效訊號與傳輸層零洩漏法則 (Opaque Invalidation Signal & Zero-Leakage Realtime Invariance)**
+  - **Context**: 初版 Realtime 廣播在 WebSocket 載荷中直接傳輸 `{ key: newKey }`，面臨公開通道明文嗅探與惡意狀態投毒風險；且 JSX 中直接讀取 `localStorage` 存在 React 19 SSR 水合跳動風險。
+  - **Decision**: 廣播載荷嚴格禁止包含任何敏感熵，僅發送不透明時間戳記 `{ timestamp: Date.now() }`；客戶端強制走鑑權 HTTPS 通道向後端保險箱拉取，並消除 JSX 直接讀取 `localStorage`。
+  - **Consequence**: 徹底達成「廣播只傳失效、機密強制鑑權」之零洩漏架構，React 19 渲染 100% 穩定無警告。
+
 ---
 
 ## 🛡️ 踩坑紀錄 (Failed Paths & Debugging Lessons)
@@ -185,6 +265,16 @@
 - **FP-081: 測試環境歷史殘留 Flag 遮蔽真實時間邏輯驗證**
   - **Symptom**: 測試行程因 10/14 遺留 `is_capsule_unlocked = true`，導致 10/23 畫面提早進入破印盛典，差點遺漏最後一天守衛的物理檢驗。
   - **Lesson**: 測試資料庫必須定期執行狀態對齊與法醫學清理，拒絕靜態假資料產生的虛假安全感。
+
+- **FP-082: 測試依賴漏列與跨環境未隔離陷阱 (CI Test Dependency Omission Trap)**
+  - **Symptom**: 本機開發環境因全域安裝了 `pyyaml` 執行無誤，推送到 GitHub Actions 後端測試在搜集階段拋出 `ImportError: No module named 'yaml'` 直接中斷，Exit Code 2。
+  - **Lesson**: 哨兵測試若引進第三方函式庫，必須同步檢查 `requirements-test.txt`；同時在測試代碼頂部對可選依賴實施 `try ... except ImportError` 守衛，杜絕 CI 搜集階段爆裂。
+- **FP-083: 即時廣播通道明文洩漏與客戶端狀態投毒陷阱 (Realtime Broadcast Plaintext & State Poisoning Trap)**
+  - **Symptom**: 為求快速將輪替後的新金鑰直接塞入 WebSocket 廣播 payload，導致處於同一頻道者能直接嗅探明文；且惡意者可偽造 broadcast 事件污染其他設備的本機儲存。
+  - **Lesson**: 即時廣播通道一律定義為不可信傳輸層，只能用於傳遞無狀態的失效訊號；敏感資料必須強制走具備雙向身分驗證與加密的專屬 API 進行拉取。
+- **FP-084: 登入頁表單前端正則驗證與雙軌憑證未對齊陷阱 (Landing Page Form Regex Desynchronization Trap)**
+  - **Symptom**: 後端已全面升級支援 `tbj_rec_*` 格式，但前端 Landing View 登入欄位按鈕仍綁死舊版 36 字元 UUID 正則，導致持有新金鑰之用戶無法點擊提交。
+  - **Lesson**: 認證體系升級時，前端登入閘門、後端驗簽、資料庫欄位及錯誤提示正則必須實施全鏈路同步，並在端到端測試中納入格式變更後的邊界驗證。
 
 ---
 
@@ -339,6 +429,55 @@
     "id": "FP-081",
     "title": "Stale Test Database Flag Masking Temporal Guard Regressions",
     "content": "Historical test records with pre-set boolean flags bypass temporal guard verification in production previews. Always verify and reset state before E2E telemetry."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DUAL-TRACK-CREDENTIAL-DECOUPLING",
+    "title": "Dual-Track Credential & Permanent Identity Decoupling Invariant",
+    "content": "User UUID must remain an internal-only foreign key anchor and never serve as an authentication credential. Authentication must use dedicated high-entropy recovery keys (tbj_rec_*), stored strictly as salted hashes in the database."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-CLOUD-RUN-CI-SECRET-DECOUPLING",
+    "title": "Cloud Run CI/CD Workflow Secret Decoupling Invariant",
+    "content": "GitHub Actions deployment workflows must never pass sensitive environment variables via --set-env-vars. Secrets must reside exclusively within cloud platform secret managers or container service configurations."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-SERVER-CREDENTIAL-VAULT-AES256GCM",
+    "title": "Server-Side Credential Vault AES-256-GCM Invariant",
+    "content": "To support cross-device recovery key synchronization, the plaintext recovery key must be encrypted using AES-256-GCM derived via PBKDF2 from a server secret. Retrieval endpoints (/api/auth/credential) must strictly enforce caller JWT subject equality."
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-REALTIME-OPAQUE-INVALIDATION-SIGNAL",
+    "title": "Opaque Invalidation Signal for Realtime WebSocket Channels",
+    "content": "Realtime broadcast events (e.g. CREDENTIAL_ROTATED) must never contain plaintext secrets or user tokens in their payload. Broadcasts must function strictly as opaque invalidation signals (timestamp only), forcing clients to fetch fresh state over authenticated HTTPS."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-082",
+    "title": "CI Test Dependency Omission Trap",
+    "content": "Assuming dependencies are available in CI because they exist in local dev causes CI collection aborts. Always declare test dependencies in requirements-test.txt and guard optional imports."
+  },
+  {
+    "domain": "state_cache",
+    "type": "FAILED_PATH",
+    "id": "FP-083",
+    "title": "Realtime Broadcast Plaintext & State Poisoning Trap",
+    "content": "Broadcasting plaintext secrets over WebSocket channels leaks credentials and allows state poisoning. Always use opaque signals and authenticated pull."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-084",
+    "title": "Landing Page Form Regex Desynchronization Trap",
+    "content": "Updating backend credential formats without updating frontend landing page form validation regex blocks users at the submission gate. Always synchronize credential formats across the entire chain."
   }
 ]
 ```
