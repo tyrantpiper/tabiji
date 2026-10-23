@@ -7,7 +7,7 @@ supabase
 google-genai
 python-dotenv
 rapidfuzz>=3.14.6
-slowapi>=0.1.9
+slowapi>=0.1.10
 aiofiles>=25.1.0
 orjson>=3.10.0
 cryptography>=50.0.2
