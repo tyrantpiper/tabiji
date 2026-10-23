@@ -96,7 +96,6 @@ export function ZoomableImage({
                 pinch={{ step: 5 }}
                 limitToBounds={true}
                 velocityAnimation={{
-                    sensitivity: 1,
                     animationTime: 200
                 }}
             >

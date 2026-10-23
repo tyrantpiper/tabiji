@@ -177,6 +177,22 @@
    - `session-reauth-modal.test.tsx` 新增 TC-4（全新帳號重置流程）與 TC-5（錯誤容錯）。
    - 前端 568 測試、後端 298 測試 100% 通過。
 
+
+---
+
+### 里程碑八：Dependabot 大版本隔離護城河與依賴穿透型別免疫 (Dependabot Major Isolation & Type Immunization, AD-173)
+
+1. **事故背景與日誌分析**：
+   - GitHub Dependabot PR #31 試圖一次性打包升級 52 個前端依賴，其中夾雜多個破壞性大版本（如 `react-zoom-pan-pinch 3->4`、`@testing-library/jest-dom 6->7`、`maplibre-gl 6.9->6.15`），引發 29 個 TypeScript 編譯報錯。
+2. **架構決策與治理**：
+   - **大版本物理隔離護城河**：修改 `.github/dependabot.yml`，在分組規則中明確宣告 `update-types: ["minor", "patch"]`。未來 Dependabot 僅會自動聚合安全的次版本與補丁更新；任何涉及破壞性變更的 Major 版本將強制單獨開啟獨立 PR，杜絕 52 包連環炸。
+   - **全域型別宣告解耦注入**：建立 `frontend/types/jest-dom.d.ts`，全域引入 `@testing-library/jest-dom/vitest`，確保 `toBeInTheDocument` 在所有測試中無論套件升降級均能被 `tsc` 正常識別。
+   - **GeoJSON 依賴去黑箱**：在 `frontend/package.json` 的 `devDependencies` 顯式聲明 `"@types/geojson": "^7946.0.16"`，避免依賴 `maplibre-gl` 內部提升帶來的型別幽靈消失風險。
+   - **前向與後向相容清理**：在 `zoomable-image.tsx` 中移除已棄用的 `sensitivity: 1` 屬性，確保在 v3 與 v4 下均能 100% 正確編譯運行。
+3. **測試驗收**：
+   - `tsc --noEmit` 29 個型別報錯全數歸零。
+   - 前端 568 個測試、後端 298 個測試 100% 通過。
+
 ---
 
 ## 🎯 明日核心衝刺目標 (Next Steps)
@@ -229,6 +245,13 @@
     "id": "INV-AUTH-004",
     "title": "Stale Token Purge on Background Credential 401 & 10s Exchange Cooldown",
     "content": "When background vault synchronization (/api/auth/credential) returns 401 Unauthorized, client must immediately purge stale TOKEN_KEY from localStorage. In ensureValidSession, a 10000ms cooldown (lastExchangeFailedAt) must be enforced upon 401 to prevent SWR storm hammering."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEVOPS-020",
+    "title": "Dependabot Group Scope Restricted to Minor & Patch Updates",
+    "content": "Dependabot groups must specify 'update-types: [\"minor\", \"patch\"]' to strictly isolate breaking major upgrades into standalone PRs, preventing monolithic group PRs from breaking the entire test and compilation pipeline."
   }
 ]
 ```
