@@ -140,8 +140,27 @@
 
 ---
 
+### 里程碑六：Dependabot 容器崩潰法醫學診斷與零依賴漏洞治理 (Dependabot Crash Forensic & Zero-Vulnerability Resolution, AD-171)
+
+1. **事故現象與日誌溯源**：
+   - GitHub Dependabot 在執行 `/frontend` 依賴動態更新時回報容器崩潰：`Command failed with exit code 1: /bin/sh -c $DEPENDABOT_HOME/dependabot-updater/bin/run update_files`，任務標記為 Failure。
+2. **法醫學根因**：
+   - GitHub 安全審計通報了 5 項安全漏洞（`next`, `dompurify`, `vite`, `@vitest/mocker`）。
+   - 在 `package-lock.json` 中，根開發依賴 `vitest@4.1.11` 內部對 `@vitest/mocker` 實施了絕對版本相等約束（`"@vitest/mocker": "4.1.11"`）。
+   - 當 Dependabot 的 `update_files` 容器指令試圖單獨在 Lockfile 中將間接依賴 `@vitest/mocker` 升級至 `4.1.12`，而未同時升級根層 `vitest` 時，npm 解析器引發約束破壞與 Exit Code 1 崩潰。
+3. **治理與閉環策略**：
+   - **根層升級**：將 `frontend/package.json` 中的 `next` 升級至 `^16.4.3`，`vitest` 升級至 `^4.1.12`，帶動內部所有 `@vitest/*` 組件整體躍升至安全基準。
+   - **overrides 原地增量合併**：在 `package.json` 的 `overrides` 中增補 `"dompurify": "^3.4.17"` 與 `"vite": "^7.3.7"`，杜絕底層依賴重複產生漏洞。
+   - **建立確定性配置**：新建 `.github/dependabot.yml`，明確宣告 `/frontend` 與 `/backend` 之套件生態系與分組規則。
+4. **驗收成效**：
+   - `npm audit`：由 5 項漏洞（2 Moderate, 1 High, 2 Critical）完全降至 **0 vulnerabilities**。
+   - `npm ls --depth=0`：退出代碼 0，無任何 `ELSPROBLEMS`。
+   - `next build`：Turbopack 產品級建置成功，10/10 靜態頁面生成完畢。
+
+---
+
 ## 🎯 明日核心衝刺目標 (Next Steps)
-1. 執行 `/push` 全棧品質關卡發布，將包含 Oracle 防禦、零傳輸外洩與 Outbox 凍結之 27 個變動檔案安全同步至遠端倉庫。
+1. 監控 Dependabot 於 GitHub 上的分組更新表現，確保 PR #22 自動閉合且零容器報錯。
 2. 持續監控 PWA 離線環境下的長生命週期同步健康度。
 
 ---
@@ -176,6 +195,13 @@
     "id": "INV-AUTH-003",
     "title": "Post-Restoration Grace Window Against Modal Thrashing",
     "content": "Client-side triggerReauthPrompt must enforce a 5000ms grace cooldown based on lastRestoredAt timestamp to absorb in-flight stale 401 responses fired before re-anchoring, preventing modal reopening thrashing."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEVOPS-019",
+    "title": "Pinned Transitive Package Alignment in Dependabot & npm Overrides",
+    "content": "When direct dependencies strictly pin internal sub-packages (e.g. vitest strictly pinning @vitest/mocker), Dependabot single-package transitive updates fail with exit code 1. Root dependencies must be bumped in unison with npm overrides incrementally merged to guarantee 0 vulnerabilities and 0 container resolution crashes."
   }
 ]
 ```
