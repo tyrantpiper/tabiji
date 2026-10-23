@@ -13,3 +13,8 @@
 - [`2026-10-22-developer-archetype-and-intuition-engineering.md`](file:///d:/Project/tabiji/travel-pwa/docs/reflections/2026-10-22-developer-archetype-and-intuition-engineering.md)  
   *《開發者心智進化論與直覺工程學：一場非典型工程實踐的冷靜自我解剖》*  
   剖析 760+ 筆 Commit 背後的病理歷程、醫學防禦性思維映射、Stanford PR #84 攻堅真實現狀，以及面對科技巨頭標準的長短板解構。
+
+- [`2026-10-23-iatrogenic-cache-and-collaborative-illusion.md`](file:///d:/Project/tabiji/travel-pwa/docs/reflections/2026-10-23-iatrogenic-cache-and-collaborative-illusion.md)  
+  *《雙重快取的醫源性病變與協同錯覺：一次關於狀態主權的深度冷血反思》*  
+  深入解剖 Service Worker 舊快取毒丸反噬 SWR 樂觀更新的醫源性病理、Supabase Realtime CDC 欄位靜默失聯與資安破口、React 異步閉包與離線隊列洩漏，以及對防禦體系是否過度工程化的自我警惕。
+

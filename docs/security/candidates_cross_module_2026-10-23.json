@@ -1,0 +1,34 @@
+[
+  {
+    "id": "frontend/lib/hooks/useTripRealtime.ts:expenses_cdc_and_swr_tuple_key_desync",
+    "file_path": "frontend/lib/hooks/useTripRealtime.ts",
+    "attack_vector": "race_condition_and_cache_desync",
+    "hypothesis": "useTripRealtime lacks Supabase postgres_changes listener on 'expenses' table and lacks 'expense:update' broadcast handling. Furthermore, useExpenses registers SWR with a composite tuple key [`/api/trips/${tripId}/expenses`, userId], meaning simple string mutate('/api/trips/${tripId}/expenses') silently fails to invalidate cache, causing collaborative expense updates from peers to be ignored until manual page reload.",
+    "start_line": 110,
+    "end_line": 180
+  },
+  {
+    "id": "frontend/components/views/tools-view.tsx:expense_broadcast_and_dialog_open_guard",
+    "file_path": "frontend/components/views/tools-view.tsx",
+    "attack_vector": "collaborative_desync_and_state_collision",
+    "hypothesis": "tools-view does not subscribe to tabiji:collab-event for expense updates, nor does handleDeleteExpense broadcast deletions to peers. Additionally, an uncoordinated SWR background revalidation during active expense editing (controlled by isDialogOpen) will clobber or desync local user interactions.",
+    "start_line": 145,
+    "end_line": 200
+  },
+  {
+    "id": "frontend/components/views/info-view.tsx:handle_save_stale_closure_and_l0_snapshot_omission",
+    "file_path": "frontend/components/views/info-view.tsx",
+    "attack_vector": "stale_closure_and_l0_persistence_omission",
+    "hypothesis": "In info-view.tsx, handleSaveInner executes setHotels(newHotels) and immediately triggers handleSave(). Because React state updates are asynchronous, handleSave closes over the stale 'hotels' state, sending outdated flight/hotel info to the backend and dropping user input. Furthermore, handleSave fails to invoke saveTripSnapshot, leaving L0 IndexedDB cache desynced from server state.",
+    "start_line": 125,
+    "end_line": 145
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx:optimistic_activity_rollback_snapshot_poisoning",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "state_desynchronization_and_snapshot_poisoning",
+    "hypothesis": "In itinerary-view.tsx, handleUpdateActivity and handleDeleteItem optimistically mutate SWR cache without persisting to saveTripSnapshot. In handleUpdateActivity's catch block, revalidation rollback fails to update saveTripSnapshot, leaving corrupted optimistic data in IndexedDB upon network error. Additionally, 5-second delayed deletion queue leaves L0 snapshot inconsistent during undo windows.",
+    "start_line": 1295,
+    "end_line": 1370
+  }
+]

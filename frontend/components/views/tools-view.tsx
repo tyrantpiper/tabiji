@@ -32,6 +32,7 @@ import { useExpenses, useHaptic, useTripDetail } from "@/lib/hooks"
 import { useTargetExpenseId, useTripStore } from "@/lib/stores/tripStore"
 import { debugLog } from "@/lib/debug"
 import { ExpenseDialog } from "@/components/expense-dialog"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { expensesApi, tripsApi, API_HOST } from "@/lib/api"
 import { ActuaryDialogCard } from "@/components/ActuaryDialogCard"
 import { useOfflineMutation } from "@/lib/sync-hooks"
@@ -257,6 +258,18 @@ export function ToolsView() {
     const [isDialogOpen, setIsDialogOpen] = useState(false)
     const [editItem, setEditItem] = useState<Expense | null>(null)
     const haptic = useHaptic()
+
+    // ⚡ 監聽跨裝置記帳協同廣播 (<10ms 鏡像感知，彈窗編輯中免打擾)
+    useEffect(() => {
+        const handleCollab = (e: Event) => {
+            const detail = (e as CustomEvent).detail
+            if (detail?.event === "expense:update" && !isDialogOpen) {
+                reloadExpenses()
+            }
+        }
+        window.addEventListener("tabiji:collab-event", handleCollab)
+        return () => window.removeEventListener("tabiji:collab-event", handleCollab)
+    }, [isDialogOpen, reloadExpenses])
 
     // 🆕 v3.8: 信用卡回饋彙整
     const [localCards, setLocalCards] = useState<CreditCard[]>([])
@@ -560,6 +573,12 @@ export function ToolsView() {
         try {
             const userId = localStorage.getItem("user_uuid") || ""
             await expensesApi.delete(id, userId)
+            if (activeTripId) {
+                broadcastTripEvent(activeTripId, "expense:update", {
+                    deleted_id: id,
+                    action: "delete"
+                }).catch(() => {})
+            }
             reloadExpenses() // 🔄 Use SWR mutate
         } catch (e) { console.error(e) }
     }

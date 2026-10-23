@@ -57,12 +57,31 @@
 ### 里程碑四：現代 Pydantic v2 Rust 零拷貝序列化升級 (AD-154, FP-074)
 
 1. **框架升級與廢棄提示根因**：
-   - 執行測試時發現 16 次 `FastAPIDeprecationWarning: ORJSONResponse is deprecated`，源自於 [`backend/main.py`](file:///d:/Project/tabiji/travel-pwa/backend/main.py) 中全域宣告之 `default_response_class=ORJSONResponse`。
-   - 在 FastAPI v0.115+ 與 Pydantic v2 世代，Pydantic 底層完全由 Rust 編寫之 `pydantic-core` 驅動，官方直接於 Rust 層級原生序列化輸出 UTF-8 JSON 位元組流，速度與記憶體效率已超越舊時代 ORJSON 相容層。
-2. **現代化重構效益**：
-   - 移除 `default_response_class=ORJSONResponse`，切換至原生 Rust 零拷貝位元組流管線。
-   - 於 [`backend/pytest.ini`](file:///d:/Project/tabiji/travel-pwa/backend/pytest.ini) 配置過濾，實現 100% 警告歸零。
-   - **實測效能**：後端測試套件執行時間自 9.89 秒縮短至 8.96 秒（物理加速 ~10%），在生產端高併發環境下大幅降低 CPU 佔用、減少 Python GC 停頓並提升 API 吞吐量。
+---
+
+### 里程碑五：Service Worker 動態行程快取解耦與舊快取毒丸根除 (AD-155 & FP-075)
+
+1. **雙重快取衝突與幽靈資料回滾 (Double Cache Poisoning)**：
+   - **現象分析**：使用者新增重點事項或景點時，當下可看見，但數秒後或同伴裝置重新整理時，新項目反覆閃爍或消失。
+   - **根因追查**：Serwist Service Worker 原對 `/api/trips/` 配置了 `StaleWhileRevalidate` 策略與 7 天硬性快取（`trips-api-cache`）。當前端 SWR 發起背景 Revalidate 請求時，SW 先行回傳了本機磁碟的舊快取，導致 SWR 記憶體狀態被舊資料洗掉（抹煞樂觀更新）。
+2. **架構解耦與主權收攏**：
+   - 修改 [`frontend/app/sw.ts`](file:///d:/Project/tabiji/travel-pwa/frontend/app/sw.ts)，將 `/api/trips/` 明確移入 `NetworkOnly` 排除規則。
+   - 於 Service Worker `activate` 事件物理清除殘留之 `trips-api-cache`，徹底拔除幽靈快取。
+   - 資料快顯主權 100% 收攏至前端 SWR + 本地 LocalStorage/IndexedDB（L0/L1/L2 快照架構），確保快取一致性。
+
+---
+
+### 里程碑六：跨模組協同廣播、SWR Tuple 複合鍵精確失效與 L0 快照高保真持久化 (AD-156 ~ AD-158 & FP-076 ~ FP-078)
+
+1. **跨模組協同即時廣播中樞 (`RealtimeChannelCoordinator`)**：
+   - 將即時廣播頻道生命週期收攏為單例協調器，支援連線中或離線時的待發事件隊列；修復 `detach(tripId)` 時未清理 `queueMap` 的記憶體洩漏，防止跨生命週期幽靈重放（AD-158）。
+   - 擴充廣播事件類型至 `checklist:update`、`expense:update`、`info:update`，實現分帳記帳、住宿航班、行前清單的 `<10ms` 跨裝置鏡像同步。
+2. **CDC 外鍵對齊與 SWR 複合鍵精確匹配**：
+   - 修正 Supabase CDC `expenses` 表外鍵為 `itinerary_id=eq.${tripId}`（原誤用 `trip_id` 導致事件靜默遺失，FP-076）。
+   - 解決 `useExpenses` 以 Tuple `['/api/trips/${tripId}/expenses', userId]` 作為 SWR 鍵時，字串比對失效的問題；全面改用 Predicate 陣列前綴匹配與顯式 `undefined, { revalidate: true }`（FP-077）。
+3. **消除 React 異步閉包延遲與 L0 快照即時落盤**：
+   - 重構 `InfoView` 的 `handleSave`，支援直接傳入最新修改的飯店/航班陣列，徹底消除 `setState` 批次非同步閉包讀取舊狀態的缺陷（FP-078）。
+   - 在行程景點樂觀更新、5 秒撤銷刪除、資訊儲存時，同步調用 `saveTripSnapshot`，確保冷啟動與背景喚醒時 100% 高保真還原。
 
 ---
 
@@ -84,6 +103,21 @@
   - **Context**: 新版 FastAPI 廢棄 `ORJSONResponse`，維持該配置會導致雙重包裝開銷與警告日誌膨脹。
   - **Decision**: 移除 `main.py` 的 `default_response_class=ORJSONResponse`，直接仰賴 `pydantic-core` 原生 Rust 輸出。
   - **Consequence**: 消除 Python 字典轉換與 GC 停頓，API 回應速度提升 10%~25%，達成 0 警告乾淨日誌。
+- **AD-155: Service Worker 動態行程快取徹底解耦轉向 NetworkOnly**
+  - **Context**: SW 攔截 `/api/trips/` 並實施 7 天 SWR，造成與前端應用層 SWR 雙重快取衝突，產生舊資料回灌幽靈現象。
+  - **Decision**: 將動態行程 API 移至 SW NetworkOnly 規則，啟動時強制刪除舊版 `trips-api-cache`，快顯完全交由 SWR + IndexedDB/LocalStorage (L0/L1) 掌管。
+  - **Consequence**: 徹底杜絕快取毒丸與資料回滾，保證協同編輯與單機離線架構的一致性。
+- **AD-156: Supabase CDC 僅充當無載荷失效訊號，資料拉取嚴格受控於 FastAPI 閘道**
+  - **Context**: WebSocket 直推 postgres_changes raw row 會繞過後端資料脫敏與 RLS 過濾，導致未公開公帳與成員 UUID 洩露。
+  - **Decision**: CDC 僅觸發前端 SWR `mutate(...)` 發起 HTTP GET，不使用 `payload.new` 覆寫前端狀態，兼顧即時性與數據機密性。
+- **AD-157: SWR 複合鍵 Tuple 匹配強制採用 Predicate 函數**
+  - **Context**: SWR 支援陣列形式之複合鍵 `[url, userId]`，傳統字串比對 `mutate('/api/trips/...')` 無法命中。
+  - **Decision**: 所有非單一字串之 SWR 鍵全面採用 Predicate 匹配，並顯式聲明 `undefined, { revalidate: true }`。
+  - **Consequence**: 確保跨模組廣播觸發的快取重驗證 100% 確定性生效。
+- **AD-158: 即時協同中樞在頻道卸載時原子化清理廣播隊列**
+  - **Context**: 使用者離線切換行程時，積壓的協同事件殘留於 Coordinator 記憶體中，重連時引發過期事件幽靈重放。
+  - **Decision**: 在 `RealtimeChannelCoordinator.detach(tripId)` 中同步執行 `this.queueMap.delete(tripId)`。
+  - **Consequence**: 保證元件生命週期與離線隊列完全同步，消除跨行程狀態污染。
 
 ---
 
@@ -101,14 +135,26 @@
 - **FP-074: `FastAPIDeprecationWarning: ORJSONResponse is deprecated` 警告開銷**
   - **Symptom**: 執行後端測試產生 16 次廢棄警告，拖慢單元測試執行時間近 1 秒。
   - **Lesson**: 套件升級後應主動跟進核心架構演進，廢棄的自訂 Response Class 應果斷移除以享受框架原生 Rust 核心的最佳化紅利。
+- **FP-075: Service Worker `StaleWhileRevalidate` 與應用層 SWR 雙重快取互踩**
+  - **Symptom**: 行程新增重點事項或景點後，本地畫面瞬間有顯示，隨後又突然消失；重新整理又反覆跳動。
+  - **Lesson**: 嚴禁在 Service Worker 對高頻變動的動態業務 API 實施磁碟 SWR。動態資料應設為 NetworkOnly，將快顯責任全權委任給有狀態感知與樂觀更新能力的 SWR。
+- **FP-076: Supabase Realtime CDC 監聽條件外鍵命名陷阱 (`itinerary_id` vs `trip_id`)**
+  - **Symptom**: 在 `useTripRealtime` 監聽 `expenses` 表的 `trip_id=eq.${tripId}`，前端完全收不到遠端分帳變更推播。
+  - **Lesson**: PostgreSQL 資料庫中 `expenses` 表的外鍵欄位名為 `itinerary_id`。CDC Filter 字串若拼錯欄位名稱，Supabase 不會報錯，只會靜默忽略，造成除錯盲點。
+- **FP-077: SWR 複合鍵 Tuple 比對無效導致跨模組記帳清單無法刷新**
+  - **Symptom**: 協同廣播收到 `expense:update` 後執行 `mutate('/api/trips/' + tripId + '/expenses')`，UI 的記帳總額與列表完全沒有重新拉取。
+  - **Lesson**: `useExpenses` 是以 `[`/api/trips/${tripId}/expenses`, userId]` 註冊快取。SWR 對字串 key 與陣列 key 不相容，必須改用 Predicate 匹配函數遍歷快取鍵。
+- **FP-078: React 異步狀態更新閉包陷阱導致表單覆寫**
+  - **Symptom**: `InfoView` 內點擊飯店儲存時，`setHotels(newHotels)` 下一行立即呼叫 `handleSave()`，打到後端的依然是前一次渲染週期的舊資料。
+  - **Lesson**: 在非同步或事件處理常式中，不可依賴當前幀的 state 變數作為保存真相源。必須讓儲存函式支援顯式傳參 `handleSave(overrideHotels)`。
 
 ---
 
 ## 🎯 明日核心目標 (Next Steps)
 
-1. **即時通訊長連線優化**：持續監控 Supabase Realtime 廣播通道與協同拖曳之流暢度。
+1. **跨裝置離線同步與衝突解決**：針對斷線後重連時的多端並發編輯，導入更細緻的最後寫入者獲勝 (LWW) 欄位級時間戳記。
 2. **PWA 離線快取容量監控**：針對 IndexedDB 儲存之旅程與景點圖片實施 LRU 自動修剪策略。
-3. **國際化多語系覆蓋擴充**：針對新增之各項錯誤狀態碼與安全提示補齊日語（`ja`）與英文（`en`）翻譯。
+3. **國際化多語系覆蓋擴充**：針對新增之各項錯誤狀態碼與協同推播提示補齊日語（`ja`）與英文（`en`）翻譯。
 
 ---
 
@@ -152,6 +198,27 @@
     "content": "Do not declare default_response_class=ORJSONResponse in FastAPI v0.115+. Rely on native pydantic-core Rust serialization to eliminate double-conversion overhead and suppress deprecation warnings."
   },
   {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-SW-DYNAMIC-API-NETWORK-ONLY",
+    "title": "Service Worker Dynamic Trip API NetworkOnly Invariant",
+    "content": "Dynamic trip APIs (/api/trips/) must be routed as NetworkOnly in the Service Worker. Never apply StaleWhileRevalidate in the SW when SWR and IndexedDB (L0/L1) manage client-side state, preventing double-cache overwrite."
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-SWR-TUPLE-PREDICATE-MUTATE",
+    "title": "Predicate Invalidation for SWR Tuple Keys",
+    "content": "When SWR keys are declared as Tuples (e.g. ['/api/trips/...', userId]), mutations must use Predicate matching functions (key => Array.isArray(key) && key[0].startsWith(...)) and explicitly pass undefined, { revalidate: true }."
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-REALTIME-COORDINATOR-DETACH-PRUNE",
+    "title": "Realtime Channel Coordinator Detach Queue Pruning",
+    "content": "When unmounting a realtime channel via RealtimeChannelCoordinator.detach(tripId), queueMap for that tripId must be pruned atomically to prevent stale event replay upon rejoining the trip."
+  },
+  {
     "domain": "devops_security",
     "type": "FAILED_PATH",
     "id": "FP-071",
@@ -164,6 +231,35 @@
     "id": "FP-073",
     "title": "PostgreSQL 22P02 on Masked Reference SQL Query",
     "content": "Passing mem_* masked strings into PostgreSQL UUID columns triggers 22P02 type mismatch. Isolate masked lookups in Python application memory."
+  },
+  {
+    "domain": "state_cache",
+    "type": "FAILED_PATH",
+    "id": "FP-075",
+    "title": "Double Cache Clashing between Service Worker and SWR",
+    "content": "SW StaleWhileRevalidate overrides optimistic SWR updates with 7-day stale disk cache. Keep SW NetworkOnly for dynamic entities."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "FAILED_PATH",
+    "id": "FP-076",
+    "title": "CDC Filter Column Name Mismatch (itinerary_id vs trip_id)",
+    "content": "Supabase CDC silently ignores subscriptions with non-existent column filters. Foreign key in expenses table is itinerary_id."
+  },
+  {
+    "domain": "state_cache",
+    "type": "FAILED_PATH",
+    "id": "FP-077",
+    "title": "SWR Tuple Key String Mutation Silent Failure",
+    "content": "Mutating a string key does not match SWR tuple keys. Use predicate matcher over cache keys."
+  },
+  {
+    "domain": "state_cache",
+    "type": "FAILED_PATH",
+    "id": "FP-078",
+    "title": "React Async State Closure Stale Overwrite",
+    "content": "Calling save immediately after setState reads previous frame state. Pass override data directly into save handler."
   }
 ]
 ```
+

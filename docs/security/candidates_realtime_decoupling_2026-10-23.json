@@ -1,0 +1,50 @@
+[
+  {
+    "id": "frontend/app/sw.ts:trip_api_sw_stale_cache_poisoning",
+    "file_path": "frontend/app/sw.ts",
+    "attack_vector": "stale_cache_poisoning_and_collaborative_desync",
+    "hypothesis": "Serwist runtimeCaching matches '/api/trips/' with StaleWhileRevalidate (7-day maxAge). When SWR triggers revalidation following a collaborative update, the Service Worker returns the stale cached response, overwriting optimistic UI updates and causing newly added or deleted notes to disappear until browser hard reload.",
+    "start_line": 133,
+    "end_line": 160
+  },
+  {
+    "id": "frontend/lib/hooks.ts:fetcher_http_cache_bypass",
+    "file_path": "frontend/lib/hooks.ts",
+    "attack_vector": "http_cache_staleness_leak",
+    "hypothesis": "fetcherWithUserId invokes activeFetch without 'cache: no-store', allowing browser disk cache or intermediate proxies to return cached 200/304 responses during SWR background revalidation, which desynchronizes multi-user collaborative editing states.",
+    "start_line": 19,
+    "end_line": 60
+  },
+  {
+    "id": "frontend/lib/hooks/useTripRealtime.ts:untracked_channel_and_premature_revalidate_race",
+    "file_path": "frontend/lib/hooks/useTripRealtime.ts",
+    "attack_vector": "race_condition_and_dropped_broadcast",
+    "hypothesis": "broadcastTripEvent dispatches messages on an uncoordinated channel instance without checking SUBSCRIBED status, dropping events during connection phase. Furthermore, receiving tip:update immediately triggers SWR mutate() before the database HTTP PATCH completes, causing the client to fetch uncommitted stale data from Supabase and wipe out live updates.",
+    "start_line": 26,
+    "end_line": 145
+  },
+  {
+    "id": "frontend/components/itinerary/EditableDailyTips.tsx:dual_state_and_index_based_deletion",
+    "file_path": "frontend/components/itinerary/EditableDailyTips.tsx",
+    "attack_vector": "state_desynchronization_and_off_by_one_deletion",
+    "hypothesis": "EditableDailyTips maintains duplicated local state (localNotes, localCosts, localTickets) synchronized via useEffect. When SWR revalidates, stale props overwrite in-flight optimistic user input. Additionally, NoteItem lacks a unique identifier, causing concurrent deletions via array index to delete incorrect items when another collaborator inserts items asynchronously.",
+    "start_line": 170,
+    "end_line": 230
+  },
+  {
+    "id": "frontend/components/itinerary/EditableDailyChecklist.tsx:missing_realtime_and_state_clashing",
+    "file_path": "frontend/components/itinerary/EditableDailyChecklist.tsx",
+    "attack_vector": "missing_realtime_replication_and_local_overwrite",
+    "hypothesis": "EditableDailyChecklist completely lacks Supabase Realtime broadcast support, isolating checklist modifications on a single device. Its internal useState(items) + useEffect([items]) pattern suffers from identical state clashing, where background SWR revalidation overwrites recently checked items.",
+    "start_line": 35,
+    "end_line": 65
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx:omitted_storage_snapshot_desync",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "storage_snapshot_inconsistency",
+    "hypothesis": "handleDayDataUpdate modifies SWR state and database but omits saveTripSnapshot, leaving L0 LocalStorage and L1 RAM out of sync. On background wakeup or cold restart, stale snapshots from L0/L1 are reinjected into SWR as fallbackData, resurrecting deleted items or erasing newly added items.",
+    "start_line": 448,
+    "end_line": 484
+  }
+]

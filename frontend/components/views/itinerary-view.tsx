@@ -462,6 +462,7 @@ export function ItineraryView() {
                 if (type === "costs") optimisticTrip.day_costs = { ...(optimisticTrip.day_costs || {}), [day]: data }
                 if (type === "tickets") optimisticTrip.day_tickets = { ...(optimisticTrip.day_tickets || {}), [day]: data }
                 reloadTripDetail(optimisticTrip, false)
+                saveTripSnapshot(activeTripId, optimisticTrip)
             }
 
             // ⚡ 2. 5ms 記憶體廣播給同行程其他成員
@@ -1305,11 +1306,12 @@ export function ItineraryView() {
                 }))
             }
             reloadTripDetail(optimisticData, false)
+            saveTripSnapshot(currentTrip.id, optimisticData)
         }
 
         try {
             await itemsApi.update(id, updates, userId || "")
-            // Finish by revalidating with server data
+            // Finish by revalidating with server data (triggers useTripDetail.onSuccess -> saveTripSnapshot)
             if (!skipRevalidation) {
                 await reloadTripDetail()
             }
@@ -1317,7 +1319,7 @@ export function ItineraryView() {
         } catch (e) {
             console.error("🔥 handleUpdateActivity error:", e)
             toast.error(e instanceof Error ? `${t('iv_update_failed_prefix')}${e.message}` : t('iv_update_failed_short'))
-            // 🛡️ Rollback to last known good state from server
+            // 🛡️ Rollback to last known good state from server and heal L0 snapshot via onSuccess
             if (!skipRevalidation) {
                 await reloadTripDetail()
             }
@@ -1337,13 +1339,15 @@ export function ItineraryView() {
         reloadTripDetail((prev: unknown) => {
             const prevTrip = prev as Trip | undefined
             if (!prevTrip?.days) return prev
-            return {
+            const optimisticTrip = {
                 ...prevTrip,
                 days: prevTrip.days.map((d) => ({
                     ...d,
                     activities: d.activities?.filter((a) => a.id !== id) || []
                 }))
             }
+            saveTripSnapshot(prevTrip.id, optimisticTrip)
+            return optimisticTrip
         }, false)
 
         // 2. 排入 5 秒延遲刪除隊列
@@ -1365,7 +1369,7 @@ export function ItineraryView() {
                         reloadTripDetail((prev: unknown) => {
                             const prevTrip = prev as Trip | undefined
                             if (!prevTrip?.days) return prev
-                            return {
+                            const restoredTrip = {
                                 ...prevTrip,
                                 days: prevTrip.days.map((d) => {
                                     if (d.day === targetDayNum) {
@@ -1380,6 +1384,8 @@ export function ItineraryView() {
                                     return d
                                 })
                             }
+                            saveTripSnapshot(prevTrip.id, restoredTrip)
+                            return restoredTrip
                         }, false)
                         toast.success(zh ? "已復原行程" : "Activity restored")
                     }
@@ -1949,6 +1955,21 @@ export function ItineraryView() {
                                     userId={userId || undefined}
                                     onUpdate={async (items) => {
                                         if (!activeTripId) return false
+                                        // ⚡ 1. 0ms SWR 樂觀快照更新與儲存同步
+                                        if (currentTrip) {
+                                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                            const optimisticTrip: any = { ...currentTrip }
+                                            optimisticTrip.day_checklists = { ...(optimisticTrip.day_checklists || {}), [day]: items }
+                                            reloadTripDetail(optimisticTrip, false)
+                                            saveTripSnapshot(activeTripId, optimisticTrip)
+                                        }
+
+                                        // ⚡ 2. 5ms 記憶體廣播給同行程其他成員
+                                        broadcastTripEvent(activeTripId, "checklist:update", {
+                                            dayIndex: day,
+                                            items
+                                        })
+
                                         try {
                                             await tripsApi.updateDayData(activeTripId, day, {
                                                 day_checklists: { [day]: items }
@@ -1962,11 +1983,11 @@ export function ItineraryView() {
                                                 }, userId || "")
                                             }
 
-                                            await reloadTripDetail()
                                             return true
                                         } catch (e) {
                                             console.error("Failed to update checklist:", e)
                                             toast.error(t('iv_update_failed_short'))
+                                            reloadTripDetail()
                                             return false
                                         }
                                     }}

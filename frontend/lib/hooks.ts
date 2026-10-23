@@ -29,7 +29,7 @@ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
     
     let r: Response
     try {
-        r = await activeFetch(API_HOST + url, { headers })
+        r = await activeFetch(API_HOST + url, { headers, cache: "no-store" })
     } catch (err) {
         console.warn("[Fetcher] Network degradation or offline:", (err as Error)?.message || err)
         throw new HttpError(0, (err as Error)?.message || "Network error", { offline: true })
@@ -43,7 +43,7 @@ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
         if (freshToken) {
             const retryHeaders = { ...headers, "Authorization": `Bearer ${freshToken}` }
             try {
-                r = await activeFetch(API_HOST + url, { headers: retryHeaders })
+                r = await activeFetch(API_HOST + url, { headers: retryHeaders, cache: "no-store" })
             } catch (retryErr) {
                 throw new HttpError(0, (retryErr as Error)?.message || "Network error", { offline: true })
             }

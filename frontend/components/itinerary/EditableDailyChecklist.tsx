@@ -24,7 +24,7 @@ interface EditableDailyChecklistProps {
 
 export default function EditableDailyChecklist({
     tripId: _tripId,  // eslint-disable-line @typescript-eslint/no-unused-vars
-    day: _day,        // eslint-disable-line @typescript-eslint/no-unused-vars
+    day,
     items,
     onUpdate,
     readOnly = false,
@@ -51,11 +51,25 @@ export default function EditableDailyChecklist({
     const pendingUpdatesCount = useRef(0)
 
     // 🔧 FIX: Sync local items when props update (async data loading)
-    // 🛡️ L4 Protection: Skip sync if user is currently adding an item or saving to prevent "Renew Overwrite"
+    // 🛡️ L4 Protection: Skip sync if user is currently adding an item, editing, or mutation in-flight
     useEffect(() => {
-        if (pendingUpdatesCount.current > 0 || isAdding) return
+        if (pendingUpdatesCount.current > 0 || isAdding || isEditing) return
         setLocalItems(items || [])
-    }, [items, isAdding])
+    }, [items, isAdding, isEditing])
+
+    // ⚡ 即時協同：接收廣播事件，毫秒級反映同伴勾選或修改的清單內容
+    useEffect(() => {
+        const handleCollab = (e: Event) => {
+            const detail = (e as CustomEvent).detail
+            if (detail?.event === "checklist:update" && Number(detail?.dayIndex) === Number(day)) {
+                if (Array.isArray(detail.items) && !isEditing && !isAdding && pendingUpdatesCount.current === 0) {
+                    setLocalItems(detail.items as ChecklistItem[])
+                }
+            }
+        }
+        window.addEventListener("tabiji:collab-event", handleCollab)
+        return () => window.removeEventListener("tabiji:collab-event", handleCollab)
+    }, [day, isEditing, isAdding])
 
     // 🆕 Cleanup: cancel debounce on unmount to prevent memory leak
     useEffect(() => {

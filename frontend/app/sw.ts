@@ -119,32 +119,18 @@ const serwist: Serwist = new Serwist({
       }),
     },
     {
-      // 🔒 排除 Supabase 認證、本地 Session 認證與高敏感 API (NetworkOnly)
+      // 🔒 排除動態行程 API、Supabase 認證、本地 Session 認證與高敏感 API (NetworkOnly)
+      // ⚡ 核心解耦：行程資料快顯 100% 委任 SWR + IndexedDB (L0/L1/L2)，徹底根除 SW 舊快取毒丸污染
       matcher: ({ url }) => {
         const isSupabaseAuth = url.hostname.includes("supabase.co") && url.pathname.includes("/auth/v1/");
         const isSensitiveApi = 
           url.pathname.startsWith("/api/auth/") ||
           url.pathname.startsWith("/api/sign-cloudinary") || 
           url.pathname.startsWith("/api/parse-receipt");
-        return isSupabaseAuth || isSensitiveApi;
+        const isDynamicTripApi = url.pathname.startsWith("/api/trips/");
+        return isSupabaseAuth || isSensitiveApi || isDynamicTripApi;
       },
       handler: new NetworkOnly(),
-    },
-    {
-      // ⚡ 行程詳情 API 極速快顯 (SWR 策略：本地磁碟秒回 + 背景靜默更新)
-      matcher: ({ url, request }) => 
-        url.pathname.startsWith("/api/trips/") && 
-        !url.pathname.includes("/dates") && 
-        (!request || request.method === "GET"),
-      handler: new StaleWhileRevalidate({
-        cacheName: "trips-api-cache",
-        plugins: [
-          new ExpirationPlugin({
-            maxEntries: 30,
-            maxAgeSeconds: 60 * 60 * 24 * 7, // 快取 7 天
-          }),
-        ],
-      }),
     },
     {
       // 📨 離線寫入發件箱 (POST / PUT / PATCH / DELETE 行程與費用 API 離線自動排隊)
@@ -251,6 +237,15 @@ const serwist: Serwist = new Serwist({
 });
 
 serwist.addEventListeners();
+
+// 🧹 物理清除舊版殘留之 trips-api-cache，根除幽靈舊快取
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.delete("trips-api-cache").then((deleted) => {
+      if (deleted) console.log("🧹 [SW] Purged legacy trips-api-cache successfully");
+    })
+  );
+});
 
 // === Web Push Notification Handler (Ported from legacy sw.js) ===
 self.addEventListener("push", (event) => {

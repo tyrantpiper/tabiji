@@ -24,6 +24,7 @@ import { translations, TranslationKey } from "@/lib/i18n"
 import { useHaptic } from "@/lib/hooks"
 import { getExchangeRate, getAllSupportedCurrencies, type CurrencyInfo } from "@/lib/currency"
 import { expensesApi, aiApi } from "@/lib/api"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { debugLog } from "@/lib/debug"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
@@ -491,6 +492,12 @@ export function ExpenseDialog({
             haptic.success()
             toast.success(editItem ? t('exp_update_success') : t('exp_save_success'))
             onOpenChange(false)
+            if (activeTripId) {
+                broadcastTripEvent(activeTripId, "expense:update", {
+                    id: editItem?.id,
+                    action: editItem ? "update" : "create"
+                }).catch(() => {})
+            }
             onSaveSuccess(payload.expense_date)
         } catch (e) {
             console.error("❌ [EXPENSE SAVE ERROR]", e)

@@ -1,15 +1,93 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-23T03:54:00Z",
+  "last_audit_date": "2026-10-23T05:40:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 194,
-    "audited_targets": 194,
-    "verified_vulnerabilities": 24,
+    "total_targets": 204,
+    "audited_targets": 204,
+    "verified_vulnerabilities": 32,
     "remediated_vulnerabilities": 40,
-    "dismissed_hypotheses": 130
+    "dismissed_hypotheses": 132
   },
   "targets": [
+    {
+      "id": "frontend/app/sw.ts:trip_api_sw_stale_cache_poisoning",
+      "target_type": "service_worker",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "stale_cache_poisoning_and_collaborative_desync"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: Serwist StaleWhileRevalidate on /api/trips/ returns 7-day stale cache upon SWR revalidation, wiping out optimistic updates until hard refresh.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (NetworkOnly + activate purge)."
+    },
+    {
+      "id": "frontend/lib/hooks.ts:fetcher_http_cache_bypass",
+      "target_type": "frontend_hook",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "http_cache_staleness_leak"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "validator_details": "Dismissed by Sentinel RFC 9111 check: Intermediate proxies do not cache Authorization-bearing requests; HTTP 304 revalidation conforms to standard browser SWR semantics.",
+      "remediated_at": "2026-10-23T04:53:00Z",
+      "resolution": "Safe as designed; cache: 'no-store' added as defense-in-depth."
+    },
+    {
+      "id": "frontend/lib/hooks/useTripRealtime.ts:untracked_channel_and_premature_revalidate_race",
+      "target_type": "frontend_hook",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "race_condition_and_dropped_broadcast"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: broadcastTripEvent calls send() on unsubscribed channel; immediate mutate() on broadcast fetches uncommitted DB data, wiping out live updates.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (RealtimeChannelCoordinator with queue + debounced reconciliation)."
+    },
+    {
+      "id": "frontend/components/itinerary/EditableDailyTips.tsx:dual_state_and_index_based_deletion",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "state_desynchronization_and_off_by_one_deletion"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: Component local useState + useEffect clobbers optimistic state on background revalidations; lack of unique ID causes off-by-one deletions.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (Single Source of Truth + composite ID normalization)."
+    },
+    {
+      "id": "frontend/components/itinerary/EditableDailyChecklist.tsx:missing_realtime_and_state_clashing",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "missing_realtime_replication_and_local_overwrite"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "validator_details": "Confirmed by Sentinel: Checklist lacks realtime broadcast integration and suffers from same local useState clobbering on SWR revalidations.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (checklist:update broadcast + Single Source of Truth)."
+    },
+    {
+      "id": "frontend/components/views/itinerary-view.tsx:omitted_storage_snapshot_desync",
+      "target_type": "frontend_controller",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "storage_snapshot_inconsistency"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: handleDayDataUpdate omits saveTripSnapshot, leaving L0/L1 snapshots stale and causing rollback on cold restart or background wake-up.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (saveTripSnapshot synchronization)."
+    },
     {
       "id": "scripts/purge_sample_explorers_safely.py:accidental_data_destruction_cascade",
       "target_type": "migration_script",
@@ -2414,6 +2492,58 @@
       "status": "CONFIRMED_PENDING_DEV",
       "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
       "validator_details": "VERIFIED by In-Memory PoC: get_verified_user decodes HS256 without enforcing iss or type, and fallback string exists."
+    },
+    {
+      "id": "frontend/lib/hooks/useTripRealtime.ts:expenses_cdc_and_swr_tuple_key_desync",
+      "target_type": "frontend_hook",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "race_condition_and_cache_desync"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_cross_module.md",
+      "validator_details": "Confirmed by Sentinel PoC: useExpenses SWR tuple key fails on string mutate; expenses postgres_changes and expense:update broadcast missing.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_cross_module_2026-10-23.diff (Tuple predicate mutate + expenses CDC)."
+    },
+    {
+      "id": "frontend/components/views/tools-view.tsx:expense_broadcast_and_dialog_open_guard",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "collaborative_desync_and_state_collision"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_cross_module.md",
+      "validator_details": "Dismissed by Sentinel: ExpenseDialog maintains isolated form state, immune to background SWR revalidation clobber; deletion broadcast added as defense-in-depth.",
+      "remediated_at": "2026-10-23T05:40:00Z",
+      "resolution": "Verified safe; defense-in-depth deletion broadcast added to patch."
+    },
+    {
+      "id": "frontend/components/views/info-view.tsx:handle_save_stale_closure_and_l0_snapshot_omission",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "stale_closure_and_l0_persistence_omission"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_cross_module.md",
+      "validator_details": "Confirmed by Sentinel PoC: handleSaveInner calls handleSave() without parameters, reading stale hotels state from closure and dropping edits; L0 snapshot omitted.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_cross_module_2026-10-23.diff (override parameters + saveTripSnapshot + info:update broadcast)."
+    },
+    {
+      "id": "frontend/components/views/itinerary-view.tsx:optimistic_activity_rollback_snapshot_poisoning",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "state_desynchronization_and_snapshot_poisoning"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_cross_module.md",
+      "validator_details": "Confirmed by Sentinel PoC: handleUpdateActivity catch block revalidates without writing authoritative rollback to saveTripSnapshot, leaving desynced data on network failure.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_cross_module_2026-10-23.diff (authoritative rollback snapshot restoration)."
     }
   ]
 }

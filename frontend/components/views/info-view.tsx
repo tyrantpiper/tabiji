@@ -24,6 +24,8 @@ import { toast } from "sonner"
 import { COUNTRY_REGIONS } from "@/lib/constants"
 import { tripsApi, geocodeApi } from "@/lib/api"
 import { useHaptic, useTripDetail } from "@/lib/hooks"
+import { saveTripSnapshot } from "@/lib/idb-storage"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { FlightCard } from "./info/FlightCard"
 import { BookingTab } from "./info/BookingTab"
 import { buildTripContext } from "@/lib/affiliate-utils"
@@ -132,7 +134,7 @@ export function InfoView() {
         newHotels[currentHotelIdx] = tempHotel
         setHotels(newHotels)
         setInnerEditing(false)
-        handleSave() // Sync to backend (Chain-Reaction Trigger)
+        handleSave(newHotels) // 👈 消除 React 非同步更新延遲
     }
 
     // 🔄 Sync SWR Data to Local State (Hybrid Mode)
@@ -158,6 +160,35 @@ export function InfoView() {
             setHotels(parsedHotels)
         }
     }, [activeTripData, activeTripId, isEditing])
+
+    // ⚡ 監聽跨裝置航班/住宿協同廣播 (<10ms 鏡像感知與草稿保護)
+    useEffect(() => {
+        const handleCollab = (e: Event) => {
+            const detail = (e as CustomEvent).detail
+            if (detail?.event === "info:update") {
+                // 🛡️ 草稿隔離防護：若正在編輯，禁止覆蓋並提示
+                if (isEditing || innerEditing) {
+                    toast.info("🔄 旅伴已更新航班住宿資訊（您正在編輯中，未覆蓋草稿）")
+                    return
+                }
+                if (detail.flight_info) {
+                    const fi = detail.flight_info as { outbound?: unknown[]; inbound?: unknown[] }
+                    setFlights({
+                        outbound: normalizeFlights(fi.outbound, 'outbound'),
+                        inbound: normalizeFlights(fi.inbound, 'inbound')
+                    })
+                }
+                if (detail.hotel_info) {
+                    const hData = detail.hotel_info
+                    const parsedHotels = (Array.isArray(hData) ? hData : (typeof hData === 'object' && hData && Object.keys(hData).length ? [hData] : [DEFAULT_HOTEL]))
+                        .map((h: Partial<Hotel>) => ({ ...DEFAULT_HOTEL, ...h }))
+                    setHotels(parsedHotels)
+                }
+            }
+        }
+        window.addEventListener("tabiji:collab-event", handleCollab)
+        return () => window.removeEventListener("tabiji:collab-event", handleCollab)
+    }, [isEditing, innerEditing])
 
     // 獨立的刷新函數供全域通知鈴鐺與 Tab Hub 使用
     const refreshInfo = useCallback(async () => {
@@ -215,15 +246,17 @@ export function InfoView() {
         }
     }
 
-    const handleSave = async () => {
+    const handleSave = async (overrideHotels?: Hotel[], overrideFlights?: typeof DEFAULT_FLIGHTS) => {
         if (!activeTripId) return
+        const targetHotels = overrideHotels || hotels
+        const targetFlights = overrideFlights || flights
         try {
             const userId = localStorage.getItem("user_uuid") || ""
 
             // 🧠 v4.5: Use standardized API with identity guard
             await tripsApi.updateInfo(activeTripId, {
-                flight_info: flights,
-                hotel_info: hotels
+                flight_info: targetFlights,
+                hotel_info: targetHotels
             }, userId)
 
             toast.success("Done")
@@ -231,6 +264,21 @@ export function InfoView() {
             // 🧠 v4.5: Absolute Fidelity Protocol - Trigger detail revalidation before list mutate
             await reloadTripDetail()
             await tripMutate() // 🔄 Refresh global context
+
+            // 🛡️ L0 快照同步寫入
+            if (activeTripData) {
+                saveTripSnapshot(activeTripId, {
+                    ...activeTripData,
+                    flight_info: targetFlights,
+                    hotel_info: targetHotels
+                })
+            }
+
+            // ⚡ 跨端協同廣播 (<10ms)
+            await broadcastTripEvent(activeTripId, "info:update", {
+                flight_info: targetFlights,
+                hotel_info: targetHotels
+            }).catch(() => {})
         } catch (e) {
             console.error("Save failed:", e)
             toast.error("Save failed. Please check your connection or permissions.")

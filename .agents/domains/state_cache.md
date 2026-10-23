@@ -3,6 +3,12 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **Realtime Channel Coordinator Detach Queue Pruning**: When unmounting a realtime channel via RealtimeChannelCoordinator.detach(tripId), queueMap for that tripId must be pruned atomically to prevent stale event replay upon rejoining the trip.
+
+- **Predicate Invalidation for SWR Tuple Keys**: When SWR keys are declared as Tuples (e.g. ['/api/trips/...', userId]), mutations must use Predicate matching functions (key => Array.isArray(key) && key[0].startsWith(...)) and explicitly pass undefined, { revalidate: true }.
+
+- **Service Worker Dynamic Trip API NetworkOnly Invariant**: Dynamic trip APIs (/api/trips/) must be routed as NetworkOnly in the Service Worker. Never apply StaleWhileRevalidate in the SW when SWR and IndexedDB (L0/L1) manage client-side state, preventing double-cache overwrite.
+
 - **Strict Local-First Recovery Key Anti-Overwrite Invariant**: In client auth-session handling, if a local recovery key exists in localStorage, it must never be overwritten if a session response returns a mismatched user_id. Such occurrences must trigger an alert and throw an error to preserve account ownership.
 
 - **雙軌協同與全量快照調和防衛法則**: 系統必須維持即時同步（增量廣播，主打多人 0ms 極速體驗）與手動/手勢重整（全量快照，主打手機休眠喚醒、丟包與競態調和）雙軌架構。手動重整應無感封裝於通知鈴鐺或下拉手勢中，兼顧介面極簡留白與 100% 狀態自癒防呆。
@@ -31,6 +37,12 @@
 - **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **React Async State Closure Stale Overwrite**: Calling save immediately after setState reads previous frame state. Pass override data directly into save handler.
+
+- **SWR Tuple Key String Mutation Silent Failure**: Mutating a string key does not match SWR tuple keys. Use predicate matcher over cache keys.
+
+- **Double Cache Clashing between Service Worker and SWR**: SW StaleWhileRevalidate overrides optimistic SWR updates with 7-day stale disk cache. Keep SW NetworkOnly for dynamic entities.
+
 - **SWR 提早 Revalidate 引發資料庫非同步寫入競態與卡片回彈陷阱**: 當同伴重排卡片時，監聽端收到廣播後若立即呼叫 SWR mutate() 重新發起 GET 請求，後端 DB 若仍在執行批次 update，GET 拉取到的仍是舊的 sort_order，導致卡片剛排好又瞬間「彈回舊位置」。修復準則：即時重排必須走「記憶體鏡像先行」：廣播封包中夾帶最終的 orderedItemIds，監聽端直接在記憶體中執行本地陣列重排，待平靜期後再行背景靜默校驗。
 
 - **協同廣播非陣列資料引發 React TypeError 白屏崩潰陷阱**: 當即時廣播頻道接收到格式異常或空物件之 tip:update 事件時，detail.data.map(...) 拋出 TypeError: detail.data.map is not a function，摧毀整棵 React 元件樹引發白屏。修復準則：任何自外部長連線（WebSocket/WebRTC/CustomEvent）接收的動態資料，在餵入 React 狀態或呼叫陣列方法前，一律強制實施 Array.isArray(data) 邊界斷言。

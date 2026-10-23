@@ -188,34 +188,55 @@ export default function EditableDailyTips({
     const [editCostsData, setEditCostsData] = useState<CostItem[]>([])
     const [editTicketsData, setEditTicketsData] = useState<TicketItem[]>([])
 
+    // Forms
+    const [newNote, setNewNote] = useState<NoteItem>({ icon: "⚠️", title: "", content: "" })
+    const [newCost, setNewCost] = useState<CostItem>({ item: "", amount: "", currency: effectiveCurrency, note: "" })
+    const [newTicket, setNewTicket] = useState<TicketItem>({ name: "", price: "", currency: effectiveCurrency, note: "" })
+
+    const [savingNotes, setSavingNotes] = useState(false)
+    const [savingCosts, setSavingCosts] = useState(false)
+    const [savingTickets, setSavingTickets] = useState(false)
+    const saving = savingNotes || savingCosts || savingTickets
+
+    // 🆕 Per-item processing state for anti-spam
+    const [processingNotes, setProcessingNotes] = useState<Set<number>>(new Set())
+    const [processingCosts, setProcessingCosts] = useState<Set<number>>(new Set())
+    const [processingTickets, setProcessingTickets] = useState<Set<number>>(new Set())
+
     // 🔧 FIX: Sync local state when props update (async data loading)
-    // 🛡️ L4 Protection: Skip sync if user is currently adding OR editing an item to prevent "Renew Overwrite"
+    // 🛡️ L4 Protection: Skip sync if user is currently adding, editing, or saving an item
     useEffect(() => {
-        if (!addingNote && !editingNotes) setLocalNotes((notes || []).map(normalizeNote))
-    }, [notes, addingNote, editingNotes])
+        if (!addingNote && !editingNotes && !savingNotes && processingNotes.size === 0) {
+            setLocalNotes((notes || []).map(normalizeNote))
+        }
+    }, [notes, addingNote, editingNotes, savingNotes, processingNotes.size])
 
     useEffect(() => {
-        if (!addingCost && !editingCosts) setLocalCosts(costs || [])
-    }, [costs, addingCost, editingCosts])
+        if (!addingCost && !editingCosts && !savingCosts && processingCosts.size === 0) {
+            setLocalCosts(costs || [])
+        }
+    }, [costs, addingCost, editingCosts, savingCosts, processingCosts.size])
 
     useEffect(() => {
-        if (!addingTicket && !editingTickets) setLocalTickets(tickets || [])
-    }, [tickets, addingTicket, editingTickets])
+        if (!addingTicket && !editingTickets && !savingTickets && processingTickets.size === 0) {
+            setLocalTickets(tickets || [])
+        }
+    }, [tickets, addingTicket, editingTickets, savingTickets, processingTickets.size])
 
     // ⚡ 即時協同：接收廣播事件，毫秒級反映同伴新增或修改的內容
     useEffect(() => {
         const handleCollab = (e: Event) => {
             const detail = (e as CustomEvent).detail
-            if (detail?.event === "tip:update" && detail?.dayIndex === _day) {
-                if (detail.type === "notes" && !editingNotes && !addingNote) {
+            if (detail?.event === "tip:update" && Number(detail?.dayIndex) === Number(_day)) {
+                if (detail.type === "notes" && !editingNotes && !addingNote && !savingNotes && processingNotes.size === 0) {
                     if (Array.isArray(detail.data)) {
                         setLocalNotes(detail.data.map(normalizeNote))
                     }
-                } else if (detail.type === "costs" && !editingCosts && !addingCost) {
+                } else if (detail.type === "costs" && !editingCosts && !addingCost && !savingCosts && processingCosts.size === 0) {
                     if (Array.isArray(detail.data)) {
                         setLocalCosts(detail.data as CostItem[])
                     }
-                } else if (detail.type === "tickets" && !editingTickets && !addingTicket) {
+                } else if (detail.type === "tickets" && !editingTickets && !addingTicket && !savingTickets && processingTickets.size === 0) {
                     if (Array.isArray(detail.data)) {
                         setLocalTickets(detail.data as TicketItem[])
                     }
@@ -224,19 +245,7 @@ export default function EditableDailyTips({
         }
         window.addEventListener("tabiji:collab-event", handleCollab)
         return () => window.removeEventListener("tabiji:collab-event", handleCollab)
-    }, [_day, editingNotes, addingNote, editingCosts, addingCost, editingTickets, addingTicket])
-
-    // Forms
-    const [newNote, setNewNote] = useState<NoteItem>({ icon: "⚠️", title: "", content: "" })
-    const [newCost, setNewCost] = useState<CostItem>({ item: "", amount: "", currency: effectiveCurrency, note: "" })
-    const [newTicket, setNewTicket] = useState<TicketItem>({ name: "", price: "", currency: effectiveCurrency, note: "" })
-
-    const [saving, setSaving] = useState(false)
-
-    // 🆕 Per-item processing state for anti-spam
-    const [processingNotes, setProcessingNotes] = useState<Set<number>>(new Set())
-    const [processingCosts, setProcessingCosts] = useState<Set<number>>(new Set())
-    const [processingTickets, setProcessingTickets] = useState<Set<number>>(new Set())
+    }, [_day, editingNotes, addingNote, savingNotes, processingNotes.size, editingCosts, addingCost, savingCosts, processingCosts.size, editingTickets, addingTicket, savingTickets, processingTickets.size])
 
     // 🆕 Exchange rates for conversion display
     const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({ JPY: 0.22 }) // Default JPY→TWD
@@ -302,7 +311,7 @@ export default function EditableDailyTips({
 
     // Notes
     const handleAddNote = async () => {
-        if (saving) return
+        if (savingNotes) return
         if (!newNote.title.trim()) { toast.error(zh ? "請輸入標題" : "Please enter a title"); return }
         const prevNotes = localNotes
         const updated = [...localNotes, newNote]
@@ -311,7 +320,7 @@ export default function EditableDailyTips({
         setNewNote({ icon: "⚠️", title: "", content: "" })
         setAddingNote(false)
         haptic.tap()
-        setSaving(true)
+        setSavingNotes(true)
         try {
             if (await onUpdate("notes", updated)) {
                 toast.success(zh ? "已新增提醒" : "Reminder added")
@@ -323,19 +332,20 @@ export default function EditableDailyTips({
             setLocalNotes(prevNotes)
             toast.error(zh ? "新增失敗" : "Failed to add")
         } finally {
-            setSaving(false)
+            setSavingNotes(false)
         }
     }
 
     const handleRemoveNote = async (idx: number) => {
         // 🛡️ Anti-spam: skip if already processing
-        if (processingNotes.has(idx)) return
+        if (processingNotes.has(idx) || savingNotes) return
         haptic.tap()
         setProcessingNotes(prev => new Set(prev).add(idx))
         const prevNotes = localNotes
         const updated = localNotes.filter((_, i) => i !== idx)
         // ⚡ 0ms 樂觀移除
         setLocalNotes(updated)
+        setSavingNotes(true)
         try {
             if (await onUpdate("notes", updated)) {
                 toast.success(zh ? "已移除" : "Removed")
@@ -347,6 +357,7 @@ export default function EditableDailyTips({
             setLocalNotes(prevNotes)
             toast.error(zh ? "移除失敗" : "Failed to remove")
         } finally {
+            setSavingNotes(false)
             setProcessingNotes(prev => {
                 const next = new Set(prev)
                 next.delete(idx)
@@ -364,13 +375,13 @@ export default function EditableDailyTips({
     }
 
     const handleSaveNotes = async () => {
-        if (saving) return
+        if (savingNotes) return
         const prevNotes = localNotes
         // ⚡ 0ms 樂觀儲存
         setLocalNotes(editNotesData)
         setEditingNotes(false)
         haptic.tap()
-        setSaving(true)
+        setSavingNotes(true)
         try {
             if (await onUpdate("notes", editNotesData)) {
                 setEditNotesData([])
@@ -383,7 +394,7 @@ export default function EditableDailyTips({
             setLocalNotes(prevNotes)
             toast.error(zh ? "儲存失敗" : "Save failed")
         } finally {
-            setSaving(false)
+            setSavingNotes(false)
         }
     }
 
@@ -400,7 +411,7 @@ export default function EditableDailyTips({
     }
 
     const handleAddCost = async () => {
-        if (saving) return
+        if (savingCosts) return
         if (!newCost.item.trim() || !newCost.amount.trim()) { toast.error(zh ? "請輸入項目和金額" : "Please enter item and amount"); return }
         const prevCosts = localCosts
         const updated = [...localCosts, newCost]
@@ -409,7 +420,7 @@ export default function EditableDailyTips({
         setNewCost({ item: "", amount: "", currency: effectiveCurrency, note: "" })
         setAddingCost(false)
         haptic.tap()
-        setSaving(true)
+        setSavingCosts(true)
         try {
             if (await onUpdate("costs", updated)) {
                 toast.success(zh ? "已新增花費" : "Cost added")
@@ -421,18 +432,19 @@ export default function EditableDailyTips({
             setLocalCosts(prevCosts)
             toast.error(zh ? "新增失敗" : "Failed to add")
         } finally {
-            setSaving(false)
+            setSavingCosts(false)
         }
     }
 
     const handleRemoveCost = async (idx: number) => {
-        if (processingCosts.has(idx)) return
+        if (processingCosts.has(idx) || savingCosts) return
         haptic.tap()
         setProcessingCosts(prev => new Set(prev).add(idx))
         const prevCosts = localCosts
         const updated = localCosts.filter((_, i) => i !== idx)
         // ⚡ 0ms 樂觀移除花費
         setLocalCosts(updated)
+        setSavingCosts(true)
         try {
             if (await onUpdate("costs", updated)) {
                 toast.success("已移除")
@@ -442,6 +454,7 @@ export default function EditableDailyTips({
         } catch {
             setLocalCosts(prevCosts)
         } finally {
+            setSavingCosts(false)
             setProcessingCosts(prev => {
                 const next = new Set(prev)
                 next.delete(idx)
@@ -452,7 +465,7 @@ export default function EditableDailyTips({
 
     // 🆕 Toggle privacy for costs
     const handleTogglePrivacyCost = async (idx: number) => {
-        if (processingCosts.has(idx)) return
+        if (processingCosts.has(idx) || savingCosts) return
         haptic.tap()
         setProcessingCosts(prev => new Set(prev).add(idx))
         const prevCosts = localCosts
@@ -465,6 +478,7 @@ export default function EditableDailyTips({
         )
         // ⚡ 0ms 樂觀切換隱私
         setLocalCosts(updated)
+        setSavingCosts(true)
         try {
             if (await onUpdate("costs", updated)) {
                 toast.success(updated[idx].is_private ? (zh ? "已設為私人" : "Set to private") : (zh ? "已設為公開" : "Set to public"))
@@ -474,6 +488,7 @@ export default function EditableDailyTips({
         } catch {
             setLocalCosts(prevCosts)
         } finally {
+            setSavingCosts(false)
             setProcessingCosts(prev => {
                 const next = new Set(prev)
                 next.delete(idx)
@@ -491,13 +506,13 @@ export default function EditableDailyTips({
     }
 
     const handleSaveCosts = async () => {
-        if (saving) return
+        if (savingCosts) return
         const prevCosts = localCosts
         // ⚡ 0ms 樂觀儲存修改
         setLocalCosts(editCostsData)
         setEditingCosts(false)
         haptic.tap()
-        setSaving(true)
+        setSavingCosts(true)
         try {
             if (await onUpdate("costs", editCostsData)) {
                 setEditCostsData([])
@@ -510,7 +525,7 @@ export default function EditableDailyTips({
             setLocalCosts(prevCosts)
             toast.error(zh ? "儲存失敗" : "Save failed")
         } finally {
-            setSaving(false)
+            setSavingCosts(false)
         }
     }
 
@@ -528,7 +543,7 @@ export default function EditableDailyTips({
 
     // Tickets
     const handleAddTicket = async () => {
-        if (saving) return
+        if (savingTickets) return
         if (!newTicket.name.trim() || !newTicket.price.trim()) { toast.error(zh ? "請輸入票券名稱和價格" : "Please enter ticket name and price"); return }
         const prevTickets = localTickets
         const updated = [...localTickets, newTicket]
@@ -537,7 +552,7 @@ export default function EditableDailyTips({
         setNewTicket({ name: "", price: "", currency: effectiveCurrency, note: "" })
         setAddingTicket(false)
         haptic.tap()
-        setSaving(true)
+        setSavingTickets(true)
         try {
             if (await onUpdate("tickets", updated)) {
                 toast.success(zh ? "已新增票券" : "Ticket added")
@@ -549,18 +564,19 @@ export default function EditableDailyTips({
             setLocalTickets(prevTickets)
             toast.error(zh ? "新增失敗" : "Failed to add")
         } finally {
-            setSaving(false)
+            setSavingTickets(false)
         }
     }
 
     const handleRemoveTicket = async (idx: number) => {
-        if (processingTickets.has(idx)) return
+        if (processingTickets.has(idx) || savingTickets) return
         haptic.tap()
         setProcessingTickets(prev => new Set(prev).add(idx))
         const prevTickets = localTickets
         const updated = localTickets.filter((_, i) => i !== idx)
         // ⚡ 0ms 樂觀移除票券
         setLocalTickets(updated)
+        setSavingTickets(true)
         try {
             if (await onUpdate("tickets", updated)) {
                 toast.success("已移除")
@@ -570,6 +586,7 @@ export default function EditableDailyTips({
         } catch {
             setLocalTickets(prevTickets)
         } finally {
+            setSavingTickets(false)
             setProcessingTickets(prev => {
                 const next = new Set(prev)
                 next.delete(idx)
@@ -580,7 +597,7 @@ export default function EditableDailyTips({
 
     // 🆕 Toggle privacy for tickets
     const handleTogglePrivacyTicket = async (idx: number) => {
-        if (processingTickets.has(idx)) return
+        if (processingTickets.has(idx) || savingTickets) return
         haptic.tap()
         setProcessingTickets(prev => new Set(prev).add(idx))
         const prevTickets = localTickets
@@ -593,6 +610,7 @@ export default function EditableDailyTips({
         )
         // ⚡ 0ms 樂觀切換隱私
         setLocalTickets(updated)
+        setSavingTickets(true)
         try {
             if (await onUpdate("tickets", updated)) {
                 toast.success(updated[idx].is_private ? (zh ? "已設為私人" : "Set to private") : (zh ? "已設為公開" : "Set to public"))
@@ -602,6 +620,7 @@ export default function EditableDailyTips({
         } catch {
             setLocalTickets(prevTickets)
         } finally {
+            setSavingTickets(false)
             setProcessingTickets(prev => {
                 const next = new Set(prev)
                 next.delete(idx)
@@ -619,13 +638,13 @@ export default function EditableDailyTips({
     }
 
     const handleSaveTickets = async () => {
-        if (saving) return
+        if (savingTickets) return
         const prevTickets = localTickets
         // ⚡ 0ms 樂觀儲存修改
         setLocalTickets(editTicketsData)
         setEditingTickets(false)
         haptic.tap()
-        setSaving(true)
+        setSavingTickets(true)
         try {
             if (await onUpdate("tickets", editTicketsData)) {
                 setEditTicketsData([])
@@ -638,7 +657,7 @@ export default function EditableDailyTips({
             setLocalTickets(prevTickets)
             toast.error(zh ? "儲存失敗" : "Save failed")
         } finally {
-            setSaving(false)
+            setSavingTickets(false)
         }
     }
 
