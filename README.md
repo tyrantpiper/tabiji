@@ -9,8 +9,8 @@
 <h1 align="center">Tabiji 旅路</h1>
 
 <p align="center">
-  <strong>Next-Generation Generative AI Travel Orchestrator</strong><br/>
-  <strong>新一代生成式 AI 旅遊編排助手</strong>
+  <strong>Zero-Marginal-Cost Geospatial AI Agent & Routing Infrastructure, showcased via an end-to-end travel orchestrator</strong><br/>
+  <strong>零邊際成本的空間感知 AI 代理與路由基礎設施——以旅遊編排為概念驗證</strong>
 </p>
 
 <p align="center">
