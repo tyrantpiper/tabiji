@@ -1,0 +1,8 @@
+[
+  {
+    "id": ".github/workflows/deploy-backend.yml",
+    "file_path": ".github/workflows/deploy-backend.yml",
+    "attack_vector": "decoupled_cloudrun_deploy",
+    "hypothesis": "Decoupling environment variables and secrets by completely removing --set-env-vars and --set-secrets from Cloud Run deploy workflow ensures zero Git credential leakage while Cloud Run retains all console-configured secrets across revisions."
+  }
+]
