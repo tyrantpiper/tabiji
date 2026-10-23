@@ -25,3 +25,4 @@ uvicorn
 pytest
 pytest-asyncio
 pytest-mock==3.14.0
+pyyaml
