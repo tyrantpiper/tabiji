@@ -100,14 +100,14 @@ class InMemDB:
 
 
 mock_db = InMemDB()
-test_app = FastAPI()
+mock_app = FastAPI()
 
 
 class SessionReq(BaseModel):
     recovery_key: Optional[str] = None
 
 
-@test_app.post("/api/auth/session")
+@mock_app.post("/api/auth/session")
 def session_endpoint(req: SessionReq):
     key = (req.recovery_key or "").strip()
     
@@ -177,7 +177,7 @@ def session_endpoint(req: SessionReq):
     raise HTTPException(400, "Unsupported recovery key format")
 
 
-@test_app.post("/api/auth/rotate")
+@mock_app.post("/api/auth/rotate")
 def rotate_endpoint(authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing token")
@@ -236,7 +236,7 @@ def simulate_edge_shield_poi_dispatch(headers: Dict[str, str]) -> Dict[str, Any]
 # ---------------------------------------------------------------------------
 # Sentinel Test Cases
 # ---------------------------------------------------------------------------
-client = TestClient(test_app)
+client = TestClient(mock_app)
 
 
 def test_tc1_legacy_uuid_silent_upgrade():
