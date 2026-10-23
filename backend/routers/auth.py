@@ -187,13 +187,14 @@ def get_user_record_by_key_id(supabase: Client, key_id: str) -> Optional[dict]:
 async def create_or_exchange_session(
     request: Request,
     body: SessionRequest,
+    auth_header: Optional[str] = Header(None, alias="Authorization"),
     secret: str = Depends(get_session_secret),
     supabase: Client = Depends(get_supabase),
 ):
     """
     ✨ 雙軌憑證領取與靜默升級 (Dual-Track Session Exchange & Silent Upgrade)
     - 帶有 tbj_rec_*：O(1) 索引檢索驗簽換票。
-    - 帶有 legacy UUID：若尚未綁定金鑰，自動升級簽發新引繼碼；若已升級則拒絕原生 UUID (杜絕 ATO)。
+    - 帶有 legacy UUID：若尚未綁定金鑰，自動升級簽發新引繼碼；若已升級且持合法舊憑證則無縫解密新鑰匙，無憑證則拒絕原生 UUID (杜絕 ATO)。
     - 未帶 key：生成全新 UUID 與新版引繼碼。
     """
     raw_key = (body.recovery_key or "").strip()
@@ -223,11 +224,46 @@ async def create_or_exchange_session(
 
         user_rec = await run_in_threadpool(get_user_record_by_id, supabase, clean_uid)
         
-        # 若用戶已完成雙軌升級，強制阻斷原生 UUID，消除 ATO 漏洞
+        # 🛡️ 雙軌平滑升級：若帳號已升級，校驗合法持有證明 (Proof-of-Possession)
         if user_rec and user_rec.get("recovery_key_id"):
-            raise HTTPException(
-                status_code=400, 
-                detail="Account already upgraded. Please use your modern recovery key (tbj_rec_*)."
+            is_authenticated = False
+            if auth_header and auth_header.startswith("Bearer "):
+                cand_token = auth_header.split(" ")[1].strip()
+                try:
+                    payload = jwt.decode(
+                        cand_token,
+                        secret,
+                        algorithms=["HS256"],
+                        issuer="tabiji-core",
+                        options={"verify_exp": False, "require": ["sub", "iss", "iat", "type"]}
+                    )
+                    now = int(time.time())
+                    sub = str(payload.get("sub") or "").strip()
+                    if (
+                        payload.get("type") == "device_session"
+                        and sub.lower() == clean_uid
+                        and (now - payload.get("iat", 0) <= 90 * 86400)
+                    ):
+                        is_authenticated = True
+                except Exception:
+                    pass
+
+            if not is_authenticated:
+                raise HTTPException(
+                    status_code=401, 
+                    detail="Account already upgraded. Please use your modern recovery key (tbj_rec_*)."
+                )
+
+            # 🛡️ 驗證通過之合法舊設備：解密保險庫下發最新金鑰與新 Session，消除死結
+            vault_key = derive_vault_key(secret)
+            decrypted_key = decrypt_recovery_key(user_rec.get("recovery_key_encrypted"), vault_key)
+            token = create_session_jwt(clean_uid, secret, user_rec.get("credential_version", 1))
+            return SessionResponse(
+                access_token=token,
+                user_id=clean_uid,
+                recovery_key=decrypted_key,
+                upgraded=True,
+                is_new=False,
             )
 
         # 靜默升級：確保資料庫寫入成功後才下發新金鑰，若失敗則降級回傳舊版 Session
@@ -413,6 +449,58 @@ async def rotate_recovery_key(
     )
 
 
+async def get_verified_user_with_grace(
+    request: Request,
+    auth_header: str = Header(None, alias="Authorization"),
+    secret: str = Depends(get_session_secret),
+) -> str:
+    """
+    🛡️ 自癒寬限期身分驗證依賴 (Grace-Period Token Verification)
+    優先標準驗證 (有效 JWT)；若過期但簽名未遭竄改且在 90 天寬限期內，允許存取保險庫自癒。
+    """
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
+
+    token = auth_header.split(" ")[1].strip()
+
+    # 1. 優先標準解碼校驗 (未過期)
+    try:
+        payload = jwt.decode(
+            token, 
+            secret, 
+            algorithms=["HS256"],
+            issuer="tabiji-core",
+            options={"require": ["sub", "iss", "iat", "exp", "type"]}
+        )
+        sub = str(payload.get("sub") or "").strip()
+        if payload.get("type") == "device_session" and UUID_V4_REGEX.match(sub):
+            return sub
+    except jwt.ExpiredSignatureError:
+        # 2. 🛡️ 寬限期驗簽 (過期 <= 90 天之合法伺服器簽署歷史憑證)
+        try:
+            payload = jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                issuer="tabiji-core",
+                options={"verify_exp": False, "require": ["sub", "iss", "iat", "type"]}
+            )
+            now = int(time.time())
+            sub = str(payload.get("sub") or "").strip()
+            if (
+                payload.get("type") == "device_session" 
+                and UUID_V4_REGEX.match(sub)
+                and (now - payload.get("iat", 0) <= 90 * 86400)
+            ):
+                return sub
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
 class CredentialResponse(BaseModel):
     recovery_key: Optional[str] = None
     credential_version: int = 1
@@ -422,7 +510,7 @@ class CredentialResponse(BaseModel):
 @limiter.limit("30/minute")
 async def get_user_recovery_credential(
     request: Request,
-    current_user: str = Depends(get_verified_user),
+    current_user: str = Depends(get_verified_user_with_grace),
     secret: str = Depends(get_session_secret),
     supabase: Client = Depends(get_supabase),
 ):

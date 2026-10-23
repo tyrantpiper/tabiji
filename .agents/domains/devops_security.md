@@ -3,6 +3,12 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **Proof-of-Possession Migration Invariant**: In dual-track migration, legacy identifiers must not be accepted unauthenticated nor rejected unconditionally. The server must verify proof of possession of a server-signed session token before decrypting upgraded credentials.
+
+- **PostgREST Anon Column-Level Least Privilege Invariant**: Sensitive credential columns in public tables must never be exposed to the anon role. Table-level SELECT must be revoked and replaced with explicit column-level grants.
+
+- **Resting Data Vault Key Decoupling Invariant**: The master key used for resting data AES-256-GCM encryption must be decoupled from the ephemeral JWT signing secret (SESSION_SECRET_KEY) to ensure secret rotation never invalidates stored recovery keys.
+
 - **Cloud Run CI/CD Workflow Secret Decoupling Invariant**: GitHub Actions deployment workflows must never pass sensitive environment variables via --set-env-vars. Secrets must reside exclusively within cloud platform secret managers or container service configurations.
 
 - **Dual-Track Credential & Permanent Identity Decoupling Invariant**: User UUID must remain an internal-only foreign key anchor and never serve as an authentication credential. Authentication must use dedicated high-entropy recovery keys (tbj_rec_*), stored strictly as salted hashes in the database.
@@ -38,6 +44,16 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Windows PowerShell Subprocess CLI Character Overflow Trap**: Passing entire multi-line source files into agy.exe CLI arguments exceeds Windows command buffer limits; candidates must be sliced with line numbers.
+
+- **Blind 400 Rejection Inducing Authentication Deadlock Trap**: Strictly rejecting legacy identifiers after account upgrade prevents legitimate legacy devices from receiving sessions or accessing the vault.
+
+- **Stale Token Silent 401 Lockout Trap**: Failing to dispatch upgrade events on 401 upgraded responses leaves clients hung without self-healing pathways.
+
+- **PostgREST Blanket Table Grant Exposure Trap**: Adding columns to tables with pre-existing blanket anon grants silently exposes sensitive fields to public PostgREST endpoints.
+
+- **JWT Signing Key and Storage DEK Coupling Trap**: Deriving data encryption keys directly from JWT signing secrets invalidates all encrypted database records upon secret rotation.
+
 - **Landing Page Form Regex Desynchronization Trap**: Updating backend credential formats without updating frontend landing page form validation regex blocks users at the submission gate. Always synchronize credential formats across the entire chain.
 
 - **CI Test Dependency Omission Trap**: Assuming dependencies are available in CI because they exist in local dev causes CI collection aborts. Always declare test dependencies in requirements-test.txt and guard optional imports.

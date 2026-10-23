@@ -1,6 +1,6 @@
 # 📅 Daily Report - 2026-10-23 (P0 Auth & BOLA Hardening, Dual-Track Credential Vault, Realtime Sync & Security Sentinel)
 
-> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 83 Suites / 551 Tests Passed; Backend 283 Items: 278 Passed, 5 Skipped, 0 Failures; Vercel Live Ready & Promoted), Security Ledger 212 Targets (40 Remediated, 36 Verified, 136 Dismissed).  
+> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 83 Suites / 551 Tests Passed; Backend 285 Items: 285 Passed, 5 Skipped, 0 Failures; Vercel Live Ready & Promoted), Security Ledger 218 Targets (40 Remediated, 42 Verified, 136 Dismissed).
 > **今日關鍵研發範疇 (Core Focus)**：
 > - 🛡️ **P0 密碼學身分認證與物件授權（BOLA）深度加固**：修復行程先驗後刪漏洞（防範費用惡意清空）、實作成員脫敏 ID 記憶體安全比對（徹底消除 PostgreSQL 22P02 型別崩潰）、以及費用表成員存取校驗。
 > - 🔑 **1Password 私鑰主權與本地防覆寫鐵律**：在 `auth-session.ts` 注入身分不一致拒絕覆寫守衛，守護 Local-First 永久引繼碼，杜絕帳號被非預期 Session 覆蓋洗白（AD-153）。
@@ -286,6 +286,34 @@
 
 ---
 
+---
+
+### 里程碑十二：密鑰派生主密鑰解耦與 PostgREST 匿名權限隔離 (AD-166 ~ AD-168 & FP-085 ~ FP-087)
+
+1. **JWT 簽名密鑰與靜態資料保險庫主密鑰解耦 (AD-166 & FP-085)**：
+   - **痛點根因**：原程式碼 `derive_vault_key(secret)` 直接綁定自 `SESSION_SECRET_KEY`。此密鑰本質為短生命週期的 JWT 傳輸憑證簽章密鑰，若運維依資安常規輪換，資料庫所有靜態加密的引繼金鑰將因派生不同 AES-256-GCM 金鑰而觸發 `InvalidTag` 解密崩潰。
+   - **解耦防禦**：建立 `get_vault_master_key()`，優先取用專屬環境變數 `VAULT_MASTER_KEY`，未設定時以專屬獨立鹽值 `tabiji-dedicated-vault-salt-` 派生，確保傳輸簽章輪換時靜態資料 100% 安全解密。
+2. **PostgREST 資料 API 匿名列層級隔離防禦 (AD-167 & FP-086)**：
+   - **權限漏洞**：資料庫遷移為 `public.users` 新增 `recovery_key_id`、`recovery_secret_hash` 等欄位時，自動繼承了先前遷移賦予的 `GRANT SELECT ON public.users TO anon` 全表讀取權限，導致匿名訪客可透過 PostgREST API 傾倒全站使用者的金鑰 ID 與加密酬載。
+   - **閉環隔離**：在遷移指令顯式執行 `REVOKE SELECT ON public.users FROM anon;` 並收斂為僅授權安全公開列 `GRANT SELECT (id, name, created_at) ON public.users TO anon;`。
+3. **休眠舊裝置 401 升級自癒派發 (AD-168 & FP-087)**：
+   - 前端攔截器於收到 `HTTP 401` 且包含 `upgraded` 關鍵字時，自動派發 `tabiji:credential_upgrade_required` 事件，消除靜默當機盲區。
+
+---
+
+### 里程碑十三：多裝置金鑰輪替死結瓦解、持有證明雙軌升級與 90 天寬限期 (AD-169 ~ AD-171 & FP-088 ~ FP-091)
+
+1. **打破多裝置金鑰輪替與舊 UUID 認證死結 (AD-169 & FP-088)**：
+   - **醫源性死結**：原設計在帳號升級後，為防範 ATO 對原生 UUID 拋出 `HTTP 400`。但這導致尚未升級的合法舊設備 B 換不到 Token，而查詢保險庫又強制要求有效 Token，設備 B 被永久卡死在無效狀態。
+   - **持有證明解鎖 (Proof-of-Possession)**：在 `/api/auth/session` 中，若舊設備出示本機曾獲伺服器簽署之 Session Token（即使過期），後端驗簽通過即證明為本人實體裝置，自動就地解密下發最新金鑰與新 Token，達成 0 感知無痛升級；未出示或出示偽造 Token 之第三方依然嚴格以 401 拒絕，Anti-ATO 防禦 100% 保持。
+2. **保險庫自癒 90 天寬限期 (AD-170 & FP-089)**：
+   - 在 `/api/auth/credential` 端點注入 `get_verified_user_with_grace`，允許 90 天內未遭竄改之歷史伺服器簽名憑證安全存取保險庫，使關機逾 30 天之休眠設備開機連網秒級自癒。
+3. **前端全域頂層反應式狀態匯流排 (AD-171 & FP-090)**：
+   - 將 Supabase Realtime 廣播自深層 `profile-view.tsx` 拔除，提升至根層級 `app-client-layer.tsx` 常駐監聽。
+   - 透過 `window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated"))` 建立全域事件匯流排，深層視圖 0ms 反應式重繪，消滅 WebSocket 局部盲區。
+4. **Windows CLI 子進程字符限制防護 (FP-091)**：
+   - 記錄並固化 `runner.py` 在 Windows PowerShell 下傳入超過 6000 字符 prompt 會觸發 CLI 崩潰的邊界，規範候選檔案一律使用 `start_line` 與 `end_line` 切片。
+
 ## 🧬 Machine-Executable Invariant Rules
 
 ```json
@@ -478,6 +506,90 @@
     "id": "FP-084",
     "title": "Landing Page Form Regex Desynchronization Trap",
     "content": "Updating backend credential formats without updating frontend landing page form validation regex blocks users at the submission gate. Always synchronize credential formats across the entire chain."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-VAULT-MASTER-KEY-DECOUPLING",
+    "title": "Resting Data Vault Key Decoupling Invariant",
+    "content": "The master key used for resting data AES-256-GCM encryption must be decoupled from the ephemeral JWT signing secret (SESSION_SECRET_KEY) to ensure secret rotation never invalidates stored recovery keys."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-POSTGREST-ANON-COLUMN-ISOLATION",
+    "title": "PostgREST Anon Column-Level Least Privilege Invariant",
+    "content": "Sensitive credential columns in public tables must never be exposed to the anon role. Table-level SELECT must be revoked and replaced with explicit column-level grants."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-PROOF-OF-POSSESSION-UPGRADE-GATE",
+    "title": "Proof-of-Possession Migration Invariant",
+    "content": "In dual-track migration, legacy identifiers must not be accepted unauthenticated nor rejected unconditionally. The server must verify proof of possession of a server-signed session token before decrypting upgraded credentials."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DORMANT-DEVICE-GRACE-PERIOD",
+    "title": "Dormant Device Grace Period Self-Healing Invariant",
+    "content": "Credential vault recovery endpoints must accept un-tampered server-signed tokens within a 90-day grace period to allow dormant devices to recover modern credentials."
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-ROOT-LAYER-REALTIME-SUBSCRIPTION",
+    "title": "Root Layer Realtime Subscription & Event Bus Invariant",
+    "content": "Account-level Realtime broadcast channels must be subscribed exclusively at the top-level client layer and communicate to deep views via DOM CustomEvents to avoid blindspots and redundant connections."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-085",
+    "title": "JWT Signing Key and Storage DEK Coupling Trap",
+    "content": "Deriving data encryption keys directly from JWT signing secrets invalidates all encrypted database records upon secret rotation."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-086",
+    "title": "PostgREST Blanket Table Grant Exposure Trap",
+    "content": "Adding columns to tables with pre-existing blanket anon grants silently exposes sensitive fields to public PostgREST endpoints."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-087",
+    "title": "Stale Token Silent 401 Lockout Trap",
+    "content": "Failing to dispatch upgrade events on 401 upgraded responses leaves clients hung without self-healing pathways."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-088",
+    "title": "Blind 400 Rejection Inducing Authentication Deadlock Trap",
+    "content": "Strictly rejecting legacy identifiers after account upgrade prevents legitimate legacy devices from receiving sessions or accessing the vault."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "FAILED_PATH",
+    "id": "FP-089",
+    "title": "Strict Expire Lockout on Recovery Vault Trap",
+    "content": "Strictly enforcing 30-day token expiration on vault endpoints blocks offline or dormant devices from pulling updated credentials."
+  },
+  {
+    "domain": "state_cache",
+    "type": "FAILED_PATH",
+    "id": "FP-090",
+    "title": "Deep-View Scoped Realtime Blindspot Trap",
+    "content": "Scoping realtime credential sync listeners inside specific subviews causes devices on other pages to miss critical rotation signals."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-091",
+    "title": "Windows PowerShell Subprocess CLI Character Overflow Trap",
+    "content": "Passing entire multi-line source files into agy.exe CLI arguments exceeds Windows command buffer limits; candidates must be sliced with line numbers."
   }
 ]
 ```

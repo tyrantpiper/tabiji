@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/routers/auth.py:legacy_and_rotated_key_deadlock",
+    "file_path": "backend/routers/auth.py",
+    "attack_vector": "device_lockout_deadlock",
+    "hypothesis": "In /api/auth/session, when a legacy UUID is submitted after another device upgraded to tbj_rec_*, the endpoint returns HTTP 400 'Account already upgraded' without checking for proof-of-possession of an existing/recent session token, locking out the legitimate legacy device from obtaining modern credentials or a session token.",
+    "start_line": 217,
+    "end_line": 260
+  },
+  {
+    "id": "backend/routers/auth.py:credential_vault_expired_token_block",
+    "file_path": "backend/routers/auth.py",
+    "attack_vector": "grace_period_missing_for_dormant_device",
+    "hypothesis": "In /api/auth/credential, the endpoint strictly depends on get_verified_user which strictly rejects expired JWTs (>30 days) with HTTP 401 without any proof-of-possession grace period, preventing dormant devices that missed live broadcasts from self-healing and decrypting the updated vault master key.",
+    "start_line": 420,
+    "end_line": 457
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:dormant_token_vault_sync_barrier",
+    "file_path": "frontend/lib/auth-session.ts",
+    "attack_vector": "client_side_token_prerequisite_lockout",
+    "hypothesis": "In fetchLatestRecoveryKey(), if getCachedToken() is null (e.g. token expired while offline or during initial startup), the function immediately aborts and returns null, cementing client-side deadlock and preventing key recovery.",
+    "start_line": 260,
+    "end_line": 286
+  }
+]

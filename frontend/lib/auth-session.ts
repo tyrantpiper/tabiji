@@ -67,18 +67,26 @@ export function getCachedToken(): string | null {
     }
 }
 
+let lastVaultSyncTime = 0;
+
 /**
  * 🛰️ 全域連線與前台恢復監聽器 (Online & Visibility Auto-Exchange)
- * 當 PWA 從完全斷網恢復連線，或自背景喚醒至前台時，
- * 若當前無有效憑證，自動觸發背景換票以確保所有請求可用。
+ * 當 PWA 從完全斷網恢復連線，或自背景喚醒至前台時：
+ * 1. 若當前無有效憑證，自動觸發背景換票以確保所有請求可用。
+ * 2. 若已有憑證，背景自動向密文保險庫校準引繼碼，杜絕離線/休眠導致之多裝置脫節。
  */
 export function initSessionLifecycleListener(): () => void {
     if (typeof window === "undefined") return () => {};
 
     const handleReconnectOrResume = () => {
-        if (navigator.onLine && !getCachedToken()) {
+        if (!navigator.onLine) return;
+
+        if (!getCachedToken()) {
             console.log("🛰️ [Auth] Network restored or resumed, auto-exchanging session token...");
             ensureValidSession().catch(() => {});
+        } else if (Date.now() - lastVaultSyncTime > 15000) {
+            lastVaultSyncTime = Date.now();
+            fetchLatestRecoveryKey().catch(() => {});
         }
     };
 
@@ -110,7 +118,7 @@ export function getRecoveryKey(): string | null {
  * 確保當前裝置持有有效的 Session JWT
  * - 若已有 Token：直接回傳
  * - 若離線狀態：靜默回傳 null，保障 PWA 離線自癒不中斷
- * - 若聯網狀態：背景向後端換票/領票
+ * - 若聯網狀態：背景向後端換票/領票 (攜帶現有 Token 作為持有證明 Proof-of-Possession 以支援舊裝置升級)
  */
 export async function ensureValidSession(): Promise<string | null> {
     if (typeof window === "undefined") return null;
@@ -137,9 +145,15 @@ export async function ensureValidSession(): Promise<string | null> {
     inFlightSessionPromise = (async () => {
         try {
             const storedKey = getRecoveryKey();
+            const rawToken = typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
+            const headers: Record<string, string> = { "Content-Type": "application/json" };
+            if (rawToken) {
+                headers["Authorization"] = `Bearer ${rawToken}`;
+            }
+
             const res = await fetch("/api/auth/session", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers,
                 body: JSON.stringify({ recovery_key: storedKey || undefined })
             });
 
@@ -162,7 +176,15 @@ export async function ensureValidSession(): Promise<string | null> {
                 localStorage.setItem(TOKEN_KEY, data.access_token);
                 // 🛡️ 雙軌固化：既有 UUID 與新版專屬引繼碼同步持久化
                 if (data.recovery_key) {
-                    localStorage.setItem("user_recovery_key", data.recovery_key);
+                    const currentKey = localStorage.getItem("user_recovery_key");
+                    if (currentKey !== data.recovery_key) {
+                        localStorage.setItem("user_recovery_key", data.recovery_key);
+                        if (typeof window !== "undefined") {
+                            window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", {
+                                detail: { recoveryKey: data.recovery_key }
+                            }));
+                        }
+                    }
                 }
                 if (storedKey && !data.upgraded) {
                     const currentUuid = localStorage.getItem(RECOVERY_KEY);
@@ -261,9 +283,10 @@ export async function rotateAccountRecoveryKey(): Promise<string> {
 
 /**
  * 跨裝置保險庫同步：主動向雲端密文保險庫獲取最新引繼金鑰
+ * 🛡️ 支援寬限期：優先採用快取有效 Token，若已過期則回退攜帶本地歷史 Token 供後端驗簽自癒
  */
 export async function fetchLatestRecoveryKey(): Promise<string | null> {
-    const token = getCachedToken();
+    const token = typeof window !== "undefined" ? (getCachedToken() || localStorage.getItem(TOKEN_KEY)) : null;
     if (!token) return null;
 
     try {
@@ -275,7 +298,15 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
         if (!res.ok) return null;
         const data = await res.json();
         if (data?.recovery_key) {
-            localStorage.setItem("user_recovery_key", data.recovery_key);
+            const currentKey = localStorage.getItem("user_recovery_key");
+            if (currentKey !== data.recovery_key) {
+                localStorage.setItem("user_recovery_key", data.recovery_key);
+                if (typeof window !== "undefined") {
+                    window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", {
+                        detail: { recoveryKey: data.recovery_key }
+                    }));
+                }
+            }
             return data.recovery_key as string;
         }
     } catch (err) {

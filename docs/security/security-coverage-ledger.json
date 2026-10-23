@@ -1,15 +1,57 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-23T14:50:00Z",
+  "last_audit_date": "2026-10-23T15:43:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 215,
-    "audited_targets": 215,
-    "verified_vulnerabilities": 39,
+    "total_targets": 218,
+    "audited_targets": 218,
+    "verified_vulnerabilities": 42,
     "remediated_vulnerabilities": 40,
     "dismissed_hypotheses": 136
   },
   "targets": [
+    {
+      "id": "frontend/lib/auth-session.ts:dormant_token_vault_sync_barrier",
+      "target_type": "frontend_session",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "client_side_token_prerequisite_lockout",
+        "dormant_sync_unblock"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase4_sync_deadlock.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-3: fetchLatestRecoveryKey immediately returns null on expired token, preventing dormant grace period rescue.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_phase4_sync_deadlock_2026-10-23.diff (fallback to raw stored token)."
+    },
+    {
+      "id": "backend/routers/auth.py:credential_vault_expired_token_block",
+      "target_type": "auth_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "grace_period_missing_for_dormant_device",
+        "dormant_vault_recovery"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase4_sync_deadlock.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-2: Dormant devices whose 30d JWT expired while offline blocked from /api/auth/credential without grace period.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_phase4_sync_deadlock_2026-10-23.diff."
+    },
+    {
+      "id": "backend/routers/auth.py:legacy_and_rotated_key_deadlock",
+      "target_type": "auth_router",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "device_lockout_deadlock",
+        "proof_of_possession_upgrade"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase4_sync_deadlock.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-1: Legacy devices with valid/recent token rejected with 400 when account upgraded; resolved via Proof-of-Possession.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_phase4_sync_deadlock_2026-10-23.diff (Proof-of-Possession grace verification)."
+    },
     {
       "id": "frontend/lib/auth-session.ts:stale_device_upgrade_lockout",
       "target_type": "frontend_session",

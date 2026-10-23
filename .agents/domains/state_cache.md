@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **Root Layer Realtime Subscription & Event Bus Invariant**: Account-level Realtime broadcast channels must be subscribed exclusively at the top-level client layer and communicate to deep views via DOM CustomEvents to avoid blindspots and redundant connections.
+
 - **Opaque Invalidation Signal for Realtime WebSocket Channels**: Realtime broadcast events (e.g. CREDENTIAL_ROTATED) must never contain plaintext secrets or user tokens in their payload. Broadcasts must function strictly as opaque invalidation signals (timestamp only), forcing clients to fetch fresh state over authenticated HTTPS.
 
 - **Realtime Channel Coordinator Detach Queue Pruning**: When unmounting a realtime channel via RealtimeChannelCoordinator.detach(tripId), queueMap for that tripId must be pruned atomically to prevent stale event replay upon rejoining the trip.
@@ -39,6 +41,8 @@
 - **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Deep-View Scoped Realtime Blindspot Trap**: Scoping realtime credential sync listeners inside specific subviews causes devices on other pages to miss critical rotation signals.
+
 - **Realtime Broadcast Plaintext & State Poisoning Trap**: Broadcasting plaintext secrets over WebSocket channels leaks credentials and allows state poisoning. Always use opaque signals and authenticated pull.
 
 - **React Async State Closure Stale Overwrite**: Calling save immediately after setState reads previous frame state. Pass override data directly into save handler.

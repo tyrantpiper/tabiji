@@ -66,27 +66,19 @@ export function ProfileView() {
             }
         }).catch(() => {})
 
-        // 📡 跨裝置即時金鑰輪替廣播監聽
-        const currentUuid = localStorage.getItem("user_uuid")
-        if (currentUuid) {
-            const client = getSupabaseClient()
-            if (client) {
-                const channel = client.channel(`user-sync:${currentUuid}`)
-                channel.on("broadcast", { event: "CREDENTIAL_ROTATED" }, () => {
-                    fetchLatestRecoveryKey().then(k => {
-                        if (k) {
-                            setRecoveryKeyDisplay(k)
-                            toast.info(zh ? "✨ 引繼金鑰已自其他裝置同步更新" : "✨ Recovery key synced from another device")
-                        }
-                    }).catch(() => {})
-                }).subscribe()
-
-                return () => {
-                    client.removeChannel(channel)
-                }
+        // 🔔 監聽全域反應式金鑰變更事件 (由 AppClientLayer 或背景保險庫同步觸發)，0ms 即時更新顯示
+        const handleKeyUpdated = (e: Event) => {
+            const ce = e as CustomEvent<{ recoveryKey: string }>
+            if (ce.detail?.recoveryKey) {
+                setRecoveryKeyDisplay(ce.detail.recoveryKey)
             }
         }
-    }, [zh])
+        window.addEventListener("tabiji:recovery_key_updated", handleKeyUpdated)
+
+        return () => {
+            window.removeEventListener("tabiji:recovery_key_updated", handleKeyUpdated)
+        }
+    }, [])
 
     const handleRotateKey = useCallback(async () => {
         const confirmed = window.confirm(zh ? "確定要輪替引繼碼嗎？舊引繼碼將立即作廢，所有既有行程不受影響。" : "Rotate recovery key? Old key will be invalidated. Existing trips are unaffected.")
