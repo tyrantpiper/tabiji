@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-23T05:40:00Z",
+  "last_audit_date": "2026-10-23T08:53:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 204,
-    "audited_targets": 204,
-    "verified_vulnerabilities": 32,
+    "total_targets": 212,
+    "audited_targets": 212,
+    "verified_vulnerabilities": 36,
     "remediated_vulnerabilities": 40,
-    "dismissed_hypotheses": 132
+    "dismissed_hypotheses": 136
   },
   "targets": [
     {
@@ -2544,6 +2544,110 @@
       "validator_details": "Confirmed by Sentinel PoC: handleUpdateActivity catch block revalidates without writing authoritative rollback to saveTripSnapshot, leaving desynced data on network failure.",
       "remediated_at": null,
       "resolution": "Candidate patch formulated in docs/security/patch_candidate_cross_module_2026-10-23.diff (authoritative rollback snapshot restoration)."
+    },
+    {
+      "id": "frontend/lib/idb-storage.ts:capsule_l0_snapshot_cross_account_leak",
+      "target_type": "frontend_storage",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "storage_isolation_and_cross_account_leak"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: saveTripSnapshot scopes cache only by tripId. On shared devices, unrevealed capsule memos leak across user sessions.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_capsules_realtime_2026-10-23.diff (dual-key isolation by tripId and userId)."
+    },
+    {
+      "id": "frontend/lib/hooks/useTripRealtime.ts:capsule_broadcast_and_rls_wal_suppression",
+      "target_type": "frontend_hook",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "collaborative_desync_and_rls_suppression"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "validator_details": "Dismissed by Sentinel: existing code does not rely on postgres_changes for capsules; missing broadcast is an unimplemented feature rather than an unhandled defect.",
+      "remediated_at": "2026-10-23T08:21:00Z",
+      "resolution": "Safe as designed; broadcastTripEvent union and listener synthesized in candidate patch."
+    },
+    {
+      "id": "frontend/components/itinerary/PolaroidCapsuleModal.tsx:capsule_broadcast_plaintext_leakage",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "data_leakage_and_missing_broadcast"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "validator_details": "Dismissed by Sentinel: existing modal delegates to backend HTTP submit without client broadcast; zero plaintext leak exists in current code.",
+      "remediated_at": "2026-10-23T08:21:00Z",
+      "resolution": "Safe as designed; desensitized progress metadata broadcast added to candidate patch."
+    },
+    {
+      "id": "backend/routers/capsules.py:early_unveil_endpoint_and_bola_auth",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "access_control_and_missing_early_unlock"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "validator_details": "Dismissed by Sentinel: time-lock mechanism conforms to specification; early unveil is a new feature requirement.",
+      "remediated_at": "2026-10-23T08:21:00Z",
+      "resolution": "Safe as designed; /api/trips/{trip_id}/capsules/unlock endpoint with strict membership checks synthesized in candidate patch."
+    },
+    {
+      "id": "frontend/components/views/itinerary-view.tsx:ceremony_reentrance_and_violent_rerender",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "race_condition_and_state_thrashing"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "validator_details": "Dismissed by Sentinel: React boolean state setters are idempotent; no unhandled unveil listener exists in current code.",
+      "remediated_at": "2026-10-23T08:21:00Z",
+      "resolution": "Safe as designed; reentrance defense !isCapsuleCeremonyOpen included in candidate patch."
+    },
+    {
+      "id": "backend/routers/capsules.py:hardcoded_timezone_drift",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "temporal_and_timezone_desync"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules_temporal.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: compute_trip_end_utc hardcoded Asia/Tokyo UTC+9, causing 13.0 hours premature freeze for America/New_York EDT trips.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/history/patch_candidate_capsules_temporal_tamper_2026-10-23.diff (compute_trip_local_bounds via infer_destination_timezone)."
+    },
+    {
+      "id": "backend/routers/capsules.py:early_unlock_premature_trigger",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "access_control_and_time_lock_bypass"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules_temporal.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: unlock_trip_capsules_early lacked last_day_start temporal boundary check, allowing premature unlock on Day 1.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/history/patch_candidate_capsules_temporal_tamper_2026-10-23.diff (Last-Day Gate check against destination local 00:00:00)."
+    },
+    {
+      "id": "backend/routers/capsules.py:post_unveil_tampering_overwrite",
+      "target_type": "backend_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "integrity_and_tampering"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules_temporal.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: Enabling catch-up submission requires atomic check to block modifying existing revealed entries while allowing new inserts.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/history/patch_candidate_capsules_temporal_tamper_2026-10-23.diff (Tamper-Proof Soft Unlock query check)."
     }
   ]
 }

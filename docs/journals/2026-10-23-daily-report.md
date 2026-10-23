@@ -6,7 +6,8 @@
 > - 🔑 **1Password 私鑰主權與本地防覆寫鐵律**：在 `auth-session.ts` 注入身分不一致拒絕覆寫守衛，守護 Local-First 永久引繼碼，杜絕帳號被非預期 Session 覆蓋洗白（AD-153）。
 > - 🧹 **417 位歷史殭屍帳號法醫學審計與物理安全清空**：深度調查 10/22 回填遺留之 417 位 Explorer 帳號，以 100% 物理零活動證明為基礎，建立具備乾跑（Dry-Run）、全量 JSON 快照備份與分批（Chunk 50）防禦之清理工具，安全移除 5,005 筆細項與 417 筆重複行程，資料庫成功瘦身 96%（AD-151, AD-152）。
 > - 🚀 **現代 Pydantic v2 Rust 零拷貝序列化升級**：拔除 `backend/main.py` 廢棄之 `default_response_class=ORJSONResponse`，切換至 FastAPI 原生 Rust `pydantic-core` 位元組流管線，測試執行加速約 10% 並達成全棧 0 Warnings 乾淨輸出（AD-154, FP-074）。
-> - 📊 **資安總台帳數學守恆擴充**：`security-coverage-ledger.json` 自 182 擴充至 194 標的，通過 `validate_security_ledger.py` 與 `neural_seam_harness.py` 雙重嚴格校驗。
+> - 📮 **旅伴時光膠囊破印盛典與全鏈路防篡改守衛**：動態目的地真實 IANA 時區邊界換算（杜絕西半球提前 13 小時硬凍結之地理偏見，AD-159）、告別晚宴最後一天守衛 (Last-Day Gate) 與防篡改軟解鎖（未填者寬限補交至午夜，已揭曉者禁止竄改，AD-160）、本機 L0 快照 `tripId_userId` 雙鍵防窺探隔離（AD-161）、WebSocket 脫敏協同與 Chrome DevTools 物理遙測端到端驗收。
+> - 📊 **資安總台帳數學守恆擴充**：`security-coverage-ledger.json` 自 182 擴充至 212 標的，通過 `validate_security_ledger.py` 與 `neural_seam_harness.py` 雙重嚴格校驗。
 
 ---
 
@@ -85,6 +86,22 @@
 
 ---
 
+### 里程碑七：旅伴時光膠囊破印盛典、真實目的地時區換算與防篡改軟解鎖守衛 (AD-159 ~ AD-161 & FP-079 ~ FP-081)
+
+1. **跨時區時空邊界換算與夏令時間自動對齊 (AD-159 & FP-079)**：
+   - **時差硬傷**：舊版代碼寫死以 `Asia/Tokyo (UTC+9) 14:59:59 UTC` 作為午夜凍結點。若旅程目的地在美東（`America/New_York`，EDT UTC-4），14:59:59 UTC 竟然是紐約最後一天上午 10:59:59，提早 13 小時將膠囊封死。
+   - **精準換算**：新增 `compute_trip_local_bounds(trip)`，透過 `infer_destination_timezone(trip)` 動態解析真實目的地 IANA 時區，利用 Python 3.9+ `zoneinfo` 精確計算最後一天當地的 `[00:00:00, 23:59:59]` 並轉為 UTC 時間戳，具備 DST 自動補償與東京時間安全保底。
+2. **告別晚宴最後一天守衛 (Last-Day Gate) 與防篡改軟解鎖 (AD-160 & FP-080)**：
+   - **提前破印守衛**：新增 `POST /api/trips/{trip_id}/capsules/unlock` 端點，強制校驗 `now_utc >= last_day_start_utc`。在行程中途（如 10/23 對應 10/25 結束）發起提前破印直接以 HTTP 400 阻斷。
+   - **防篡改軟解鎖**：若晚宴提前破印，旅伴看見彼此真心話後，已填寫者禁止再修改心得（HTTP 403 阻斷，防範偷看他人後回頭討好或報復改寫）；未填寫者則允許補交至午夜 23:59:59（包容晚宴遲到者）。
+3. **共用設備跨帳號雙鍵 L0 隔離與脫敏廣播 (AD-161)**：
+   - 本地快照改採 `tabiji_capsule_sync_${tripId}_${userId}` 雙維度鍵值，徹底杜絕多人在同一台 iPad 切換帳號時窺探未解鎖私密心得。
+   - 封存廣播 payload 僅帶 `{ day_number, author_id, action: "sealed" }`，心得文字、心情與照片 URL 零洩漏。
+4. **實體瀏覽器全生命週期遙測**：
+   - 透過 `@mcp:chrome-devtools-mcp` 對運作中的實體頁面（Page 4）進行端到端開箱監測，3D 盛典彈窗掛載、翻牌、旅伴切換、關閉 unmount、重入防衛全部 100% 綠燈，0 異常日誌。
+
+---
+
 ## 🏛️ 架構決策記錄 (Architecture Decisions)
 
 - **AD-151: 示範行程資料治理維持記憶體範本獨立複製模式 (YAGNI & Zero-Regression)**
@@ -118,6 +135,18 @@
   - **Context**: 使用者離線切換行程時，積壓的協同事件殘留於 Coordinator 記憶體中，重連時引發過期事件幽靈重放。
   - **Decision**: 在 `RealtimeChannelCoordinator.detach(tripId)` 中同步執行 `this.queueMap.delete(tripId)`。
   - **Consequence**: 保證元件生命週期與離線隊列完全同步，消除跨行程狀態污染。
+- **AD-159: 行程跨日時空邊界錨定目的地真實 IANA 時區度量衡**
+  - **Context**: 舊版程式碼硬編碼東京時間，導致跨西半球或歐美行程在白天提前 13~19 小時凍結。
+  - **Decision**: 透過 `compute_trip_local_bounds(trip)` 動態推斷目的地 IANA 時區，以當地 `[00:00:00, 23:59:59]` 換算 UTC 作為判定時間鎖與凍結的唯一標準。
+  - **Consequence**: 消除跨時區提早凍結缺陷，全球夏令時間自動校準。
+- **AD-160: 提前破印後之心得防篡改軟解鎖與最後一天守衛門戶 (Last-Day Gate)**
+  - **Context**: 提前破印後若允許自由修改會破壞人際信任；若全面硬凍結則剝奪遲到旅伴的補填機會。
+  - **Decision**: 實裝非對稱軟解鎖——已提交者物理封鎖修改（403），未提交者允許寬限補填至午夜；且提前破印端點僅限最後一天門戶開放。
+  - **Consequence**: 兼顧人際心理博弈平衡與旅途溫情包容。
+- **AD-161: 本機快照儲存全面落實雙維度隔離 (tripId + userId)**
+  - **Context**: 單一以 `tripId` 為鍵之 LocalStorage 在平板共用情境下存在 BOLA/資訊外洩風險。
+  - **Decision**: 涉及私密資料之 L0 儲存強制採用 `tabiji_capsule_sync_${tripId}_${userId}`。
+  - **Consequence**: 實現設備級多租戶實體隔離，冷啟動零洩漏。
 
 ---
 
@@ -147,6 +176,15 @@
 - **FP-078: React 異步狀態更新閉包陷阱導致表單覆寫**
   - **Symptom**: `InfoView` 內點擊飯店儲存時，`setHotels(newHotels)` 下一行立即呼叫 `handleSave()`，打到後端的依然是前一次渲染週期的舊資料。
   - **Lesson**: 在非同步或事件處理常式中，不可依賴當前幀的 state 變數作為保存真相源。必須讓儲存函式支援顯式傳參 `handleSave(overrideHotels)`。
+- **FP-079: 硬編碼東京時區導致西半球行程提早半日凍結**
+  - **Symptom**: 在紐約或夏威夷行程中，時光膠囊在最後一天上午 10 點就無法新增。
+  - **Lesson**: 地理偏見是時間邏輯的大敵。跨日時鐘必須依賴目的地經緯度反查真實時區庫動態運算。
+- **FP-080: 提前破印後旅伴反向篡改心得引發信任崩壞**
+  - **Symptom**: 告別晚宴上旅伴看到彼此真心話後，有動機根據他人評價篡改自己寫的心得。
+  - **Lesson**: 協同系統在「揭曉階段」必須對已讀取的資料實施狀態不可逆保護，落實防篡改軟解鎖。
+- **FP-081: 測試環境歷史殘留 Flag 遮蔽真實時間邏輯驗證**
+  - **Symptom**: 測試行程因 10/14 遺留 `is_capsule_unlocked = true`，導致 10/23 畫面提早進入破印盛典，差點遺漏最後一天守衛的物理檢驗。
+  - **Lesson**: 測試資料庫必須定期執行狀態對齊與法醫學清理，拒絕靜態假資料產生的虛假安全感。
 
 ---
 
@@ -259,6 +297,48 @@
     "id": "FP-078",
     "title": "React Async State Closure Stale Overwrite",
     "content": "Calling save immediately after setState reads previous frame state. Pass override data directly into save handler."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-TEMPORAL-DESTINATION-TIMEZONE",
+    "title": "Destination IANA Timezone Temporal Boundary Invariant",
+    "content": "All multi-day trip temporal boundaries (capsule locks, daily expenses, daily weather) must be evaluated against the destination IANA timezone [00:00:00, 23:59:59] converted to UTC. Never hardcode client or server local offsets."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-CAPSULE-ANTI-TAMPER-SOFT-UNLOCK",
+    "title": "Anti-Tampering Soft Unlock for Revealed Time Capsules",
+    "content": "When a trip capsule is unlocked early on the final day, existing submitted entries are permanently frozen against updates (403 Forbidden) to prevent post-unveil tampering, while unsubmitted members may append their first entry until destination midnight."
+  },
+  {
+    "domain": "offline_pwa",
+    "type": "INVARIANT_RULE",
+    "id": "INV-STORAGE-SHARED-DEVICE-DUAL-KEY",
+    "title": "Shared Device Dual-Key L0 Storage Isolation",
+    "content": "All local-first snapshots containing private or desensitized entries must be partitioned with composite keys formatted as [module]_[tripId]_[userId] in localStorage and IndexedDB to eliminate cross-account leakage on shared tablets."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "FAILED_PATH",
+    "id": "FP-079",
+    "title": "Hardcoded Destination Timezone Premature Freezing Trap",
+    "content": "Assuming Asia/Tokyo (UTC+9) for end-of-trip calculations freezes Western Hemisphere trips (e.g. EDT UTC-4) up to 13-19 hours prematurely. Always infer timezone from coordinates."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "FAILED_PATH",
+    "id": "FP-080",
+    "title": "Post-Unveil Entry Modification Tampering Trap",
+    "content": "Allowing edits after early unveiling breaks trust. Existing entries must be locked upon unlock while allowing pending members to submit."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-081",
+    "title": "Stale Test Database Flag Masking Temporal Guard Regressions",
+    "content": "Historical test records with pre-set boolean flags bypass temporal guard verification in production previews. Always verify and reset state before E2E telemetry."
   }
 ]
 ```

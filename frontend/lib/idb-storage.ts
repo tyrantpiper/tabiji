@@ -151,6 +151,36 @@ export async function saveTripSnapshot<T = unknown>(tripId: string | null | unde
 }
 
 /**
+ * 📮 旅伴時光膠囊 L0 快照 (雙維度隔離：依據 tripId + userId 隔離，杜絕共用設備跨帳號窺探)
+ */
+export function saveTripCapsuleSnapshot(
+    tripId: string | null | undefined,
+    userId: string | null | undefined,
+    data: unknown
+): void {
+    if (typeof window === "undefined" || !tripId || !userId || !data) return
+    try {
+        const key = `tabiji_capsule_sync_${tripId}_${userId}`
+        localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }))
+    } catch {
+        // LocalStorage quota defense
+    }
+}
+
+export function getTripCapsuleSnapshotSync<T = unknown>(
+    tripId: string | null | undefined,
+    userId: string | null | undefined
+): T | null {
+    if (typeof window === "undefined" || !tripId || !userId) return null
+    try {
+        const raw = localStorage.getItem(`tabiji_capsule_sync_${tripId}_${userId}`)
+        return raw ? (JSON.parse(raw).data as T) : null
+    } catch {
+        return null
+    }
+}
+
+/**
  * ⚡ 五清自癒閉環：同步抹除 L0 本地儲存、L1 記憶體、L2 IndexedDB 與 L3 Service Worker CacheStorage
  * 徹底杜絕 404 幽靈行程在客戶端或離線時復活
  */

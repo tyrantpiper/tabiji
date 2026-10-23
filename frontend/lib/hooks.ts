@@ -1,7 +1,7 @@
 import useSWR from "swr"
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { travelDataApi, API_HOST } from './api'
-import { getTripSnapshotSync, saveTripSnapshot, preloadTripSnapshot, getTripsListSnapshotSync, preloadTripsListSnapshot, saveTripsListSnapshot } from './idb-storage'
+import { getTripSnapshotSync, saveTripSnapshot, preloadTripSnapshot, getTripsListSnapshotSync, preloadTripsListSnapshot, saveTripsListSnapshot, getTripCapsuleSnapshotSync, saveTripCapsuleSnapshot } from './idb-storage'
 import type { Trip, CapsuleProgressSummary } from './itinerary-types'
 
 
@@ -335,6 +335,12 @@ export function useTripCapsules(tripId: string | null | undefined, userId: strin
         {
             revalidateOnFocus: false,
             dedupingInterval: 10000,
+            fallbackData: getTripCapsuleSnapshotSync<CapsuleProgressSummary>(tripId, userId) || undefined,
+            onSuccess: (freshData) => {
+                if (tripId && userId && freshData) {
+                    saveTripCapsuleSnapshot(tripId, userId, freshData)
+                }
+            },
         }
     )
 

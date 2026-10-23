@@ -14,6 +14,7 @@ from pydantic import BaseModel, field_validator
 from supabase import Client
 
 from utils.deps import get_supabase, get_verified_user
+from services.temporal_service import infer_destination_timezone, safe_get_zoneinfo
 
 router = APIRouter(prefix="/api/trips", tags=["capsules"])
 
@@ -103,22 +104,31 @@ def check_trip_membership(trip: dict, user_id: str, supabase: Optional[Client] =
     return False
 
 
-def compute_trip_end_utc(trip: dict) -> datetime:
+def compute_trip_local_bounds(trip: dict) -> tuple[datetime, datetime]:
     """
-    Computes absolute UTC timestamp for trip end.
-    Anchored to destination end_date 23:59:59 (defaults to Asia/Tokyo UTC+9).
+    依據行程目的地真實 IANA 時區，計算最後一天的本地 [00:00:00, 23:59:59] 並精確轉為 UTC 時間戳。
+    支援全球夏令時間 (DST) 自動補償，查無時區時安全回退至 Asia/Tokyo。
     """
     end_date_str = trip.get("end_date") or trip.get("start_date")
     if not end_date_str:
-        return datetime.max.replace(tzinfo=timezone.utc)
-    
+        return datetime.max.replace(tzinfo=timezone.utc), datetime.max.replace(tzinfo=timezone.utc)
+
+    dest_tz_name = trip.get("timezone") or infer_destination_timezone(trip, client_tz_str="Asia/Tokyo")
+    dest_tz = safe_get_zoneinfo(dest_tz_name, fallback="Asia/Tokyo")
+
     try:
-        parts = [int(p) for p in end_date_str.split("-")[:3]]
-        # 23:59:59 Asia/Tokyo (UTC+9) is 14:59:59 UTC
-        # If no explicit timezone, assume UTC+9 anchor
-        return datetime(parts[0], parts[1], parts[2], 14, 59, 59, tzinfo=timezone.utc)
+        parts = [int(p) for p in str(end_date_str).split("-")[:3]]
+        last_day_start_local = datetime(parts[0], parts[1], parts[2], 0, 0, 0, tzinfo=dest_tz)
+        trip_end_local = datetime(parts[0], parts[1], parts[2], 23, 59, 59, tzinfo=dest_tz)
+        return last_day_start_local.astimezone(timezone.utc), trip_end_local.astimezone(timezone.utc)
     except Exception:
-        return datetime.max.replace(tzinfo=timezone.utc)
+        return datetime.max.replace(tzinfo=timezone.utc), datetime.max.replace(tzinfo=timezone.utc)
+
+
+def compute_trip_end_utc(trip: dict) -> datetime:
+    """相容性包裝：取得目的地最後一天 23:59:59 之 UTC 時間戳"""
+    _, end_utc = compute_trip_local_bounds(trip)
+    return end_utc
 
 
 # ==============================================================================
@@ -325,10 +335,25 @@ async def submit_trip_capsule(
         )
 
     # 2. Check if trip is already unlocked/ended (Freezes edits upon unlock)
-    trip_end_utc = compute_trip_end_utc(trip)
+    _, trip_end_utc = compute_trip_local_bounds(trip)
     now_utc = datetime.now(timezone.utc)
-    if bool(trip.get("is_capsule_unlocked", False)) or (now_utc >= trip_end_utc):
-        raise HTTPException(status_code=403, detail="Capsule is already sealed and unlocked. Modifications are frozen.")
+    # 當地行程結束日 23:59:59 過去後，全面物理凍結 (Hard Freeze)
+    if now_utc >= trip_end_utc:
+        raise HTTPException(status_code=403, detail="旅程已結束，時光膠囊已全面封存凍結 (Modifications are frozen)，無法再新增或修改。")
+
+    # 🛡️ 防篡改軟解鎖守衛 (Tamper-Proof Soft Unlock)：已解鎖狀態下禁止修改已存在條目，僅允許未填者補填
+    if bool(trip.get("is_capsule_unlocked", False)):
+        existing_res = supabase.table("trip_capsule_entries")\
+            .select("id")\
+            .eq("trip_id", trip_id)\
+            .eq("day_number", payload.day_number)\
+            .eq("author_id", user_id)\
+            .execute()
+        if existing_res.data and len(existing_res.data) > 0:
+            raise HTTPException(
+                status_code=403,
+                detail="時光膠囊已提前破印揭曉。為防止偷看他人心得後篡改，已揭曉之條目嚴禁修改。"
+            )
 
     # 3. Upsert entry into trip_capsule_entries
     entry_data = {
@@ -363,3 +388,46 @@ async def submit_trip_capsule(
         created_at=saved.get("created_at"),
         updated_at=saved.get("updated_at")
     )
+
+
+@router.post("/{trip_id}/capsules/unlock", response_model=CapsuleProgressSummary)
+async def unlock_trip_capsules_early(
+    trip_id: str,
+    user_id: str = Depends(get_verified_user),
+    supabase: Client = Depends(get_supabase)
+):
+    """
+    提前破印盛典解鎖端點（例如告別晚宴現場全員開箱）。
+    權限檢查：必須為行程擁有者或成員，防禦 BOLA 越權。
+    """
+    trip_res = supabase.table("itineraries").select("*").eq("id", trip_id).execute()
+    if not trip_res.data:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    trip = trip_res.data[0]
+
+    if not check_trip_membership(trip, user_id, supabase):
+        raise HTTPException(status_code=403, detail="Not authorized to unlock capsules for this trip")
+
+    # 1.1 Sample trip check
+    is_sample = (trip.get("created_by") == "SYSTEM") or bool((trip.get("content") or {}).get("is_sample"))
+    if is_sample:
+        raise HTTPException(
+            status_code=400,
+            detail="Sample/demo trip does not support collaborative time capsules."
+        )
+
+    # 🛡️ 當地時區最後一天守衛 (Last-Day Gate)
+    last_day_start_utc, _ = compute_trip_local_bounds(trip)
+    now_utc = datetime.now(timezone.utc)
+    if now_utc < last_day_start_utc:
+        raise HTTPException(
+            status_code=400,
+            detail="提前破印盛典僅在行程最後一天（目的地當地時間）開放，旅途中途禁止提前解鎖。"
+        )
+
+    try:
+        supabase.table("itineraries").update({"is_capsule_unlocked": True}).eq("id", trip_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update unlock status: {e}")
+
+    return await get_trip_capsules(trip_id=trip_id, user_id=user_id, supabase=supabase)

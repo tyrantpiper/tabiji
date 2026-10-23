@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/routers/capsules.py:hardcoded_timezone_drift",
+    "file_path": "backend/routers/capsules.py",
+    "attack_vector": "temporal_and_timezone_desync",
+    "start_line": 105,
+    "end_line": 130,
+    "hypothesis": "compute_trip_end_utc hardcodes Asia/Tokyo UTC+9, causing trips in other timezones (e.g., America/New_York EDT or Europe/London) to calculate trip end timestamps with up to 13-17 hours of drift, prematurely freezing or misaligning time locks."
+  },
+  {
+    "id": "backend/routers/capsules.py:early_unlock_premature_trigger",
+    "file_path": "backend/routers/capsules.py",
+    "attack_vector": "access_control_and_time_lock_bypass",
+    "start_line": 368,
+    "end_line": 402,
+    "hypothesis": "unlock_trip_capsules_early lacks a temporal boundary guard ensuring it is only triggered during the final day of the trip in destination local time, allowing premature unveiling on Day 1 or Day 2."
+  },
+  {
+    "id": "backend/routers/capsules.py:post_unveil_tampering_overwrite",
+    "file_path": "backend/routers/capsules.py",
+    "attack_vector": "integrity_and_tampering",
+    "start_line": 325,
+    "end_line": 365,
+    "hypothesis": "submit_trip_capsule allows overwriting existing entries even after is_capsule_unlocked is true, creating a post-unveil tampering vulnerability where a user modifies their diary after reading companions' unsealed notes."
+  }
+]

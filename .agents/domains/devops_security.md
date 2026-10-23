@@ -34,6 +34,8 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Stale Test Database Flag Masking Temporal Guard Regressions**: Historical test records with pre-set boolean flags bypass temporal guard verification in production previews. Always verify and reset state before E2E telemetry.
+
 - **Windows Console CP950 Output Encoding Trap**: Python CLI scripts on Windows PowerShell fail with UnicodeEncodeError when emitting UTF-8 emojis. Always reconfigure sys.stdout and sys.stderr with encoding='utf-8'.
 
 - **Windows CreateProcess 命令列長度溢位陷阱 - WinError 206**: 在 Windows 平台使用 asyncio.create_subprocess_exec 傳遞包含未切片代碼字串（60,000+ 字元）之 -p={prompt} 參數給 agy.exe 時，系統拋出 [WinError 206] 檔名或副檔名太長，造成子代理人崩潰。修復準則：外部 Subprocess 調度必須對傳入的代碼片段實施精確行範圍切片或預設上限截斷（如 <= 6000 字元），防止 OS 層級命令列長度溢位。

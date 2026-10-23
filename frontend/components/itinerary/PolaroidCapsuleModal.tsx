@@ -12,6 +12,7 @@ import { useLanguage } from "@/lib/LanguageContext"
 import { uploadCapsulePhotoToCloudinary } from "@/lib/capsule-upload"
 import { capsulesApi } from "@/lib/api"
 import { TripCapsuleEntry } from "@/lib/itinerary-types"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 
 interface PolaroidCapsuleModalProps {
     isOpen: boolean
@@ -134,6 +135,14 @@ export function PolaroidCapsuleModal({
             )
 
             toast.success(zh ? "🔒 心得已成功封存入時光膠囊！" : "🔒 Capsule sealed into vault!")
+
+            // 🛡️ 零洩漏約束：絕不夾帶 content/photo_url/mood_emoji，僅傳遞進度元資料
+            await broadcastTripEvent(tripId, "capsule:update", {
+                day_number: day,
+                author_id: userId,
+                action: "sealed",
+            })
+
             haptic.success()
             onSuccess?.()
             onOpenChange(false)

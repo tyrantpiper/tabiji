@@ -18,3 +18,7 @@
   *《雙重快取的醫源性病變與協同錯覺：一次關於狀態主權的深度冷血反思》*  
   深入解剖 Service Worker 舊快取毒丸反噬 SWR 樂觀更新的醫源性病理、Supabase Realtime CDC 欄位靜默失聯與資安破口、React 異步閉包與離線隊列洩漏，以及對防禦體系是否過度工程化的自我警惕。
 
+- [`2026-10-23-temporal-boundaries-and-tamper-proof-trust.md`](file:///d:/Project/tabiji/travel-pwa/docs/reflections/2026-10-23-temporal-boundaries-and-tamper-proof-trust.md)  
+  *《時空邊界與防篡改信任：時光膠囊背後的跨時區陷阱與軟解鎖哲學》*  
+  解剖硬編碼東京時間導致紐約行程提早 13 小時凍結的地理偏見、告別晚宴提前破印後的博弈論與防篡改軟解鎖設計、共用設備雙鍵隔離，以及測試資料殘留遮蔽真實時鐘的人類直覺審查價值。
+

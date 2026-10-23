@@ -1,0 +1,42 @@
+[
+  {
+    "id": "frontend/lib/hooks/useTripRealtime.ts:capsule_broadcast_and_rls_wal_suppression",
+    "file_path": "frontend/lib/hooks/useTripRealtime.ts",
+    "attack_vector": "collaborative_desync_and_rls_suppression",
+    "start_line": 90,
+    "end_line": 215,
+    "hypothesis": "broadcastTripEvent does not support capsule events, and relying on postgres_changes on trip_capsule_entries fails silently during sealed phase due to Supabase RLS SELECT isolation, causing collaborator progress desync."
+  },
+  {
+    "id": "frontend/components/itinerary/PolaroidCapsuleModal.tsx:capsule_broadcast_plaintext_leakage",
+    "file_path": "frontend/components/itinerary/PolaroidCapsuleModal.tsx",
+    "attack_vector": "data_leakage_and_missing_broadcast",
+    "start_line": 110,
+    "end_line": 150,
+    "hypothesis": "PolaroidCapsuleModal fails to broadcast capsule:update upon submission; or if broadcast is dispatched with raw content/photo_url in payload, WebSocket listeners can intercept secret blind diary entries before unlock."
+  },
+  {
+    "id": "frontend/lib/idb-storage.ts:capsule_l0_snapshot_cross_account_leak",
+    "file_path": "frontend/lib/idb-storage.ts",
+    "attack_vector": "storage_isolation_and_cross_account_leak",
+    "start_line": 118,
+    "end_line": 155,
+    "hypothesis": "Storing capsule summary in L0 localStorage using only tripId as key leaks unrevealed private memos to subsequent users logging in on the same shared device."
+  },
+  {
+    "id": "backend/routers/capsules.py:early_unveil_endpoint_and_bola_auth",
+    "file_path": "backend/routers/capsules.py",
+    "attack_vector": "access_control_and_missing_early_unlock",
+    "start_line": 160,
+    "end_line": 220,
+    "hypothesis": "Backend has no endpoint for early capsule unveiling before end_date_utc 23:59:59, and any candidate unlock endpoint must enforce trip membership/owner authorization to prevent BOLA."
+  },
+  {
+    "id": "frontend/components/views/itinerary-view.tsx:ceremony_reentrance_and_violent_rerender",
+    "file_path": "frontend/components/views/itinerary-view.tsx",
+    "attack_vector": "race_condition_and_state_thrashing",
+    "start_line": 1840,
+    "end_line": 1860,
+    "hypothesis": "Receiving capsule:unveil broadcast without checking if ceremony modal is already open triggers re-mounting or violent state resetting while traveler is reading cards."
+  }
+]

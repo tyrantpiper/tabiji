@@ -92,7 +92,7 @@ class RealtimeChannelCoordinator {
  */
 export const broadcastTripEvent = async (
     tripId: string,
-    event: "tip:update" | "tip:typing" | "item:reorder" | "item:mutate" | "checklist:update" | "expense:update" | "info:update",
+    event: "tip:update" | "tip:typing" | "item:reorder" | "item:mutate" | "checklist:update" | "expense:update" | "info:update" | "capsule:update" | "capsule:unveil",
     data: Record<string, unknown>
 ) => {
     if (typeof window === "undefined" || !tripId) return
@@ -204,6 +204,23 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                         if (typeof key === "string" && key.includes(`/api/trips/${tripId}/expenses`)) return true
                         return false
                     }, undefined, { revalidate: true })
+                }
+
+                // 📮 時光膠囊廣播事件處理 (進度刷新與破印盛典同步)
+                if (payload.event === "capsule:update" || payload.event === "capsule:unveil") {
+                    mutate((key: unknown) => {
+                        if (Array.isArray(key) && typeof key[0] === "string" && key[0].startsWith(`/api/trips/${tripId}/capsules`)) return true
+                        if (typeof key === "string" && key.includes(`/api/trips/${tripId}/capsules`)) return true
+                        return false
+                    }, undefined, { revalidate: true })
+
+                    if (payload.event === "capsule:update") {
+                        const now = Date.now()
+                        if (now - lastToastTimeRef.current > 3000) {
+                            lastToastTimeRef.current = now
+                            toast.info("💌 旅伴已封存時光膠囊", { duration: 2500 })
+                        }
+                    }
                 }
             }
         )

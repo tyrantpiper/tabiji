@@ -524,6 +524,19 @@ export function ItineraryView() {
         return () => window.removeEventListener("tabiji:collab-event", handleCollabReorder)
     }, [day, currentTrip, reloadTripDetail])
 
+    // 📮 時光膠囊破印盛典協同監聽 (雙機同步喚起 3D 盛典，並實施 !isCapsuleCeremonyOpen 重入防衛)
+    useEffect(() => {
+        const handleCollabCapsule = (e: Event) => {
+            const customEvent = e as CustomEvent<{ event: string }>
+            if (customEvent.detail?.event === "capsule:unveil" && !isCapsuleCeremonyOpen) {
+                toast.success(zh ? "✨ 旅伴啟動了時光膠囊破印盛典！" : "✨ Companion launched Capsule Unveiling Ceremony!", { duration: 3000 })
+                setIsCapsuleCeremonyOpen(true)
+            }
+        }
+        window.addEventListener("tabiji:collab-event", handleCollabCapsule)
+        return () => window.removeEventListener("tabiji:collab-event", handleCollabCapsule)
+    }, [isCapsuleCeremonyOpen, zh])
+
 
     // 🆕 2026: Store-based GC is now handled by the weatherStore itself
 
@@ -1851,6 +1864,12 @@ export function ItineraryView() {
                                 }
                                 if (capsuleSummary?.is_unlocked) {
                                     setIsCapsuleCeremonyOpen(true)
+                                    if (activeTripId) {
+                                        broadcastTripEvent(activeTripId, "capsule:unveil", {
+                                            day_number: day > 0 ? day : 1,
+                                            author_id: userId,
+                                        }).catch(() => {})
+                                    }
                                 } else {
                                     setIsCapsuleModalOpen(true)
                                 }

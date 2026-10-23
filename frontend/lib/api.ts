@@ -1565,6 +1565,22 @@ export const capsulesApi = {
             throw new Error(err.detail || `Failed to submit capsule: ${res.status}`)
         }
         return res.json()
+    },
+
+    /** 提前解鎖膠囊破印盛典 (告別晚宴) */
+    unlock: async (tripId: string, userId?: string): Promise<CapsuleProgressSummary> => {
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        if (userId) headers["X-User-ID"] = userId
+
+        const res = await fetch(`${API_HOST}/api/trips/${tripId}/capsules/unlock`, {
+            method: "POST",
+            headers,
+        })
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            throw new Error(err.detail || `Failed to unlock capsules: ${res.status}`)
+        }
+        return res.json()
     }
 }
 

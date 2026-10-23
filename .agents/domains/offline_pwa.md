@@ -3,6 +3,8 @@
 > **所屬領域**: Service Worker (Serwist), IndexedDB (idb-keyval), Cache Storage, PWA Standalone
 
 ## 🏛️ 架構決策 (Decisions)
+- **Shared Device Dual-Key L0 Storage Isolation**: All local-first snapshots containing private or desensitized entries must be partitioned with composite keys formatted as [module]_[tripId]_[userId] in localStorage and IndexedDB to eliminate cross-account leakage on shared tablets.
+
 - **Service Worker 構建路徑絕對化**: 靜態資產掃描以模組目錄 import.meta.url 為錨點解析絕對路徑，確保建構確定性。
 - **輕量化離線原則**: 立足於專案既有 serwist、idb-keyval 與 SWRConfig provider 模式，以最小增量完成離線閉環。
 - **動脈與靜脈讀寫分流架構**: GET 查詢走 SWR 快取，突變請求走 BackgroundSync 離線重試，兩者物理隔離。

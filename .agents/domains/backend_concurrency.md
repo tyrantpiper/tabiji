@@ -3,6 +3,10 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Anti-Tampering Soft Unlock for Revealed Time Capsules**: When a trip capsule is unlocked early on the final day, existing submitted entries are permanently frozen against updates (403 Forbidden) to prevent post-unveil tampering, while unsubmitted members may append their first entry until destination midnight.
+
+- **Destination IANA Timezone Temporal Boundary Invariant**: All multi-day trip temporal boundaries (capsule locks, daily expenses, daily weather) must be evaluated against the destination IANA timezone [00:00:00, 23:59:59] converted to UTC. Never hardcode client or server local offsets.
+
 - **Native Pydantic v2 Rust Serialization Pipeline**: Do not declare default_response_class=ORJSONResponse in FastAPI v0.115+. Rely on native pydantic-core Rust serialization to eliminate double-conversion overhead and suppress deprecation warnings.
 
 - **Application Layer Memory Lookup for Masked Member References**: When an endpoint accepts an opaque or masked reference (e.g. mem_*), it must never query a PostgreSQL UUID column directly. Lookup must be conducted in memory against native ID and masked hash, and mutations must use the native UUID primary key.
@@ -33,6 +37,10 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Post-Unveil Entry Modification Tampering Trap**: Allowing edits after early unveiling breaks trust. Existing entries must be locked upon unlock while allowing pending members to submit.
+
+- **Hardcoded Destination Timezone Premature Freezing Trap**: Assuming Asia/Tokyo (UTC+9) for end-of-trip calculations freezes Western Hemisphere trips (e.g. EDT UTC-4) up to 13-19 hours prematurely. Always infer timezone from coordinates.
+
 - **CDC Filter Column Name Mismatch (itinerary_id vs trip_id)**: Supabase CDC silently ignores subscriptions with non-existent column filters. Foreign key in expenses table is itinerary_id.
 
 - **PostgreSQL 22P02 on Masked Reference SQL Query**: Passing mem_* masked strings into PostgreSQL UUID columns triggers 22P02 type mismatch. Isolate masked lookups in Python application memory.
