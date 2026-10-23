@@ -128,10 +128,21 @@ export function isTrustedUrl(url: string, trustedDomain: string): boolean {
  * UUID v4 Format Guard
  * Validates whether an incoming string matches the standard UUID v4 format.
  */
-export const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
 
 export function isValidUUID(uuid: string | null | undefined): boolean {
     if (!uuid || typeof uuid !== 'string') return false;
     return UUID_V4_REGEX.test(uuid.trim());
+}
+
+/**
+ * Dual-Track Recovery Key Guard
+ * Validates whether an incoming credential is a modern Stripe-style key (tbj_rec_*) or legacy UUID.
+ */
+export function isValidRecoveryKey(key: string | null | undefined): boolean {
+    if (!key || typeof key !== 'string') return false;
+    const clean = key.trim();
+    return isValidUUID(clean) || TBJ_REC_REGEX.test(clean);
 }
 

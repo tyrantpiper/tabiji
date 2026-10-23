@@ -36,7 +36,12 @@ TBJ_REC_REGEX = re.compile(
     r'^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$',
     re.IGNORECASE
 )
-RECOVERY_PEPPER = os.getenv("RECOVERY_PEPPER", "tbj_secret_pepper_auth_recovery_v2_2026")
+RECOVERY_PEPPER = os.getenv("RECOVERY_PEPPER")
+if not RECOVERY_PEPPER:
+    is_prod = os.getenv("ENV") == "production" or os.getenv("NODE_ENV") == "production" or os.getenv("PROD") == "1"
+    if is_prod:
+        raise RuntimeError("🚨 [CRITICAL SECURITY] RECOVERY_PEPPER must be explicitly set in production!")
+    RECOVERY_PEPPER = "tbj_secret_pepper_auth_recovery_v2_2026"
 
 
 class SessionRequest(BaseModel):
@@ -181,8 +186,9 @@ async def create_or_exchange_session(
                 detail="Account already upgraded. Please use your modern recovery key (tbj_rec_*)."
             )
 
-        # 靜默升級：自動核發第一把高熵恢復憑證
+        # 靜默升級：確保資料庫寫入成功後才下發新金鑰，若失敗則降級回傳舊版 Session
         full_key, key_id, secret_hash = generate_prefixed_recovery_key()
+        persisted = False
         try:
             await run_in_threadpool(
                 lambda: supabase.table("users").update({
@@ -192,6 +198,7 @@ async def create_or_exchange_session(
                     "recovery_updated_at": "now()"
                 }).eq("id", clean_uid).execute()
             )
+            persisted = True
         except Exception as e:
             print(f"⚠️ [Auth] Warning: Could not persist upgraded credentials: {e}")
 
@@ -199,8 +206,8 @@ async def create_or_exchange_session(
         return SessionResponse(
             access_token=token,
             user_id=clean_uid,
-            recovery_key=full_key,
-            upgraded=True,
+            recovery_key=full_key if persisted else None,
+            upgraded=persisted,
             is_new=False,
         )
 
@@ -284,8 +291,9 @@ async def recover_account_with_key(
                 detail="Account upgraded. Please use your tbj_rec_* recovery key."
             )
 
-        # 靜默升級
+        # 靜默升級：確保資料庫寫入成功後才下發新金鑰，若失敗則降級回傳舊版 Session
         full_key, key_id, secret_hash = generate_prefixed_recovery_key()
+        persisted = False
         try:
             await run_in_threadpool(
                 lambda: supabase.table("users").update({
@@ -295,15 +303,16 @@ async def recover_account_with_key(
                     "recovery_updated_at": "now()"
                 }).eq("id", clean_uid).execute()
             )
-        except Exception:
-            pass
+            persisted = True
+        except Exception as e:
+            print(f"⚠️ [Auth] Warning: Could not persist upgraded credentials during recover: {e}")
 
         token = create_session_jwt(clean_uid, secret, 1)
         return SessionResponse(
             access_token=token,
             user_id=clean_uid,
-            recovery_key=full_key,
-            upgraded=True,
+            recovery_key=full_key if persisted else None,
+            upgraded=persisted,
             is_new=False,
         )
 

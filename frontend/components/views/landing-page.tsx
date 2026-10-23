@@ -69,7 +69,7 @@ import { usersApi } from "@/lib/api"
 import { restoreAccountWithKey } from "@/lib/auth-session"
 import { debugLog, debugWarn } from "@/lib/debug"
 
-import { generateSecureUUID, isValidUUID } from "@/lib/security"
+import { generateSecureUUID, isValidRecoveryKey } from "@/lib/security"
 
 function generateUUID() {
     return generateSecureUUID();
@@ -144,8 +144,8 @@ export function LandingPage() {
 
     const handleRecover = async () => {
         const cleanCode = recoverCode.trim()
-        if (!isValidUUID(cleanCode)) {
-            toast.error(t('landing_invalid_code'))
+        if (!isValidRecoveryKey(cleanCode)) {
+            toast.error(t('landing_invalid_code') || "引繼碼格式不正確")
             return
         }
 
@@ -361,7 +361,7 @@ export function LandingPage() {
                                 <h3 className="font-bold text-slate-800 dark:text-white">{t('landing_account_recovery')}</h3>
                                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('landing_enter_uuid')}</p>
                             </div>
-                            <Input className="h-10 text-xs font-mono bg-stone-50 dark:bg-slate-900 dark:border-slate-600 dark:text-white mb-4 text-center" placeholder="xxxxxxxx-xxxx-xxxx..." value={recoverCode} onChange={e => setRecoverCode(e.target.value)} />
+                            <Input className="h-10 text-xs font-mono bg-stone-50 dark:bg-slate-900 dark:border-slate-600 dark:text-white mb-4 text-center" placeholder="tbj_rec_xxxxxxxx_... 或 UUID" value={recoverCode} onChange={e => setRecoverCode(e.target.value)} />
                             <div className="flex gap-2"><Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700" onClick={() => setShowRecover(false)}>{t('cancel')}</Button><Button className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white" onClick={handleRecover}>{t('landing_recover')}</Button></div>
                         </div>
                     )}
