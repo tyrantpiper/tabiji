@@ -82,9 +82,22 @@ def generate_prefixed_recovery_key() -> tuple[str, str, str]:
     return full_key, key_id, secret_hash
 
 
-def derive_vault_key(master_secret: str) -> bytes:
+def get_vault_master_key(fallback_secret: Optional[str] = None) -> str:
+    """
+    🛡️ 獨立長生命週期資料加密主密鑰 (Key Encryption Key)
+    優先取用專用 VAULT_MASTER_KEY，未設定時以獨立專屬鹽值派生自 session_secret。
+    """
+    vault_secret = os.getenv("VAULT_MASTER_KEY")
+    if vault_secret and len(vault_secret) >= 16:
+        return vault_secret
+    sec = fallback_secret or get_session_secret()
+    return hashlib.sha256(f"tabiji-dedicated-vault-salt-{sec}".encode()).hexdigest()
+
+
+def derive_vault_key(master_secret: Optional[str] = None) -> bytes:
     """Derives a deterministic 256-bit key for AES-256-GCM vault from server secret."""
-    return hashlib.sha256(f"tabiji-recovery-vault-salt-{master_secret}".encode()).digest()
+    secret = get_vault_master_key(fallback_secret=master_secret)
+    return hashlib.sha256(f"tabiji-recovery-vault-salt-{secret}".encode()).digest()
 
 
 def encrypt_recovery_key(recovery_key: str, vault_key: bytes) -> str:

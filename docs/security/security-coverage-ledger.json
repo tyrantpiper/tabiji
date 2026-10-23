@@ -1,15 +1,57 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-23T08:53:00Z",
+  "last_audit_date": "2026-10-23T14:50:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 212,
-    "audited_targets": 212,
-    "verified_vulnerabilities": 36,
+    "total_targets": 215,
+    "audited_targets": 215,
+    "verified_vulnerabilities": 39,
     "remediated_vulnerabilities": 40,
     "dismissed_hypotheses": 136
   },
   "targets": [
+    {
+      "id": "frontend/lib/auth-session.ts:stale_device_upgrade_lockout",
+      "target_type": "frontend_session",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "stale_device_upgrade_lockout",
+        "silent_lockout_hang"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase3_decoupling.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: Stale devices with expired JWT receiving HTTP 401 upgraded hang silently without event dispatch or user guidance.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_phase3_decoupling_2026-10-23.diff (dispatch tabiji:credential_upgrade_required on 401 upgraded)."
+    },
+    {
+      "id": "supabase/migrations/20261023_dual_track_auth_credentials.sql:postgrest_data_api_exposure",
+      "target_type": "database_migration",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "postgrest_data_api_exposure",
+        "anon_credential_dump"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase3_decoupling.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: Newly added sensitive credential columns in public.users automatically inherit blanket anon SELECT grant from previous migration.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_phase3_decoupling_2026-10-23.diff (REVOKE anon on users + grant safe columns only)."
+    },
+    {
+      "id": "backend/routers/auth.py:key_derivation_coupling",
+      "target_type": "auth_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "key_derivation_coupling",
+        "jwt_rotation_vault_invalidation"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase3_decoupling.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC: derive_vault_key directly binds AES-256-GCM vault encryption to ephemeral JWT secret SESSION_SECRET_KEY, invalidating vault decryption if JWT secret is rotated.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_phase3_decoupling_2026-10-23.diff (decoupled get_vault_master_key)."
+    },
     {
       "id": "frontend/app/sw.ts:trip_api_sw_stale_cache_poisoning",
       "target_type": "service_worker",

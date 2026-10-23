@@ -13,3 +13,12 @@ ADD COLUMN IF NOT EXISTS recovery_updated_at TIMESTAMPTZ DEFAULT NOW();
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_recovery_key_id 
 ON public.users(recovery_key_id) 
 WHERE recovery_key_id IS NOT NULL;
+
+-- 🛡️ 收攏 PostgREST Data API 欄位權限：防止匿名傾印敏感認證欄位
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users') THEN
+        REVOKE SELECT ON public.users FROM anon;
+        GRANT SELECT (id, name, created_at) ON public.users TO anon;
+    END IF;
+END $$;

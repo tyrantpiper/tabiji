@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/routers/auth.py",
+    "file_path": "backend/routers/auth.py",
+    "start_line": 75,
+    "end_line": 115,
+    "attack_vector": "key_derivation_coupling",
+    "hypothesis": "derive_vault_key(master_secret) binds AES-256-GCM vault encryption directly to ephemeral JWT signing secret SESSION_SECRET_KEY, causing resting data in recovery_key_encrypted to become un-decryptable if the JWT secret is rotated."
+  },
+  {
+    "id": "supabase/migrations/20261023_dual_track_auth_credentials.sql",
+    "file_path": "supabase/migrations/20261023_dual_track_auth_credentials.sql",
+    "start_line": 1,
+    "end_line": 16,
+    "attack_vector": "postgrest_data_api_exposure",
+    "hypothesis": "public.users sensitive credential columns (recovery_key_id, recovery_secret_hash, recovery_key_encrypted) are exposed to anonymous PostgREST SELECT queries due to a previous blanket anon table GRANT, violating least-privilege."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 140,
+    "end_line": 175,
+    "attack_vector": "stale_device_upgrade_lockout",
+    "hypothesis": "Stale inactive devices with expired JWT tokens sending legacy UUID receive HTTP 401 account upgraded error and hang silently without notifying the user or dispatching a self-healing upgrade event."
+  }
+]

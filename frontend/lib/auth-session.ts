@@ -145,6 +145,15 @@ export async function ensureValidSession(): Promise<string | null> {
 
             if (!res.ok) {
                 console.warn(`⚠️ [Auth] Session exchange returned HTTP ${res.status}`);
+                if (res.status === 401) {
+                    const err = await res.json().catch(() => ({}));
+                    if (typeof err.detail === "string" && err.detail.toLowerCase().includes("upgraded")) {
+                        console.info("ℹ️ [Auth] Account upgraded on another device. Dispatching upgrade event...");
+                        if (typeof window !== "undefined") {
+                            window.dispatchEvent(new CustomEvent("tabiji:credential_upgrade_required"));
+                        }
+                    }
+                }
                 return null;
             }
 
