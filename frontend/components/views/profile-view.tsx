@@ -92,7 +92,6 @@ export function ProfileView() {
             }
         }
     }, [subView])
-    const [copiedUuid, setCopiedUuid] = useState(false)
     const [isEditing, setIsEditing] = useState(false)
     const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
     const [memoryToDelete, setMemoryToDelete] = useState<UserPreference | null>(null)
