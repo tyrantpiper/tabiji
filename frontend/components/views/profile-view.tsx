@@ -72,20 +72,13 @@ export function ProfileView() {
             const client = getSupabaseClient()
             if (client) {
                 const channel = client.channel(`user-sync:${currentUuid}`)
-                channel.on("broadcast", { event: "CREDENTIAL_ROTATED" }, (payload: { payload?: { key?: string } }) => {
-                    const updatedKey = payload?.payload?.key
-                    if (updatedKey) {
-                        localStorage.setItem("user_recovery_key", updatedKey)
-                        setRecoveryKeyDisplay(updatedKey)
-                        toast.info(zh ? "✨ 引繼金鑰已自其他裝置同步更新" : "✨ Recovery key synced from another device")
-                    } else {
-                        fetchLatestRecoveryKey().then(k => {
-                            if (k) {
-                                setRecoveryKeyDisplay(k)
-                                toast.info(zh ? "✨ 引繼金鑰已自其他裝置同步更新" : "✨ Recovery key synced from another device")
-                            }
-                        })
-                    }
+                channel.on("broadcast", { event: "CREDENTIAL_ROTATED" }, () => {
+                    fetchLatestRecoveryKey().then(k => {
+                        if (k) {
+                            setRecoveryKeyDisplay(k)
+                            toast.info(zh ? "✨ 引繼金鑰已自其他裝置同步更新" : "✨ Recovery key synced from another device")
+                        }
+                    }).catch(() => {})
                 }).subscribe()
 
                 return () => {
@@ -113,7 +106,7 @@ export function ProfileView() {
                     channel.send({
                         type: "broadcast",
                         event: "CREDENTIAL_ROTATED",
-                        payload: { key: newKey }
+                        payload: { timestamp: Date.now() }
                     }).catch(() => {})
                 }
             }
@@ -862,7 +855,7 @@ export function ProfileView() {
                                     </p>
                                     <div className="bg-[#F6F5EE] dark:bg-[#121A18] rounded-xl p-3 flex items-center justify-between border border-[#0B3026]/10 dark:border-white/10 gap-2">
                                         <code className="text-xs font-mono text-[#E56E25] truncate max-w-45 sm:max-w-60 font-semibold">
-                                            {recoveryKeyDisplay || (typeof window !== 'undefined' ? localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "Loading..." : "Loading...")}
+                                            {recoveryKeyDisplay || "Loading..."}
                                         </code>
                                         <div className="flex items-center gap-1 shrink-0">
                                             <Button
@@ -1387,7 +1380,7 @@ export function ProfileView() {
                                 </p>
                                 <div className="bg-[#F6F5EE] dark:bg-[#121A18] rounded-xl p-3 flex items-center justify-between border border-[#0B3026]/10 dark:border-white/10 gap-2">
                                     <code className="text-xs font-mono text-[#E56E25] truncate max-w-45 sm:max-w-60 font-semibold">
-                                        {recoveryKeyDisplay || (typeof window !== 'undefined' ? localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "guest-session" : "guest-session")}
+                                        {recoveryKeyDisplay || "guest-session"}
                                     </code>
                                     <div className="flex items-center gap-1 shrink-0">
                                         <Button
