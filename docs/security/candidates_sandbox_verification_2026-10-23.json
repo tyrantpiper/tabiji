@@ -1,0 +1,20 @@
+[
+  {
+    "id": "backend/routers/auth.py",
+    "file_path": "backend/routers/auth.py",
+    "attack_vector": "access_control_dual_track",
+    "hypothesis": "Dual-track credentials could allow an unauthenticated attacker to rotate another user's key or leak the recovery secret hash in plaintext."
+  },
+  {
+    "id": ".github/workflows/deploy-backend.yml",
+    "file_path": ".github/workflows/deploy-backend.yml",
+    "attack_vector": "workflow_secret_leakage",
+    "hypothesis": "Deploy workflow contains hardcoded API tokens or secrets in step definitions, allowing public repository visitors to extract sensitive service keys."
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "attack_vector": "header_spoofing",
+    "hypothesis": "Untrusted X-User-ID headers injected by external callers bypass verification and reach backend protected endpoints."
+  }
+]

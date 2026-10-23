@@ -1,22 +1,29 @@
 """
-🛡️ Tabiji Authentication & Session Management Router (v2026)
-Implements the 1Password Secret Key / Local-First Recovery Key paradigm.
+🛡️ Tabiji Authentication & Session Management Router (v2026 - Dual-Track Hardened)
+Implements dual-track architecture:
+- Identity Anchor: Immutable user_id (UUID v4) preserved for all DB relations and offline caches.
+- Recovery Credential: Independent, revocable Stripe-style prefixed recovery key (tbj_rec_<id>_<secret>).
+- Silent Upgrade Bridge: Legacy UUID sessions are automatically upgraded to modern recovery keys without lockout.
 Provides:
 - POST /api/auth/session: Silent issuance / exchange of cryptographically signed JWT.
 - POST /api/auth/recover: Landing page recovery key restoration with rate limiting.
+- POST /api/auth/rotate: Invalidation of compromised recovery keys and rotation to fresh credentials.
 """
 
 import os
 import re
 import time
 import uuid
+import hmac
+import hashlib
+import secrets
 import jwt
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, Header
 from starlette.concurrency import run_in_threadpool
 from supabase import Client
 from pydantic import BaseModel, Field
 from typing import Optional, Any
-from utils.deps import get_session_secret, get_supabase
+from utils.deps import get_session_secret, get_supabase, get_verified_user
 from utils.limiter import limiter
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -25,10 +32,15 @@ UUID_V4_REGEX = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 
     re.IGNORECASE
 )
+TBJ_REC_REGEX = re.compile(
+    r'^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$',
+    re.IGNORECASE
+)
+RECOVERY_PEPPER = os.getenv("RECOVERY_PEPPER", "tbj_secret_pepper_auth_recovery_v2_2026")
 
 
 class SessionRequest(BaseModel):
-    recovery_key: Optional[str] = Field(None, description="Existing user UUID / recovery key")
+    recovery_key: Optional[str] = Field(None, description="Existing user recovery key (tbj_rec_*) or legacy UUID")
 
 
 class SessionResponse(BaseModel):
@@ -36,6 +48,8 @@ class SessionResponse(BaseModel):
     token_type: str = "Bearer"
     user_id: str
     is_new: bool
+    recovery_key: Optional[str] = None
+    upgraded: Optional[bool] = None
 
 
 def is_valid_uuid(val: Any) -> bool:
@@ -44,23 +58,44 @@ def is_valid_uuid(val: Any) -> bool:
     return bool(UUID_V4_REGEX.match(val.strip()))
 
 
-def normalize_uuid_or_400(val: Optional[str]) -> str:
-    """🛡️ 嚴格校驗並歸一化 UUID，杜絕型別錯誤與注入"""
+def is_valid_tbj_rec(val: Any) -> bool:
     if not val or not isinstance(val, str):
-        raise HTTPException(status_code=400, detail="Recovery key is required")
-    cleaned = val.strip().lower()
-    if not UUID_V4_REGEX.match(cleaned):
-        raise HTTPException(status_code=400, detail="Invalid recovery key format")
-    return cleaned
+        return False
+    return bool(TBJ_REC_REGEX.match(val.strip()))
 
 
-def create_session_jwt(user_id: str, secret: str) -> str:
+def generate_prefixed_recovery_key() -> tuple[str, str, str]:
+    """Generates (full_key, key_id, secret_hash) using Stripe-style format."""
+    key_id = secrets.token_hex(4)  # 8 hex chars (O(1) B-tree lookup key)
+    secret_entropy = secrets.token_hex(16)  # 32 hex chars (128-bit secret entropy)
+    full_key = f"tbj_rec_{key_id}_{secret_entropy}"
+    secret_hash = hmac.new(
+        RECOVERY_PEPPER.encode(), secret_entropy.encode(), hashlib.sha256
+    ).hexdigest()
+    return full_key, key_id, secret_hash
+
+
+def verify_recovery_key(full_key: str, stored_hash: Optional[str]) -> bool:
+    if not stored_hash or not is_valid_tbj_rec(full_key):
+        return False
+    parts = full_key.strip().split("_")
+    if len(parts) != 4:
+        return False
+    secret_entropy = parts[3]
+    computed_hash = hmac.new(
+        RECOVERY_PEPPER.encode(), secret_entropy.encode(), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(computed_hash, stored_hash)
+
+
+def create_session_jwt(user_id: str, secret: str, credential_ver: int = 1) -> str:
     now = int(time.time())
     payload = {
         "sub": user_id,
         "iss": "tabiji-core",
         "iat": now,
         "exp": now + (30 * 86400),  # 30 天效期 (由前端 401 攔截器靜默換發)
+        "ver": credential_ver,
         "type": "device_session"
     }
     return jwt.encode(payload, secret, algorithm="HS256")
@@ -78,6 +113,26 @@ def legacy_identity_exists(supabase: Client, uid: str) -> bool:
     return False
 
 
+def get_user_record_by_id(supabase: Client, uid: str) -> Optional[dict]:
+    try:
+        res = supabase.table("users").select("id, recovery_key_id, recovery_secret_hash, credential_version").eq("id", uid).limit(1).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception:
+        pass
+    return None
+
+
+def get_user_record_by_key_id(supabase: Client, key_id: str) -> Optional[dict]:
+    try:
+        res = supabase.table("users").select("id, recovery_key_id, recovery_secret_hash, credential_version").eq("recovery_key_id", key_id).limit(1).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception:
+        pass
+    return None
+
+
 @router.post("/session", response_model=SessionResponse)
 @limiter.limit("20/minute")
 async def create_or_exchange_session(
@@ -87,43 +142,100 @@ async def create_or_exchange_session(
     supabase: Client = Depends(get_supabase),
 ):
     """
-    ✨ 靜默憑證領取與安全換發 (Hardened Silent Session Exchange)
-    - 帶有 recovery_key：必須通過資料庫存在性查核，查無回傳 401 (拒絕洗白老用戶)
-    - 未帶 key：生成全新 UUID 並寫入 public.users
+    ✨ 雙軌憑證領取與靜默升級 (Dual-Track Session Exchange & Silent Upgrade)
+    - 帶有 tbj_rec_*：O(1) 索引檢索驗簽換票。
+    - 帶有 legacy UUID：若尚未綁定金鑰，自動升級簽發新引繼碼；若已升級則拒絕原生 UUID (杜絕 ATO)。
+    - 未帶 key：生成全新 UUID 與新版引繼碼。
     """
-    if body.recovery_key:
-        uid = normalize_uuid_or_400(body.recovery_key)
-        try:
-            exists = await run_in_threadpool(legacy_identity_exists, supabase, uid)
-        except Exception as e:
-            print(f"🔥 [Auth] DB error during session check: {e}")
-            raise HTTPException(status_code=503, detail="Identity check temporarily unavailable")
+    raw_key = (body.recovery_key or "").strip()
 
-        if not exists:
-            # 🛡️ 查無此人絕不降級成新用戶，回傳 401 保障本地金鑰不被覆寫
-            raise HTTPException(status_code=401, detail="Unknown recovery key")
-
-        token = create_session_jwt(uid, secret)
+    # 1. 現代化前綴引繼碼校驗路徑
+    if is_valid_tbj_rec(raw_key):
+        parts = raw_key.split("_")
+        key_id = parts[2]
+        user = await run_in_threadpool(get_user_record_by_key_id, supabase, key_id)
+        if not user or not verify_recovery_key(raw_key, user.get("recovery_secret_hash")):
+            raise HTTPException(status_code=401, detail="Unknown or invalid recovery key")
+        
+        token = create_session_jwt(user["id"], secret, user.get("credential_version", 1))
         return SessionResponse(
             access_token=token,
-            user_id=uid,
+            user_id=user["id"],
+            recovery_key=raw_key,
             is_new=False,
         )
 
-    # 全新無金鑰裝置秒開
+    # 2. 舊版 UUID 靜默平滑升級路徑 (Zero-Breakage Legacy Migration)
+    if is_valid_uuid(raw_key):
+        clean_uid = raw_key.lower()
+        exists = await run_in_threadpool(legacy_identity_exists, supabase, clean_uid)
+        if not exists:
+            raise HTTPException(status_code=401, detail="Unknown recovery key")
+
+        user_rec = await run_in_threadpool(get_user_record_by_id, supabase, clean_uid)
+        
+        # 若用戶已完成雙軌升級，強制阻斷原生 UUID，消除 ATO 漏洞
+        if user_rec and user_rec.get("recovery_key_id"):
+            raise HTTPException(
+                status_code=400, 
+                detail="Account already upgraded. Please use your modern recovery key (tbj_rec_*)."
+            )
+
+        # 靜默升級：自動核發第一把高熵恢復憑證
+        full_key, key_id, secret_hash = generate_prefixed_recovery_key()
+        try:
+            await run_in_threadpool(
+                lambda: supabase.table("users").update({
+                    "recovery_key_id": key_id,
+                    "recovery_secret_hash": secret_hash,
+                    "credential_version": 1,
+                    "recovery_updated_at": "now()"
+                }).eq("id", clean_uid).execute()
+            )
+        except Exception as e:
+            print(f"⚠️ [Auth] Warning: Could not persist upgraded credentials: {e}")
+
+        token = create_session_jwt(clean_uid, secret, 1)
+        return SessionResponse(
+            access_token=token,
+            user_id=clean_uid,
+            recovery_key=full_key,
+            upgraded=True,
+            is_new=False,
+        )
+
+    # 3. 格式無效直接拒絕
+    if raw_key:
+        raise HTTPException(status_code=400, detail="Invalid recovery key format")
+
+    # 4. 全新無金鑰裝置秒開 (生成全新 UUID 與專屬引繼金鑰)
     new_uid = str(uuid.uuid4())
+    full_key, key_id, secret_hash = generate_prefixed_recovery_key()
     try:
         await run_in_threadpool(
-            lambda: supabase.table("users").insert({"id": new_uid, "name": "Traveler"}).execute()
+            lambda: supabase.table("users").insert({
+                "id": new_uid,
+                "name": "Traveler",
+                "recovery_key_id": key_id,
+                "recovery_secret_hash": secret_hash,
+                "credential_version": 1
+            }).execute()
         )
     except Exception as e:
-        print(f"🔥 [Auth] DB bootstrap error: {e}")
-        raise HTTPException(status_code=503, detail="Account bootstrap failed")
+        # 後備：若 users 表無新欄位，降級寫入基礎資訊
+        try:
+            await run_in_threadpool(
+                lambda: supabase.table("users").insert({"id": new_uid, "name": "Traveler"}).execute()
+            )
+        except Exception as e2:
+            print(f"🔥 [Auth] DB bootstrap error: {e2}")
+            raise HTTPException(status_code=503, detail="Account bootstrap failed")
 
-    token = create_session_jwt(new_uid, secret)
+    token = create_session_jwt(new_uid, secret, 1)
     return SessionResponse(
         access_token=token,
         user_id=new_uid,
+        recovery_key=full_key,
         is_new=True,
     )
 
@@ -138,22 +250,100 @@ async def recover_account_with_key(
 ):
     """
     🛡️ 首頁專屬恢復金鑰還原帳號 (Restricted Recovery Endpoint)
-    受 SlowAPI 限流保護 (5次/分鐘)，且強制查核帳號真實存在。
+    受 SlowAPI 限流保護 (5次/分鐘)，支援新版 tbj_rec_* 與未升級之舊版 UUID。
     """
-    clean_uid = normalize_uuid_or_400(body.recovery_key)
+    raw_key = (body.recovery_key or "").strip()
 
-    try:
+    # 1. 現代化前綴金鑰還原
+    if is_valid_tbj_rec(raw_key):
+        parts = raw_key.split("_")
+        key_id = parts[2]
+        user = await run_in_threadpool(get_user_record_by_key_id, supabase, key_id)
+        if not user or not verify_recovery_key(raw_key, user.get("recovery_secret_hash")):
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        token = create_session_jwt(user["id"], secret, user.get("credential_version", 1))
+        return SessionResponse(
+            access_token=token,
+            user_id=user["id"],
+            recovery_key=raw_key,
+            is_new=False,
+        )
+
+    # 2. 舊版 UUID 還原相容
+    if is_valid_uuid(raw_key):
+        clean_uid = raw_key.lower()
         exists = await run_in_threadpool(legacy_identity_exists, supabase, clean_uid)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        user_rec = await run_in_threadpool(get_user_record_by_id, supabase, clean_uid)
+        if user_rec and user_rec.get("recovery_key_id"):
+            raise HTTPException(
+                status_code=400, 
+                detail="Account upgraded. Please use your tbj_rec_* recovery key."
+            )
+
+        # 靜默升級
+        full_key, key_id, secret_hash = generate_prefixed_recovery_key()
+        try:
+            await run_in_threadpool(
+                lambda: supabase.table("users").update({
+                    "recovery_key_id": key_id,
+                    "recovery_secret_hash": secret_hash,
+                    "credential_version": 1,
+                    "recovery_updated_at": "now()"
+                }).eq("id", clean_uid).execute()
+            )
+        except Exception:
+            pass
+
+        token = create_session_jwt(clean_uid, secret, 1)
+        return SessionResponse(
+            access_token=token,
+            user_id=clean_uid,
+            recovery_key=full_key,
+            upgraded=True,
+            is_new=False,
+        )
+
+    raise HTTPException(status_code=400, detail="Invalid recovery key format")
+
+
+@router.post("/rotate", response_model=SessionResponse)
+@limiter.limit("5/minute")
+async def rotate_recovery_key(
+    request: Request,
+    current_user: str = Depends(get_verified_user),
+    secret: str = Depends(get_session_secret),
+    supabase: Client = Depends(get_supabase),
+):
+    """
+    🔄 憑證輪替與歷史暴露作廢 (Revocation & Key Rotation)
+    核發全新引繼金鑰，立即使所有先前暴露或外洩之金鑰失效。
+    """
+    user_rec = await run_in_threadpool(get_user_record_by_id, supabase, current_user)
+    current_ver = (user_rec.get("credential_version", 1) if user_rec else 1) + 1
+
+    new_full_key, new_key_id, new_secret_hash = generate_prefixed_recovery_key()
+    try:
+        await run_in_threadpool(
+            lambda: supabase.table("users").update({
+                "recovery_key_id": new_key_id,
+                "recovery_secret_hash": new_secret_hash,
+                "credential_version": current_ver,
+                "recovery_updated_at": "now()"
+            }).eq("id", current_user).execute()
+        )
     except Exception as e:
-        print(f"🔥 [Auth] DB error during recover check: {e}")
-        raise HTTPException(status_code=503, detail="Identity check temporarily unavailable")
+        print(f"🔥 [Auth] Failed to rotate recovery credentials: {e}")
+        raise HTTPException(status_code=503, detail="Credential rotation temporarily unavailable")
 
-    if not exists:
-        raise HTTPException(status_code=404, detail="Account not found")
-
-    token = create_session_jwt(clean_uid, secret)
+    new_token = create_session_jwt(current_user, secret, current_ver)
     return SessionResponse(
-        access_token=token,
-        user_id=clean_uid,
+        access_token=new_token,
+        user_id=current_user,
+        recovery_key=new_full_key,
         is_new=False,
     )
+

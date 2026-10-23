@@ -225,6 +225,9 @@ async def get_trips(
             trip['credit_cards'] = trip.get('credit_cards') or content.get('credit_cards', [])
             trip['currency'] = resolve_trip_currency(trip, content)
             trip['is_sample'] = content.get('is_sample', False)  # 🎓 Sample trip flag
+            # 🛡️ 列表出口脫敏：非建立者本人不暴露原生 created_by UUID，消除 ATO 外洩路徑
+            if str(trip.get('created_by') or '') != user_id:
+                trip['created_by'] = None
             trips.append(trip)
             
         # 📌 Feature: 行程強制置頂 (Pin Sample Itinerary)

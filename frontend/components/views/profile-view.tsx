@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
     LogOut, CreditCard, Edit3, Save, Camera, Trash2, Smartphone, User, Loader2,
     Shield, Copy, Globe, Sparkles, Moon, Sun, Palette, AlertTriangle,
-    ChevronDown, ChevronUp, Brain, ChevronRight, ChevronLeft, // 🆕 AI 記憶與導航圖示
-    BookOpen, Mail, Check, BellRing, Type  // 🆕 使用說明、聯絡、推播、字級圖示
+    ChevronDown, ChevronUp, Brain, ChevronRight, ChevronLeft,
+    BookOpen, Mail, Check, BellRing, Type, RefreshCw
 } from "lucide-react"
+import { rotateAccountRecoveryKey } from "@/lib/auth-session"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -48,6 +49,14 @@ export function ProfileView() {
     const [subView, setSubView] = useState<'main' | 'account' | 'guide'>('main')
     const scrollContainerRef = useRef<HTMLDivElement>(null)
     const mainScrollPosRef = useRef<number>(0)
+    const [recoveryKeyDisplay, setRecoveryKeyDisplay] = useState<string>("")
+    const [isRotatingKey, setIsRotatingKey] = useState<boolean>(false)
+
+    useEffect(() => {
+        if (typeof window !== "undefined") {
+            setRecoveryKeyDisplay(localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "")
+        }
+    }, [])
 
     // 🎯 導航至子視圖之安全包裝函式（記錄精確捲動位置並切換）
     const navigateToSubView = useCallback((target: 'account' | 'guide') => {
@@ -785,32 +794,58 @@ export function ProfileView() {
                                     <p className="text-xs text-[#0B3026]/70 dark:text-[#88A29A] mb-3 leading-relaxed">
                                         {t('recovery_key_desc')}
                                     </p>
-                                    <div className="bg-[#F6F5EE] dark:bg-[#121A18] rounded-xl p-3 flex items-center justify-between border border-[#0B3026]/10 dark:border-white/10">
-                                        <code className="text-xs font-mono text-[#E56E25] truncate max-w-50 font-semibold">
-                                            {typeof window !== 'undefined' ? localStorage.getItem("user_uuid") || "Loading..." : "Loading..."}
+                                    <div className="bg-[#F6F5EE] dark:bg-[#121A18] rounded-xl p-3 flex items-center justify-between border border-[#0B3026]/10 dark:border-white/10 gap-2">
+                                        <code className="text-xs font-mono text-[#E56E25] truncate max-w-45 sm:max-w-60 font-semibold">
+                                            {recoveryKeyDisplay || (typeof window !== 'undefined' ? localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "Loading..." : "Loading...")}
                                         </code>
-                                        <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg"
-                                            onClick={() => {
-                                                const uuid = localStorage.getItem("user_uuid") || "";
-                                                if (navigator.clipboard && navigator.clipboard.writeText) {
-                                                    navigator.clipboard.writeText(uuid);
-                                                    toast.success(t('code_copied'));
-                                                } else {
-                                                    const textArea = document.createElement("textarea");
-                                                    textArea.value = uuid;
-                                                    document.body.appendChild(textArea);
-                                                    textArea.select();
-                                                    document.execCommand('copy');
-                                                    document.body.removeChild(textArea);
-                                                    toast.success(t('code_copied'));
-                                                }
-                                            }}
-                                        >
-                                            <Copy className="w-3.5 h-3.5 mr-1 text-[#0B3026]/70 dark:text-[#88A29A]" /> {t('copy')}
-                                        </Button>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                disabled={isRotatingKey}
+                                                className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg px-2"
+                                                onClick={async () => {
+                                                    const confirmed = window.confirm(zh ? "確定要輪替引繼碼嗎？舊引繼碼將立即作廢，所有既有行程不受影響。" : "Rotate recovery key? Old key will be invalidated. Existing trips are unaffected.")
+                                                    if (!confirmed) return
+                                                    setIsRotatingKey(true)
+                                                    try {
+                                                        const newKey = await rotateAccountRecoveryKey()
+                                                        setRecoveryKeyDisplay(newKey)
+                                                        toast.success(zh ? "已成功換發新引繼碼，舊密鑰已作廢！" : "New recovery key issued. Old key revoked!")
+                                                    } catch (err: unknown) {
+                                                        const msg = err instanceof Error ? err.message : "Failed to rotate key"
+                                                        toast.error(msg)
+                                                    } finally {
+                                                        setIsRotatingKey(false)
+                                                    }
+                                                }}
+                                                title={zh ? "作廢舊金鑰並換發新金鑰" : "Revoke old key and issue new"}
+                                            >
+                                                <RefreshCw className={cn("w-3.5 h-3.5 mr-1 text-[#E56E25]", isRotatingKey && "animate-spin")} /> {zh ? "輪替" : "Rotate"}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg px-2"
+                                                onClick={() => {
+                                                    const keyToCopy = recoveryKeyDisplay || (typeof window !== "undefined" ? (localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "") : "");
+                                                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                                                        navigator.clipboard.writeText(keyToCopy);
+                                                        toast.success(t('code_copied'));
+                                                    } else {
+                                                        const textArea = document.createElement("textarea");
+                                                        textArea.value = keyToCopy;
+                                                        document.body.appendChild(textArea);
+                                                        textArea.select();
+                                                        document.execCommand('copy');
+                                                        document.body.removeChild(textArea);
+                                                        toast.success(t('code_copied'));
+                                                    }
+                                                }}
+                                            >
+                                                <Copy className="w-3.5 h-3.5 mr-1 text-[#0B3026]/70 dark:text-[#88A29A]" /> {t('copy')}
+                                            </Button>
+                                        </div>
                                     </div>
                                 </div>
 

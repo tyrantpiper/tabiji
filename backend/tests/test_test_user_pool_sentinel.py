@@ -17,10 +17,10 @@ TEST_USER_VIEWER_ID = "00000000-0000-0000-0000-000000000003"
 TEST_USER_CAPSULE_ID = "00000000-0000-0000-0000-000000000004"
 TEST_USER_STRANGER_ID = "00000000-0000-0000-0000-000000000005"
 
-# Real Core User UUID Whitelist (Must NEVER collide or be impersonated)
-REAL_USER_RYAN_ID = "3f7abf22-b447-4281-b240-584549c79943"
-REAL_USER_PIG_ID = "66234892-200e-4a3f-98b4-dbb58dc6e3fa"
-REAL_USER_AIMEE_ID = "c14d3bc6-0540-44ec-98f8-ad649c9ee261"
+# Synthetic Core User Fixture Constants (Isolated Fixtures)
+FIXTURE_CORE_USER_1 = "11111111-2222-3333-4444-555555555551"
+FIXTURE_CORE_USER_2 = "11111111-2222-3333-4444-555555555552"
+FIXTURE_CORE_USER_3 = "11111111-2222-3333-4444-555555555553"
 
 
 def create_mock_supabase(trip_data: dict, capsule_entries: list):
@@ -65,8 +65,8 @@ def test_sentinel_test_pool_constants_integrity():
     # 1. All 5 are distinct
     assert len(set(test_ids)) == 5
     
-    # 2. Strict separation from real user whitelist
-    real_ids = {REAL_USER_RYAN_ID, REAL_USER_PIG_ID, REAL_USER_AIMEE_ID}
+    # 2. Strict separation from core user fixtures
+    real_ids = {FIXTURE_CORE_USER_1, FIXTURE_CORE_USER_2, FIXTURE_CORE_USER_3}
     for tid in test_ids:
         assert tid not in real_ids
         assert tid.startswith("00000000-0000-0000-0000-00000000000")

@@ -100,7 +100,7 @@ export function initSessionLifecycleListener(): () => void {
 export function getRecoveryKey(): string | null {
     if (typeof window === "undefined") return null;
     try {
-        return localStorage.getItem(RECOVERY_KEY);
+        return localStorage.getItem("user_recovery_key") || localStorage.getItem(RECOVERY_KEY);
     } catch {
         return null;
     }
@@ -151,14 +151,17 @@ export async function ensureValidSession(): Promise<string | null> {
             const data = await res.json();
             if (data?.access_token) {
                 localStorage.setItem(TOKEN_KEY, data.access_token);
-                // 🛡️ 金鑰防覆寫鐵律：若本機已有 recovery key，絕不可被非預期之 user_id 覆寫，守護永久金鑰主權
-                if (storedKey) {
-                    if (data.user_id && data.user_id !== storedKey) {
+                // 🛡️ 雙軌固化：既有 UUID 與新版專屬引繼碼同步持久化
+                if (data.recovery_key) {
+                    localStorage.setItem("user_recovery_key", data.recovery_key);
+                }
+                if (storedKey && !data.upgraded) {
+                    const currentUuid = localStorage.getItem(RECOVERY_KEY);
+                    if (currentUuid && data.user_id && data.user_id !== currentUuid) {
                         console.error("🚨 [Auth] Security Sentinel Alert: Session response user_id differs from stored recovery key! Refusing to overwrite key.");
                         throw new Error("Identity mismatch — refusing to overwrite recovery key");
                     }
                 } else if (data.user_id) {
-                    // 全新訪客初次造訪：首次固化 Recovery Key
                     localStorage.setItem(RECOVERY_KEY, data.user_id);
                 }
                 return data.access_token as string;
@@ -202,6 +205,9 @@ export async function restoreAccountWithKey(recoveryKey: string): Promise<Sessio
     if (data?.access_token) {
         localStorage.setItem(TOKEN_KEY, data.access_token);
         localStorage.setItem(RECOVERY_KEY, data.user_id);
+        if (data.recovery_key) {
+            localStorage.setItem("user_recovery_key", data.recovery_key);
+        }
         return {
             accessToken: data.access_token,
             userId: data.user_id,
@@ -210,4 +216,36 @@ export async function restoreAccountWithKey(recoveryKey: string): Promise<Sessio
     }
 
     throw new Error("Failed to restore session token");
+}
+
+/**
+ * 個人頁面專用：主動輪替引繼金鑰並使舊金鑰作廢 (Key Rotation & Revocation)
+ */
+export async function rotateAccountRecoveryKey(): Promise<string> {
+    const token = getCachedToken();
+    if (!token) throw new Error("No active session token available");
+
+    const res = await fetch("/api/auth/rotate", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+        }
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Failed to rotate recovery key (${res.status})`);
+    }
+
+    const data = await res.json();
+    if (data?.recovery_key) {
+        localStorage.setItem("user_recovery_key", data.recovery_key);
+        if (data.access_token) {
+            localStorage.setItem(TOKEN_KEY, data.access_token);
+        }
+        return data.recovery_key as string;
+    }
+
+    throw new Error("Invalid rotation response from server");
 }

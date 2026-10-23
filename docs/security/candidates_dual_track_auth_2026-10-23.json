@@ -1,0 +1,34 @@
+[
+  {
+    "id": "backend/routers/auth.py:dual_track_recovery_and_legacy_silent_upgrade",
+    "file_path": "backend/routers/auth.py",
+    "target_type": "backend_router",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "account_takeover_and_legacy_lockout",
+    "hypothesis": "Accepting raw UUIDs at /recover and /session allows account takeover if UUID is exposed, while immediately rejecting raw UUIDs locks out existing active users. Dual-track architecture with Stripe-style prefixed keys (tbj_rec_*) and silent legacy upgrade resolves both."
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js:jwt_verification_and_header_stripping",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "target_type": "edge_worker",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "bola_and_header_injection",
+    "hypothesis": "Edge Shield clones and forwards requests to POI service via Service Binding without stripping X-User-ID or verifying Bearer JWT HS256 signatures, allowing unauthenticated attackers to access and mutate any user's D1 POIs."
+  },
+  {
+    "id": "cloudflare/poi-service/worker.js:bola_unverified_jwt_and_spoofed_user_id",
+    "file_path": "cloudflare/poi-service/worker.js",
+    "target_type": "edge_worker",
+    "trust_boundary": "edge_to_internal",
+    "attack_vector": "signature_bypass",
+    "hypothesis": "extractUserId blindly trusts unvalidated X-User-ID headers and base64-decoded JWT sub fields without cryptographic signature verification, violating BOLA boundaries."
+  },
+  {
+    "id": "backend/routers/trips.py:collaborator_uuid_leakage_and_share_code_preservation",
+    "file_path": "backend/routers/trips.py",
+    "target_type": "backend_router",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "collaborator_information_disclosure",
+    "hypothesis": "GET /api/trips/:id previously leaked internal owner UUIDs to collaborators in day_notes and content, while naively removing share_code breaks dashboard card rendering and member invitation."
+  }
+]

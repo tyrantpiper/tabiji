@@ -2,6 +2,41 @@
  * Tabidachi 邊緣同源防護罩 (Edge Shield - Hardened v2)
  * 解決 GET/HEAD TypeError、支援 Gemini 流式串流、放行 Vercel 本地 API
  */
+// Web Crypto API helper to verify HS256 JWT in Cloudflare Worker
+async function verifyJwtSub(authHeader, secret) {
+  if (!authHeader || !authHeader.startsWith("Bearer ") || !secret) {
+    return null;
+  }
+  const token = authHeader.substring(7).trim();
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+
+  const [headerB64, payloadB64, signatureB64] = parts;
+  try {
+    const signatureBin = Uint8Array.from(atob(signatureB64.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+    const enc = new TextEncoder();
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"]
+    );
+    const data = enc.encode(`${headerB64}.${payloadB64}`);
+    const isValid = await crypto.subtle.verify("HMAC", cryptoKey, signatureBin, data);
+    if (!isValid) return null;
+
+    const payload = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp && payload.exp < now) {
+      return null;
+    }
+    return payload.sub || null;
+  } catch (err) {
+    return null;
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -29,8 +64,30 @@ export default {
         return new Response(null, { status: 204, headers: CORS_HEADERS });
       }
 
+      // 🛡️ Edge Shield 邊緣身分防偽閉環 (BOLA Defense & Cryptographic Gateway)
+      const rawAuth = request.headers.get("Authorization") || "";
+      const headers = new Headers(request.headers);
+
+      if (env.SESSION_SECRET) {
+        const verifiedSub = await verifyJwtSub(rawAuth, env.SESSION_SECRET);
+        if (!verifiedSub) {
+          return new Response(JSON.stringify({ error: "UNAUTHORIZED", detail: "Valid Bearer JWT required for POI service" }), {
+            status: 401,
+            headers: {
+              ...CORS_HEADERS,
+              "Content-Type": "application/json; charset=utf-8",
+            },
+          });
+        }
+        headers.delete("X-User-ID");
+        headers.set("X-User-ID", verifiedSub);
+      } else {
+        // 後備防禦：未配置密鑰前，無條件剝除外部偽造標頭
+        headers.delete("X-User-ID");
+      }
+
       try {
-        const serviceReq = request.clone();
+        const serviceReq = new Request(request, { headers });
         const resp = await env.POI_SERVICE.fetch(serviceReq);
         if (resp.ok || resp.status < 500) {
           return resp;
