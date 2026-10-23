@@ -1,0 +1,18 @@
+[
+  {
+    "id": "backend/routers/auth.py:wire_jwt_leak_and_identity_oracle",
+    "file_path": "backend/routers/auth.py",
+    "target_type": "backend_auth_endpoint",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "credential_enumeration_and_wire_jwt_leak",
+    "hypothesis": "When a client re-anchors a session using a recovery key belonging to a different user, the backend generates and transmits the victim's access_token (JWT) over the wire before the client can reject it. Furthermore, differentiating error messages provides an oracle confirming the existence of active accounts."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:uniform_error_and_race_cooldown",
+    "file_path": "frontend/lib/auth-session.ts",
+    "target_type": "frontend_session_manager",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "ui_oracle_leakage_and_in_flight_thrashing",
+    "hypothesis": "Displaying '此引繼碼屬於另一個帳號' leaks user enumeration intelligence. Additionally, lacking a post-restoration grace window allows in-flight stale 401s to re-trigger the re-auth modal immediately after successful re-anchoring."
+  }
+]

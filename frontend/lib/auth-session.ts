@@ -8,10 +8,27 @@
  * 3. Zero-Disruption Upgrade: Silently exchanges legacy user_uuid for signed JWT.
  */
 
+import { SyncEngineControl } from "./sync-engine";
+
 const TOKEN_KEY = "tabiji_session_token";
 const RECOVERY_KEY = "user_uuid";
 
 let inFlightSessionPromise: Promise<string | null> | null = null;
+let isReauthBroadcasting = false;
+let lastRestoredAt = 0;
+
+export const UNIFORM_REAUTH_ERROR = "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。";
+
+export function triggerReauthPrompt() {
+    // 🛡️ 重認證後 5 秒冷卻保護：阻斷在途 (in-flight) 舊 401 請求造成的彈窗重複震盪
+    if (Date.now() - lastRestoredAt < 5000) return;
+    if (isReauthBroadcasting) return;
+    isReauthBroadcasting = true;
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("tabiji:session_reauth_required"));
+    }
+    setTimeout(() => { isReauthBroadcasting = false; }, 3000);
+}
 
 export interface SessionInfo {
     accessToken: string;
@@ -313,4 +330,59 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
         console.warn("⚠️ [Auth] Failed to sync latest recovery key from vault:", err);
     }
     return null;
+}
+
+const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
+
+/**
+ * 🛡️ [Sentinel Local-First Patch] 原地重錨定會話憑證 (In-Place Session Re-anchoring)
+ * 1. 驗證金鑰格式，防止無效請求衝擊後端
+ * 2. 呼叫 /api/auth/session 換票
+ * 3. 🛡️ 執行 Wrong-User Guard：比對 user_id.toLowerCase()，防止拿他人金鑰覆蓋本地既有行程
+ * 4. 原地寫入 localStorage (不呼叫 localStorage.clear()，確保離線行程 100% 留存)
+ * 5. 喚醒 SyncEngineControl.resume()，自動無縫沖刷積壓的離線寄件匣
+ */
+export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<string> {
+    const cleanKey = newRecoveryKey.trim();
+    if (!TBJ_REC_REGEX.test(cleanKey)) {
+        throw new Error(UNIFORM_REAUTH_ERROR);
+    }
+
+    const currentUuid = typeof window !== "undefined" ? localStorage.getItem(RECOVERY_KEY) : null;
+    const res = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            recovery_key: cleanKey,
+            expected_user_id: currentUuid || undefined,
+        })
+    });
+
+    if (!res.ok) {
+        throw new Error(UNIFORM_REAUTH_ERROR);
+    }
+
+    const data = await res.json();
+    if (!data?.access_token || !data?.user_id) {
+        throw new Error(UNIFORM_REAUTH_ERROR);
+    }
+
+    // 🛡️ 雙重保險防禦 (Defense-in-Depth)：若伺服器返回異常使用者 ID，直接拋出統一錯誤
+    if (currentUuid && data.user_id.toLowerCase() !== currentUuid.toLowerCase()) {
+        throw new Error(UNIFORM_REAUTH_ERROR);
+    }
+
+    localStorage.setItem(TOKEN_KEY, data.access_token);
+    localStorage.setItem("user_recovery_key", cleanKey);
+    localStorage.setItem(RECOVERY_KEY, data.user_id);
+    lastRestoredAt = Date.now();
+
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", { detail: { recoveryKey: cleanKey } }));
+        window.dispatchEvent(new CustomEvent("tabiji:session_restored"));
+    }
+
+    // 恢復寄件匣同步
+    SyncEngineControl.resume();
+    return data.access_token;
 }

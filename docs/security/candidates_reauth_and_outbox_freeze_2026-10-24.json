@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/lib/sync-engine.ts:outbox_eviction_on_auth_desync",
+    "file_path": "frontend/lib/sync-engine.ts",
+    "target_type": "frontend_sync_engine",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "offline_data_loss_and_queue_eviction",
+    "hypothesis": "When session token expires or recovery key is rotated, background sync replay in useBackgroundSync receives 401 responses. Because retryCount is incremented without pausing, requests exceed MAX_RETRIES (3) and are silently dequeued from IndexedDB, destroying the user's offline-created itineraries and expenses."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:in_place_reauth_and_wrong_user_hazard",
+    "file_path": "frontend/lib/auth-session.ts",
+    "target_type": "frontend_auth_manager",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "wrong_user_data_contamination_and_destructive_logout",
+    "hypothesis": "Lacking an in-place session re-anchoring mechanism forces users on desynced devices to click logout, triggering localStorage.clear() and wiping all offline data. Conversely, naive re-authentication without asserting res.user_id === current_uuid allows a different user's key to contaminate and overwrite the existing local database."
+  },
+  {
+    "id": "frontend/components/auth/session-reauth-modal.tsx:event_flood_and_modal_thrashing",
+    "file_path": "frontend/components/auth/session-reauth-modal.tsx",
+    "target_type": "frontend_ui_component",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "ui_event_thrashing_and_double_submit",
+    "hypothesis": "Concurrent 401 responses from multiple SWR hooks fire tabiji:session_reauth_required repeatedly without debouncing, inducing state thrashing and double-submit race conditions that exhaust backend rate limits."
+  }
+]

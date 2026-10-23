@@ -3,6 +3,8 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **Constant Error String for Identity Oracle Suppression**: All recovery key verification failures (format invalid, non-existent key, hash mismatch, expected_user_id mismatch) across backend and frontend must output the identical uniform constant string: '引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。' Never reveal 'belongs to another account'.
+
 - **Proof-of-Possession Migration Invariant**: In dual-track migration, legacy identifiers must not be accepted unauthenticated nor rejected unconditionally. The server must verify proof of possession of a server-signed session token before decrypting upgraded credentials.
 
 - **PostgREST Anon Column-Level Least Privilege Invariant**: Sensitive credential columns in public tables must never be exposed to the anon role. Table-level SELECT must be revoked and replaced with explicit column-level grants.

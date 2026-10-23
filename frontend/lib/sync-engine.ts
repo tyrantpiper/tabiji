@@ -23,6 +23,20 @@ function inferEntityType(url: string): 'expense' | 'itinerary_item' | 'trip' | '
     return 'general';
 }
 
+let isSyncEnginePaused = false;
+
+export const SyncEngineControl = {
+    pause: () => {
+        console.warn("🛑 [SyncEngine] Outbox frozen due to auth desync.");
+        isSyncEnginePaused = true;
+    },
+    resume: () => {
+        console.log("▶️ [SyncEngine] Outbox thawed. Resuming sync.");
+        isSyncEnginePaused = false;
+    },
+    isPaused: () => isSyncEnginePaused,
+};
+
 /**
  * 🔄 Sync Queue Manager (IndexedDB Wrapper)
  */

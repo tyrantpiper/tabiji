@@ -22,3 +22,11 @@
   *《時空邊界與防篡改信任：時光膠囊背後的跨時區陷阱與軟解鎖哲學》*  
   解剖硬編碼東京時間導致紐約行程提早 13 小時凍結的地理偏見、告別晚宴提前破印後的博弈論與防篡改軟解鎖設計、共用設備雙鍵隔離，以及測試資料殘留遮蔽真實時鐘的人類直覺審查價值。
 
+- [`2026-10-23-proof-of-possession-and-multi-device-auth-deadlocks.md`](file:///d:/Project/tabiji/travel-pwa/docs/reflections/2026-10-23-proof-of-possession-and-multi-device-auth-deadlocks.md)  
+  *《持有證明與認證死結：多裝置金鑰輪替背後的「防 ATO 毒丸」與全域反應式自癒》*  
+  剖析雙軌引繼金鑰升級過程中，防範帳號劫持的嚴格校驗如何使休眠舊設備陷入無法換票、無法查庫的「醫源性死結」，並以密碼學持有證明（Proof-of-Possession）與 90 天寬限期自癒化解矛盾。
+
+- [`2026-10-24-oracle-defense-and-zero-wire-leak.md`](file:///d:/Project/tabiji/travel-pwa/docs/reflections/2026-10-24-oracle-defense-and-zero-wire-leak.md)  
+  *《預言機消解與傳輸層零洩漏：從使用者直覺到 Local-First 認證防線的深度病理學解剖》*  
+  由一句「這相當於告訴別人這是別人的啊」引爆出「身分枚舉預言機」與「網路傳輸層 JWT 提前外洩」雙重深層漏洞。完整解構服務端先驗阻斷（`expected_user_id`）、常數錯誤防禦、Outbox 物理凍結與 5 秒冷卻窗口的四重防衛閉環。
+

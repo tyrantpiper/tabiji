@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **Post-Restoration Grace Window Against Modal Thrashing**: Client-side triggerReauthPrompt must enforce a 5000ms grace cooldown based on lastRestoredAt timestamp to absorb in-flight stale 401 responses fired before re-anchoring, preventing modal reopening thrashing.
+
 - **Root Layer Realtime Subscription & Event Bus Invariant**: Account-level Realtime broadcast channels must be subscribed exclusively at the top-level client layer and communicate to deep views via DOM CustomEvents to avoid blindspots and redundant connections.
 
 - **Opaque Invalidation Signal for Realtime WebSocket Channels**: Realtime broadcast events (e.g. CREDENTIAL_ROTATED) must never contain plaintext secrets or user tokens in their payload. Broadcasts must function strictly as opaque invalidation signals (timestamp only), forcing clients to fetch fresh state over authenticated HTTPS.

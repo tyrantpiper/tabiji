@@ -1,15 +1,128 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-23T15:43:00Z",
+  "last_audit_date": "2026-10-24T03:05:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 218,
-    "audited_targets": 218,
-    "verified_vulnerabilities": 42,
+    "total_targets": 227,
+    "audited_targets": 227,
+    "verified_vulnerabilities": 51,
     "remediated_vulnerabilities": 40,
     "dismissed_hypotheses": 136
   },
   "targets": [
+    {
+      "id": "backend/routers/auth.py:wire_jwt_leak_and_identity_oracle",
+      "target_type": "backend_auth_endpoint",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "wire_jwt_leak_before_client_rejection",
+        "user_enumeration_oracle_defense",
+        "legacy_uuid_expected_user_bypass"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_oracle_defense.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-7 & TC-8: Unpatched endpoint serialized victim's JWT over HTTP before client could inspect it. Fixed by server-side expected_user_id assertion and uniform 401 response with zero token payload.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_oracle_defense_2026-10-24.diff."
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:uniform_error_and_race_cooldown",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "ui_oracle_leakage_and_user_enumeration",
+        "in_flight_401_modal_thrashing"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_oracle_defense.md",
+      "validator_details": "Confirmed by In-Memory Vitest TC-9 & TC-10: Client transmits expected_user_id, enforces uniform error string across all failures, and silences in-flight 401 races with 5000ms lastRestoredAt window.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_oracle_defense_2026-10-24.diff."
+    },
+    {
+      "id": "frontend/lib/sync-engine.ts:outbox_eviction_on_auth_desync",
+      "target_type": "frontend_sync_engine",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "offline_data_loss_and_queue_eviction",
+        "freeze_outbox_on_401"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_reauth_and_outbox_freeze.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-1 & TC-2: useBackgroundSync discards un-synced requests after 3x 401 retries. Fixed by SyncEngineControl.pause().",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_reauth_and_outbox_freeze_2026-10-24.diff."
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:in_place_reauth_and_wrong_user_hazard",
+      "target_type": "frontend_auth_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "wrong_user_data_contamination_and_destructive_logout",
+        "in_place_session_reanchor"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_reauth_and_outbox_freeze.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-3 & TC-4: In-place re-anchoring preserves local DB while case-insensitive identity assertion prevents data contamination.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_reauth_and_outbox_freeze_2026-10-24.diff."
+    },
+    {
+      "id": "frontend/components/auth/session-reauth-modal.tsx:event_flood_and_modal_thrashing",
+      "target_type": "frontend_ui_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "ui_event_thrashing_and_double_submit",
+        "reauth_broadcast_debouncing"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_reauth_and_outbox_freeze.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-5: 3s debounce collapses concurrent 401 broadcasts into a single modal invocation.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_reauth_and_outbox_freeze_2026-10-24.diff."
+    },
+    {
+      "id": "backend/routers/auth.py:credential_vault_revoked_session_backdoor",
+      "target_type": "auth_router",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "token_revocation_bypass_and_vault_exfiltration",
+        "stale_jwt_version_gate"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_auth_revocation.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-1 & TC-2: get_verified_user_with_grace returns only UUID, allowing pre-rotation JWTs (ver 1) to retrieve modern rotated key (ver 2) from /credential.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_p0_auth_revocation_2026-10-24.diff (VerifiedSession version gate)."
+    },
+    {
+      "id": "backend/routers/auth.py:dual_track_silent_upgrade_race_condition",
+      "target_type": "auth_router",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "concurrency_race_condition_and_ghost_credential",
+        "optimistic_lock_healing"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_auth_revocation.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-5: Concurrent upgrade overwrites key without optimistic check, stranding one device with invalid ghost key.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_p0_auth_revocation_2026-10-24.diff."
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:cross_tab_exchange_concurrency_and_weblock_safety",
+      "target_type": "frontend_session",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "multi_tab_thundering_herd_and_runtime_crash",
+        "web_locks_fallback_safety"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_auth_revocation.md",
+      "validator_details": "Confirmed by code audit: navigator.locks lacks feature detection and timeout handling.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/patch_candidate_p0_auth_revocation_2026-10-24.diff."
+    },
     {
       "id": "frontend/lib/auth-session.ts:dormant_token_vault_sync_barrier",
       "target_type": "frontend_session",
@@ -2732,6 +2845,20 @@
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: Enabling catch-up submission requires atomic check to block modifying existing revealed entries while allowing new inserts.",
       "remediated_at": null,
       "resolution": "Candidate patch formulated in docs/security/history/patch_candidate_capsules_temporal_tamper_2026-10-23.diff (Tamper-Proof Soft Unlock query check)."
+    },
+    {
+      "id": "backend/routers/auth.py:credential_vault_revocation_bypass",
+      "target_type": "backend_router",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "credential_revocation_bypass",
+        "stale_jwt_vault_replay"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_auth_revocation.md",
+      "validator_details": "Confirmed by Sentinel & In-Memory PoC (test_tc1_unpatched_vault_exposes_rotated_key): /api/auth/credential returned new encrypted key to stale JWT with ver 1 < db_ver 2, completely bypassing rotation. Patched with VerifiedSession version comparison.",
+      "remediated_at": null,
+      "resolution": "Candidate patch formulated in docs/security/patch_candidate_p0_auth_revocation_2026-10-24.diff (VerifiedSession + token_version < db_ver check)."
     }
   ]
 }

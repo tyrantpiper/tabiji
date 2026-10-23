@@ -46,8 +46,12 @@ if not RECOVERY_PEPPER:
     RECOVERY_PEPPER = "tbj_secret_pepper_auth_recovery_v2_2026"
 
 
+UNIFORM_AUTH_ERROR = "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。"
+
+
 class SessionRequest(BaseModel):
     recovery_key: Optional[str] = Field(None, description="Existing user recovery key (tbj_rec_*) or legacy UUID")
+    expected_user_id: Optional[str] = Field(None, description="Expected user UUID when re-anchoring an existing device session")
 
 
 class SessionResponse(BaseModel):
@@ -205,7 +209,13 @@ async def create_or_exchange_session(
         key_id = parts[2]
         user = await run_in_threadpool(get_user_record_by_key_id, supabase, key_id)
         if not user or not verify_recovery_key(raw_key, user.get("recovery_secret_hash")):
-            raise HTTPException(status_code=401, detail="Unknown or invalid recovery key")
+            raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
+        
+        # 🛡️ 伺服器端帳號錨定防衛 (Server-Side Expected User ID Gate)
+        # 嚴禁在身分不符時向網路傳輸目標帳號之 JWT 或使用者識別碼，徹底阻絕傳輸外洩與 Oracle 枚舉
+        if body.expected_user_id:
+            if user["id"].strip().lower() != body.expected_user_id.strip().lower():
+                raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
         
         token = create_session_jwt(user["id"], secret, user.get("credential_version", 1))
         return SessionResponse(
@@ -218,9 +228,14 @@ async def create_or_exchange_session(
     # 2. 舊版 UUID 靜默平滑升級路徑 (Zero-Breakage Legacy Migration)
     if is_valid_uuid(raw_key):
         clean_uid = raw_key.lower()
+        # 🛡️ 舊版 UUID 遷移路徑同樣受 expected_user_id 伺服器端防衛
+        if body.expected_user_id:
+            if clean_uid != body.expected_user_id.strip().lower():
+                raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
+
         exists = await run_in_threadpool(legacy_identity_exists, supabase, clean_uid)
         if not exists:
-            raise HTTPException(status_code=401, detail="Unknown recovery key")
+            raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
 
         user_rec = await run_in_threadpool(get_user_record_by_id, supabase, clean_uid)
         
@@ -449,14 +464,20 @@ async def rotate_recovery_key(
     )
 
 
-async def get_verified_user_with_grace(
+class VerifiedSession(BaseModel):
+    user_id: str
+    token_version: int = 1
+
+
+async def get_verified_session_with_grace(
     request: Request,
     auth_header: str = Header(None, alias="Authorization"),
     secret: str = Depends(get_session_secret),
-) -> str:
+) -> VerifiedSession:
     """
     🛡️ 自癒寬限期身分驗證依賴 (Grace-Period Token Verification)
     優先標準驗證 (有效 JWT)；若過期但簽名未遭竄改且在 90 天寬限期內，允許存取保險庫自癒。
+    回傳 VerifiedSession 物件以嚴格閉合金鑰輪替後的版本號檢驗。
     """
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
@@ -474,7 +495,10 @@ async def get_verified_user_with_grace(
         )
         sub = str(payload.get("sub") or "").strip()
         if payload.get("type") == "device_session" and UUID_V4_REGEX.match(sub):
-            return sub
+            return VerifiedSession(
+                user_id=sub,
+                token_version=int(payload.get("ver") or 1)
+            )
     except jwt.ExpiredSignatureError:
         # 2. 🛡️ 寬限期驗簽 (過期 <= 90 天之合法伺服器簽署歷史憑證)
         try:
@@ -492,13 +516,22 @@ async def get_verified_user_with_grace(
                 and UUID_V4_REGEX.match(sub)
                 and (now - payload.get("iat", 0) <= 90 * 86400)
             ):
-                return sub
+                return VerifiedSession(
+                    user_id=sub,
+                    token_version=int(payload.get("ver") or 1)
+                )
         except Exception:
             pass
     except Exception:
         pass
 
     raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+async def get_verified_user_with_grace(
+    session: VerifiedSession = Depends(get_verified_session_with_grace),
+) -> str:
+    return session.user_id
 
 
 class CredentialResponse(BaseModel):
@@ -510,7 +543,7 @@ class CredentialResponse(BaseModel):
 @limiter.limit("30/minute")
 async def get_user_recovery_credential(
     request: Request,
-    current_user: str = Depends(get_verified_user_with_grace),
+    session: VerifiedSession = Depends(get_verified_session_with_grace),
     secret: str = Depends(get_session_secret),
     supabase: Client = Depends(get_supabase),
 ):
@@ -522,19 +555,27 @@ async def get_user_recovery_credential(
         res = await run_in_threadpool(
             lambda: supabase.table("users").select(
                 "recovery_key_encrypted, credential_version"
-            ).eq("id", current_user).limit(1).execute()
+            ).eq("id", session.user_id).limit(1).execute()
         )
         if not res.data:
             raise HTTPException(status_code=404, detail="User not found")
 
         user_row = res.data[0]
+        db_ver = int(user_row.get("credential_version") or 1)
+        # 🛡️ 徹底阻斷輪替後的保險庫後門：若持有舊 Token 則視為已撤銷
+        if session.token_version < db_ver:
+            raise HTTPException(
+                status_code=401,
+                detail="Credential has been rotated. This session is revoked."
+            )
+
         enc_payload = user_row.get("recovery_key_encrypted")
         vault_key = derive_vault_key(secret)
         decrypted_key = decrypt_recovery_key(enc_payload, vault_key) if enc_payload else None
 
         return CredentialResponse(
             recovery_key=decrypted_key,
-            credential_version=user_row.get("credential_version", 1)
+            credential_version=db_ver
         )
     except HTTPException:
         raise

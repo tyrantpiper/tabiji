@@ -22,6 +22,7 @@ import { ZoomableImage } from "@/components/ui/zoomable-image"
 import { useHaptic } from "@/lib/hooks"
 
 import { useLanguage } from "@/lib/LanguageContext"
+import { SyncEngineControl } from "@/lib/sync-engine"
 import { useTheme, ACCENT_COLORS, AccentColor, VALID_FONT_SCALES, FONT_SCALE_TIERS } from "@/lib/ThemeContext"
 import { ImageUpload } from "@/components/ui/image-upload"
 import { toast } from "sonner"
@@ -387,7 +388,10 @@ export function ProfileView() {
     }
 
     const handleLogout = () => {
-        if (confirm("Are you sure you want to logout?")) {
+        const warnMessage = zh
+            ? "⚠️ 確定要登出嗎？\n\n注意：若您有尚未同步至雲端的本機離線行程，登出將清除本機暫存且無法復原！請確認已備份您的引繼碼。"
+            : "⚠️ Are you sure you want to logout?\n\nWarning: Any unsynced offline trips will be cleared. Please ensure you have backed up your recovery key.";
+        if (confirm(warnMessage)) {
             localStorage.clear()
             window.location.reload()
         }
@@ -865,6 +869,9 @@ export function ProfileView() {
                                                 variant="ghost"
                                                 className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg px-2"
                                                 onClick={() => {
+                                                    if (SyncEngineControl.isPaused()) {
+                                                        toast.warning(zh ? "⚠️ 注意：此裝置金鑰待重新驗證，可能已在其他裝置更新！" : "⚠️ Warning: This key is pending re-authentication.");
+                                                    }
                                                     const keyToCopy = recoveryKeyDisplay || (typeof window !== "undefined" ? (localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "") : "");
                                                     if (navigator.clipboard && navigator.clipboard.writeText) {
                                                         navigator.clipboard.writeText(keyToCopy);
@@ -1390,6 +1397,9 @@ export function ProfileView() {
                                             variant="ghost"
                                             className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg px-2"
                                             onClick={() => {
+                                                if (SyncEngineControl.isPaused()) {
+                                                    toast.warning(zh ? "⚠️ 注意：此裝置金鑰待重新驗證，可能已在其他裝置更新！" : "⚠️ Warning: This key is pending re-authentication.");
+                                                }
                                                 const keyToCopy = recoveryKeyDisplay || (typeof window !== "undefined" ? (localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "") : "");
                                                 if (navigator.clipboard && navigator.clipboard.writeText) {
                                                     navigator.clipboard.writeText(keyToCopy);

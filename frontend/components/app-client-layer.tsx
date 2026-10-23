@@ -7,10 +7,12 @@ import { getSupabaseClient } from "@/lib/supabase"
 import { useLanguage } from "@/lib/LanguageContext"
 import { toast } from "sonner"
 
+import { SessionReauthModal } from "@/components/auth/session-reauth-modal"
+
 // 🚀 [Perf Audit 2026] 建立客戶端隔離區 (Client Boundary)
 // 1. 解決 Server Component (layout.tsx) 不能直接使用 ssr:false dynamic 的限制
 // 2. 確保 AI 機器人在背景獨立 Hydrate，不阻塞首屏渲染
-// 3. 🛡️ 於頂層守護 Session 生命週期（斷網恢復自動領票、前台喚醒自癒、跨裝置即時金鑰同步）
+// 3. 🛡️ 於頂層守護 Session 生命週期（斷網恢復自動領票、前台喚醒自癒、跨裝置即時金鑰同步、401 原地熱重錨）
 const ChatWidget = dynamic(() => import("@/components/chat-widget").then(mod => mod.default), {
     ssr: false,
 })
@@ -54,9 +56,13 @@ export function AppClientLayer() {
     }, [zh]);
 
     return (
-        <Suspense fallback={null}>
-            <ChatWidget />
-        </Suspense>
+        <>
+            <Suspense fallback={null}>
+                <ChatWidget />
+            </Suspense>
+            <SessionReauthModal />
+        </>
     )
 }
+
 

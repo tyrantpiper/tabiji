@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Server-Side Expected User ID Assertion Before JWT Issuance**: In /api/auth/session, when expected_user_id is provided by the client, the backend must assert user['id'].strip().lower() == expected_user_id.strip().lower() BEFORE calling create_session_jwt. Mismatched identities must return 401 with zero tokens serialized in response body.
+
 - **Dormant Device Grace Period Self-Healing Invariant**: Credential vault recovery endpoints must accept un-tampered server-signed tokens within a 90-day grace period to allow dormant devices to recover modern credentials.
 
 - **Server-Side Credential Vault AES-256-GCM Invariant**: To support cross-device recovery key synchronization, the plaintext recovery key must be encrypted using AES-256-GCM derived via PBKDF2 from a server secret. Retrieval endpoints (/api/auth/credential) must strictly enforce caller JWT subject equality.

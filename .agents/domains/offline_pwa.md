@@ -3,6 +3,8 @@
 > **所屬領域**: Service Worker (Serwist), IndexedDB (idb-keyval), Cache Storage, PWA Standalone
 
 ## 🏛️ 架構決策 (Decisions)
+- **Outbox 401 Physical Freeze and Dequeue Protection**: When useBackgroundSync encounters a 401 Unauthorized during mutation replay, it must immediately call SyncEngineControl.pause() and break out of the replay loop without incrementing retryCount and without dequeuing the mutation.
+
 - **Shared Device Dual-Key L0 Storage Isolation**: All local-first snapshots containing private or desensitized entries must be partitioned with composite keys formatted as [module]_[tripId]_[userId] in localStorage and IndexedDB to eliminate cross-account leakage on shared tablets.
 
 - **Service Worker 構建路徑絕對化**: 靜態資產掃描以模組目錄 import.meta.url 為錨點解析絕對路徑，確保建構確定性。

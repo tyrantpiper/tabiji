@@ -701,6 +701,109 @@ def test_kick_member_masked_lookup_and_delete(test_client, mock_supabase):
     mock_members.delete.return_value.eq.return_value.eq.assert_called_with("id", member_record_id)
 
 
+# ---------------------------------------------------------------------------
+# Oracle Defense & Zero-Wire-Leak Integration Tests on Real App Router
+# ---------------------------------------------------------------------------
+def test_auth_session_server_side_expected_user_id_mismatch_blocks_jwt_and_prevents_oracle(test_client, mock_supabase):
+    """
+    [REAL ROUTER AUDIT]: Real POST /api/auth/session strictly asserts expected_user_id server-side.
+    If expected_user_id does not match the recovery key's owner:
+    1. Returns 401 Unauthorized.
+    2. Response contains ZERO access_token / user_id (Zero Wire Leak).
+    3. Response detail is UNIFORM_AUTH_ERROR (Zero Oracle Leak).
+    """
+    import hmac
+    import hashlib
+    from routers.auth import RECOVERY_PEPPER, UNIFORM_AUTH_ERROR
+
+    victim_uid = "99999999-8888-7777-6666-555555555555"
+    attacker_uid = "11111111-2222-3333-4444-555555555555"
+    key_id = "abcd1234"
+    secret_entropy = "0123456789abcdef0123456789abcdef"
+    full_key = f"tbj_rec_{key_id}_{secret_entropy}"
+    valid_hash = hmac.new(RECOVERY_PEPPER.encode(), secret_entropy.encode(), hashlib.sha256).hexdigest()
+
+    # Mock user record returned from Supabase for this key_id
+    mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[{
+            "id": victim_uid,
+            "recovery_key_id": key_id,
+            "recovery_secret_hash": valid_hash,
+            "credential_version": 1
+        }]
+    )
+
+    # Attacker submits victim's key with attacker's expected_user_id
+    res = test_client.post("/api/auth/session", json={
+        "recovery_key": full_key,
+        "expected_user_id": attacker_uid
+    })
+
+    # Assert 1: HTTP 401
+    assert res.status_code == 401
+    res_json = res.json()
+    # Assert 2: Uniform error message (Oracle defense)
+    assert res_json["detail"] == UNIFORM_AUTH_ERROR
+    # Assert 3: Wire-level token zero leak
+    assert "access_token" not in res_json
+    assert "user_id" not in res_json
+
+
+def test_auth_session_server_side_expected_user_id_match_issues_jwt(test_client, mock_supabase):
+    """
+    [REAL ROUTER AUDIT]: When expected_user_id matches recovery key owner, JWT is safely issued.
+    """
+    import hmac
+    import hashlib
+    from routers.auth import RECOVERY_PEPPER
+
+    owner_uid = "88888888-7777-6666-5555-444444444444"
+    key_id = "beef5678"
+    secret_entropy = "11223344556677889900aabbccddeeff"
+    full_key = f"tbj_rec_{key_id}_{secret_entropy}"
+    valid_hash = hmac.new(RECOVERY_PEPPER.encode(), secret_entropy.encode(), hashlib.sha256).hexdigest()
+
+    mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[{
+            "id": owner_uid,
+            "recovery_key_id": key_id,
+            "recovery_secret_hash": valid_hash,
+            "credential_version": 2
+        }]
+    )
+
+    res = test_client.post("/api/auth/session", json={
+        "recovery_key": full_key,
+        "expected_user_id": owner_uid
+    })
+
+    assert res.status_code == 200
+    res_json = res.json()
+    assert res_json["user_id"] == owner_uid
+    assert "access_token" in res_json
+    assert res_json["access_token"] is not None
+
+
+def test_auth_session_legacy_uuid_expected_user_id_guard(test_client, mock_supabase):
+    """
+    [REAL ROUTER AUDIT]: Legacy UUID path also strictly blocks expected_user_id mismatch.
+    """
+    from routers.auth import UNIFORM_AUTH_ERROR
+
+    victim_legacy_uuid = "22222222-3333-4444-5555-666666666666"
+    attacker_uid = "77777777-8888-9999-0000-111111111111"
+
+    # Attacker tries to exchange victim's legacy UUID while passing attacker_uid
+    res = test_client.post("/api/auth/session", json={
+        "recovery_key": victim_legacy_uuid,
+        "expected_user_id": attacker_uid
+    })
+
+    assert res.status_code == 401
+    assert res.json()["detail"] == UNIFORM_AUTH_ERROR
+    assert "access_token" not in res.json()
+
+
 
 
 

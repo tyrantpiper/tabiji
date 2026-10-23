@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/routers/auth.py:credential_vault_revoked_session_backdoor",
+    "file_path": "backend/routers/auth.py",
+    "target_type": "backend_router",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "token_revocation_bypass_and_vault_exfiltration",
+    "hypothesis": "GET /api/auth/credential relies on get_verified_user_with_grace which does not compare the JWT version (payload.ver) against the database credential_version. When a user rotates credentials after an exploit or device loss, an attacker holding a pre-rotation token (ver < db_ver) can query /api/auth/credential and receive the newly rotated, decrypted recovery key, entirely bypassing key rotation."
+  },
+  {
+    "id": "backend/routers/auth.py:dual_track_silent_upgrade_race_condition",
+    "file_path": "backend/routers/auth.py",
+    "target_type": "backend_router",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "concurrency_race_condition_and_ghost_credential",
+    "hypothesis": "When two legacy devices (holding the same historical UUID) reconnect concurrently and request POST /api/auth/session, both pass the recovery_key_id is None check and generate different keys. The second update overwrites the database without optimistic locking, leaving the first device with an unrecoverable ghost credential."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:cross_tab_exchange_concurrency_and_weblock_safety",
+    "file_path": "frontend/lib/auth-session.ts",
+    "target_type": "frontend_lib",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "multi_tab_thundering_herd_and_runtime_crash",
+    "hypothesis": "In-flight session promise deduplication is restricted to a single browser tab. Multiple tabs opening simultaneously issue concurrent /api/auth/session requests triggering 429 rate limits. Naively calling navigator.locks.request without feature detection crashes test environments (Vitest/jsdom) and non-secure contexts, and lacking timeout handling induces tab lock starvation."
+  }
+]
