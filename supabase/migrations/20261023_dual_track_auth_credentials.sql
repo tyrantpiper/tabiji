@@ -5,6 +5,7 @@
 ALTER TABLE public.users 
 ADD COLUMN IF NOT EXISTS recovery_key_id TEXT,
 ADD COLUMN IF NOT EXISTS recovery_secret_hash TEXT,
+ADD COLUMN IF NOT EXISTS recovery_key_encrypted TEXT,
 ADD COLUMN IF NOT EXISTS credential_version INT DEFAULT 1 NOT NULL,
 ADD COLUMN IF NOT EXISTS recovery_updated_at TIMESTAMPTZ DEFAULT NOW();
 

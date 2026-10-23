@@ -8,7 +8,8 @@ import {
     ChevronDown, ChevronUp, Brain, ChevronRight, ChevronLeft,
     BookOpen, Mail, Check, BellRing, Type, RefreshCw
 } from "lucide-react"
-import { rotateAccountRecoveryKey } from "@/lib/auth-session"
+import { rotateAccountRecoveryKey, fetchLatestRecoveryKey } from "@/lib/auth-session"
+import { getSupabaseClient } from "@/lib/supabase"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -53,10 +54,76 @@ export function ProfileView() {
     const [isRotatingKey, setIsRotatingKey] = useState<boolean>(false)
 
     useEffect(() => {
-        if (typeof window !== "undefined") {
-            setRecoveryKeyDisplay(localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || "")
+        if (typeof window === "undefined") return
+
+        const cached = localStorage.getItem("user_recovery_key") || localStorage.getItem("user_uuid") || ""
+        if (cached) setRecoveryKeyDisplay(cached)
+
+        // 🛡️ 跨裝置密文保險庫自動對齊
+        fetchLatestRecoveryKey().then((latestKey) => {
+            if (latestKey) {
+                setRecoveryKeyDisplay(latestKey)
+            }
+        }).catch(() => {})
+
+        // 📡 跨裝置即時金鑰輪替廣播監聽
+        const currentUuid = localStorage.getItem("user_uuid")
+        if (currentUuid) {
+            const client = getSupabaseClient()
+            if (client) {
+                const channel = client.channel(`user-sync:${currentUuid}`)
+                channel.on("broadcast", { event: "CREDENTIAL_ROTATED" }, (payload: { payload?: { key?: string } }) => {
+                    const updatedKey = payload?.payload?.key
+                    if (updatedKey) {
+                        localStorage.setItem("user_recovery_key", updatedKey)
+                        setRecoveryKeyDisplay(updatedKey)
+                        toast.info(zh ? "✨ 引繼金鑰已自其他裝置同步更新" : "✨ Recovery key synced from another device")
+                    } else {
+                        fetchLatestRecoveryKey().then(k => {
+                            if (k) {
+                                setRecoveryKeyDisplay(k)
+                                toast.info(zh ? "✨ 引繼金鑰已自其他裝置同步更新" : "✨ Recovery key synced from another device")
+                            }
+                        })
+                    }
+                }).subscribe()
+
+                return () => {
+                    client.removeChannel(channel)
+                }
+            }
         }
-    }, [])
+    }, [zh])
+
+    const handleRotateKey = useCallback(async () => {
+        const confirmed = window.confirm(zh ? "確定要輪替引繼碼嗎？舊引繼碼將立即作廢，所有既有行程不受影響。" : "Rotate recovery key? Old key will be invalidated. Existing trips are unaffected.")
+        if (!confirmed) return
+        setIsRotatingKey(true)
+        try {
+            const newKey = await rotateAccountRecoveryKey()
+            setRecoveryKeyDisplay(newKey)
+            toast.success(zh ? "已成功換發新引繼碼，舊密鑰已作廢！" : "New recovery key issued. Old key revoked!")
+
+            // 📡 即時向其他已登入裝置廣播新引繼碼
+            const currentUuid = localStorage.getItem("user_uuid")
+            if (currentUuid) {
+                const client = getSupabaseClient()
+                if (client) {
+                    const channel = client.channel(`user-sync:${currentUuid}`)
+                    channel.send({
+                        type: "broadcast",
+                        event: "CREDENTIAL_ROTATED",
+                        payload: { key: newKey }
+                    }).catch(() => {})
+                }
+            }
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : "Failed to rotate key"
+            toast.error(msg)
+        } finally {
+            setIsRotatingKey(false)
+        }
+    }, [zh])
 
     // 🎯 導航至子視圖之安全包裝函式（記錄精確捲動位置並切換）
     const navigateToSubView = useCallback((target: 'account' | 'guide') => {
@@ -803,21 +870,7 @@ export function ProfileView() {
                                                 variant="ghost"
                                                 disabled={isRotatingKey}
                                                 className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg px-2"
-                                                onClick={async () => {
-                                                    const confirmed = window.confirm(zh ? "確定要輪替引繼碼嗎？舊引繼碼將立即作廢，所有既有行程不受影響。" : "Rotate recovery key? Old key will be invalidated. Existing trips are unaffected.")
-                                                    if (!confirmed) return
-                                                    setIsRotatingKey(true)
-                                                    try {
-                                                        const newKey = await rotateAccountRecoveryKey()
-                                                        setRecoveryKeyDisplay(newKey)
-                                                        toast.success(zh ? "已成功換發新引繼碼，舊密鑰已作廢！" : "New recovery key issued. Old key revoked!")
-                                                    } catch (err: unknown) {
-                                                        const msg = err instanceof Error ? err.message : "Failed to rotate key"
-                                                        toast.error(msg)
-                                                    } finally {
-                                                        setIsRotatingKey(false)
-                                                    }
-                                                }}
+                                                onClick={handleRotateKey}
                                                 title={zh ? "作廢舊金鑰並換發新金鑰" : "Revoke old key and issue new"}
                                             >
                                                 <RefreshCw className={cn("w-3.5 h-3.5 mr-1 text-[#E56E25]", isRotatingKey && "animate-spin")} /> {zh ? "輪替" : "Rotate"}
@@ -1342,19 +1395,7 @@ export function ProfileView() {
                                             variant="ghost"
                                             disabled={isRotatingKey}
                                             className="h-7 text-xs hover:bg-[#0B3026]/5 dark:hover:bg-white/10 text-[#1E2927] dark:text-[#E5EBEA] rounded-lg px-2"
-                                            onClick={async () => {
-                                                setIsRotatingKey(true)
-                                                try {
-                                                    const newKey = await rotateAccountRecoveryKey()
-                                                    setRecoveryKeyDisplay(newKey)
-                                                    toast.success(zh ? "新引繼碼已生成，舊引繼碼已失效！" : "New recovery key issued. Old key revoked!")
-                                                } catch (err: unknown) {
-                                                    const msg = err instanceof Error ? err.message : "Failed to rotate key"
-                                                    toast.error(msg)
-                                                } finally {
-                                                    setIsRotatingKey(false)
-                                                }
-                                            }}
+                                            onClick={handleRotateKey}
                                             title={zh ? "作廢舊金鑰並換發新金鑰" : "Revoke old key and issue new"}
                                         >
                                             <RefreshCw className={cn("w-3.5 h-3.5 mr-1 text-[#E56E25]", isRotatingKey && "animate-spin")} /> {zh ? "輪替" : "Rotate"}

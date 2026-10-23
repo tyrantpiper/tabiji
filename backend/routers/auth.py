@@ -17,7 +17,9 @@ import uuid
 import hmac
 import hashlib
 import secrets
+import base64
 import jwt
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import APIRouter, HTTPException, Request, Depends, Header
 from starlette.concurrency import run_in_threadpool
 from supabase import Client
@@ -78,6 +80,35 @@ def generate_prefixed_recovery_key() -> tuple[str, str, str]:
         RECOVERY_PEPPER.encode(), secret_entropy.encode(), hashlib.sha256
     ).hexdigest()
     return full_key, key_id, secret_hash
+
+
+def derive_vault_key(master_secret: str) -> bytes:
+    """Derives a deterministic 256-bit key for AES-256-GCM vault from server secret."""
+    return hashlib.sha256(f"tabiji-recovery-vault-salt-{master_secret}".encode()).digest()
+
+
+def encrypt_recovery_key(recovery_key: str, vault_key: bytes) -> str:
+    """Encrypts full recovery key with AES-256-GCM for authorized multi-device sync."""
+    aesgcm = AESGCM(vault_key)
+    nonce = os.urandom(12)
+    ciphertext = aesgcm.encrypt(nonce, recovery_key.encode("utf-8"), None)
+    return base64.b64encode(nonce + ciphertext).decode("utf-8")
+
+
+def decrypt_recovery_key(encrypted_payload: Optional[str], vault_key: bytes) -> Optional[str]:
+    """Decrypts AES-256-GCM recovery key payload."""
+    if not encrypted_payload:
+        return None
+    try:
+        raw_data = base64.b64decode(encrypted_payload.encode("utf-8"))
+        if len(raw_data) < 28:
+            return None
+        nonce = raw_data[:12]
+        ciphertext = raw_data[12:]
+        aesgcm = AESGCM(vault_key)
+        return aesgcm.decrypt(nonce, ciphertext, None).decode("utf-8")
+    except Exception:
+        return None
 
 
 def verify_recovery_key(full_key: str, stored_hash: Optional[str]) -> bool:
@@ -188,12 +219,15 @@ async def create_or_exchange_session(
 
         # 靜默升級：確保資料庫寫入成功後才下發新金鑰，若失敗則降級回傳舊版 Session
         full_key, key_id, secret_hash = generate_prefixed_recovery_key()
+        vault_key = derive_vault_key(secret)
+        encrypted_key = encrypt_recovery_key(full_key, vault_key)
         persisted = False
         try:
             await run_in_threadpool(
                 lambda: supabase.table("users").update({
                     "recovery_key_id": key_id,
                     "recovery_secret_hash": secret_hash,
+                    "recovery_key_encrypted": encrypted_key,
                     "credential_version": 1,
                     "recovery_updated_at": "now()"
                 }).eq("id", clean_uid).execute()
@@ -218,6 +252,8 @@ async def create_or_exchange_session(
     # 4. 全新無金鑰裝置秒開 (生成全新 UUID 與專屬引繼金鑰)
     new_uid = str(uuid.uuid4())
     full_key, key_id, secret_hash = generate_prefixed_recovery_key()
+    vault_key = derive_vault_key(secret)
+    encrypted_key = encrypt_recovery_key(full_key, vault_key)
     try:
         await run_in_threadpool(
             lambda: supabase.table("users").insert({
@@ -225,6 +261,7 @@ async def create_or_exchange_session(
                 "name": "Traveler",
                 "recovery_key_id": key_id,
                 "recovery_secret_hash": secret_hash,
+                "recovery_key_encrypted": encrypted_key,
                 "credential_version": 1
             }).execute()
         )
@@ -293,12 +330,15 @@ async def recover_account_with_key(
 
         # 靜默升級：確保資料庫寫入成功後才下發新金鑰，若失敗則降級回傳舊版 Session
         full_key, key_id, secret_hash = generate_prefixed_recovery_key()
+        vault_key = derive_vault_key(secret)
+        encrypted_key = encrypt_recovery_key(full_key, vault_key)
         persisted = False
         try:
             await run_in_threadpool(
                 lambda: supabase.table("users").update({
                     "recovery_key_id": key_id,
                     "recovery_secret_hash": secret_hash,
+                    "recovery_key_encrypted": encrypted_key,
                     "credential_version": 1,
                     "recovery_updated_at": "now()"
                 }).eq("id", clean_uid).execute()
@@ -335,11 +375,14 @@ async def rotate_recovery_key(
     current_ver = (user_rec.get("credential_version", 1) if user_rec else 1) + 1
 
     new_full_key, new_key_id, new_secret_hash = generate_prefixed_recovery_key()
+    vault_key = derive_vault_key(secret)
+    new_encrypted_key = encrypt_recovery_key(new_full_key, vault_key)
     try:
         await run_in_threadpool(
             lambda: supabase.table("users").update({
                 "recovery_key_id": new_key_id,
                 "recovery_secret_hash": new_secret_hash,
+                "recovery_key_encrypted": new_encrypted_key,
                 "credential_version": current_ver,
                 "recovery_updated_at": "now()"
             }).eq("id", current_user).execute()
@@ -355,4 +398,46 @@ async def rotate_recovery_key(
         recovery_key=new_full_key,
         is_new=False,
     )
+
+
+class CredentialResponse(BaseModel):
+    recovery_key: Optional[str] = None
+    credential_version: int = 1
+
+
+@router.get("/credential", response_model=CredentialResponse)
+@limiter.limit("30/minute")
+async def get_user_recovery_credential(
+    request: Request,
+    current_user: str = Depends(get_verified_user),
+    secret: str = Depends(get_session_secret),
+    supabase: Client = Depends(get_supabase),
+):
+    """
+    🛡️ 跨裝置引繼碼即時授權同步端點 (Authorized Multi-Device Credential Sync)
+    僅允許持有有效 JWT 之本人設備存取，自 AES-256-GCM 雲端保險庫解密下發最新金鑰。
+    """
+    try:
+        res = await run_in_threadpool(
+            lambda: supabase.table("users").select(
+                "recovery_key_encrypted, credential_version"
+            ).eq("id", current_user).limit(1).execute()
+        )
+        if not res.data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user_row = res.data[0]
+        enc_payload = user_row.get("recovery_key_encrypted")
+        vault_key = derive_vault_key(secret)
+        decrypted_key = decrypt_recovery_key(enc_payload, vault_key) if enc_payload else None
+
+        return CredentialResponse(
+            recovery_key=decrypted_key,
+            credential_version=user_row.get("credential_version", 1)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"🔥 [Auth] Failed to retrieve recovery credential: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve credential")
 

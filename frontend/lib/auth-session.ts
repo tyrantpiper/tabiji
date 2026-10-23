@@ -249,3 +249,28 @@ export async function rotateAccountRecoveryKey(): Promise<string> {
 
     throw new Error("Invalid rotation response from server");
 }
+
+/**
+ * 跨裝置保險庫同步：主動向雲端密文保險庫獲取最新引繼金鑰
+ */
+export async function fetchLatestRecoveryKey(): Promise<string | null> {
+    const token = getCachedToken();
+    if (!token) return null;
+
+    try {
+        const res = await fetch("/api/auth/credential", {
+            headers: {
+                "Authorization": `Bearer ${token}`
+            }
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (data?.recovery_key) {
+            localStorage.setItem("user_recovery_key", data.recovery_key);
+            return data.recovery_key as string;
+        }
+    } catch (err) {
+        console.warn("⚠️ [Auth] Failed to sync latest recovery key from vault:", err);
+    }
+    return null;
+}
