@@ -21,7 +21,7 @@ if (typeof window === "undefined" || process.env.NODE_ENV === "development") {
     console.log("🚀 [API] Connected to:", API_HOST || "(same-origin /api)");
 }
 
-import { getCachedToken, ensureValidSession } from './auth-session';
+import { getCachedToken, ensureValidSession, triggerReauthPrompt } from './auth-session';
 
 const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const urlStr = typeof input === "string" ? input : (input instanceof URL ? input.toString() : (input as Request)?.url || "");
@@ -59,12 +59,12 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     const res = await activeFetch(input, init);
     // 🛡️ 401 自動換票與自癒重試防禦 (Self-Healing Recovery & 1-time Re-execution)
     if (res.status === 401 && typeof window !== "undefined" && !urlStr.includes("/api/poi/")) {
-        console.warn("⚠️ [API] Received 401 Unauthorized, purging cached token...");
-        localStorage.removeItem("tabiji_session_token");
+        console.warn("⚠️ [API] Received 401 Unauthorized from backend...");
 
         // 🛑 遞迴熔斷防護：認證端點本身或已重試過的請求禁止再次觸發換票重試
         const isBodyConsumed = typeof Request !== "undefined" && input instanceof Request && input.bodyUsed;
         if (!isAuthEndpoint && !isRetry && !isBodyConsumed) {
+            // 注意：保留現有 Token 作為持有證明 (PoP) 供 ensureValidSession 驗簽
             const freshToken = await ensureValidSession().catch(() => null);
             if (freshToken) {
                 let nextHeaders: Headers;
@@ -82,6 +82,10 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
                     _isRetry: true
                 } as RequestInit & { _isRetry?: boolean };
                 return activeFetch(input, retryInit);
+            } else {
+                // 🛡️ 換票失敗（代表憑證已徹底作廢或輪替）：主動喚起重認證視窗，絕不讓頁面靜默失敗！
+                localStorage.removeItem("tabiji_session_token");
+                triggerReauthPrompt("您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。");
             }
         }
     }

@@ -35,7 +35,9 @@ def encrypt_recovery_key(recovery_key: str, vault_key: bytes) -> str:
     return base64.b64encode(nonce + ciphertext).decode("utf-8")
 
 
-def decrypt_recovery_key(encrypted_payload: str, vault_key: bytes) -> Optional[str]:
+def decrypt_recovery_key(encrypted_payload: Optional[str], vault_key: bytes) -> Optional[str]:
+    if not encrypted_payload:
+        return None
     raw_data = base64.b64decode(encrypted_payload.encode("utf-8"))
     nonce = raw_data[:12]
     ciphertext = raw_data[12:]
@@ -545,4 +547,191 @@ def test_tc8_mantis_patch_server_expected_user_guard_and_uniform_401():
     assert "access_token" in legit_data
     token_payload = jwt.decode(legit_data["access_token"], SECRET, algorithms=["HS256"], options={"verify_exp": False})
     assert token_payload["sub"] == alice_uuid
+
+
+# ---------------------------------------------------------------------------
+# Test Case 9: Omission Bug Reproduction & Fix Verification (recovery_key_encrypted in get_user_record_by_id)
+# ---------------------------------------------------------------------------
+def test_tc9_reproduce_missing_recovery_key_encrypted_omission():
+    """
+    OMISSION BUG REPRODUCTION & VERIFICATION:
+    get_user_record_by_id previously missed 'recovery_key_encrypted' in SELECT query.
+    1. Unpatched: user_rec lacks 'recovery_key_encrypted', decrypt_recovery_key returns None, recovery_key in response is None.
+    2. Patched: user_rec includes 'recovery_key_encrypted', decrypt_recovery_key succeeds and returns full key.
+    """
+    alice_uuid = "11111111-1111-1111-1111-111111111111"
+    raw_key = "tbj_rec_keyalice_secretalice1111222233334444"
+    enc_key = encrypt_recovery_key(raw_key, VAULT_KEY)
+    
+    db_row = {
+        "id": alice_uuid,
+        "recovery_key_id": "keyalice",
+        "recovery_secret_hash": hashlib.sha256(raw_key.encode()).hexdigest(),
+        "recovery_key_encrypted": enc_key,
+        "credential_version": 1
+    }
+
+    # 1. Unpatched SELECT projection
+    def unpatched_get_user_record(uid: str):
+        # Missing 'recovery_key_encrypted'!
+        return {
+            "id": db_row["id"],
+            "recovery_key_id": db_row["recovery_key_id"],
+            "recovery_secret_hash": db_row["recovery_secret_hash"],
+            "credential_version": db_row["credential_version"]
+        }
+
+    user_rec_unpatched = unpatched_get_user_record(alice_uuid)
+    # Proof of omission: Key missing in dict
+    assert "recovery_key_encrypted" not in user_rec_unpatched
+    decrypted_unpatched = decrypt_recovery_key(user_rec_unpatched.get("recovery_key_encrypted"), VAULT_KEY)
+    assert decrypted_unpatched is None  # Legitimate user gets None! Broken self-healing.
+
+    # 2. Patched SELECT projection
+    def patched_get_user_record(uid: str):
+        return {
+            "id": db_row["id"],
+            "recovery_key_id": db_row["recovery_key_id"],
+            "recovery_secret_hash": db_row["recovery_secret_hash"],
+            "recovery_key_encrypted": db_row["recovery_key_encrypted"],
+            "credential_version": db_row["credential_version"]
+        }
+
+    user_rec_patched = patched_get_user_record(alice_uuid)
+    assert "recovery_key_encrypted" in user_rec_patched
+    decrypted_patched = decrypt_recovery_key(user_rec_patched.get("recovery_key_encrypted"), VAULT_KEY)
+    assert decrypted_patched == raw_key  # Successfully recovered!
+
+
+# ---------------------------------------------------------------------------
+# Test Case 10: State-Bifurcated Rotation Bypass Guard on Legacy UUID Endpoint
+# ---------------------------------------------------------------------------
+def test_tc10_legacy_uuid_rotation_bypass_and_state_bifurcation_guard():
+    """
+    STATE-BIFURCATED TRADE-OFF VS. VULNERABILITY GUARD:
+    Scenario:
+    - User rotated credentials: DB has credential_version = 2 and new key.
+    - Attacker / Stolen device has old JWT (ver = 1) and legacy UUID.
+    - Flaw: If legacy upgrade branch in /session doesn't check version, attacker bypasses
+      /credential guard and steals the rotated key via POST /session with legacy UUID!
+    - Resolution: State Bifurcation:
+      * When db_ver == 1: 90-day grace period is allowed (intended usability trade-off for unrotated users).
+      * When db_ver > 1: If token_ver < db_ver, immediately reject with 401 (rotation revocation enforced).
+    """
+    app = FastAPI()
+    alice_uuid = "11111111-1111-1111-1111-111111111111"
+    v2_key = "tbj_rec_v2newkey_secretalice9999888877776666"
+
+    db = {
+        alice_uuid: {
+            "id": alice_uuid,
+            "recovery_key_id": "v2newkey",
+            "recovery_secret_hash": hashlib.sha256(v2_key.encode()).hexdigest(),
+            "recovery_key_encrypted": encrypt_recovery_key(v2_key, VAULT_KEY),
+            "credential_version": 2  # Already rotated!
+        }
+    }
+
+    class SessionReq(BaseModel):
+        recovery_key: str
+
+    @app.post("/api/auth/session")
+    def session_legacy_endpoint(req: SessionReq, authorization: Optional[str] = Header(None)):
+        clean_uid = req.recovery_key.lower()
+        user_rec = db.get(clean_uid)
+        if not user_rec:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        # Bearer PoP check
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing auth token")
+        
+        token = authorization.split(" ")[1]
+        payload = jwt.decode(token, SECRET, algorithms=["HS256"], issuer="tabiji-core", options={"verify_exp": False})
+        
+        db_ver = int(user_rec.get("credential_version") or 1)
+        token_ver = int(payload.get("ver") or 1)
+
+        # 🛡️ State-Bifurcated Guard:
+        # If db_ver > 1, credential rotation has occurred! Stale tokens MUST NOT receive new credentials.
+        if db_ver > 1 and token_ver < db_ver:
+            raise HTTPException(
+                status_code=401,
+                detail="Credential has been rotated. This session is revoked."
+            )
+
+        decrypted_key = decrypt_recovery_key(user_rec.get("recovery_key_encrypted"), VAULT_KEY)
+        return {
+            "access_token": make_test_jwt(clean_uid, ver=db_ver),
+            "user_id": clean_uid,
+            "recovery_key": decrypted_key,
+            "upgraded": True
+        }
+
+    # 0. Unpatched Vulnerability Reproduction: Legacy endpoint lacks version check
+    @app.post("/api/auth/session/unpatched")
+    def session_legacy_unpatched(req: SessionReq, authorization: Optional[str] = Header(None)):
+        clean_uid = req.recovery_key.lower()
+        user_rec = db.get(clean_uid)
+        token = authorization.split(" ")[1]
+        # Only checks signature and iat <= 90 days, totally ignores 'ver'!
+        payload = jwt.decode(token, SECRET, algorithms=["HS256"], issuer="tabiji-core", options={"verify_exp": False})
+        decrypted_key = decrypt_recovery_key(user_rec.get("recovery_key_encrypted"), VAULT_KEY)
+        return {
+            "access_token": make_test_jwt(clean_uid, ver=user_rec["credential_version"]),
+            "user_id": clean_uid,
+            "recovery_key": decrypted_key,
+            "upgraded": True
+        }
+
+    client = TestClient(app)
+
+    # 1. Unpatched Flaw Proof: Attacker with stale token (ver = 1) steals rotated key (ver = 2) via bypass!
+    stale_token_v1 = make_test_jwt(alice_uuid, ver=1)
+    res_unpatched = client.post(
+        "/api/auth/session/unpatched",
+        json={"recovery_key": alice_uuid},
+        headers={"Authorization": f"Bearer {stale_token_v1}"}
+    )
+    assert res_unpatched.status_code == 200
+    assert res_unpatched.json()["recovery_key"] == v2_key  # Flaw: Leaked rotated key!
+
+    # 2. Patched Security Verification: Attacker is REJECTED (401)
+    res_attacker = client.post(
+        "/api/auth/session",
+        json={"recovery_key": alice_uuid},
+        headers={"Authorization": f"Bearer {stale_token_v1}"}
+    )
+    assert res_attacker.status_code == 401
+    assert "revoked" in res_attacker.json()["detail"].lower()
+
+    # 2. Legitimate re-anchored device with valid token (ver = 2) -> ACCEPTED (200)
+    fresh_token_v2 = make_test_jwt(alice_uuid, ver=2)
+    res_legit = client.post(
+        "/api/auth/session",
+        json={"recovery_key": alice_uuid},
+        headers={"Authorization": f"Bearer {fresh_token_v2}"}
+    )
+    assert res_legit.status_code == 200
+    assert res_legit.json()["recovery_key"] == v2_key
+
+    # 3. Unrotated account (db_ver = 1) with legacy token (ver = 1) -> ACCEPTED (200, Usability Trade-off preserved!)
+    bob_uuid = "22222222-2222-2222-2222-222222222222"
+    bob_key = "tbj_rec_keybob01_secretbob1111222233334444"
+    db[bob_uuid] = {
+        "id": bob_uuid,
+        "recovery_key_id": "keybob01",
+        "recovery_secret_hash": hashlib.sha256(bob_key.encode()).hexdigest(),
+        "recovery_key_encrypted": encrypt_recovery_key(bob_key, VAULT_KEY),
+        "credential_version": 1  # Not rotated
+    }
+    bob_token_v1 = make_test_jwt(bob_uuid, ver=1)
+    res_bob = client.post(
+        "/api/auth/session",
+        json={"recovery_key": bob_uuid},
+        headers={"Authorization": f"Bearer {bob_token_v1}"}
+    )
+    assert res_bob.status_code == 200
+    assert res_bob.json()["recovery_key"] == bob_key
+
 

@@ -3,6 +3,10 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Projection Invariant for Encrypted Recovery Key**: get_user_record_by_id in backend/routers/auth.py must explicitly project 'recovery_key_encrypted' in Supabase select query to prevent vault decrypt returning None on legitimate upgrades.
+
+- **State-Bifurcated Rotation Revocation Guard in Legacy UUID Path**: In /api/auth/session, when db_ver > 1 (credential rotated), any token with token_ver < db_ver MUST be rejected with HTTP 401, completely cutting off rotation bypass attacks while preserving 90-day grace upgrade for db_ver == 1.
+
 - **Server-Side Expected User ID Assertion Before JWT Issuance**: In /api/auth/session, when expected_user_id is provided by the client, the backend must assert user['id'].strip().lower() == expected_user_id.strip().lower() BEFORE calling create_session_jwt. Mismatched identities must return 401 with zero tokens serialized in response body.
 
 - **Dormant Device Grace Period Self-Healing Invariant**: Credential vault recovery endpoints must accept un-tampered server-signed tokens within a 90-day grace period to allow dormant devices to recover modern credentials.

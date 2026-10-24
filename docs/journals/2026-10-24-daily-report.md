@@ -195,9 +195,72 @@
 
 ---
 
+### 里程碑九：審查夥伴質疑消解與雙軌憑證狀態機二元分流 (State-Bifurcated Guard & ADR-009, AD-174)
+
+1. **質疑叩問與取捨邊界**：
+   - 審查夥伴對「`/session` 舊 UUID 升級分支未比對 `ver` 是否為刻意取捨」提出犀利質疑：若為取捨，必須滿足「範圍限定、控制補償、不可被利用於提權」等條件。
+   - **漏洞根因**：若帳號已執行金鑰輪替 (`db_ver > 1`)，攻擊者若持有受害者遺失設備的舊版 JWT (`ver: 1`)，可繞過 `/credential` 端點，透過 `/session` 舊 UUID 升級端點騙取輪替後的最新引繼金鑰。
+2. **狀態機二元分流防衛 (State Bifurcation)**：
+   - 狀態 A (`db_ver == 1`)：允許 90 天平滑升級自癒（刻意取捨生效，保障合法離線終端零摩擦）。
+   - 狀態 B (`db_ver > 1`)：強制比對 `token_ver >= db_ver`；若小於則直接回傳 HTTP 401 撤銷，徹底阻斷旁路攻擊。
+3. **規格與驗證**：
+   - 撰寫正式架構規格 [ADR-009](file:///d:/Project/tabiji/travel-pwa/docs/specs/core-architecture/p0-dual-track-auth-revocation-and-recovery-adr-009.md)。
+   - 於 `backend/tests/test_p0_auth_revocation_sentinel_poc.py` (TC-10) 證偽通過。
+
+---
+
+### 里程碑十：後端 SELECT 投影遺漏修復與自癒解密死結解除 (Projection Omission Repair, AD-175)
+
+1. **漏洞根因**：
+   - `get_user_record_by_id()` 在查詢 Supabase `users` 表時，未選取 `recovery_key_encrypted` 欄位。
+   - 導致合法舊設備在連網升級時，呼叫 `decrypt_recovery_key(None, vault_key)` 永遠回傳 `None`，向客戶端回傳 `{ recovery_key: null }`。
+2. **連鎖癱瘓死結 (Permanent Deadlock)**：
+   - 前端本機未保存到最新引繼碼；短期 Token 到期後，後端判定帳號已升級而拒絕舊 UUID，要求輸入 `tbj_rec_*`。
+   - 前端形成死結：看似能滑動行程，但所有寫入操作靜默失敗，逼得使用者被迫手動登出。
+3. **修補實證**：
+   - SELECT 投影補齊 `recovery_key_encrypted` 欄位。
+   - 沙盒測試 TC-9 驗證通過，解密鏈路 100% 恢復。
+
+---
+
+### 里程碑十一：前端行程頁面 401 原地主動彈窗閉環與 5 秒防震盪冷卻 (In-Place Reauth Modal Loop, AD-176)
+
+1. **使用者體驗痛點剖析**：
+   - Local-First 快取保護使行程畫面維持完整可滑動，但背景 API 401 換票失敗時，前端過去有 4 大斷點（提早撕毀 Token、換票失敗未喚醒彈窗、SWR 吞掉錯誤、事件名稱錯位）導致彈窗「失聲」。
+   - 使用者面臨「動作全死卻毫無提示」，被逼手動登出重登。
+2. **全鏈路原地閉環**：
+   - `api.ts` & `hooks.ts`：401 換票時保留 Token 作為持有證明 (PoP)；換票失敗時清理 Token 並調用 `triggerReauthPrompt` 喚醒全域彈窗。
+   - `session-reauth-modal.tsx`：同時監聽 `tabiji:session_reauth_required` 與相容事件，於 `DialogDescription` 呈現動態白話告警：「本機行程安全保留中，請在此輸入最新引繼碼原地復原，無需登出」。
+   - 引入 5 秒 `dismissReauthPrompt()` 防震盪冷卻，使用者點擊稍後驗證時避免背景重試密集彈窗。
+3. **測試實證**：
+   - Vitest 新增 TC-6 與 TC-7，驗證 5 秒冷卻阻斷與 DOM 事件惡意字串轉義安全。
+
+---
+
+### 里程碑十二：全球業界標準調研與 Google NotebookLM 知識庫匯入 (Industry Benchmark & NLM Sync, AD-177)
+
+1. **業界對標調研**：
+   - 深度調研 RFC 9449 (OAuth 2.0 DPoP Nonce Rotation)、Ory Hydra (Token Refresh Grace Periods)、Supabase Auth (In-Flight Cooldown) 與 1Password (Secret Key Revocation)。
+   - 產出深度研究報告 [2026-10-24-token-rotation-grace-period-and-revocation-deep-research.md](file:///d:/Project/tabiji/travel-pwa/docs/research/2026-10-24-token-rotation-grace-period-and-revocation-deep-research.md)。
+2. **NotebookLM 永久資產固化**：
+   - 調用 MCP `source_add` 成功將研究報告匯入 Google NotebookLM 知識庫（筆記本 ID `129a8b1f-919e-42d4-8fc2-014ab067d371`，Source ID `f9996ec6-4f1c-4c8b-a4cd-30ec7e69f96d`）。
+
+---
+
+### 里程碑十三：Red Team 對抗式審核與安全覆蓋帳本數學守恆 (Adversarial Sentinel Verification, AD-178)
+
+1. **紅隊對抗假說建立與證偽**：
+   - 針對「`token_ver` 型別混淆」、「90 天滑動窗口膨脹」、「DOM 釣魚注入」、「5 秒冷卻佇列飢餓」及「Token 殘留洩漏」5 大假說執行沙盒單元測試（`test_p0_adversarial_sentinel_review.py`）。
+   - 實測證偽：全數具備 Fail-Closed 防衛或架構邊界封閉，3/3 PASSED。
+2. **安全帳本數學守恆**：
+   - 更新 `docs/security/security-coverage-ledger.json`，通過 `python scripts/validate_security_ledger.py` 嚴格校驗（Verified: 228, Remediated: 40, Dismissed: 137, 數學守恆零誤差）。
+
+---
+
 ## 🎯 明日核心衝刺目標 (Next Steps)
 1. 監控 Dependabot 於 GitHub 上的分組更新表現，確保 PR #22 自動閉合且零容器報錯。
 2. 持續監控 PWA 離線環境下的長生命週期同步健康度與生產端 Console 純淨度。
+3. 持續觀察跨裝置引繼碼輪替後的即時 Supabase Broadcast 與原地彈窗平滑度。
 
 ---
 
@@ -252,6 +315,35 @@
     "id": "INV-DEVOPS-020",
     "title": "Dependabot Group Scope Restricted to Minor & Patch Updates",
     "content": "Dependabot groups must specify 'update-types: [\"minor\", \"patch\"]' to strictly isolate breaking major upgrades into standalone PRs, preventing monolithic group PRs from breaking the entire test and compilation pipeline."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AUTH-005",
+    "title": "State-Bifurcated Rotation Revocation Guard in Legacy UUID Path",
+    "content": "In /api/auth/session, when db_ver > 1 (credential rotated), any token with token_ver < db_ver MUST be rejected with HTTP 401, completely cutting off rotation bypass attacks while preserving 90-day grace upgrade for db_ver == 1."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AUTH-006",
+    "title": "Projection Invariant for Encrypted Recovery Key",
+    "content": "get_user_record_by_id in backend/routers/auth.py must explicitly project 'recovery_key_encrypted' in Supabase select query to prevent vault decrypt returning None on legitimate upgrades."
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AUTH-007",
+    "title": "401 Self-Healing Token Retention & In-Place Modal Prompt",
+    "content": "In api.ts and hooks.ts, existing session tokens must be preserved across 401 as proof-of-possession for ensureValidSession exchange; upon exchange failure, token is purged and triggerReauthPrompt is fired to wake SessionReauthModal in-place without manual logout."
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AUTH-008",
+    "title": "5000ms Dismiss Cooldown for Reauth Modal",
+    "content": "When user clicks 'Dismiss (Stay Offline)' in SessionReauthModal, dismissReauthPrompt must set a 5000ms cooldown timestamp to prevent rapid background SWR requests from reopening the modal immediately."
   }
 ]
 ```
+

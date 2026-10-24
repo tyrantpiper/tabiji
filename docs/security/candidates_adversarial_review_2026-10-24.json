@@ -1,0 +1,37 @@
+[
+  {
+    "id": "backend/routers/auth.py:downgrade_token_ver_type_confusion",
+    "file_path": "backend/routers/auth.py",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "token_ver_type_confusion_and_bypass",
+    "hypothesis": "An attacker crafts a legacy JWT with ver omitted, string formatted, negative, or malformed, causing int(payload.get('ver') or 1) to bypass db_ver > 1 rotation guard or raise unhandled 500 error."
+  },
+  {
+    "id": "backend/routers/auth.py:unrotated_account_infinite_grace_refresh",
+    "file_path": "backend/routers/auth.py",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "infinite_90day_window_rolling_amplification",
+    "hypothesis": "On unrotated accounts (db_ver == 1), an attacker with a legacy UUID and a single valid token can repeatedly exchange it via /session to obtain brand new 90-day tokens indefinitely, effectively negating token expiration."
+  },
+  {
+    "id": "frontend/components/auth/session-reauth-modal.tsx:custom_reason_event_spoofing",
+    "file_path": "frontend/components/auth/session-reauth-modal.tsx",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "dom_event_spoofing_phishing",
+    "hypothesis": "A malicious script running in the DOM can dispatch a synthetic tabiji:session_reauth_required event with custom reason text, inducing user phishing to extract the tbj_rec key into the modal."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:dismiss_cooldown_outbox_queue_starvation",
+    "file_path": "frontend/lib/auth-session.ts",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "race_condition_dismiss_starvation",
+    "hypothesis": "When user clicks 'Dismiss (Stay Offline)', dismissReauthPrompt sets a 5000ms cooldown during which subsequent legit 401s fail silently; if background sync retries during this window, pending outbox items could be evicted or discarded."
+  },
+  {
+    "id": "frontend/lib/api.ts:token_retention_pop_persistence_leakage",
+    "file_path": "frontend/lib/api.ts",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "token_retention_state_leak",
+    "hypothesis": "Retaining the session token across 401 until exchange failure causes the invalid token to remain in localStorage if the network drops (e.g. 503 or offline) during exchange, violating fail-closed zero-token storage policy."
+  }
+]

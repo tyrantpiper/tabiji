@@ -1,15 +1,30 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-24T03:05:00Z",
+  "last_audit_date": "2026-10-24T07:45:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 227,
-    "audited_targets": 227,
+    "total_targets": 228,
+    "audited_targets": 228,
     "verified_vulnerabilities": 51,
     "remediated_vulnerabilities": 40,
-    "dismissed_hypotheses": 136
+    "dismissed_hypotheses": 137
   },
   "targets": [
+    {
+      "id": "backend/routers/auth.py:adversarial_token_ver_and_rotation_bypass",
+      "target_type": "backend_auth_endpoint",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "token_ver_type_confusion_and_bypass",
+        "infinite_90day_window_rolling_amplification",
+        "legacy_uuid_rotation_bypass_and_state_bifurcation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_adversarial_review_2026-10-24.md",
+      "validator_details": "Confirmed by In-Memory PoC test_p0_adversarial_sentinel_review.py: Type confusion safely caught by try-except falling back to 401; rotation bypass strictly rejected when db_ver > 1.",
+      "remediated_at": "2026-10-24T07:45:00Z",
+      "resolution": "State-bifurcated guard active in backend/routers/auth.py."
+    },
     {
       "id": "backend/routers/auth.py:wire_jwt_leak_and_identity_oracle",
       "target_type": "backend_auth_endpoint",

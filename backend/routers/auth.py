@@ -168,7 +168,7 @@ def legacy_identity_exists(supabase: Client, uid: str) -> bool:
 
 def get_user_record_by_id(supabase: Client, uid: str) -> Optional[dict]:
     try:
-        res = supabase.table("users").select("id, recovery_key_id, recovery_secret_hash, credential_version").eq("id", uid).limit(1).execute()
+        res = supabase.table("users").select("id, recovery_key_id, recovery_secret_hash, recovery_key_encrypted, credential_version").eq("id", uid).limit(1).execute()
         if res.data and len(res.data) > 0:
             return res.data[0]
     except Exception:
@@ -242,6 +242,7 @@ async def create_or_exchange_session(
         # 🛡️ 雙軌平滑升級：若帳號已升級，校驗合法持有證明 (Proof-of-Possession)
         if user_rec and user_rec.get("recovery_key_id"):
             is_authenticated = False
+            token_ver = 1
             if auth_header and auth_header.startswith("Bearer "):
                 cand_token = auth_header.split(" ")[1].strip()
                 try:
@@ -259,6 +260,7 @@ async def create_or_exchange_session(
                         and sub.lower() == clean_uid
                         and (now - payload.get("iat", 0) <= 90 * 86400)
                     ):
+                        token_ver = int(payload.get("ver") or 1)
                         is_authenticated = True
                 except Exception:
                     pass
@@ -269,10 +271,19 @@ async def create_or_exchange_session(
                     detail="Account already upgraded. Please use your modern recovery key (tbj_rec_*)."
                 )
 
+            # 🛡️ 狀態機二元分流防衛 (ADR-009 State-Bifurcated Guard)
+            # 若帳號曾受威脅並執行金鑰輪替 (db_ver > 1)，舊版 Token (token_ver < db_ver) 視為已撤銷，徹底阻斷旁路提權
+            db_ver = int(user_rec.get("credential_version") or 1)
+            if db_ver > 1 and token_ver < db_ver:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Credential has been rotated. This session is revoked."
+                )
+
             # 🛡️ 驗證通過之合法舊設備：解密保險庫下發最新金鑰與新 Session，消除死結
             vault_key = derive_vault_key(secret)
             decrypted_key = decrypt_recovery_key(user_rec.get("recovery_key_encrypted"), vault_key)
-            token = create_session_jwt(clean_uid, secret, user_rec.get("credential_version", 1))
+            token = create_session_jwt(clean_uid, secret, db_ver)
             return SessionResponse(
                 access_token=token,
                 user_id=clean_uid,

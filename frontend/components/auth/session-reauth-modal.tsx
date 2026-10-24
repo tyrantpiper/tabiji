@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { reanchorSessionWithKey, resetAndStartFreshSession } from "@/lib/auth-session"
+import { reanchorSessionWithKey, resetAndStartFreshSession, dismissReauthPrompt } from "@/lib/auth-session"
 import { useLanguage } from "@/lib/LanguageContext"
 import { ShieldAlert, KeyRound, RefreshCw, CheckCircle2, AlertTriangle, UserPlus } from "lucide-react"
 import { toast } from "sonner"
@@ -26,20 +26,26 @@ export function SessionReauthModal() {
     const [recoveryKeyInput, setRecoveryKeyInput] = useState("")
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
+    const [customReason, setCustomReason] = useState<string | null>(null)
     const [isSuccess, setIsSuccess] = useState(false)
 
     useEffect(() => {
-        const handleReauthRequired = () => {
-            setIsOpen(true)
-            setErrorMessage(null)
-            setIsSuccess(false)
-        }
+        const handleReauthRequired = (e: Event) => {
+            const customEvent = e as CustomEvent<{ reason?: string }>;
+            const reason = customEvent.detail?.reason;
+            setCustomReason(reason || null);
+            setIsOpen(true);
+            setErrorMessage(null);
+            setIsSuccess(false);
+        };
 
-        window.addEventListener("tabiji:session_reauth_required", handleReauthRequired)
+        window.addEventListener("tabiji:session_reauth_required", handleReauthRequired);
+        window.addEventListener("tabiji:credential_upgrade_required", handleReauthRequired);
         return () => {
-            window.removeEventListener("tabiji:session_reauth_required", handleReauthRequired)
-        }
-    }, [])
+            window.removeEventListener("tabiji:session_reauth_required", handleReauthRequired);
+            window.removeEventListener("tabiji:credential_upgrade_required", handleReauthRequired);
+        };
+    }, []);
 
     const handleRestore = useCallback(async () => {
         const cleanKey = recoveryKeyInput.trim()
@@ -74,6 +80,7 @@ export function SessionReauthModal() {
     }, [recoveryKeyInput, zh])
 
     const handleDismissOffline = () => {
+        dismissReauthPrompt()
         setIsOpen(false)
         setErrorMessage(null)
         toast.info(zh ? "已暫時切換為離線模式，本機行程安全保留中。" : "Offline mode active. Local data is safely preserved.")
@@ -94,12 +101,24 @@ export function SessionReauthModal() {
                         <ShieldAlert className="w-6 h-6" />
                     </div>
                     <DialogTitle className="text-lg font-bold text-[#1E2927] dark:text-[#E5EBEA]">
-                        {zh ? "需要重新驗證引繼碼" : "Authentication Required"}
+                        {zh ? "需要原地驗證最新引繼碼" : "In-Place Re-authentication Required"}
                     </DialogTitle>
-                    <DialogDescription className="text-xs text-[#1E2927]/70 dark:text-[#E5EBEA]/70 leading-relaxed">
-                        {zh
-                            ? "您的本機離線行程與記帳完全安全保留中。由於引繼碼已在其他裝置輪替更新，雲端同步已暫時凍結。請從已登入裝置取得最新引繼碼以恢復同步。"
-                            : "Your local offline itineraries and expenses are completely safe. The recovery key was rotated on another device. Please enter the latest recovery key from your active device to resume cloud synchronization."}
+                    <DialogDescription className="text-xs text-[#1E2927]/70 dark:text-[#E5EBEA]/70 leading-relaxed space-y-1.5">
+                        {customReason && (
+                            <span className="block font-medium text-[#E56E25] bg-[#E56E25]/10 p-2 rounded-lg border border-[#E56E25]/20">
+                                ⚠️ {customReason}
+                            </span>
+                        )}
+                        <span className="block">
+                            {zh
+                                ? "您的本機離線行程與記帳完全安全保留中（可隨意滑動瀏覽）。由於憑證已在其他裝置輪替更新或過期，雲端同步動作已暫時凍結。"
+                                : "Your local offline itineraries and expenses are safely preserved. Cloud synchronization is temporarily frozen because your credentials were rotated on another device."}
+                        </span>
+                        <span className="block text-[#1E2927]/90 dark:text-[#E5EBEA]/90 font-medium">
+                            {zh
+                                ? "請在此直接貼上最新引繼碼以「原地復原連線」，您無需登出！"
+                                : "Please paste your latest recovery key to restore connection in-place without logging out!"}
+                        </span>
                     </DialogDescription>
                 </DialogHeader>
 

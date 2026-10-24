@@ -24,13 +24,26 @@ export function __resetExchangeFailedForTesting() {
 
 export const UNIFORM_REAUTH_ERROR = "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。";
 
-export function triggerReauthPrompt() {
-    // 🛡️ 重認證後 5 秒冷卻保護：阻斷在途 (in-flight) 舊 401 請求造成的彈窗重複震盪
+let lastDismissedAt = 0;
+
+export function dismissReauthPrompt() {
+    lastDismissedAt = Date.now();
+}
+
+export function triggerReauthPrompt(reason?: string) {
+    // 🛡️ 重認證成功後 5 秒冷卻，或使用者點擊「稍後驗證」關閉後 5 秒輕量冷卻防震盪
     if (Date.now() - lastRestoredAt < 5000) return;
+    if (Date.now() - lastDismissedAt < 5000) return;
     if (isReauthBroadcasting) return;
     isReauthBroadcasting = true;
     if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("tabiji:session_reauth_required"));
+        window.dispatchEvent(new CustomEvent("tabiji:session_reauth_required", {
+            detail: { reason }
+        }));
+        // 同步觸發升級事件以保證舊監聽器最大相容性
+        window.dispatchEvent(new CustomEvent("tabiji:credential_upgrade_required", {
+            detail: { reason }
+        }));
     }
     setTimeout(() => { isReauthBroadcasting = false; }, 3000);
 }
@@ -189,15 +202,9 @@ export async function ensureValidSession(): Promise<string | null> {
                 if (res.status === 401) {
                     lastExchangeFailedAt = Date.now();
                     const err = await res.json().catch(() => ({}));
-                    if (typeof err.detail === "string" && err.detail.toLowerCase().includes("upgraded")) {
-                        console.info("ℹ️ [Auth] Account upgraded on another device. Dispatching upgrade event...");
-                        if (typeof window !== "undefined") {
-                            window.dispatchEvent(new CustomEvent("tabiji:credential_upgrade_required"));
-                        }
-                    } else if (storedKey) {
-                        // 🛡️ 伺服器拒絕本機引繼碼 (401)，主動喚起重認證視窗，阻斷 SWR 盲目重試風暴
-                        triggerReauthPrompt();
-                    }
+                    const detail = typeof err.detail === "string" ? err.detail : undefined;
+                    // 🛡️ 凡換票收到 401，立即攜帶原因喚醒重認證彈窗，拒絕靜默假死
+                    triggerReauthPrompt(detail);
                 }
                 return null;
             }

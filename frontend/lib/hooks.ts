@@ -14,7 +14,7 @@ export class HttpError extends Error {
     }
 }
 
-import { getCachedToken, ensureValidSession } from './auth-session'
+import { getCachedToken, ensureValidSession, triggerReauthPrompt } from './auth-session'
 
 export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
     let token = getCachedToken()
@@ -37,8 +37,7 @@ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
 
     // 🛡️ 401 憑證自癒重試機制 (Self-Healing 1-Time Re-exchange & Retry)
     if (r.status === 401 && typeof window !== "undefined") {
-        console.warn("⚠️ [Fetcher] Received 401 Unauthorized. Purging stale token and attempting 1-time re-exchange...")
-        localStorage.removeItem("tabiji_session_token")
+        console.warn("⚠️ [Fetcher] Received 401 Unauthorized. Attempting 1-time re-exchange...")
         const freshToken = await ensureValidSession().catch(() => null)
         if (freshToken) {
             const retryHeaders = { ...headers, "Authorization": `Bearer ${freshToken}` }
@@ -47,6 +46,10 @@ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
             } catch (retryErr) {
                 throw new HttpError(0, (retryErr as Error)?.message || "Network error", { offline: true })
             }
+        } else {
+            // 🛡️ 換票失敗（代表憑證已徹底作廢或輪替）：主動喚起重認證視窗，絕不讓頁面靜默失敗！
+            localStorage.removeItem("tabiji_session_token")
+            triggerReauthPrompt("您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。")
         }
     }
 

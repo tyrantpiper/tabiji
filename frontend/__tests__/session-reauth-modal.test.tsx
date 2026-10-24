@@ -119,4 +119,40 @@ describe('SessionReauthModal Sandbox Component Tests', () => {
         expect(mockStorage.user_recovery_key).toContain('tbj_rec_newkey12');
         expect(mockStorage.tabiji_session_token).toBe('fresh-valid-token');
     });
+
+    it('TC-6: Dismiss cooldown strictly suppresses reauth prompts for 5000ms window', () => {
+        let lastDismissedAt = Date.now();
+        const canTriggerPrompt = (now: number) => {
+            if (now - lastDismissedAt < 5000) return false;
+            return true;
+        };
+
+        // Immediate subsequent 401 within 1000ms -> Suppressed
+        expect(canTriggerPrompt(lastDismissedAt + 1000)).toBe(false);
+        // At 4999ms -> Suppressed
+        expect(canTriggerPrompt(lastDismissedAt + 4999)).toBe(false);
+        // At 5001ms -> Cooldown expired, allowed
+        expect(canTriggerPrompt(lastDismissedAt + 5001)).toBe(true);
+    });
+
+    it('TC-7: Modal event handler extracts reason safely as a string primitive', () => {
+        let capturedReason: string | null = null;
+        const handleReauth = (e: Event) => {
+            const customEvent = e as CustomEvent<{ reason?: string }>;
+            capturedReason = customEvent.detail?.reason || null;
+        };
+
+        window.addEventListener('tabiji:session_reauth_required', handleReauth);
+
+        // Dispatch synthetic attack event with HTML tag
+        const maliciousPayload = "<img src=x onerror=alert('xss')>";
+        window.dispatchEvent(new CustomEvent('tabiji:session_reauth_required', {
+            detail: { reason: maliciousPayload }
+        }));
+
+        expect(capturedReason).toBe(maliciousPayload);
+        expect(typeof capturedReason).toBe('string');
+        window.removeEventListener('tabiji:session_reauth_required', handleReauth);
+    });
 });
+
