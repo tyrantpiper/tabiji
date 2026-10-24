@@ -1419,11 +1419,22 @@ export const usersApi = {
 
     /** 🧠 Get AI memory preferences (Adaptive Memory) */
     getPreferences: async (userId: string): Promise<UserPreference[]> => {
-        const res = await fetch(`${API.USERS}/me/preferences`, {
-            headers: { "X-User-ID": userId }
-        })
-        if (!res.ok) throw new Error("Failed to fetch preferences")
-        return res.json()
+        try {
+            const res = await fetch(`${API.USERS}/me/preferences`, {
+                headers: { "X-User-ID": userId }
+            });
+            if (!res.ok) {
+                // 🛡️ 401 (未認證/換票中) 或 404 (無紀錄) 屬於非致命狀態，回退為空陣列不污染 Console
+                if (res.status === 401 || res.status === 403 || res.status === 404) {
+                    return [];
+                }
+                throw new Error(`[${res.status}] Failed to fetch preferences`);
+            }
+            return await res.json();
+        } catch (err) {
+            console.warn("⚠️ [API] getPreferences fallback to empty list:", err);
+            return [];
+        }
     },
 
     /** 🗑️ Delete a preference */

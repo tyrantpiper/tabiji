@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-24T08:35:00Z",
+  "last_audit_date": "2026-10-24T10:55:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 233,
-    "audited_targets": 233,
+    "total_targets": 236,
+    "audited_targets": 236,
     "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 41,
-    "dismissed_hypotheses": 141
+    "remediated_vulnerabilities": 43,
+    "dismissed_hypotheses": 142
   },
   "targets": [
     {
@@ -2939,6 +2939,45 @@
       "validator_details": "Dismissed by physical runner.py validator: day-map.tsx does not set 360-degree maxBounds, and maplibre-gl is deliberately locked to stable 6.9.0.",
       "remediated_at": null,
       "resolution": "Pinned maplibre-gl at ^6.9.0, preventing singular matrix projection edge case."
+    },
+    {
+      "id": "frontend/lib/utils.ts:cloudinary_proxy_dns_failure_and_sw_dos",
+      "target_type": "frontend_image_optimizer",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "dns_resolution_failure_and_service_worker_no_response"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_cloudinary_proxy_and_prefs.md",
+      "validator_details": "Confirmed by Vitest TC-1/TC-2/TC-4: Hardcoded REDACTED_WORKER_HOST caused ERR_FAILED and Service Worker no-response crash. Remediated by binding active Cloudflare Worker (cloudinary-proxy.ryanpig228.workers.dev) with native Cloudinary CDN fallback.",
+      "remediated_at": "2026-10-24T10:52:00Z",
+      "resolution": "Applied NEXT_PUBLIC_CLOUDINARY_PROXY_HOST fallback in frontend/lib/utils.ts."
+    },
+    {
+      "id": "frontend/lib/api.ts:preferences_unhandled_rejection_dos",
+      "target_type": "frontend_api_client",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "unhandled_rejection_and_auth_race_denial_of_service"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_cloudinary_proxy_and_prefs.md",
+      "validator_details": "Confirmed by Vitest TC-6/TC-7/TC-8: getPreferences threw unhandled Error during unauthenticated or racing session exchange. Remediated by graceful degradation returning [] on 401/403/404 and network errors.",
+      "remediated_at": "2026-10-24T10:52:00Z",
+      "resolution": "Applied non-blocking graceful fallback in frontend/lib/api.ts."
+    },
+    {
+      "id": "frontend/components/views/profile-view.tsx:profile_reauth_event_race_and_tampering",
+      "target_type": "frontend_view",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "stale_identity_state_and_missing_reauth_revalidation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_cloudinary_proxy_and_prefs.md",
+      "validator_details": "Dismissed by physical runner.py validator & enhanced with 300ms debounced revalidation: Event listener properly registered and revalidates profile state on recovery key rotation.",
+      "remediated_at": null,
+      "resolution": "No vulnerability detected; hardening applied via tabiji:recovery_key_updated debounced revalidation."
     }
   ]
 }

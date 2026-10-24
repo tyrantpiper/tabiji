@@ -247,6 +247,14 @@ export function ProfileView() {
         updateKeyStatus()
         window.addEventListener("apiKeyUpdated", updateKeyStatus)
 
+        // 🛡️ 監聽金鑰更新/重認證完成事件，延遲 300ms 自動刷新 Profile 與偏好
+        const handleAuthRevalidated = () => {
+            setTimeout(() => {
+                if (isMounted) fetchProfileData(isMounted)
+            }, 300)
+        }
+        window.addEventListener("tabiji:recovery_key_updated", handleAuthRevalidated)
+
         // 🆕 載入 POI 偏好設定
         const savedPoiPrefs = localStorage.getItem("poi_preferences")
         if (savedPoiPrefs && isMounted) {
@@ -258,6 +266,7 @@ export function ProfileView() {
         return () => {
             isMounted = false
             window.removeEventListener("apiKeyUpdated", updateKeyStatus)
+            window.removeEventListener("tabiji:recovery_key_updated", handleAuthRevalidated)
         }
     }, [zh, fetchProfileData])
 

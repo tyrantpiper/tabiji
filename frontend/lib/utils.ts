@@ -70,7 +70,19 @@ export function getOptimizedImageUrl(originalUrl?: string | null, width: 320 | 6
         
         if (uploadPathMatch && uploadPathMatch[1]) {
             const cleanPath = uploadPathMatch[1];
-            return `https://cloudinary-proxy.REDACTED_WORKER_HOST/w_${width}/${cleanPath}`;
+            // 🛡️ 優先讀取環境變數或專案真實 Cloudflare Worker，絕不使用硬編碼無效主機
+            const rawHost = process.env.NEXT_PUBLIC_CLOUDINARY_PROXY_HOST;
+            const workerHost = rawHost !== undefined ? rawHost.trim() : "cloudinary-proxy.ryanpig228.workers.dev";
+            
+            if (workerHost && !workerHost.includes("REDACTED") && workerHost.toLowerCase() !== "none") {
+                return `https://${workerHost}/w_${width}/${cleanPath}`;
+            }
+
+            // 🛡️ 雙保險原生轉換：直接截取 base url (/image/upload/) 拼接精確的 cleanPath
+            const baseMatch = originalUrl.match(/^(https:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\/)/);
+            if (baseMatch) {
+                return `${baseMatch[1]}w_${width},c_limit,f_auto,q_auto/${cleanPath}`;
+            }
         }
     }
     

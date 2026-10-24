@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/lib/utils.ts:cloudinary_proxy_dns_failure_and_sw_dos",
+    "file_path": "frontend/lib/utils.ts",
+    "attack_vector": "dns_resolution_failure_and_service_worker_no_response",
+    "hypothesis": "Hardcoded redacted host 'cloudinary-proxy.REDACTED_WORKER_HOST' in getOptimizedImageUrl fails DNS resolution, triggering browser ERR_FAILED and Service Worker unhandled 'no-response' rejection, breaking image rendering."
+  },
+  {
+    "id": "frontend/lib/api.ts:preferences_unhandled_rejection_dos",
+    "file_path": "frontend/lib/api.ts",
+    "attack_vector": "unhandled_rejection_and_auth_race_denial_of_service",
+    "hypothesis": "getPreferences throws unhandled Error on HTTP 401/403/404 during unauthenticated or racing session exchange, polluting console and causing profile UI degradation."
+  },
+  {
+    "id": "frontend/components/views/profile-view.tsx:profile_reauth_event_race_and_tampering",
+    "file_path": "frontend/components/views/profile-view.tsx",
+    "attack_vector": "stale_identity_state_and_missing_reauth_revalidation",
+    "hypothesis": "profile-view.tsx fails to listen for recovery key update / reauth success events, permanently stranding the UI in a failed preference state even after the user successfully restores credentials."
+  }
+]
