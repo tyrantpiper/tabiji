@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { reanchorSessionWithKey, resetAndStartFreshSession, dismissReauthPrompt } from "@/lib/auth-session"
+import { reanchorSessionWithKey, resetAndStartFreshSession, dismissReauthPrompt, isUserLoggedIn } from "@/lib/auth-session"
 import { useLanguage } from "@/lib/LanguageContext"
 import { ShieldAlert, KeyRound, RefreshCw, CheckCircle2, AlertTriangle, UserPlus } from "lucide-react"
 import { toast } from "sonner"
@@ -31,6 +31,12 @@ export function SessionReauthModal() {
 
     useEffect(() => {
         const handleReauthRequired = (e: Event) => {
+            // 🛡️ 硬閘門防衛：若使用者根本尚未登入，絕對不開啟彈窗 (單一真理源)
+            if (!isUserLoggedIn()) {
+                console.warn("🛡️ [Auth] Suppressed SessionReauthModal: User is not logged in yet.");
+                return;
+            }
+
             const customEvent = e as CustomEvent<{ reason?: string }>;
             const reason = customEvent.detail?.reason;
             setCustomReason(reason || null);

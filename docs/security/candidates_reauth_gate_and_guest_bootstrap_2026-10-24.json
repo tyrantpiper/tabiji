@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/lib/auth-session.ts:unauthenticated_visitor_reauth_dos",
+    "file_path": "frontend/lib/auth-session.ts",
+    "attack_vector": "unauthenticated_visitor_reauth_denial_of_service",
+    "hypothesis": "When an unauthenticated visitor opens the root URL with an unregistered or stale user_uuid in localStorage, ensureValidSession() receives HTTP 401 from /api/auth/session and blindly triggers triggerReauthPrompt(detail). SessionReauthModal unconditionally opens over LandingPage, presenting an alarming re-authentication modal for an account that does not exist, blocking visitor onboarding and locking the visitor in a 10s cooldown deadlock."
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:client_unregistered_uuid_injection",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "client_side_unregistered_uuid_injection",
+    "hypothesis": "LandingPage.handleLogin() generates a rogue client-side UUID via generateUUID() and writes it to localStorage without verifying its registration in the Supabase database. On subsequent page visits, ensureValidSession() treats this unregistered UUID as a legacy recovery key, which fails legacy_identity_exists on the backend, inducing HTTP 401 and permanently triggering the SessionReauthModal trap on refresh."
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:offline_onboarding_regression",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "attack_vector": "offline_first_time_login_regression",
+    "hypothesis": "If handleLogin() strictly depends on ensureValidSession() without an offline fallback, an unauthenticated user on their first visit without internet (navigator.onLine === false) will receive null from ensureValidSession(), causing the Start Journey action to fail silently and breaking Tabiji's L0 offline-first architectural invariant."
+  }
+]

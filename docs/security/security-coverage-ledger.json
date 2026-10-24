@@ -1,15 +1,43 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-24T10:55:00Z",
+  "last_audit_date": "2026-10-24T11:30:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 236,
-    "audited_targets": 236,
+    "total_targets": 238,
+    "audited_targets": 238,
     "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 43,
+    "remediated_vulnerabilities": 45,
     "dismissed_hypotheses": 142
   },
   "targets": [
+    {
+      "id": "frontend/lib/auth-session.ts:reauth_gate_and_guest_bootstrap",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "unauthenticated_visitor_reauth_denial_of_service",
+        "client_side_unregistered_uuid_injection",
+        "offline_first_time_login_regression"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_reauth_gate_and_guest_bootstrap.md",
+      "validator_details": "Confirmed by Physical Validator runner.py (task-457) and In-Memory PoC TC-1~TC-5: Unpatched code allowed unauthenticated visitors holding stale orphan UUIDs to be locked into an alarming SessionReauthModal trap with a 10s cooldown lock. Patched with isUserLoggedIn() root gate, visitor self-healing identity purge, and LandingPage online/offline dual-track bootstrap. Verified resilient via runner task-627 (DISMISSED).",
+      "remediated_at": "2026-10-24T13:16:00Z",
+      "resolution": "Applied isUserLoggedIn() root gate in frontend/lib/auth-session.ts and frontend/components/auth/session-reauth-modal.tsx, visitor purge in ensureValidSession, and dual-track bootstrap in landing-page.tsx."
+    },
+    {
+      "id": "backend/routers/auth.py:rotate_endpoint_revocation_bypass",
+      "target_type": "backend_auth_endpoint",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "stale_token_rotation_bypass_and_revocation_escape"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_rotate_revocation.md",
+      "validator_details": "Confirmed by In-Memory PoC TC-1 & TC-2 (test_rotate_revocation_sentinel_poc.py): Unpatched rotate endpoint allowed stale pre-rotation JWT (ver 1 < db_ver 2) to trigger secondary rotation to ver 3. Patched with VerifiedSession and state-bifurcated version comparison, returning HTTP 401. Verified 6/6 tests passing.",
+      "remediated_at": "2026-10-24T13:16:00Z",
+      "resolution": "Patched backend/routers/auth.py with Depends(get_verified_session_with_grace) and strict db_ver > 1 and session.token_version < db_ver check."
+    },
     {
       "id": "backend/routers/auth.py:adversarial_token_ver_and_rotation_bypass",
       "target_type": "backend_auth_endpoint",

@@ -434,47 +434,6 @@ async def recover_account_with_key(
     raise HTTPException(status_code=400, detail="Invalid recovery key format")
 
 
-@router.post("/rotate", response_model=SessionResponse)
-@limiter.limit("5/minute")
-async def rotate_recovery_key(
-    request: Request,
-    current_user: str = Depends(get_verified_user),
-    secret: str = Depends(get_session_secret),
-    supabase: Client = Depends(get_supabase),
-):
-    """
-    🔄 憑證輪替與歷史暴露作廢 (Revocation & Key Rotation)
-    核發全新引繼金鑰，立即使所有先前暴露或外洩之金鑰失效。
-    """
-    user_rec = await run_in_threadpool(get_user_record_by_id, supabase, current_user)
-    current_ver = (user_rec.get("credential_version", 1) if user_rec else 1) + 1
-
-    new_full_key, new_key_id, new_secret_hash = generate_prefixed_recovery_key()
-    vault_key = derive_vault_key(secret)
-    new_encrypted_key = encrypt_recovery_key(new_full_key, vault_key)
-    try:
-        await run_in_threadpool(
-            lambda: supabase.table("users").update({
-                "recovery_key_id": new_key_id,
-                "recovery_secret_hash": new_secret_hash,
-                "recovery_key_encrypted": new_encrypted_key,
-                "credential_version": current_ver,
-                "recovery_updated_at": "now()"
-            }).eq("id", current_user).execute()
-        )
-    except Exception as e:
-        print(f"🔥 [Auth] Failed to rotate recovery credentials: {e}")
-        raise HTTPException(status_code=503, detail="Credential rotation temporarily unavailable")
-
-    new_token = create_session_jwt(current_user, secret, current_ver)
-    return SessionResponse(
-        access_token=new_token,
-        user_id=current_user,
-        recovery_key=new_full_key,
-        is_new=False,
-    )
-
-
 class VerifiedSession(BaseModel):
     user_id: str
     token_version: int = 1
@@ -537,6 +496,60 @@ async def get_verified_session_with_grace(
         pass
 
     raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+@router.post("/rotate", response_model=SessionResponse)
+@limiter.limit("5/minute")
+async def rotate_recovery_key(
+    request: Request,
+    session: VerifiedSession = Depends(get_verified_session_with_grace),
+    secret: str = Depends(get_session_secret),
+    supabase: Client = Depends(get_supabase),
+):
+    """
+    🔄 憑證輪替與歷史暴露作廢 (Revocation & Key Rotation)
+    核發全新引繼金鑰，立即使所有先前暴露或外洩之金鑰失效。
+    """
+    user_rec = await run_in_threadpool(get_user_record_by_id, supabase, session.user_id)
+    if not user_rec:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db_ver = int(user_rec.get("credential_version") or 1)
+
+    # 🛡️ ADR-009 輪替端點狀態分流硬性撤銷守衛 (Enforce Revocation on Rotation Endpoint)
+    # 若帳號曾受威脅並已輪替 (db_ver > 1)，歷史舊版 Token (token_ver < db_ver) 嚴禁再次發起輪替！
+    if db_ver > 1 and session.token_version < db_ver:
+        raise HTTPException(
+            status_code=401,
+            detail="Credential has been rotated. This session is revoked."
+        )
+
+    current_ver = db_ver + 1
+
+    new_full_key, new_key_id, new_secret_hash = generate_prefixed_recovery_key()
+    vault_key = derive_vault_key(secret)
+    new_encrypted_key = encrypt_recovery_key(new_full_key, vault_key)
+    try:
+        await run_in_threadpool(
+            lambda: supabase.table("users").update({
+                "recovery_key_id": new_key_id,
+                "recovery_secret_hash": new_secret_hash,
+                "recovery_key_encrypted": new_encrypted_key,
+                "credential_version": current_ver,
+                "recovery_updated_at": "now()"
+            }).eq("id", session.user_id).execute()
+        )
+    except Exception as e:
+        print(f"🔥 [Auth] Failed to rotate recovery credentials: {e}")
+        raise HTTPException(status_code=503, detail="Credential rotation temporarily unavailable")
+
+    new_token = create_session_jwt(session.user_id, secret, current_ver)
+    return SessionResponse(
+        access_token=new_token,
+        user_id=session.user_id,
+        recovery_key=new_full_key,
+        is_new=False,
+    )
 
 
 async def get_verified_user_with_grace(

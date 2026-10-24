@@ -66,7 +66,7 @@ const AppShell = dynamic(() => import("@/components/views/app-shell").then(mod =
 
 import { toast } from "sonner"
 import { usersApi } from "@/lib/api"
-import { restoreAccountWithKey } from "@/lib/auth-session"
+import { restoreAccountWithKey, ensureValidSession } from "@/lib/auth-session"
 import { debugLog, debugWarn } from "@/lib/debug"
 
 import { generateSecureUUID, isValidRecoveryKey } from "@/lib/security"
@@ -107,20 +107,30 @@ export function LandingPage() {
 
     const handleLogin = async () => {
         if (!nickname.trim()) { toast.warning(t('landing_please_enter_nickname')); return }
+        localStorage.setItem("user_nickname", nickname)
+
+        // 1. 若連線正常，優先透過 ensureValidSession 讓伺服器正規派發合法憑證與使用者 ID (若本機已有則複用)
         let uuid = localStorage.getItem("user_uuid")
+        if (!uuid && navigator.onLine) {
+            await ensureValidSession().catch(() => null)
+            uuid = localStorage.getItem("user_uuid")
+        }
+
+        // 2. 📴 離線防衛降級路徑：完全斷網時本機安全派發離線 UUID，保證 100% 正常進入 AppShell
         if (!uuid) {
             uuid = generateUUID()
             localStorage.setItem("user_uuid", uuid)
         }
-        localStorage.setItem("user_nickname", nickname)
 
         // 🆕 Sync nickname to backend database (Nickname <-> RecoveryKey Binding)
-        try {
-            await usersApi.updateProfile(uuid, { name: nickname })
-            debugLog("✅ [Profile] Nickname synced to backend:", nickname)
-        } catch (err) {
-            // Non-blocking: sync failure shouldn't block login
-            debugWarn("⚠️ [Profile] Failed to sync nickname to backend:", err)
+        if (navigator.onLine) {
+            try {
+                await usersApi.updateProfile(uuid, { name: nickname })
+                debugLog("✅ [Profile] Nickname synced to backend:", nickname)
+            } catch (err) {
+                // Non-blocking: sync failure shouldn't block login
+                debugWarn("⚠️ [Profile] Failed to sync nickname to backend:", err)
+            }
         }
 
         // 🆕 通知 ChatWidget 用戶已登入

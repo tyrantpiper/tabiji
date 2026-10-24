@@ -1,0 +1,20 @@
+[
+  {
+    "id": "frontend/lib/auth-session.ts:post_patch_unauth_visitor_trap_check",
+    "file_path": "frontend/lib/auth-session.ts",
+    "attack_vector": "unauthenticated_visitor_reauth_denial_of_service",
+    "hypothesis": "Even after applying the isUserLoggedIn() gate in triggerReauthPrompt() and ensureValidSession() visitor purge, an unauthenticated visitor visiting the website could still trigger a reauth broadcast or have their login flow locked by a failed cooldown."
+  },
+  {
+    "id": "frontend/components/auth/session-reauth-modal.tsx:post_patch_modal_leakage_check",
+    "file_path": "frontend/components/auth/session-reauth-modal.tsx",
+    "attack_vector": "unauthenticated_modal_exposure",
+    "hypothesis": "Despite importing isUserLoggedIn() from @/lib/auth-session, SessionReauthModal's event listener still allows an unauthenticated visitor to see the 'In-Place Re-authentication Required' modal on initial page mount."
+  },
+  {
+    "id": "backend/routers/auth.py:post_patch_rotate_revocation_escape",
+    "file_path": "backend/routers/auth.py",
+    "attack_vector": "stale_token_rotation_bypass_and_revocation_escape",
+    "hypothesis": "Despite the check 'db_ver > 1 and session.token_version < db_ver', an adversary possessing an expired or stale pre-rotation JWT can still bypass the check and force the backend to execute key rotation to a higher version."
+  }
+]

@@ -327,11 +327,46 @@
 
 ---
 
+### 里程碑六：MapLibre 3D DEM Mapterhorn 404 報錯與 Overzoom 機制深度調研 (AD-182)
+
+1. **現象與根本原因**：
+   - 地圖調整相機俯仰角（Pitch $\ge 30^\circ$）時，控制台爆發大量 `GET https://tiles.mapterhorn.com/{z}/{x}/{y}.webp 404 (Not Found)`。
+   - Mapterhorn 全球開源 DEM 基線來自 ESA Copernicus GLO-30，全球物理切片僅到 Zoom 12；其 `tilejson.json` 聲明 `maxzoom: null`，MapLibre GL JS 解析時退化為內核預設值 `maxzoom = 22`。
+   - 傾角增大時近景視錐體要求 z13~z16 瓦片，MapLibre 發起實體網路請求導致連環 404。
+2. **架構規約與解法**：
+   - 評估為**次致命頻寬與控制台污染**（MapLibre 內建 Parent Tile Fallback 雙線性著色器升採樣）。
+   - 規約：聲明 `raster-dem` 數據源時必須顯式注入 `maxzoom: 12`，物理切斷無效網路請求。已產出完整調研報告於 `docs/research/2026-10-24-maplibre-3d-dem-mapterhorn-tile-404-and-overzoom-deep-research.md`。
+
+---
+
+### 里程碑七：POST /api/auth/rotate 輪替端點狀態分流硬性撤銷守衛 (AD-183, ADR-009)
+
+1. **安全破口與重現**：
+   - 舊版 `POST /api/auth/rotate` 依賴無狀態的 `get_verified_user`，未核對 Token 版本。當 Alice 於 Device A 輪替憑證後（DB 版本升至 2），攻擊者持有 Device B 的歷史 Token（版本 1）依然能強行發起二次輪替（升至版本 3），架空了憑證作廢機制。
+2. **閉環實作與 In-Memory 實證**：
+   - 將依賴重構為 `VerifiedSession = Depends(get_verified_session_with_grace)`。
+   - 嚴格注入 ADR-009 狀態分流撤銷守衛：`if db_ver > 1 and session.token_version < db_ver: raise HTTPException(401, detail="Credential has been rotated. This session is revoked.")`。
+   - 透過專屬測試 `backend/tests/test_rotate_revocation_sentinel_poc.py` 6 項測試實證 100% 攔截且資料庫毫髮無傷。
+
+---
+
+### 里程碑八：未登入訪客首頁重認證彈窗阻斷與自癒引導 (AD-184)
+
+1. **阻斷陷阱根因**：
+   - 訪客電腦殘留孤兒 UUID 時，首頁 `ensureValidSession()` 向後端換票收到 401，無差別呼叫 `triggerReauthPrompt()`，導致 `SessionReauthModal` 在首頁跳出，並受 10 秒冷卻死鎖。
+2. **雙軌引導與自癒防禦**：
+   - `triggerReauthPrompt` 與 `SessionReauthModal` 建立 `isUserLoggedIn()` 統一硬閘門，未登入者一律物理截斷事件廣播。
+   - `ensureValidSession` 遭遇 401 且判定為未登入者時，觸發訪客自癒：清除本機孤兒身分並重置冷卻 `lastExchangeFailedAt = 0`。
+   - `LandingPage.handleLogin` 實作線上（正規換票派發）/ 離線（本機安全派發）雙軌身分引導。
+   - 前端專屬測試 `frontend/__tests__/reauth-gate-and-guest-bootstrap.test.ts` 5 項測試實證全數通過。
+
+---
+
 ## 🎯 明日核心衝刺目標 (Next Steps)
 1. 監控 Dependabot 於 GitHub 上的分組更新表現，確保 PR 自動閉合且零容器報錯。
-2. 持續監控 PWA 離線環境下的長生命週期同步健康度與生產端 Console 純淨度。
-3. 持續觀察跨裝置引繼碼輪替後的即時 Supabase Broadcast 與原地彈窗平滑度。
-4. 驗證 Cloudflare Worker 圖片 Proxy 在高併發下的邊緣快取命中率與轉碼效能。
+2. 在地圖子系統全面落地 `maxzoom: 12` 顯式聲明，根除相機俯仰角時的 404 控制台噪音。
+3. 持續監控 PWA 離線環境下的長生命週期同步健康度與生產端 Console 純淨度。
+4. 持續觀察跨裝置引繼碼輪替後的即時 Supabase Broadcast 與原地彈窗平滑度。
 
 ---
 
@@ -435,7 +470,43 @@
     "id": "INV-AUTH-009",
     "title": "Non-Blocking Preferences Graceful Degradation & Debounced Revalidation Loop",
     "content": "usersApi.getPreferences must catch 401/403/404 and network errors, gracefully returning empty array [] without throwing unhandled exceptions to console. ProfileView must listen to 'tabiji:recovery_key_updated' with a 300ms debounce to auto-revalidate preferences and profile data upon in-place re-anchoring."
+  },
+  {
+    "domain": "map_webgl",
+    "type": "INVARIANT_RULE",
+    "id": "INV-MAP-001",
+    "title": "Explicit maxzoom 12 Bound on Mapterhorn 3D DEM Raster Source",
+    "content": "Mapterhorn GLO-30 DEM elevation slices only exist up to Zoom 12 globally. TileJSON defaults to maxzoom: null which triggers MapLibre's maxzoom 22 default, causing massive 404 tile request storms when camera pitch >= 30 deg. All raster-dem sources using Mapterhorn must explicitly inject maxzoom: 12 to eliminate invalid network fetches and rely on GPU bilinear shader overzooming."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AUTH-010",
+    "title": "State-Bifurcated Revocation Guard on /api/auth/rotate Endpoint",
+    "content": "POST /api/auth/rotate must depend on get_verified_session_with_grace. When db_ver > 1 (credential rotated), any incoming token where session.token_version < db_ver must be immediately rejected with HTTP 401 'Credential has been rotated. This session is revoked.', preventing revocation bypass attacks."
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AUTH-011",
+    "title": "Unauthenticated Visitor Reauth Suppression & Identity Self-Healing",
+    "content": "triggerReauthPrompt and SessionReauthModal must strictly verify isUserLoggedIn() (checking user_nickname && user_uuid || user_recovery_key) before broadcasting or opening. In ensureValidSession, 401 for unauthenticated visitors purges orphan UUIDs and resets lastExchangeFailedAt = 0, unlocking login. LandingPage handleLogin must implement dual-track bootstrap (online: ensureValidSession server registration, offline: generateUUID fallback)."
+  },
+  {
+    "domain": "map_webgl",
+    "type": "FAILED_PATH",
+    "id": "FP-004",
+    "title": "MapLibre 3D DEM Pitch 404 Cascade from TileJSON Null Maxzoom",
+    "content": "Symptom: Tilting map camera pitch >= 30 deg floods console with GET tiles.mapterhorn.com/{z}/{x}/{y}.webp 404 (Not Found). Cause: TileJSON maxzoom is null, defaulting to 22, while GLO-30 data only exists up to z12. Lesson: Always explicitly specify maxzoom: 12 on raster-dem sources."
+  },
+  {
+    "domain": "state_cache",
+    "type": "FAILED_PATH",
+    "id": "FP-005",
+    "title": "Orphan Client UUID Inducing Reauth Modal Trap on Root Landing Page",
+    "content": "Symptom: First-time visitor opening root '/' was immediately confronted with an alarming '需要原地驗證最新引繼碼' modal with a 10s cooldown lock. Cause: Client-side generated UUID was persisted in localStorage without server registration, causing ensureValidSession to receive 401 and trigger triggerReauthPrompt. Lesson: Unauthenticated visitors must be strictly gated with isUserLoggedIn() and orphan UUIDs silently purged."
   }
 ]
 ```
+
 

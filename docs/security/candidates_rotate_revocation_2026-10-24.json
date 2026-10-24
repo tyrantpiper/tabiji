@@ -1,0 +1,10 @@
+[
+  {
+    "id": "backend/routers/auth.py:rotate_endpoint_revocation_bypass",
+    "file_path": "backend/routers/auth.py",
+    "attack_vector": "stale_credential_version_validation",
+    "hypothesis": "In POST /api/auth/rotate, the endpoint relies on get_verified_user which does not compare the JWT version (ver claim) with the database credential_version. When credential_version in the database is greater than 1, a client holding an outdated token version (ver < db_ver) can invoke /rotate to generate new credentials and increment credential_version, bypassing the intended revocation of outdated sessions.",
+    "start_line": 435,
+    "end_line": 476
+  }
+]

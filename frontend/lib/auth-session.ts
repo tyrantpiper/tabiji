@@ -30,7 +30,26 @@ export function dismissReauthPrompt() {
     lastDismissedAt = Date.now();
 }
 
+/**
+ * 🛡️ 檢查當前本機是否具備完整之登入使用者身分 (已登入狀態機閘門)
+ */
+export function isUserLoggedIn(): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        const hasNicknameAndId = Boolean(localStorage.getItem("user_nickname") && localStorage.getItem(RECOVERY_KEY));
+        const hasModernRecoveryKey = Boolean(localStorage.getItem("user_recovery_key"));
+        return hasNicknameAndId || hasModernRecoveryKey;
+    } catch {
+        return false;
+    }
+}
+
 export function triggerReauthPrompt(reason?: string) {
+    // 🛡️ 訪客/未登入者硬阻斷：未登入者絕不具備重認證上下文，嚴禁廣播彈窗
+    if (!isUserLoggedIn()) {
+        console.warn("🛡️ [Auth] Suppressed triggerReauthPrompt: User is not logged in.");
+        return;
+    }
     // 🛡️ 重認證成功後 5 秒冷卻，或使用者點擊「稍後驗證」關閉後 5 秒輕量冷卻防震盪
     if (Date.now() - lastRestoredAt < 5000) return;
     if (Date.now() - lastDismissedAt < 5000) return;
@@ -200,11 +219,20 @@ export async function ensureValidSession(): Promise<string | null> {
             if (!res.ok) {
                 console.warn(`⚠️ [Auth] Session exchange returned HTTP ${res.status}`);
                 if (res.status === 401) {
-                    lastExchangeFailedAt = Date.now();
-                    const err = await res.json().catch(() => ({}));
-                    const detail = typeof err.detail === "string" ? err.detail : undefined;
-                    // 🛡️ 凡換票收到 401，立即攜帶原因喚醒重認證彈窗，拒絕靜默假死
-                    triggerReauthPrompt(detail);
+                    if (isUserLoggedIn()) {
+                        lastExchangeFailedAt = Date.now();
+                        const err = await res.json().catch(() => ({}));
+                        const detail = typeof err.detail === "string" ? err.detail : undefined;
+                        // 🛡️ 凡換票收到 401，立即攜帶原因喚醒重認證彈窗，拒絕靜默假死
+                        triggerReauthPrompt(detail);
+                    } else {
+                        // 🛡️ 訪客自癒機制：無效孤兒 UUID 立即物理清除，重置冷卻，絕不觸發彈窗！
+                        console.warn("🛡️ [Auth] Purging invalid orphan identity for unauthenticated visitor.");
+                        localStorage.removeItem(TOKEN_KEY);
+                        localStorage.removeItem("user_recovery_key");
+                        localStorage.removeItem(RECOVERY_KEY);
+                        lastExchangeFailedAt = 0; // 🔓 立即解開冷卻，保證使用者輸入暱稱時可秒開換票
+                    }
                 }
                 return null;
             }

@@ -3,6 +3,8 @@
 > **所屬領域**: MapLibre GL JS, WebGL Canvas, 3D Globe, 大圓航線, 手勢隔離, CSP Worker
 
 ## 🏛️ 架構決策 (Decisions)
+- **Explicit maxzoom 12 Bound on Mapterhorn 3D DEM Raster Source**: Mapterhorn GLO-30 DEM elevation slices only exist up to Zoom 12 globally. TileJSON defaults to maxzoom: null which triggers MapLibre's maxzoom 22 default, causing massive 404 tile request storms when camera pitch >= 30 deg. All raster-dem sources using Mapterhorn must explicitly inject maxzoom: 12 to eliminate invalid network fetches and rely on GPU bilinear shader overzooming.
+
 - **Pinned Lock for MapLibre GL (^6.9.0) and Lucide React (^0.473.0)**: MapLibre GL must be pinned to ^6.9.0 to prevent mat4.invert singular projection crashes in >=6.10, and Lucide React must be pinned to ^0.473.0 to prevent icon renaming breaking changes. Never blindly bulk-upgrade major dependencies in Dependabot without standalone sandboxed verification.
 
 - **MapLibre 宣告式圖層拓撲優先原則**: JSX 必須依物理由底至頂排列。禁止 beforeId 指向未宣告同級圖層。
@@ -17,6 +19,8 @@
 - **地圖控制膠囊呼吸降敏架構**: 靜止 3 秒進入 25% 晶透幽靈態，觸控或拖曳瞬間喚醒至 100%。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **MapLibre 3D DEM Pitch 404 Cascade from TileJSON Null Maxzoom**: Symptom: Tilting map camera pitch >= 30 deg floods console with GET tiles.mapterhorn.com/{z}/{x}/{y}.webp 404 (Not Found). Cause: TileJSON maxzoom is null, defaulting to 22, while GLO-30 data only exists up to z12. Lesson: Always explicitly specify maxzoom: 12 on raster-dem sources.
+
 - **FP-001 (圖形與地圖渲染)**: 雙 WebGL Context (Liquid Glass + MapLibre) 導致 iOS Safari 拋出 WebGL Context Lost 崩潰。改以純 CSS backdrop-blur 交付。
 - **FP-002 (MapLibre 相機排程競爭)**: 連續呼叫 easeTo 與 fitBounds 導致後者掐斷前者。必須在 fitBounds options 顯式注入 bearing: 0, pitch: 0。
 - **FP-003 (離散生命週期)**: 禁止在 onMove 中綁定 React state，改以 onMoveStart / onMoveEnd 接管。

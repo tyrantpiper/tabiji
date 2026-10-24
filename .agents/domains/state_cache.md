@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **Unauthenticated Visitor Reauth Suppression & Identity Self-Healing**: triggerReauthPrompt and SessionReauthModal must strictly verify isUserLoggedIn() (checking user_nickname && user_uuid || user_recovery_key) before broadcasting or opening. In ensureValidSession, 401 for unauthenticated visitors purges orphan UUIDs and resets lastExchangeFailedAt = 0, unlocking login. LandingPage handleLogin must implement dual-track bootstrap (online: ensureValidSession server registration, offline: generateUUID fallback).
+
 - **Non-Blocking Preferences Graceful Degradation & Debounced Revalidation Loop**: usersApi.getPreferences must catch 401/403/404 and network errors, gracefully returning empty array [] without throwing unhandled exceptions to console. ProfileView must listen to 'tabiji:recovery_key_updated' with a 300ms debounce to auto-revalidate preferences and profile data upon in-place re-anchoring.
 
 - **401 Self-Healing Token Retention & In-Place Modal Prompt**: In api.ts and hooks.ts, existing session tokens must be preserved across 401 as proof-of-possession for ensureValidSession exchange; upon exchange failure, token is purged and triggerReauthPrompt is fired to wake SessionReauthModal in-place without manual logout.
@@ -49,6 +51,8 @@
 - **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Orphan Client UUID Inducing Reauth Modal Trap on Root Landing Page**: Symptom: First-time visitor opening root '/' was immediately confronted with an alarming '需要原地驗證最新引繼碼' modal with a 10s cooldown lock. Cause: Client-side generated UUID was persisted in localStorage without server registration, causing ensureValidSession to receive 401 and trigger triggerReauthPrompt. Lesson: Unauthenticated visitors must be strictly gated with isUserLoggedIn() and orphan UUIDs silently purged.
+
 - **Deep-View Scoped Realtime Blindspot Trap**: Scoping realtime credential sync listeners inside specific subviews causes devices on other pages to miss critical rotation signals.
 
 - **Realtime Broadcast Plaintext & State Poisoning Trap**: Broadcasting plaintext secrets over WebSocket channels leaks credentials and allows state poisoning. Always use opaque signals and authenticated pull.
