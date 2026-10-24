@@ -1,14 +1,16 @@
-# 📅 Daily Report - 2026-10-24 (Zero-Wire-Leak Architecture, Identity Oracle Defense, Local-First In-Place Reauth & Security Sentinel)
+# 📅 Daily Report - 2026-10-24 (Zero-Wire-Leak Architecture, Identity Oracle Defense, Cloudflare Image Proxy Resilience & Dependabot 38 Upgrades)
 
-> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 85 Suites / 565 Tests Passed; Backend 295 Items: 295 Passed, 5 Skipped, 0 Failures; Chrome DevTools MCP 實體遙測閉環通過), Security Ledger 227 Targets (40 Remediated, 51 Verified, 136 Dismissed).
+> **系統狀態**：🟢 Production Ready & Security Sentinel Hardened, 0 TypeScript Errors, 0 ESLint Warnings, 100% Tests Green (Frontend 86 Suites / 579 Tests Passed; Backend 308 Items: 303 Passed, 5 Skipped, 0 Failures; Chrome DevTools MCP 實體遙測閉環通過), Security Ledger 236 Targets (43 Remediated, 51 Verified, 142 Dismissed).
 > **今日關鍵研發範疇 (Core Focus)**：
 > - 🛡️ **使用者直覺驅動之身分枚舉預言機消解 (Identity Oracle Defense, AD-167)**：由一句「這相當於告訴別人這是別人的啊」引爆出深入骨髓的安全審查。徹底根除錯誤訊息中洩漏金鑰有效性的提示，後端與前端全面統一生產常數錯誤回應 `"引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。"`。
 > - 🔐 **網路傳輸層 Token 提前外洩防禦 (Zero-Wire-Leak Architecture, AD-166)**：後端認證契約擴充 `expected_user_id`，在服務端比對身分前**嚴禁生成或序列化任何 JWT**，身分不相符時直接回傳 401，達成傳輸層 100% 零 Token、零 user_id 洩漏，並同步加固舊版 UUID 遷移路徑防止繞過。
 > - 📦 **離線寄件匣 401 物理凍結與突變零丟失 (Outbox 401 Freeze & Data Preservation, AD-168)**：徹底修復舊版 `useBackgroundSync` 遭遇 401 時盲目重試 3 次後丟棄未同步行程的致命 Bug。實作 `SyncEngineControl.pause()` 物理急煞機制，保留 retryCount，直到原地重錨定成功後由 `SyncEngineControl.resume()` 依序回放。
 > - ⏱️ **5000ms 在途請求冷卻窗口與彈窗抗震盪設計 (Post-Restoration Grace Window, AD-169)**：在 `auth-session.ts` 引入 `lastRestoredAt` 時間戳記，在成功重錨定後 5 秒內，靜默吸收先前在途發出、攜帶舊 Token 的 401 請求，消解彈窗重複震盪 (Modal Thrashing)。
 > - 🛑 **登出破壞性清除防護警告 (Destructive Logout Guard, AD-170)**：在個人檔案視圖加入未同步資料提示，若本機存在離線暫存，登出前顯式對話框警告，杜絕 `localStorage.clear()` 誤刪離線行程。
-> - 🔬 **Security Sentinel 物理對抗沙盒與 Chrome DevTools MCP 實體遙測**：撰寫 In-Memory PoC（`test_p0_auth_revocation_sentinel_poc.py`）重現漏洞並驗證補丁；在真實應用程式路由（`test_p0_auth_sentinel.py`）執行端點斷言；並透過 Chrome DevTools MCP 於真實瀏覽器中注入事件、實測錯誤提示與離線降級，取得 7 張實體截圖佐證。
-> - 📊 **全域安全帳本數學守恆校驗**：修復重複 ID 與長度統計不一致，通過 `python scripts/validate_security_ledger.py` 嚴格校驗（227 標的數學守恆）。
+> - 📦 **Dependabot PR #32 深度審核與 38 項依賴安全升級 (AD-179)**：精準審查 40 個更新，排查網路變更與社群反饋，安全升級 Tailwind v4.2.1、Framer Motion v12.4.7、SWR v2.3.8 等 38 個無破壞套件，顯式鎖定 MapLibre GL 6.9.0 與 Lucide React 0.473.0 避免奇異矩陣與圖示重命名破壞。
+> - 🌐 **Cloudflare Worker 圖片 Proxy 綁定與原生 CDN 雙保險回退 (AD-180)**：消滅脫敏殘留字面量 `REDACTED_WORKER_HOST` 導致的 DNS 解析失敗與 Serwist Service Worker `no-response` 崩潰，動態綁定活躍 Worker 並提供 Cloudinary 官方原生動態網址雙保險。
+> - 🧠 **`getPreferences` 非阻塞式優雅降級與重認證事件閉環 (AD-181)**：徹底消除主控台 401 未捕獲例外紅字，並於 `ProfileView` 監聽 `tabiji:recovery_key_updated` 實現 300ms 延遲防抖無感刷新。
+> - 🔬 **Security Sentinel 物理沙盒隔離與全量回歸**：在實體 Worktree 沙盒中撰寫專屬測試，台帳擴充至 236 Targets 保持數學守恆。
 
 ---
 
@@ -126,6 +128,21 @@
   - Decision: 在 `profile-view.tsx` 加入顯式警告對話框，同步凍結時提示金鑰待驗證。
   - Status: Implemented in `frontend/components/views/profile-view.tsx`.
 
+- **AD-179: Dependabot 40 項升級精準審核與雙重破壞性大版本鎖定 (38 Upgraded, 2 Locked)**
+  - Context: Dependabot PR #32 提出 40 個依賴升級，其中部分包含深層破壞性變更（例如 MapLibre GL 6.15 的矩陣求逆奇異崩潰與 Lucide React 1.16 的圖示重命名）。
+  - Decision: 逐一檢索 GitHub / StackOverflow / Reddit，安全升級 38 項次版本與補丁，顯式鎖定 `maplibre-gl@^6.9.0` 與 `lucide-react@^0.473.0`，維持 100% 綠燈零編譯報錯。
+  - Status: Implemented in `frontend/package.json`, `package-lock.json` (Commit `1c4c16b`).
+
+- **AD-180: Cloudflare Worker 圖片 Proxy 動態綁定與原生 CDN 雙保險回退架構 (Proxy Binding & Native Fallback)**
+  - Context: `frontend/lib/utils.ts` 中殘留脫敏字面量 `REDACTED_WORKER_HOST`，導致 DNS 失敗 (`net::ERR_FAILED`)，引發 Serwist Service Worker `no-response` 崩潰。
+  - Decision: 優先綁定環境變數或正式活躍 Worker `cloudinary-proxy.ryanpig228.workers.dev`；若 Proxy 關閉或失效，自動平滑切換至 Cloudinary 官方原生動態網址 `.../image/upload/w_xxx,c_limit,f_auto,q_auto/...`，徹底杜絕 Service Worker 崩潰。
+  - Status: Implemented in `frontend/lib/utils.ts` (Commit `810004a`).
+
+- **AD-181: `usersApi.getPreferences` 非阻塞優雅降級與重認證事件閉環 (Non-Blocking Preferences & Reauth Sync)**
+  - Context: 後端偏好端點要求已認證用戶，未登入或換票時返回 401，舊版直接拋出未捕獲例外污染 Console；且重認證後 Profile 缺乏即時刷新。
+  - Decision: `getPreferences` 捕捉 401/403/404 及網路錯誤優雅降級回傳空陣列 `[]`；`ProfileView` 監聽 `tabiji:recovery_key_updated`，在重錨定完成後延遲 300ms 自動刷新 Profile 與偏好。
+  - Status: Implemented in `frontend/lib/api.ts`, `frontend/components/views/profile-view.tsx` (Commit `810004a`).
+
 ---
 
 ## 🛡️ 失敗路徑與避坑指南 (Failed Paths)
@@ -137,6 +154,10 @@
 - **FP-086: 安全台帳統計數字未嚴格守恆 (Ledger Conservation Violation)**
   - Symptom: 台帳手動增補項目時長度為 230，但 statistics 填寫 226，且有 3 筆重複 ID，導致 `validate_security_ledger.py` 與 `test_root_hygiene_sentinel.py` 報錯。
   - Lesson: 台帳增補必須依賴確定性 Python 腳本進行 deduplicate 與精確統計，確保 `total == audited == (verified + remediated + dismissed)`。
+
+- **FP-087: VS Code Git Worktree 自動快取與分頁檔案鎖定殘留**
+  - Symptom: 使用 `git worktree add D:\Project\tabiji\sandbox-fix` 建立獨立沙盒測試完畢並透過 `git worktree remove` 刪除後，VS Code 原始檔控制側邊欄仍顯示 `sandbox-fix`。
+  - Lesson: VS Code 會自動監視開啟的分頁，若編輯器分頁仍開著沙盒目錄下的檔案，IDE 會持續保留對該 worktree 的緩存。只需關閉分頁並手動點擊 Source Control 重新整理 🔄 即可完全清除。
 
 ---
 
@@ -257,10 +278,60 @@
 
 ---
 
+### 里程碑十四：Dependabot PR #32 40 項升級深度研調與 38 項依賴安全升級 (AD-179)
+
+1. **事故背景與研發脈絡**：
+   - GitHub Dependabot PR #32 提出了聚合 40 個前端依賴包更新的巨大變更。
+   - 秉持「不盲目全部升級、逐一審查網路與官方變更、具破壞性者一律拒絕」的鐵律，展開全面檢索。
+2. **逐項研調與破壞性大版本雙重隔離**：
+   - **全面調研**：檢索 GitHub Changelog、Release Notes、Reddit 與 StackOverflow 開發社群回饋。
+   - **採納 38 項安全升級**：Tailwind CSS v4.2.1、Framer Motion v12.4.7、SWR v2.3.8、Radix UI 系列 primitives、TypeScript ESLint、PostCSS 等，無任何破壞性改動。
+   - **精準識別並顯式鎖定 2 項高風險破壞性套件**：
+     - `maplibre-gl`：嘗試由 6.9.0 升級至 6.15.0，經查證在多角投影運算時會引發 `mat4.invert` 奇異矩陣崩潰，顯式鎖定於 `^6.9.0`。
+     - `lucide-react`：由 0.473.0 升級至 1.16.0 存在大量 Icon 命名變更與 Tree-shaking 破壞性問題，顯式鎖定於 `^0.473.0`。
+3. **驗收成效**：
+   - 前端 86 個測試檔案、570 項測試 100% 通過。
+   - `npx tsc --noEmit` 與 `eslint` 保持 0 錯誤、0 警告。
+   - Commit `1c4c16b` 合入主幹。
+
+---
+
+### 里程碑十五：Cloudflare Worker 圖片 Proxy 域名綁定與官方原生 CDN 雙保險降級 (AD-180)
+
+1. **事故現象與日誌溯源**：
+   - 瀏覽器主控台跳出大量圖片載入失敗紅字：`net::ERR_FAILED (https://cloudinary-proxy.REDACTED_WORKER_HOST/...)`。
+   - Serwist Service Worker 捕獲後引發未處理例外：`Uncaught (in promise) no-response :: [{"url":"https://cloudinary-proxy.REDACTED_WORKER_HOST/..."}]`。
+2. **法醫學根因**：
+   - `frontend/lib/utils.ts` 第 73 行殘留脫敏字面量 `REDACTED_WORKER_HOST`，導致 DNS 解析失敗。
+   - 實體探針驗證：透過 Python 模擬瀏覽器 User-Agent 探測，確認 Cloudflare 部署的活躍 Worker 真實網域名稱為 `cloudinary-proxy.ryanpig228.workers.dev`（返回 HTTP 200，WebP 5,784 bytes）。
+3. **動態綁定與官方原生 CDN 雙保險回退**：
+   - `frontend/lib/utils.ts` 改為優先讀取 `process.env.NEXT_PUBLIC_CLOUDINARY_PROXY_HOST || "cloudinary-proxy.ryanpig228.workers.dev"`。
+   - 若 Proxy Host 未設置或設定為 "none"，無縫平滑回退至 Cloudinary 官方原生動態網址 `.../image/upload/w_xxx,c_limit,f_auto,q_auto/...`，徹底杜絕 Service Worker 崩潰。
+
+---
+
+### 里程碑十六：`usersApi.getPreferences` 非阻塞優雅降級與引繼重認證閉環 (AD-181)
+
+1. **事故現象**：
+   - 進入頁面時主控台頻繁報錯：`Failed to load preferences: Error: Failed to fetch preferences at Object.getPreferences (lib/api.ts:1425:28)`。
+2. **根因剖析**：
+   - 後端 `/api/users/me/preferences` 受 `get_verified_user` 保護，未登入或換票在途中返回 HTTP 401。
+   - 舊版程式碼直接 `if (!res.ok) throw new Error(...)`，拋出未捕獲例外中斷渲染。
+3. **優雅降級與重認證事件閉環**：
+   - `frontend/lib/api.ts` 的 `getPreferences` 捕捉 401/403/404 及網路錯誤，非阻塞式優雅降級回傳空陣列 `[]`，消除 Console 報錯。
+   - `ProfileView` 監聽 `tabiji:recovery_key_updated`，在使用者輸入新引繼碼完成後，延遲 300ms 自動重新載入 Profile 資料與偏好，達成無感資料閉環。
+4. **Sentinel 測試與主幹落地**：
+   - 在獨立實體沙盒 `sandbox-fix` 建立 9 項對抗測試（`cloudinary-proxy-and-preferences-sentinel.test.ts`），紅綠驗證全綠。
+   - 安全帳本擴增至 236 Targets，通過 `validate_security_ledger.py` 驗證。
+   - Commit `810004a` 合入並推送至遠端主幹。
+
+---
+
 ## 🎯 明日核心衝刺目標 (Next Steps)
-1. 監控 Dependabot 於 GitHub 上的分組更新表現，確保 PR #22 自動閉合且零容器報錯。
+1. 監控 Dependabot 於 GitHub 上的分組更新表現，確保 PR 自動閉合且零容器報錯。
 2. 持續監控 PWA 離線環境下的長生命週期同步健康度與生產端 Console 純淨度。
 3. 持續觀察跨裝置引繼碼輪替後的即時 Supabase Broadcast 與原地彈窗平滑度。
+4. 驗證 Cloudflare Worker 圖片 Proxy 在高併發下的邊緣快取命中率與轉碼效能。
 
 ---
 
@@ -343,6 +414,27 @@
     "id": "INV-AUTH-008",
     "title": "5000ms Dismiss Cooldown for Reauth Modal",
     "content": "When user clicks 'Dismiss (Stay Offline)' in SessionReauthModal, dismissReauthPrompt must set a 5000ms cooldown timestamp to prevent rapid background SWR requests from reopening the modal immediately."
+  },
+  {
+    "domain": "map_webgl",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEVOPS-021",
+    "title": "Pinned Lock for MapLibre GL (^6.9.0) and Lucide React (^0.473.0)",
+    "content": "MapLibre GL must be pinned to ^6.9.0 to prevent mat4.invert singular projection crashes in >=6.10, and Lucide React must be pinned to ^0.473.0 to prevent icon renaming breaking changes. Never blindly bulk-upgrade major dependencies in Dependabot without standalone sandboxed verification."
+  },
+  {
+    "domain": "offline_pwa",
+    "type": "INVARIANT_RULE",
+    "id": "INV-EDGE-001",
+    "title": "Cloudflare Worker Proxy Dynamic Binding with Native Cloudinary CDN Fallback",
+    "content": "Image optimizer urls must dynamically resolve NEXT_PUBLIC_CLOUDINARY_PROXY_HOST falling back to active worker 'cloudinary-proxy.ryanpig228.workers.dev'. If disabled or unresolvable, it must fallback to official Cloudinary native dynamic URL transforms (.../image/upload/w_xxx,c_limit,f_auto,q_auto/...) to prevent Serwist Service Worker 'no-response' unhandled crashes."
+  },
+  {
+    "domain": "state_cache",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AUTH-009",
+    "title": "Non-Blocking Preferences Graceful Degradation & Debounced Revalidation Loop",
+    "content": "usersApi.getPreferences must catch 401/403/404 and network errors, gracefully returning empty array [] without throwing unhandled exceptions to console. ProfileView must listen to 'tabiji:recovery_key_updated' with a 300ms debounce to auto-revalidate preferences and profile data upon in-place re-anchoring."
   }
 ]
 ```

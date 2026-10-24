@@ -3,6 +3,8 @@
 > **所屬領域**: MapLibre GL JS, WebGL Canvas, 3D Globe, 大圓航線, 手勢隔離, CSP Worker
 
 ## 🏛️ 架構決策 (Decisions)
+- **Pinned Lock for MapLibre GL (^6.9.0) and Lucide React (^0.473.0)**: MapLibre GL must be pinned to ^6.9.0 to prevent mat4.invert singular projection crashes in >=6.10, and Lucide React must be pinned to ^0.473.0 to prevent icon renaming breaking changes. Never blindly bulk-upgrade major dependencies in Dependabot without standalone sandboxed verification.
+
 - **MapLibre 宣告式圖層拓撲優先原則**: JSX 必須依物理由底至頂排列。禁止 beforeId 指向未宣告同級圖層。
 - **CSP Web Worker 同源靜態管線標準化**: 透過 copy-maplibre-worker.mjs 同步至 public/，宣告 maplibregl.workerUrl = '/maplibre-gl-csp-worker.js'。
 - **WebGL Canvas 與浮動手勢雙向硬體隔離**: 容器使用 transform-gpu will-change-transform，拖曳節點宣告 willChange 動態切換，杜絕主執行緒 Layout Reflow。

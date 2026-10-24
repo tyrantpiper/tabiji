@@ -3,6 +3,8 @@
 > **所屬領域**: Service Worker (Serwist), IndexedDB (idb-keyval), Cache Storage, PWA Standalone
 
 ## 🏛️ 架構決策 (Decisions)
+- **Cloudflare Worker Proxy Dynamic Binding with Native Cloudinary CDN Fallback**: Image optimizer urls must dynamically resolve NEXT_PUBLIC_CLOUDINARY_PROXY_HOST falling back to active worker 'cloudinary-proxy.ryanpig228.workers.dev'. If disabled or unresolvable, it must fallback to official Cloudinary native dynamic URL transforms (.../image/upload/w_xxx,c_limit,f_auto,q_auto/...) to prevent Serwist Service Worker 'no-response' unhandled crashes.
+
 - **Outbox 401 Physical Freeze and Dequeue Protection**: When useBackgroundSync encounters a 401 Unauthorized during mutation replay, it must immediately call SyncEngineControl.pause() and break out of the replay loop without incrementing retryCount and without dequeuing the mutation.
 
 - **Shared Device Dual-Key L0 Storage Isolation**: All local-first snapshots containing private or desensitized entries must be partitioned with composite keys formatted as [module]_[tripId]_[userId] in localStorage and IndexedDB to eliminate cross-account leakage on shared tablets.
