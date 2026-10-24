@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-24T07:45:00Z",
+  "last_audit_date": "2026-10-24T08:35:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 228,
-    "audited_targets": 228,
+    "total_targets": 233,
+    "audited_targets": 233,
     "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 40,
-    "dismissed_hypotheses": 137
+    "remediated_vulnerabilities": 41,
+    "dismissed_hypotheses": 141
   },
   "targets": [
     {
@@ -2874,6 +2874,71 @@
       "validator_details": "Confirmed by Sentinel & In-Memory PoC (test_tc1_unpatched_vault_exposes_rotated_key): /api/auth/credential returned new encrypted key to stale JWT with ver 1 < db_ver 2, completely bypassing rotation. Patched with VerifiedSession version comparison.",
       "remediated_at": null,
       "resolution": "Candidate patch formulated in docs/security/patch_candidate_p0_auth_revocation_2026-10-24.diff (VerifiedSession + token_version < db_ver check)."
+    },
+    {
+      "id": "frontend/package.json:zod_memory_exhaustion_dos",
+      "target_type": "frontend_dependency_security",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "zod_redos_and_memory_exhaustion"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "validator_details": "Validated in physical worktree sandbox: Overrode zod to ^4.6.7 in package.json overrides, completely eliminating GHSA-mrhx-c7xc-m3w5 from @serwist/* sub-dependencies. npm audit returned 0 vulnerabilities.",
+      "remediated_at": "2026-10-24T08:30:00Z",
+      "resolution": "Applied overrides.zod = ^4.6.7 in frontend/package.json."
+    },
+    {
+      "id": "frontend/components/auth/session-reauth-modal.tsx:radix_focus_scope_suspense_deadlock",
+      "target_type": "frontend_ui_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "radix_focus_scope_suspense_deadlock"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "validator_details": "Dismissed by physical runner.py validator & Vitest session-reauth-modal.test.tsx: SessionReauthModal is controlled by local boolean state without Suspense boundaries or AlertDialog nesting.",
+      "remediated_at": null,
+      "resolution": "No action required; safe under React 19.3.1."
+    },
+    {
+      "id": "frontend/lib/utils.ts:tailwind_merge_arbitrary_value_clash",
+      "target_type": "frontend_utility",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "tailwind_merge_ast_lookup_failure"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "validator_details": "Dismissed by physical sandbox build and tests: Tailwind CSS 4.3.3 paired with tailwind-merge 3.7.0 correctly evaluates class conflict AST without dropping custom utilities.",
+      "remediated_at": null,
+      "resolution": "Upgraded both packages in tandem."
+    },
+    {
+      "id": "frontend/lib/supabase.ts:supabase_client_ssr_cookie_race",
+      "target_type": "frontend_auth_client",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "exchange_code_deferred_deadlock"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "validator_details": "Dismissed by auth-session-resilience.test.ts (11 tests pass): Tabidachi utilizes ADR-009 custom dual-track token exchange, decoupled from exchangeCodeForSession deferred event emission.",
+      "remediated_at": null,
+      "resolution": "ADR-009 architecture inherently isolates token exchange flow."
+    },
+    {
+      "id": "frontend/components/day-map.tsx:maplibre_maxbounds_singular_matrix",
+      "target_type": "frontend_map_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "singular_matrix_projection_crash"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "validator_details": "Dismissed by physical runner.py validator: day-map.tsx does not set 360-degree maxBounds, and maplibre-gl is deliberately locked to stable 6.9.0.",
+      "remediated_at": null,
+      "resolution": "Pinned maplibre-gl at ^6.9.0, preventing singular matrix projection edge case."
     }
   ]
 }

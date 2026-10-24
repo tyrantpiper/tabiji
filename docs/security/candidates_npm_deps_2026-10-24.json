@@ -1,0 +1,32 @@
+[
+  {
+    "id": "frontend/package.json:zod_memory_exhaustion_dos",
+    "file_path": "frontend/package.json",
+    "attack_vector": "zod_redos_and_memory_exhaustion",
+    "hypothesis": "Existing Zod (<4.6.6, currently 4.4.3 in node_modules) is vulnerable to GHSA-mrhx-c7xc-m3w5 where oversized constrained collections trigger unbounded memory exhaustion and parser recursion hang."
+  },
+  {
+    "id": "frontend/components/auth/session-reauth-modal.tsx:radix_focus_scope_suspense_deadlock",
+    "file_path": "frontend/components/auth/session-reauth-modal.tsx",
+    "attack_vector": "radix_focus_scope_suspense_deadlock",
+    "hypothesis": "In Radix UI FocusScope under React 19.3, a Suspense fallback hide/reveal cycle leaves an unmount cleanup timer racing with re-mount, dropping the dialog from focusScopesStack and causing RangeError maximum call stack recursion when stacked with AlertDialog."
+  },
+  {
+    "id": "frontend/lib/utils.ts:tailwind_merge_arbitrary_value_clash",
+    "file_path": "frontend/lib/utils.ts",
+    "attack_vector": "tailwind_merge_ast_lookup_failure",
+    "hypothesis": "Updating tailwindcss to 4.3.3 without bumping tailwind-merge to 3.7.0 causes arbitrary light-dark() and container size utilities to be wrongly classified as length instead of color/container, causing silent CSS class overriding drops in cn()."
+  },
+  {
+    "id": "frontend/lib/supabase.ts:supabase_client_ssr_cookie_race",
+    "file_path": "frontend/lib/supabase.ts",
+    "attack_vector": "exchange_code_deferred_deadlock",
+    "hypothesis": "Supabase JS 2.118.0 defers SIGNED_IN event emission during exchangeCodeForSession (Issue #2037); if frontend/lib/supabase.ts or auth flows rely on synchronous OAuth session propagation, SSR cookie synchronization will race and fail."
+  },
+  {
+    "id": "frontend/components/day-map.tsx:maplibre_maxbounds_singular_matrix",
+    "file_path": "frontend/components/day-map.tsx",
+    "attack_vector": "singular_matrix_projection_crash",
+    "hypothesis": "Bumping maplibre-gl to 6.15 while react-map-gl provides a 360-degree span maxBounds [-180, -85.051129, 180, 85.051129] triggers MapLibre transform singular matrix calculation, crashing WebGL canvas rendering with TypeError reading '0'."
+  }
+]
