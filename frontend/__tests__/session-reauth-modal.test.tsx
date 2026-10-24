@@ -121,7 +121,7 @@ describe('SessionReauthModal Sandbox Component Tests', () => {
     });
 
     it('TC-6: Dismiss cooldown strictly suppresses reauth prompts for 5000ms window', () => {
-        let lastDismissedAt = Date.now();
+        const lastDismissedAt = Date.now();
         const canTriggerPrompt = (now: number) => {
             if (now - lastDismissedAt < 5000) return false;
             return true;
