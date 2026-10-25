@@ -1,0 +1,47 @@
+--- a/backend/tests/test_supabase_grants_sentinel.py
++++ b/backend/tests/test_supabase_grants_sentinel.py
+@@ -42,11 +42,11 @@ def test_all_future_migrations_contain_explicit_grants():
+                 grant_pattern = re.compile(
+-                    rf"GRANT\s+.*ON\s+(?:TABLE\s+)?(?:public\.)?{table}\s+TO\s+(?:authenticated|service_role)",
++                    rf"GRANT\s+[\s\S]*?ON\s+(?:TABLE\s+)?(?:public\.)?{table}\s+TO\s+[^;]*(?:authenticated|service_role)",
+                     re.IGNORECASE
+                 )
+                 rls_pattern = re.compile(
+-                    rf"ALTER\s+TABLE\s+(?:public\.)?{table}\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
++                    rf"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?{table}\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
+                     re.IGNORECASE
+                 )
+                 
+                 has_grant = bool(grant_pattern.search(content))
+@@ -61,7 +61,7 @@ def test_all_future_migrations_contain_explicit_grants():
+             views = VIEW_CREATE_PATTERN.findall(content)
+             for view in views:
+                 view_grant_pattern = re.compile(
+-                    rf"GRANT\s+SELECT\s+ON\s+(?:VIEW\s+)?(?:public\.)?{view}\s+TO",
++                    rf"GRANT\s+[\s\S]*?SELECT\s+[\s\S]*?ON\s+(?:VIEW\s+)?(?:public\.)?{view}\s+TO\s+[^;]*(?:authenticated|service_role)",
+                     re.IGNORECASE
+                 )
+                 if sql_file.name >= "20261022" and not view_grant_pattern.search(content):
+@@ -85,11 +85,22 @@ def test_sentinel_catches_unauthenticated_table_without_grants():
+     grant_pattern = re.compile(
+-        r"GRANT\s+.*ON\s+(?:TABLE\s+)?(?:public\.)?vulnerable_passwords\s+TO\s+(?:authenticated|service_role)",
++        r"GRANT\s+[\s\S]*?ON\s+(?:TABLE\s+)?(?:public\.)?vulnerable_passwords\s+TO\s+[^;]*(?:authenticated|service_role)",
+         re.IGNORECASE
+     )
+     rls_pattern = re.compile(
+-        r"ALTER\s+TABLE\s+(?:public\.)?vulnerable_passwords\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
++        r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?vulnerable_passwords\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
+         re.IGNORECASE
+     )
+     assert not grant_pattern.search(vulnerable_sql)
+     assert not rls_pattern.search(vulnerable_sql)
++
++    hardened_sql = """
++    CREATE TABLE public.vulnerable_passwords (id UUID PRIMARY KEY);
++    ALTER TABLE IF EXISTS public.vulnerable_passwords ENABLE ROW LEVEL SECURITY;
++    GRANT SELECT, INSERT
++    ON public.vulnerable_passwords
++    TO anon, authenticated;
++    """
++    assert grant_pattern.search(hardened_sql)
++    assert rls_pattern.search(hardened_sql)

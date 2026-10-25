@@ -1,0 +1,87 @@
+diff --git a/backend/routers/auth.py b/backend/routers/auth.py
+--- a/backend/routers/auth.py
++++ b/backend/routers/auth.py
+@@ -190,6 +190,7 @@ async def create_or_exchange_session(
+     request: Request,
+     body: SessionRequest,
++    auth_header: Optional[str] = Header(None, alias="Authorization"),
+     secret: str = Depends(get_session_secret),
+     supabase: Client = Depends(get_supabase),
+ ):
+@@ -226,10 +227,33 @@ async def create_or_exchange_session(
+         user_rec = await run_in_threadpool(get_user_record_by_id, supabase, clean_uid)
+         
+-        # 若用戶已完成雙軌升級，強制阻斷原生 UUID，消除 ATO 漏洞
++        # 🛡️ 雙軌平滑升級：若帳號已升級，校驗合法持有證明 (Proof-of-Possession)
+         if user_rec and user_rec.get("recovery_key_id"):
+-            raise HTTPException(
+-                status_code=400, 
+-                detail="Account already upgraded. Please use your modern recovery key (tbj_rec_*)."
+-            )
++            is_authenticated = False
++            if auth_header and auth_header.startswith("Bearer "):
++                cand_token = auth_header.split(" ")[1].strip()
++                try:
++                    payload = jwt.decode(
++                        cand_token, secret, algorithms=["HS256"], issuer="tabiji-core", options={"verify_exp": False}
++                    )
++                    now = int(time.time())
++                    if payload.get("sub") == clean_uid and payload.get("type") == "device_session" and (now - payload.get("iat", 0) <= 90 * 86400):
++                        is_authenticated = True
++                except Exception:
++                    pass
++
++            if not is_authenticated:
++                raise HTTPException(
++                    status_code=401, 
++                    detail="Account already upgraded. Please use your modern recovery key (tbj_rec_*)."
++                )
++
++            # 合法舊設備平滑解密並下發現代引繼金鑰
++            vault_key = derive_vault_key(secret)
++            decrypted_key = decrypt_recovery_key(user_rec.get("recovery_key_encrypted"), vault_key)
++            token = create_session_jwt(clean_uid, secret, user_rec.get("credential_version", 1))
++            return SessionResponse(
++                access_token=token,
++                user_id=clean_uid,
++                recovery_key=decrypted_key,
++                upgraded=True,
++                is_new=False,
++            )
+diff --git a/frontend/lib/auth-session.ts b/frontend/lib/auth-session.ts
+--- a/frontend/lib/auth-session.ts
++++ b/frontend/lib/auth-session.ts
+@@ -140,8 +140,12 @@ export async function ensureValidSession(): Promise<string | null> {
+         try {
+             const storedKey = getRecoveryKey();
++            const rawToken = typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
++            const headers: Record<string, string> = { "Content-Type": "application/json" };
++            if (rawToken) {
++                headers["Authorization"] = `Bearer ${rawToken}`;
++            }
+             const res = await fetch("/api/auth/session", {
+                 method: "POST",
+-                headers: { "Content-Type": "application/json" },
++                headers,
+                 body: JSON.stringify({ recovery_key: storedKey || undefined })
+             });
+@@ -265,5 +269,6 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
+-    const token = getCachedToken();
++    const token = typeof window !== "undefined" ? (getCachedToken() || localStorage.getItem(TOKEN_KEY)) : null;
+     if (!token) return null;
+ 
+     try {
+@@ -277,6 +282,14 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
+         const data = await res.json();
+         if (data?.recovery_key) {
++            const currentKey = localStorage.getItem("user_recovery_key");
++            if (currentKey !== data.recovery_key) {
+                 localStorage.setItem("user_recovery_key", data.recovery_key);
++                if (typeof window !== "undefined") {
++                    window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", {
++                        detail: { recoveryKey: data.recovery_key }
++                    }));
++                }
++            }
+             return data.recovery_key as string;
+         }

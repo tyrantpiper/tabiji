@@ -1,0 +1,63 @@
+diff --git a/backend/routers/auth.py b/backend/routers/auth.py
+--- a/backend/routers/auth.py
++++ b/backend/routers/auth.py
+@@ -82,8 +82,18 @@ def generate_prefixed_recovery_key() -> tuple[str, str, str]:
+     return full_key, key_id, secret_hash
+ 
+ 
+-def derive_vault_key(master_secret: str) -> bytes:
+-    """Derives a deterministic 256-bit key for AES-256-GCM vault from server secret."""
+-    return hashlib.sha256(f"tabiji-recovery-vault-salt-{master_secret}".encode()).digest()
++def get_vault_master_key(fallback_secret: Optional[str] = None) -> str:
++    """
++    🛡️ 獨立長生命週期資料加密主密鑰 (Key Encryption Key)
++    優先取用專用 VAULT_MASTER_KEY，未設定時以獨立專屬鹽值派生自 session_secret。
++    """
++    vault_secret = os.getenv("VAULT_MASTER_KEY")
++    if vault_secret and len(vault_secret) >= 16:
++        return vault_secret
++    sec = fallback_secret or get_session_secret()
++    return hashlib.sha256(f"tabiji-dedicated-vault-salt-{sec}".encode()).hexdigest()
++
++
++def derive_vault_key(master_secret: Optional[str] = None) -> bytes:
++    """Derives a deterministic 256-bit key for AES-256-GCM vault from server secret."""
++    secret = master_secret or get_vault_master_key()
++    return hashlib.sha256(f"tabiji-recovery-vault-salt-{secret}".encode()).digest()
+ 
+ 
+ def encrypt_recovery_key(recovery_key: str, vault_key: bytes) -> str:
+diff --git a/supabase/migrations/20261023_dual_track_auth_credentials.sql b/supabase/migrations/20261023_dual_track_auth_credentials.sql
+--- a/supabase/migrations/20261023_dual_track_auth_credentials.sql
++++ b/supabase/migrations/20261023_dual_track_auth_credentials.sql
+@@ -14,3 +14,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_recovery_key_id 
+ ON public.users(recovery_key_id) 
+ WHERE recovery_key_id IS NOT NULL;
+ 
++-- 🛡️ 收攏 PostgREST Data API 欄位權限：防止匿名傾印敏感認證欄位
++DO $$
++BEGIN
++    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users') THEN
++        REVOKE SELECT ON public.users FROM anon;
++        GRANT SELECT (id, name, created_at) ON public.users TO anon;
++    END IF;
++END $$;
++
+diff --git a/frontend/lib/auth-session.ts b/frontend/lib/auth-session.ts
+--- a/frontend/lib/auth-session.ts
++++ b/frontend/lib/auth-session.ts
+@@ -146,6 +146,14 @@ export async function ensureValidSession(): Promise<string | null> {
+ 
+             if (!res.ok) {
+                 console.warn(`⚠️ [Auth] Session exchange returned HTTP ${res.status}`);
++                if (res.status === 401) {
++                    const err = await res.json().catch(() => ({}));
++                    if (typeof err.detail === "string" && err.detail.toLowerCase().includes("upgraded")) {
++                        console.info("ℹ️ [Auth] Account upgraded on another device. Dispatching upgrade event...");
++                        if (typeof window !== "undefined") {
++                            window.dispatchEvent(new CustomEvent("tabiji:credential_upgrade_required"));
++                        }
++                    }
++                }
+                 return null;
+             }

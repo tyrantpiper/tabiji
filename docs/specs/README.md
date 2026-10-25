@@ -30,6 +30,11 @@ docs/specs/
 | 規格檔案 | 現行狀態 | 核心業務與架構摘要 | 主要對應代碼位置 |
 | :--- | :---: | :--- | :--- |
 | [**`neural-seam-topology-matrix.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/core-architecture/neural-seam-topology-matrix.md) | 🟢 Active | 全棧 6 大神經叢、所有目錄檔案相依與 10 大手術脆弱縫隙（Surgical Seams）核心不變量矩陣。 | 全專案目錄<br>`frontend/__tests__/neural-seams/`<br>`backend/tests/` |
+| [**`realtime-collaboration-sync-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/core-architecture/realtime-collaboration-sync-spec.md) | 🟢 Active | 即時多人協同編輯、Supabase Realtime 狀態同步與離線收斂拓撲。 | `frontend/lib/sync-engine.ts`<br>`backend/routers/` |
+| [**`offline-emergency-medical-sentinel-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/architecture/offline-emergency-medical-sentinel-spec.md) | 🟢 Active | 海外突發急症中日英對照卡、AED/24H 藥局空間拓撲、跨時區慢病服藥生理時差排程。 | `backend/services/poi_service.py`<br>`scripts/simulations/simulate_emergency_medical.py` |
+| [**`cross-border-antimeridian-spatial-engine-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/architecture/cross-border-antimeridian-spatial-engine-spec.md) | 🟢 Active | 跨經度 180° 換日線短弧判定、Pacific-Centered BBox 消除 4.77x 螞蟻點視角崩潰、緯度鉗位防衛。 | `frontend/lib/geo-multi-day.ts`<br>`frontend/components/itinerary/MultiDayMasterMap.tsx` |
+| [**`offline-outbox-multi-master-convergence-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/architecture/offline-outbox-multi-master-convergence-spec.md) | 🟢 Active | 離線連續操作臨時 ID 級聯依賴解析、401 認證中斷物理凍結防丟失、行程分組並行重播。 | `frontend/lib/sync-engine.ts`<br>`frontend/lib/sync-hooks.ts` |
+
 
 ### 1. 🧠 AI 智能與意圖模組 (`ai/`)
 
@@ -91,6 +96,8 @@ docs/specs/
 | [**`currency-and-multi-fiat-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/business/currency-and-multi-fiat-spec.md) | 🟢 Active | 110+ 主權法定貨幣支援、確定性 ISO 4217 映射、本地多層 SVG 國旗防破圖。 | `frontend/lib/currency.ts`<br>`frontend/components/expense/ExpenseDialog.tsx` |
 | [**`flight-pricing-and-airport-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/business/flight-pricing-and-airport-spec.md) | 🟢 Active | 同城起降 0ms 記憶體短路防衛、全台與全球主要機場三字碼 IATA 解析。 | `frontend/lib/airport-mapping.ts`<br>`backend/services/flight_service.py` |
 | [**`universal-affiliate-interactive-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/business/universal-affiliate-interactive-spec.md) | 🟢 Active | 12Go Asia 官方直連加盟帶參規範、分潤 Cookie 寫入、交通比價跳轉閉環。 | `frontend/lib/affiliate.ts`<br>`frontend/components/transport/TransportCard.tsx` |
+| [**`affiliate-payout-and-multi-domain-attribution-guide.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/business/affiliate-payout-and-multi-domain-attribution-guide.md) | 🟢 Active | 聯盟行銷換網域零斷流、shmarker/Cookie 歸因原理、雙渠道並存與出款審核 (Payout Audit) SOP。 | `frontend/lib/affiliate-config.ts`<br>Travelpayouts / Klook / KKday Dashboard |
+| [**`2026-ustart-grant-allocation-and-cloud-compliance.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/business/2026-ustart-grant-allocation-and-cloud-compliance.md) | 🟢 Active | 教育部 U-start 35 萬創業開辦費合規提領 (70% 研發薪資公轉私)、Vercel 商業雷區防禦與 Cloudflare 遷移。 | 財務預算規劃<br>Vercel / Cloudflare 架構 |
 
 ---
 

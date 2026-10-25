@@ -1,0 +1,123 @@
+diff --git a/frontend/lib/idb-storage.ts b/frontend/lib/idb-storage.ts
+--- a/frontend/lib/idb-storage.ts
++++ b/frontend/lib/idb-storage.ts
+@@ -150,0 +151,28 @@
++/**
++ * 📮 旅伴時光膠囊 L0 快照 (雙維度隔離：依據 tripId + userId 隔離，杜絕共用設備跨帳號窺探)
++ */
++export function saveTripCapsuleSnapshot(
++    tripId: string | null | undefined,
++    userId: string | null | undefined,
++    data: unknown
++): void {
++    if (typeof window === "undefined" || !tripId || !userId || !data) return
++    try {
++        const key = `tabiji_capsule_sync_${tripId}_${userId}`
++        localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }))
++    } catch {
++        // LocalStorage quota defense
++    }
++}
++
++export function getTripCapsuleSnapshotSync<T = unknown>(
++    tripId: string | null | undefined,
++    userId: string | null | undefined
++): T | null {
++    if (typeof window === "undefined" || !tripId || !userId) return null
++    try {
++        const raw = localStorage.getItem(`tabiji_capsule_sync_${tripId}_${userId}`)
++        return raw ? (JSON.parse(raw).data as T) : null
++    } catch {
++        return null
++    }
++}
+
+diff --git a/frontend/lib/hooks/useTripRealtime.ts b/frontend/lib/hooks/useTripRealtime.ts
+--- a/frontend/lib/hooks/useTripRealtime.ts
++++ b/frontend/lib/hooks/useTripRealtime.ts
+@@ -95,3 +95,3 @@ export const broadcastTripEvent = async (
+     tripId: string,
+-    event: "tip:update" | "tip:typing" | "item:reorder" | "item:mutate" | "checklist:update" | "expense:update" | "info:update",
++    event: "tip:update" | "tip:typing" | "item:reorder" | "item:mutate" | "checklist:update" | "expense:update" | "info:update" | "capsule:update" | "capsule:unveil",
+     data: Record<string, unknown>
+@@ -208,2 +208,18 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
+                 }
++
++                // 📮 時光膠囊廣播事件處理
++                if (payload.event === "capsule:update" || payload.event === "capsule:unveil") {
++                    mutate((key: unknown) => {
++                        if (Array.isArray(key) && typeof key[0] === "string" && key[0].startsWith(`/api/trips/${tripId}/capsules`)) return true
++                        if (typeof key === "string" && key.includes(`/api/trips/${tripId}/capsules`)) return true
++                        return false
++                    }, undefined, { revalidate: true })
++
++                    if (payload.event === "capsule:update") {
++                        const now = Date.now()
++                        if (now - lastToastTimeRef.current > 3000) {
++                            lastToastTimeRef.current = now
++                            toast.info("💌 旅伴已封存時光膠囊", { duration: 2500 })
++                        }
++                    }
++                }
+
+diff --git a/frontend/components/itinerary/PolaroidCapsuleModal.tsx b/frontend/components/itinerary/PolaroidCapsuleModal.tsx
+--- a/frontend/components/itinerary/PolaroidCapsuleModal.tsx
++++ b/frontend/components/itinerary/PolaroidCapsuleModal.tsx
+@@ -15,2 +15,3 @@ import { capsulesApi } from "@/lib/api"
+ import { TripCapsuleEntry } from "@/lib/itinerary-types"
++import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
+@@ -136,2 +137,9 @@ export function PolaroidCapsuleModal({
+             toast.success(zh ? "🔒 心得已成功封存入時光膠囊！" : "🔒 Capsule sealed into vault!")
++            // 🛡️ 零洩漏約束：絕不夾帶 content/photo_url/mood_emoji，僅傳遞進度元資料
++            await broadcastTripEvent(tripId, "capsule:update", {
++                day_number: day,
++                author_id: userId,
++                action: "sealed",
++            })
+             haptic.success()
+
+diff --git a/frontend/lib/hooks.ts b/frontend/lib/hooks.ts
+--- a/frontend/lib/hooks.ts
++++ b/frontend/lib/hooks.ts
+@@ -4,3 +4,3 @@ import useSWR from 'swr'
+-import { getTripSnapshotSync, saveTripSnapshot, preloadTripSnapshot, getTripsListSnapshotSync, preloadTripsListSnapshot, saveTripsListSnapshot } from './idb-storage'
++import { getTripSnapshotSync, saveTripSnapshot, preloadTripSnapshot, getTripsListSnapshotSync, preloadTripsListSnapshot, saveTripsListSnapshot, getTripCapsuleSnapshotSync, saveTripCapsuleSnapshot } from './idb-storage'
+@@ -337,2 +337,8 @@ export function useTripCapsules(tripId: string | null | undefined, userId: strin
+             dedupingInterval: 10000,
++            fallbackData: getTripCapsuleSnapshotSync<CapsuleProgressSummary>(tripId, userId) || undefined,
++            onSuccess: (freshData) => {
++                if (tripId && userId && freshData) {
++                    saveTripCapsuleSnapshot(tripId, userId, freshData)
++                }
++            },
+         }
+
+diff --git a/backend/routers/capsules.py b/backend/routers/capsules.py
+--- a/backend/routers/capsules.py
++++ b/backend/routers/capsules.py
+@@ -365,0 +366,27 @@ async def submit_trip_capsule(
++
++@router.post("/{trip_id}/capsules/unlock", response_model=CapsuleProgressSummary)
++async def unlock_trip_capsules_early(
++    trip_id: str,
++    user_id: str = Depends(get_verified_user),
++    supabase: Client = Depends(get_supabase)
++):
++    """
++    提前破印盛典解鎖端點（例如告別晚宴現場全員開箱）。
++    權限檢查：必須為行程擁有者或成員，防禦 BOLA 越權。
++    """
++    trip_res = supabase.table("itineraries").select("*").eq("id", trip_id).execute()
++    if not trip_res.data:
++        raise HTTPException(status_code=404, detail="Trip not found")
++    trip = trip_res.data[0]
++
++    if not check_trip_membership(trip, user_id, supabase):
++        raise HTTPException(status_code=403, detail="Not authorized to unlock capsules for this trip")
++
++    try:
++        supabase.table("itineraries").update({"is_capsule_unlocked": True}).eq("id", trip_id).execute()
++    except Exception as e:
++        raise HTTPException(status_code=500, detail=f"Failed to update unlock status: {e}")
++
++    return await get_trip_capsules(trip_id=trip_id, user_id=user_id, supabase=supabase)

@@ -10,7 +10,7 @@ describe('🛡️ Security Sentinel: Root Hygiene and Artifact Governance Audit'
 
     it('TC-1: candidates.json in repo root MUST be relocated to docs/security/', () => {
         const rootCandidates = path.resolve(repoRoot, 'candidates.json')
-        const targetCandidates = path.resolve(repoRoot, 'docs', 'security', 'candidates_expense_toggle_icon_harmony.json')
+        const targetCandidates = path.resolve(repoRoot, 'docs', 'security', 'history', 'candidates', 'candidates_expense_toggle_icon_harmony.json')
 
         // 1. Root candidates file must be relocated (must not linger in repo root)
         expect(fs.existsSync(rootCandidates)).toBe(false)
@@ -23,8 +23,8 @@ describe('🛡️ Security Sentinel: Root Hygiene and Artifact Governance Audit'
 
     it('TC-2: SKILL.md must mandate docs/security/ prefix for candidates and findings', () => {
         const content = fs.readFileSync(skillPath, 'utf-8')
-        expect(content).toContain('docs/security/candidates_')
-        expect(content).toContain('docs/security/findings_')
+        expect(content).toContain('docs/security/history/candidates/candidates_')
+        expect(content).toContain('docs/security/history/findings/findings_')
         expect(content).not.toMatch(/--candidates\s+candidates\.json/)
     })
 

@@ -1,0 +1,42 @@
+--- a/backend/services/poi_service.py
++++ b/backend/services/poi_service.py
+@@ -18,6 +18,17 @@
+ logger = logging.getLogger("poi-service")
+ 
++# 🛡️ [Security Sentinel Guard] Overpass QL Injection & Character Sanitizer
++def sanitize_overpass_keyword(keyword: str) -> str:
++    """Strip dangerous Overpass QL characters (quotes, semicolons, brackets) to prevent QL injection."""
++    if not keyword:
++        return ""
++    sanitized = re.sub(r'[\";\[\]\(\)\{\}\<\>]', '', keyword)
++    sanitized = sanitized.replace('\n', '').replace('\r', '')
++    return sanitized.strip()[:64]
++
++
+ # 🆕 Phase 1 Observability (Lazy Loading to prevent Windows import deadlock)
+ _POI_METRICS = {"latency": None, "requests": None}
+ 
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -1240,6 +1240,24 @@
+                                 allowed_function_names=["search_web", "fetch_webpage", "get_world_time", "search_nearby_places"]
+                             )
+                         )
++                        # 🛡️ [Security Sentinel Guard] SSRF & Null Island Coordinate Validation
++                        # In search_nearby_places handler:
++                        # if not validate_geo_anchor(anchor):
++                        #     return {"error": "Invalid anchor location"}
++
+--- a/frontend/components/chat/POIPreviewCard.tsx
++++ b/frontend/components/chat/POIPreviewCard.tsx
+@@ -189,6 +189,14 @@
+     const handlePreviewOnMap = () => {
++        // 🛡️ [Security Sentinel Guard] URL Protocol & WebGL Coordinate Defense
++        if (!poiData.lat || !poiData.lng || !isFinite(poiData.lat) || !isFinite(poiData.lng) || (poiData.lat === 0 && poiData.lng === 0)) {
++            toast.error(zh ? "此地點無精確座標" : "No precise coordinates available")
++            return
++        }
++        window.dispatchEvent(new CustomEvent("tabidachi:map-flyto", {
++            detail: { lng: poiData.lng, lat: poiData.lat, zoom: 16, place_name: poiData.place_name }
++        }))
+     }

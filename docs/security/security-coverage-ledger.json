@@ -19,7 +19,7 @@
         "dos_timeout_collapse"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_chat_geo_dock.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-25_chat_geo_dock.md",
       "validator_details": "Verified: unprompted Second-Pass bypassed POIPreviewCard generation on pure recommendation queries. Resolved via patch_candidate_chat_geo_dock_2026-10-25.diff with explicit add_itinerary_item generation mandate and 6.5s timeout buffer.",
       "remediated_at": "2026-10-25T09:02:00Z",
       "resolution": "Enforced batch add_itinerary_item tool calling in second-pass grounding prompt and increased first-pass timeout from 4.5s to 6.5s."
@@ -34,7 +34,7 @@
         "offline_first_time_login_regression"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_reauth_gate_and_guest_bootstrap.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_reauth_gate_and_guest_bootstrap.md",
       "validator_details": "Confirmed by Physical Validator runner.py (task-457) and In-Memory PoC TC-1~TC-5: Unpatched code allowed unauthenticated visitors holding stale orphan UUIDs to be locked into an alarming SessionReauthModal trap with a 10s cooldown lock. Patched with isUserLoggedIn() root gate, visitor self-healing identity purge, and LandingPage online/offline dual-track bootstrap. Verified resilient via runner task-627 (DISMISSED).",
       "remediated_at": "2026-10-24T13:16:00Z",
       "resolution": "Applied isUserLoggedIn() root gate in frontend/lib/auth-session.ts and frontend/components/auth/session-reauth-modal.tsx, visitor purge in ensureValidSession, and dual-track bootstrap in landing-page.tsx."
@@ -47,7 +47,7 @@
         "stale_token_rotation_bypass_and_revocation_escape"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_rotate_revocation.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_rotate_revocation.md",
       "validator_details": "Confirmed by In-Memory PoC TC-1 & TC-2 (test_rotate_revocation_sentinel_poc.py): Unpatched rotate endpoint allowed stale pre-rotation JWT (ver 1 < db_ver 2) to trigger secondary rotation to ver 3. Patched with VerifiedSession and state-bifurcated version comparison, returning HTTP 401. Verified 6/6 tests passing.",
       "remediated_at": "2026-10-24T13:16:00Z",
       "resolution": "Patched backend/routers/auth.py with Depends(get_verified_session_with_grace) and strict db_ver > 1 and session.token_version < db_ver check."
@@ -62,7 +62,7 @@
         "legacy_uuid_rotation_bypass_and_state_bifurcation"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_adversarial_review_2026-10-24.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_adversarial_review_2026-10-24.md",
       "validator_details": "Confirmed by In-Memory PoC test_p0_adversarial_sentinel_review.py: Type confusion safely caught by try-except falling back to 401; rotation bypass strictly rejected when db_ver > 1.",
       "remediated_at": "2026-10-24T07:45:00Z",
       "resolution": "State-bifurcated guard active in backend/routers/auth.py."
@@ -77,10 +77,10 @@
         "legacy_uuid_expected_user_bypass"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_oracle_defense.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_oracle_defense.md",
       "validator_details": "Confirmed by In-Memory PoC TC-7 & TC-8: Unpatched endpoint serialized victim's JWT over HTTP before client could inspect it. Fixed by server-side expected_user_id assertion and uniform 401 response with zero token payload.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_oracle_defense_2026-10-24.diff."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_oracle_defense_2026-10-24.diff."
     },
     {
       "id": "frontend/lib/auth-session.ts:uniform_error_and_race_cooldown",
@@ -91,10 +91,10 @@
         "in_flight_401_modal_thrashing"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_oracle_defense.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_oracle_defense.md",
       "validator_details": "Confirmed by In-Memory Vitest TC-9 & TC-10: Client transmits expected_user_id, enforces uniform error string across all failures, and silences in-flight 401 races with 5000ms lastRestoredAt window.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_oracle_defense_2026-10-24.diff."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_oracle_defense_2026-10-24.diff."
     },
     {
       "id": "frontend/lib/sync-engine.ts:outbox_eviction_on_auth_desync",
@@ -105,10 +105,10 @@
         "freeze_outbox_on_401"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_reauth_and_outbox_freeze.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_reauth_and_outbox_freeze.md",
       "validator_details": "Confirmed by In-Memory PoC TC-1 & TC-2: useBackgroundSync discards un-synced requests after 3x 401 retries. Fixed by SyncEngineControl.pause().",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_reauth_and_outbox_freeze_2026-10-24.diff."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_reauth_and_outbox_freeze_2026-10-24.diff."
     },
     {
       "id": "frontend/lib/auth-session.ts:in_place_reauth_and_wrong_user_hazard",
@@ -119,10 +119,10 @@
         "in_place_session_reanchor"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_reauth_and_outbox_freeze.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_reauth_and_outbox_freeze.md",
       "validator_details": "Confirmed by In-Memory PoC TC-3 & TC-4: In-place re-anchoring preserves local DB while case-insensitive identity assertion prevents data contamination.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_reauth_and_outbox_freeze_2026-10-24.diff."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_reauth_and_outbox_freeze_2026-10-24.diff."
     },
     {
       "id": "frontend/components/auth/session-reauth-modal.tsx:event_flood_and_modal_thrashing",
@@ -133,10 +133,10 @@
         "reauth_broadcast_debouncing"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_reauth_and_outbox_freeze.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_reauth_and_outbox_freeze.md",
       "validator_details": "Confirmed by In-Memory PoC TC-5: 3s debounce collapses concurrent 401 broadcasts into a single modal invocation.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_reauth_and_outbox_freeze_2026-10-24.diff."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_reauth_and_outbox_freeze_2026-10-24.diff."
     },
     {
       "id": "backend/routers/auth.py:credential_vault_revoked_session_backdoor",
@@ -147,10 +147,10 @@
         "stale_jwt_version_gate"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_auth_revocation.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_auth_revocation.md",
       "validator_details": "Confirmed by In-Memory PoC TC-1 & TC-2: get_verified_user_with_grace returns only UUID, allowing pre-rotation JWTs (ver 1) to retrieve modern rotated key (ver 2) from /credential.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_p0_auth_revocation_2026-10-24.diff (VerifiedSession version gate)."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_p0_auth_revocation_2026-10-24.diff (VerifiedSession version gate)."
     },
     {
       "id": "backend/routers/auth.py:dual_track_silent_upgrade_race_condition",
@@ -161,10 +161,10 @@
         "optimistic_lock_healing"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_auth_revocation.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_auth_revocation.md",
       "validator_details": "Confirmed by In-Memory PoC TC-5: Concurrent upgrade overwrites key without optimistic check, stranding one device with invalid ghost key.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_p0_auth_revocation_2026-10-24.diff."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_p0_auth_revocation_2026-10-24.diff."
     },
     {
       "id": "frontend/lib/auth-session.ts:cross_tab_exchange_concurrency_and_weblock_safety",
@@ -175,10 +175,10 @@
         "web_locks_fallback_safety"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_auth_revocation.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_auth_revocation.md",
       "validator_details": "Confirmed by code audit: navigator.locks lacks feature detection and timeout handling.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_p0_auth_revocation_2026-10-24.diff."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_p0_auth_revocation_2026-10-24.diff."
     },
     {
       "id": "frontend/lib/auth-session.ts:dormant_token_vault_sync_barrier",
@@ -189,10 +189,10 @@
         "dormant_sync_unblock"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase4_sync_deadlock.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_phase4_sync_deadlock.md",
       "validator_details": "Confirmed by In-Memory PoC TC-3: fetchLatestRecoveryKey immediately returns null on expired token, preventing dormant grace period rescue.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_phase4_sync_deadlock_2026-10-23.diff (fallback to raw stored token)."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_phase4_sync_deadlock_2026-10-23.diff (fallback to raw stored token)."
     },
     {
       "id": "backend/routers/auth.py:credential_vault_expired_token_block",
@@ -203,10 +203,10 @@
         "dormant_vault_recovery"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase4_sync_deadlock.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_phase4_sync_deadlock.md",
       "validator_details": "Confirmed by In-Memory PoC TC-2: Dormant devices whose 30d JWT expired while offline blocked from /api/auth/credential without grace period.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_phase4_sync_deadlock_2026-10-23.diff."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_phase4_sync_deadlock_2026-10-23.diff."
     },
     {
       "id": "backend/routers/auth.py:legacy_and_rotated_key_deadlock",
@@ -217,10 +217,10 @@
         "proof_of_possession_upgrade"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase4_sync_deadlock.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_phase4_sync_deadlock.md",
       "validator_details": "Confirmed by In-Memory PoC TC-1: Legacy devices with valid/recent token rejected with 400 when account upgraded; resolved via Proof-of-Possession.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_phase4_sync_deadlock_2026-10-23.diff (Proof-of-Possession grace verification)."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_phase4_sync_deadlock_2026-10-23.diff (Proof-of-Possession grace verification)."
     },
     {
       "id": "frontend/lib/auth-session.ts:stale_device_upgrade_lockout",
@@ -231,10 +231,10 @@
         "silent_lockout_hang"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase3_decoupling.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_phase3_decoupling.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: Stale devices with expired JWT receiving HTTP 401 upgraded hang silently without event dispatch or user guidance.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_phase3_decoupling_2026-10-23.diff (dispatch tabiji:credential_upgrade_required on 401 upgraded)."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_phase3_decoupling_2026-10-23.diff (dispatch tabiji:credential_upgrade_required on 401 upgraded)."
     },
     {
       "id": "supabase/migrations/20261023_dual_track_auth_credentials.sql:postgrest_data_api_exposure",
@@ -245,10 +245,10 @@
         "anon_credential_dump"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase3_decoupling.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_phase3_decoupling.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: Newly added sensitive credential columns in public.users automatically inherit blanket anon SELECT grant from previous migration.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_phase3_decoupling_2026-10-23.diff (REVOKE anon on users + grant safe columns only)."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_phase3_decoupling_2026-10-23.diff (REVOKE anon on users + grant safe columns only)."
     },
     {
       "id": "backend/routers/auth.py:key_derivation_coupling",
@@ -259,10 +259,10 @@
         "jwt_rotation_vault_invalidation"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_phase3_decoupling.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_phase3_decoupling.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: derive_vault_key directly binds AES-256-GCM vault encryption to ephemeral JWT secret SESSION_SECRET_KEY, invalidating vault decryption if JWT secret is rotated.",
       "remediated_at": null,
-      "resolution": "Formulated in docs/security/patch_candidate_phase3_decoupling_2026-10-23.diff (decoupled get_vault_master_key)."
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_phase3_decoupling_2026-10-23.diff (decoupled get_vault_master_key)."
     },
     {
       "id": "frontend/app/sw.ts:trip_api_sw_stale_cache_poisoning",
@@ -272,10 +272,10 @@
         "stale_cache_poisoning_and_collaborative_desync"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_realtime_decoupling.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: Serwist StaleWhileRevalidate on /api/trips/ returns 7-day stale cache upon SWR revalidation, wiping out optimistic updates until hard refresh.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (NetworkOnly + activate purge)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_realtime_decoupling_2026-10-23.diff (NetworkOnly + activate purge)."
     },
     {
       "id": "frontend/lib/hooks.ts:fetcher_http_cache_bypass",
@@ -285,7 +285,7 @@
         "http_cache_staleness_leak"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_realtime_decoupling.md",
       "validator_details": "Dismissed by Sentinel RFC 9111 check: Intermediate proxies do not cache Authorization-bearing requests; HTTP 304 revalidation conforms to standard browser SWR semantics.",
       "remediated_at": "2026-10-23T04:53:00Z",
       "resolution": "Safe as designed; cache: 'no-store' added as defense-in-depth."
@@ -298,10 +298,10 @@
         "race_condition_and_dropped_broadcast"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_realtime_decoupling.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: broadcastTripEvent calls send() on unsubscribed channel; immediate mutate() on broadcast fetches uncommitted DB data, wiping out live updates.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (RealtimeChannelCoordinator with queue + debounced reconciliation)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_realtime_decoupling_2026-10-23.diff (RealtimeChannelCoordinator with queue + debounced reconciliation)."
     },
     {
       "id": "frontend/components/itinerary/EditableDailyTips.tsx:dual_state_and_index_based_deletion",
@@ -311,10 +311,10 @@
         "state_desynchronization_and_off_by_one_deletion"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_realtime_decoupling.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: Component local useState + useEffect clobbers optimistic state on background revalidations; lack of unique ID causes off-by-one deletions.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (Single Source of Truth + composite ID normalization)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_realtime_decoupling_2026-10-23.diff (Single Source of Truth + composite ID normalization)."
     },
     {
       "id": "frontend/components/itinerary/EditableDailyChecklist.tsx:missing_realtime_and_state_clashing",
@@ -324,10 +324,10 @@
         "missing_realtime_replication_and_local_overwrite"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_realtime_decoupling.md",
       "validator_details": "Confirmed by Sentinel: Checklist lacks realtime broadcast integration and suffers from same local useState clobbering on SWR revalidations.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (checklist:update broadcast + Single Source of Truth)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_realtime_decoupling_2026-10-23.diff (checklist:update broadcast + Single Source of Truth)."
     },
     {
       "id": "frontend/components/views/itinerary-view.tsx:omitted_storage_snapshot_desync",
@@ -337,10 +337,10 @@
         "storage_snapshot_inconsistency"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_realtime_decoupling.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_realtime_decoupling.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: handleDayDataUpdate omits saveTripSnapshot, leaving L0/L1 snapshots stale and causing rollback on cold restart or background wake-up.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_realtime_decoupling_2026-10-23.diff (saveTripSnapshot synchronization)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_realtime_decoupling_2026-10-23.diff (saveTripSnapshot synchronization)."
     },
     {
       "id": "scripts/purge_sample_explorers_safely.py:accidental_data_destruction_cascade",
@@ -352,7 +352,7 @@
         "activity_invariant_violation"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_sample_purge.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_sample_purge.md",
       "validator_details": "Confirmed by Sentinel & Dry-Run: Exact match eq('name', 'Explorer') prevents pattern/prefix mismatch. Multi-tier invariants check expenses and trip_capsule_entries, aborting if any non-zero activity exists.",
       "remediated_at": "2026-10-23T03:54:00Z",
       "resolution": "Enforced in scripts/purge_sample_explorers_safely.py and verified via backend/tests/test_purge_explorers_sentinel.py."
@@ -366,7 +366,7 @@
         "batch_deletion_overflow"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_sample_purge.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_sample_purge.md",
       "validator_details": "Confirmed by Sentinel: Strict CHUNK_SIZE = 50 eliminates PostgREST HTTP 414 URI Too Long limits across all bulk query and deletion operations.",
       "remediated_at": "2026-10-23T03:54:00Z",
       "resolution": "Enforced CHUNK_SIZE = 50 in scripts/purge_sample_explorers_safely.py."
@@ -380,7 +380,7 @@
         "orphaned_state_lockout"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_sample_purge.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_sample_purge.md",
       "validator_details": "Confirmed by Sentinel & SQL migration audit: Strict 5-stage deletion order (itinerary_items -> trip_members -> itineraries -> user_preferences -> users) satisfies all PostgreSQL cascade and REST foreign key dependencies.",
       "remediated_at": "2026-10-23T03:54:00Z",
       "resolution": "Implemented in execute_purge() within scripts/purge_sample_explorers_safely.py."
@@ -394,7 +394,7 @@
         "sample_trip_idempotency"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_sample_purge.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_sample_purge.md",
       "validator_details": "Confirmed by Sentinel: seed_sample_trip checks existing member_trip_ids with created_by='SYSTEM' prior to creation, returning skipped. Verified via backend/tests/test_sample_trip_sentinel.py.",
       "remediated_at": "2026-10-23T03:54:00Z",
       "resolution": "Audited in backend/routers/sample_trip.py and covered by test_seed_sample_trip_dedup_skips_duplicate_seed."
@@ -409,7 +409,7 @@
         "batch_mutation_scoping"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_realtime_collaboration.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_realtime_collaboration.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: reorder_items only validated membership on items[0] and updated by item_id without itinerary_id scoping, permitting cross-tenant tampering.",
       "remediated_at": "2026-10-22T07:45:00Z",
       "resolution": "Remediated in backend/routers/trips.py: Query all item_ids to assert single-itinerary ownership, verify membership against the resolved itinerary, scope update with eq('itinerary_id', tid), and pass HTTPException without 500 masking."
@@ -423,7 +423,7 @@
         "offline_data_drop_on_401"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_realtime_collaboration.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_realtime_collaboration.md",
       "validator_details": "Confirmed by Sentinel: SyncQueue processGroup replayed static Authorization headers without refreshing expired JWTs, causing 401 and permanent dequeue data drop.",
       "remediated_at": "2026-10-22T07:45:00Z",
       "resolution": "Remediated in frontend/lib/sync-hooks.ts: Injected dynamic active token via getCachedToken() and ensureValidSession() before replay, with 401 token refresh retry loop before counting towards MAX_RETRIES."
@@ -438,7 +438,7 @@
         "session_hijacking"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
       "validator_details": "Confirmed by Sentinel: get_gemini_key extracted session JWTs exceeding 39 characters from Bearer headers and risked IndexError on malformed tokens.",
       "remediated_at": "2026-10-21T20:00:00Z",
       "resolution": "Remediated in backend/utils/deps.py: Safely parsed auth_header with split(' ', 1) guarded by length and prefix checks, and explicitly excluded dot-separated JWT tokens."
@@ -453,7 +453,7 @@
         "infinite_recursion"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
       "validator_details": "Confirmed by Sentinel: Module fetch returned 401 directly without retry, and lacked URL filter preventing infinite auth recursion loops.",
       "remediated_at": "2026-10-21T20:00:00Z",
       "resolution": "Remediated in frontend/lib/api.ts: Added isAuthEndpoint recursion breaker, and implemented 1-time 401 retry with freshly exchanged session token."
@@ -467,7 +467,7 @@
         "stale_credential_loop"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
       "validator_details": "Confirmed by Sentinel: ensureValidSession only updated RECOVERY_KEY if !storedKey, retaining stale keys when backend minted new accounts.",
       "remediated_at": "2026-10-21T20:00:00Z",
       "resolution": "Remediated in frontend/lib/auth-session.ts: Updated condition to (!storedKey || data.is_new), synchronizing newly minted user IDs to localStorage."
@@ -481,7 +481,7 @@
         "sw_credential_capture"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
       "validator_details": "Confirmed by Sentinel: Service Worker NetworkOnly matcher omitted /api/auth/* endpoints, risking caching and background sync interference.",
       "remediated_at": "2026-10-21T20:00:00Z",
       "resolution": "Remediated in frontend/app/sw.ts: Injected url.pathname.startsWith('/api/auth/') into NetworkOnly matcher."
@@ -495,7 +495,7 @@
         "stream_auth_failure"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_401_zero_disconnection.md",
       "validator_details": "Confirmed by Sentinel: streamChat aborted immediately on 401 HTTP response without refreshing expired credentials.",
       "remediated_at": "2026-10-21T20:00:00Z",
       "resolution": "Remediated in frontend/lib/sse-parser.ts: Added 401 interception to purge stale token, exchange fresh session token, and re-handshake stream once."
@@ -510,7 +510,7 @@
         "role_order_rigidity"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_regex_hardening.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_regex_hardening.md",
       "validator_details": "Confirmed by Sentinel: Missing re.DOTALL and rigid role placement causes valid multiline or multi-role GRANT statements to fail match and break CI builds.",
       "remediated_at": "2026-10-21T16:18:00Z",
       "resolution": "Remediated in test_supabase_grants_sentinel.py: Hardened grant_pattern and view_grant_pattern using [\\s\\S]*? for multiline tolerance and [^;]* for comma-separated role flexibility."
@@ -524,7 +524,7 @@
         "optional_clauses_omission"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_regex_hardening.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_regex_hardening.md",
       "validator_details": "Confirmed by Sentinel: RLS pattern rejects defensive SQL clauses (IF EXISTS, ONLY), falsely flagging valid migrations.",
       "remediated_at": "2026-10-21T16:18:00Z",
       "resolution": "Remediated in test_supabase_grants_sentinel.py: Injected (?:IF\\s+EXISTS\\s+)?(?:ONLY\\s+)? modifiers into rls_pattern to support standard defensive DDL."
@@ -538,7 +538,7 @@
         "missing_row_level_security"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_supabase_grants.md",
       "validator_details": "Confirmed by Sentinel: user_preferences lacks ENABLE ROW LEVEL SECURITY, allowing anonymous PostgREST queries to extract all users' personal AI preferences.",
       "remediated_at": "2026-10-21T15:58:00Z",
       "resolution": "Remediated in 20261022_data_api_explicit_grants.sql: Explicitly enabled RLS and applied auth.uid()::text = user_id::text policies across live and local environments."
@@ -552,7 +552,7 @@
         "dac_precedes_rls"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_supabase_grants.md",
       "validator_details": "Confirmed by Sentinel: DAC evaluation precedes RLS in PostgreSQL; omitting GRANT causes 42501 permission denied in PostgREST on clean environments.",
       "remediated_at": "2026-10-21T15:58:00Z",
       "resolution": "Remediated in 20261022_data_api_explicit_grants.sql and test_supabase_grants_sentinel.py: All public tables granted explicit PostgREST permissions and CI sentinel blocks ungranted tables."
@@ -565,7 +565,7 @@
         "view_privilege_denial"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_supabase_grants.md",
       "validator_details": "Confirmed by Sentinel: View user_trips_view lacks explicit GRANT SELECT to API roles, failing Data API queries upon reconstruction.",
       "remediated_at": "2026-10-21T15:58:00Z",
       "resolution": "Remediated in 20261022_data_api_explicit_grants.sql: Explicit GRANT SELECT on user_trips_view codified and executed on production."
@@ -578,7 +578,7 @@
         "cross_engine_parser_confusion"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_supabase_grants.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_supabase_grants.md",
       "validator_details": "Dismissed by Sentinel architecture: D1 SQLite schemas reside strictly in cloudflare/ directory and are isolated from PostgreSQL migration gates."
     },
     {
@@ -589,7 +589,7 @@
         "schema_whitelist_mutation_drop"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_custom_poi_categories.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_custom_poi_categories.md",
       "validator_details": "Confirmed by Sentinel: In PATCH /api/poi/:id/category, lines 409-410 check body.category against a hardcoded 7-item array, silently overwriting custom category protocols to 'attraction'.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: category whitelist dynamically synchronizes with protocol definitions and custom categories without fallback overwrite."
@@ -602,7 +602,7 @@
         "ui_component_type_error"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_custom_poi_categories.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_custom_poi_categories.md",
       "validator_details": "Dismissed by Sentinel: Logical OR operator safely falls back to Compass icon component without throwing uncaught exceptions."
     },
     {
@@ -613,7 +613,7 @@
         "protocol_delimiter_injection"
       ],
       "status": "VERIFIED_BY_POC",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_custom_poi_categories.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_custom_poi_categories.md",
       "validator_details": "Verified via PoC 14: Colon delimiter collision in custom category name is mitigated by full-width colon normalization and slice extraction."
     },
     {
@@ -624,7 +624,7 @@
         "input_deserialization_unhandled_crash"
       ],
       "status": "VERIFIED_BY_POC",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_custom_poi_categories.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_custom_poi_categories.md",
       "validator_details": "Verified via PoC 15: Truncated or empty protocol strings gracefully degrade to default 'other' category without uncaught runtime errors."
     },
     {
@@ -635,7 +635,7 @@
         "state_desynchronization"
       ],
       "status": "VERIFIED_BY_POC",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_custom_poi_categories.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_custom_poi_categories.md",
       "validator_details": "Verified via PoC 16: Dynamic harvesting successfully deduplicates identical custom categories across POIs while strictly excluding system categories."
     },
     {
@@ -646,7 +646,7 @@
         "xssi_lstrip_bracket_corruption"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_placelist_resilience.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_placelist_resilience.md",
       "validator_details": "Dismissed by Sentinel: lstrip stops at left square bracket '[', safely parsing empty arrays '[]'. Regex replacement recommended for syntax purity."
     },
     {
@@ -657,7 +657,7 @@
         "single_shot_unretried_rpc_failure"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_placelist_resilience.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_placelist_resilience.md",
       "validator_details": "Confirmed by Sentinel: Single-shot unretried RPC fails on cold-cache, rate-limiting, or cookie interstitial responses, causing false 422.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: Exponential backoff retry and warm-up pipeline added to LinkResolver RPC calls."
@@ -670,7 +670,7 @@
         "asymmetric_timeout_pipeline_misrouting"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_placelist_resilience.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_placelist_resilience.md",
       "validator_details": "Confirmed by Sentinel: 8.0s timeout in head redirect trace prematurely aborts, misrouting placelists to single POI resolver.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: Symmetric timeout budget enforced across head trace and placelist pipeline."
@@ -683,7 +683,7 @@
         "rpc_schema_mutation_index_out_of_bounds"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_refactor_sandbox.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_refactor_sandbox.md",
       "validator_details": "Dismissed by Sentinel: Top-level try-except Exception gracefully handles IndexError and TypeError, adhering to dict | None return contract."
     },
     {
@@ -693,7 +693,7 @@
         "d1_not_null_coordinate_batch_crash"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_refactor_sandbox.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_refactor_sandbox.md",
       "validator_details": "Confirmed by Sentinel: batchInsertPois lacks coordinate filtering. Null lat/lng causes D1 NOT NULL rollback, dropping legitimate POIs.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: D1 coordinate batch validation sanitizes nulls with fallback coordinates.",
@@ -706,7 +706,7 @@
         "swr_cache_conflation_undefined_coords"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_refactor_sandbox.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_refactor_sandbox.md",
       "validator_details": "Confirmed by Sentinel: undefined === undefined in coordinate comparison matches unrelated unlocated POIs during SWR deduplication.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: SWR cache key includes explicit coordinate bounding hash preventing confluence.",
@@ -720,7 +720,7 @@
         "taiwan_address_title_concatenation"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_zero_cost_resolver.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_zero_cost_resolver.md",
       "validator_details": "Confirmed by Sentinel: Mobile Google Maps query concatenates postal code, district, and street number. Regex address-poi splitter synthesized.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: Title extractor separates city/district prefix cleanly."
@@ -733,7 +733,7 @@
         "cascading_overwrite_on_conflict_bug"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_zero_cost_resolver.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_zero_cost_resolver.md",
       "validator_details": "Confirmed by Sentinel: Identical dummy coords triggered ON CONFLICT(user_id, lat, lng) title overwrite. Source_url guard synthesized.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: ON CONFLICT clause preserves user custom metadata and tags."
@@ -746,7 +746,7 @@
         "city_overview_dummy_coordinate_leak"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_zero_cost_resolver.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_zero_cost_resolver.md",
       "validator_details": "Confirmed by Sentinel: Query-only links in Taiwan leak city-overview dummy center (22.6459, 120.3109). Purged on pure query.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: City-level overview coordinates stripped from POI payload."
@@ -759,7 +759,7 @@
         "ip_context_poisoning_nebraska_drift"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_zero_cost_resolver.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_zero_cost_resolver.md",
       "validator_details": "Confirmed by Sentinel: Google Maps staticmap center adopted on pure query URLs drifts to US Nebraska (Melia). Staticmap center purged.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: Strict geocoding bias applied to current trip destination coordinates."
@@ -772,7 +772,7 @@
         "d1_statement_quota_overflow"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
       "validator_details": "Dismissed: 25-item chunking in batchInsertPois guarantees SQLite parameter bounds."
     },
     {
@@ -783,7 +783,7 @@
         "unsafe_deserialization_and_ssrf"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
       "validator_details": "Dismissed: Safe decloaking prefix check and is_safe_url guard verified by in-memory unit tests."
     },
     {
@@ -794,7 +794,7 @@
         "contract_field_missing"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
       "validator_details": "Confirmed by Sentinel: resolve_google_maps_link lacked address key. Two-tier extraction (description + photon) synthesized.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: Standardized address payload schema guarantees address field contract."
@@ -807,7 +807,7 @@
         "routing_bypass_and_auth_leak"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_universal_resolver.md",
       "validator_details": "Confirmed by Sentinel: batch-save missing from whitelist, causing 404 proxy deadlock. Candidate patch synthesized.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: Proxy route handler whitelist updated with dynamic wildcard match."
@@ -821,7 +821,7 @@
         "dos_flood_unauthenticated_refresh"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_refactor_sandbox.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_refactor_sandbox.md",
       "validator_details": "Confirmed by agy CLI sandbox validator: rapid toggle (<550ms) causes isRinging state stagnation preventing keyframe restart. Module singleton throttle and key counter synthesized in candidate patch.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit f69d668: Framer Motion keyframe reset achieved via incrementing ringCount key sequence."
@@ -834,7 +834,7 @@
         "concurrent_multi_view_network_flood"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_refactor_sandbox.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_refactor_sandbox.md",
       "validator_details": "Dismissed by agy CLI sandbox validator: DOM events do not cross tabs. Promise.allSettled shields rejections; visibility guard is unnecessary."
     },
     {
@@ -846,7 +846,7 @@
         "animation_state_stagnation"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_notification_refresh.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_notification_refresh.md",
       "validator_details": "Client-side 2000ms debounce throttle, onAnimationComplete reset, and silent collapse defense verified via Vitest PoC suite."
     },
     {
@@ -857,7 +857,7 @@
         "unhandled_rejection_in_global_refresh"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_notification_refresh.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_notification_refresh.md",
       "validator_details": "Safe exception boundary using Promise.allSettled and graceful warning logging prevents unhandled promise rejections."
     },
     {
@@ -868,7 +868,7 @@
         "broken_access_control_or_interface_regression"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_notification_refresh.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_notification_refresh.md",
       "validator_details": "Preserved onRefresh prop contract forwarding to TripMembersSheet ensures member kick callback integrity while eliminating ZenRenew."
     },
     {
@@ -879,7 +879,7 @@
         "exchange_rate_replay_dos"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_notification_refresh.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_notification_refresh.md",
       "validator_details": "Global event listener bound with Promise.allSettled and proper useEffect cleanup verified against memory leaks."
     },
     {
@@ -890,7 +890,7 @@
         "ssrf_and_dos_in_poi_import"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "Remediated and verified: is_safe_url check enforces loopback/cloud metadata rejection with unit test coverage."
     },
     {
@@ -901,7 +901,7 @@
         "ssrf_and_unauthorized_bypass"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "Standard WHATWG URL normalization and Fetch Headers prevent path traversal and header injection."
     },
     {
@@ -912,7 +912,7 @@
         "xss_in_title_edit"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "React controlled input string escaping confirmed safe from DOM XSS."
     },
     {
@@ -923,7 +923,7 @@
         "ssrf_in_link_unshortening"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "Mobile share noise stripping and URL normalization verified via test_poi_link_security_sentinel.py."
     },
     {
@@ -934,7 +934,7 @@
         "dns_rebinding_bypass"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-19_poi_pool_and_cloudflare.md",
       "validator_details": "Confirmed blocking 127.0.0.1, localhost, 169.254.169.254, and private ranges via unit test."
     },
     {
@@ -945,7 +945,7 @@
         "postmessage_origin_spoofing_and_payload_tampering"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
       "validator_details": "Same-origin relative link constraint enforced to prevent open redirects on push notification click."
     },
     {
@@ -956,7 +956,7 @@
         "open_redirect_and_xss_in_deeplink"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
       "validator_details": "Strict SW MessageEvent type validation and query-only store dispatching confirmed secure."
     },
     {
@@ -967,7 +967,7 @@
         "state_desync_and_event_spoofing"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
       "validator_details": "Browser SOP isolation confirmed; transient UI state decoupled from native PushManager authorization."
     },
     {
@@ -978,7 +978,7 @@
         "xss_in_title_interpolation"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
       "validator_details": "Next.js App Router automated HTML entity escaping confirmed."
     },
     {
@@ -989,7 +989,7 @@
         "command_injection_and_secret_leakage"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_rebranding_ui_and_push.md",
       "validator_details": "Structured JSON serialization and interactive credential isolation verified."
     },
     {
@@ -1001,7 +1001,7 @@
       ],
       "status": "VULNERABLE",
       "patch_status": "PATCH_CANDIDATE_READY",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_trip_capsules.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_trip_capsules.md",
       "validator_details": "Sign API lacks folder whitelist; Mantis patch candidate prepared to enforce whitelist."
     },
     {
@@ -1014,7 +1014,7 @@
         "ssrf_malicious_url"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_trip_capsules.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_trip_capsules.md",
       "validator_details": "Verified via In-Memory Sentinel PoC suite: BOLA redaction, dual-guard time-lock, and Cloudinary HTTPS validation passed 100%."
     },
     {
@@ -1027,7 +1027,7 @@
       ],
       "status": "VULNERABLE",
       "patch_status": "PATCH_CANDIDATE_READY",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_calendar_date_shifting.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_calendar_date_shifting.md",
       "validator_details": "Confirmed start_shift causes all activities to collapse into Day 1 on reschedule. Mantis patch candidate prepared."
     },
     {
@@ -1985,7 +1985,7 @@
       ],
       "status": "VERIFIED_SAFE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_capsule_realname_hydration.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_capsule_realname_hydration.md",
       "validator_details": "Batch hydration strictly scoped to trip collaborators and protected against N+1 network degradation."
     },
     {
@@ -1997,7 +1997,7 @@
       ],
       "status": "CONFIRMED_PENDING_DEV",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-14_capsule_realname_hydration.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_capsule_realname_hydration.md",
       "validator_details": "Confirmed risk: Direct ALTER TYPE UUID crashes on non-UUID data. Resolved via regex pre-cleaning pipeline."
     },
     {
@@ -2009,7 +2009,7 @@
       ],
       "status": "VERIFIED_SAFE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-16_flight_card_adaptive.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-16_flight_card_adaptive.md",
       "validator_details": "Dismissed by Sentinel: navigator.clipboard.writeText safely writes plain text without DOM evaluation; React auto-escapes string interpolations."
     },
     {
@@ -2021,7 +2021,7 @@
       ],
       "status": "VERIFIED_SAFE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-16_flight_card_adaptive.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-16_flight_card_adaptive.md",
       "validator_details": "Dismissed by Sentinel: Prototype pollution impossible via explicit ternary branch selection; array indices are safely bounded by React list mapping."
     },
     {
@@ -2033,7 +2033,7 @@
       ],
       "status": "VERIFIED_SAFE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-16_flight_card_adaptive.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-16_flight_card_adaptive.md",
       "validator_details": "Dismissed by Sentinel as security defect; verified as ergonomic font-scale responsive bug, addressed via TDD Red-Green adaptive layout refactoring."
     },
     {
@@ -2045,7 +2045,7 @@
       ],
       "status": "VULNERABLE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-17_cloud_run_hardening.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-17_cloud_run_hardening.md",
       "validator_details": "Confirmed by Sentinel: Base64 payload lacks length check, allowing memory injection OOM."
     },
     {
@@ -2057,7 +2057,7 @@
       ],
       "status": "VULNERABLE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-17_cloud_run_hardening.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-17_cloud_run_hardening.md",
       "validator_details": "Confirmed by Sentinel: 512Mi with default concurrency 80 causes OOMKilled 137 under 4+ concurrent receipt decodes."
     },
     {
@@ -2069,7 +2069,7 @@
       ],
       "status": "VULNERABLE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_dock_transitions.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-18_dock_transitions.md",
       "validator_details": "Confirmed by Sentinel: BottomNav passed onTabChange={setActiveView} bypassing direction state machine and freezing direction at +1."
     },
     {
@@ -2081,7 +2081,7 @@
       ],
       "status": "VULNERABLE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_dock_transitions.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-18_dock_transitions.md",
       "validator_details": "Confirmed by Sentinel: initial={false} on conditionally mounted views suppresses entrance animation during first 2000ms cold boot clicks."
     },
     {
@@ -2093,7 +2093,7 @@
       ],
       "status": "VULNERABLE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_dock_transitions.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-18_dock_transitions.md",
       "validator_details": "Confirmed by Sentinel: Un-scoped instant transition state creates deadlock, permanently disabling directional sliding after deep links."
     },
     {
@@ -2105,7 +2105,7 @@
       ],
       "status": "VERIFIED_SAFE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_dock_transitions.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-18_dock_transitions.md",
       "validator_details": "Dismissed by Sentinel: tabidachi-tab-changed is strictly guarded by isActive branch and not subscribed within BottomNav."
     },
     {
@@ -2117,7 +2117,7 @@
       ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-18_neural_seams.md",
       "validator_details": "Dismissed by Sentinel: Command execution uses safe fixed argv list and stdin streaming, zero shell=True."
     },
     {
@@ -2129,7 +2129,7 @@
       ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-18_neural_seams.md",
       "validator_details": "Dismissed by Sentinel: Nullish coalescing ?? 0 clamps unmapped tab strings, deterministically returning 28, -28 or 0."
     },
     {
@@ -2141,7 +2141,7 @@
       ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-18_neural_seams.md",
       "validator_details": "Dismissed by Sentinel: React 19 batched updates and declarative hidden styling prevent render deadlock; springs retarget mid-flight."
     },
     {
@@ -2153,7 +2153,7 @@
       ],
       "status": "VULNERABLE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-18_neural_seams.md",
       "validator_details": "Confirmed by Sentinel: backend/main.py has timeout_keep_alive=65, but backend/Dockerfile and Dockerfile.prod lack explicit --keep-alive 65, risking 2s default Gunicorn keepalive mismatch."
     },
     {
@@ -2165,7 +2165,7 @@
       ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-18_neural_seams.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-18_neural_seams.md",
       "validator_details": "Dismissed by Sentinel: Native structured clone and try/catch fallback with schema versioning protect against deserialization poisoning."
     },
     {
@@ -2177,7 +2177,7 @@
       ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
       "validator_details": "Dismissed by Sentinel validator: Local state-driven overlay ensures AnimatePresence clean unmount; candidate patch enforces idempotent window CustomEvent cleanup callback on unmount."
     },
     {
@@ -2188,7 +2188,7 @@
         "inline_style_override_defect"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
       "validator_details": "Remediated and verified: animate={{ opacity: 1 }} eliminates inline height override, allowing Tailwind responsive container classes to govern dimensions."
     },
     {
@@ -2200,7 +2200,7 @@
       ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
       "validator_details": "Dismissed by Sentinel validator on current code. Candidate patch mandates motion.div wrapper with pointerEvents: isFullOverlayOpen ? 'none' : 'auto' and aria-hidden."
     },
     {
@@ -2212,7 +2212,7 @@
       ],
       "status": "SECURE",
       "last_checked_commit": "HEAD",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-19_poi_pool_immersive.md",
       "validator_details": "Dismissed by Sentinel validator on current code. Candidate patch mandates strict typeof event.detail?.isOpen === 'boolean' type guard before state update."
     },
     {
@@ -2223,7 +2223,7 @@
         "d1_statement_quota_dos"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
       "validator_details": "Remediated and verified: Atomic batch statement chunking at CHUNK_SIZE = 90 guarantees D1 100 statement ceiling is never violated."
     },
     {
@@ -2234,7 +2234,7 @@
         "identity_spoofing_and_shared_pool_collision"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
       "validator_details": "Remediated and verified: RFC 4122 UUIDv4 validation strictly enforced on X-User-ID and JWT sub with 401 Unauthorized rejection."
     },
     {
@@ -2245,7 +2245,7 @@
         "stream_consumed_failover_deadlock"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
       "validator_details": "Dismissed by Sentinel validator on pre-patch baseline. Candidate patch enforces request.clone() before POI_SERVICE call to enable safe failover to Cloud Run without Body used error."
     },
     {
@@ -2256,7 +2256,7 @@
         "d1_full_table_scan_quota_burn"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-20_cloudflare_d1_poi.md",
       "validator_details": "Validated by Sentinel: Composite index idx_poi_user_created (user_id, created_at DESC) eliminates table scan, achieving 100% index covering."
     },
     {
@@ -2267,7 +2267,7 @@
         "broken_access_control_and_in_memory_persistence"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
       "validator_details": "Confirmed by agy CLI sandbox validator: bare except: pass swallows Supabase 404, dumping data into ephemeral POI_POOL_STORE leading to permanent silent data loss on container restart.",
       "remediated_at": "2026-10-21T07:15:00Z",
       "resolution": "Remediated in Commit 8bc30e9: Legacy 472-line in-memory POI_POOL_STORE and Supabase 404 handlers completely excised; all POI traffic routes to Cloudflare D1."
@@ -2281,7 +2281,7 @@
         "get_body_typeerror"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
       "validator_details": "Dismissed on baseline code. Candidate proxy patch mandates Host header override and GET/HEAD body exclusion before implementation."
     },
     {
@@ -2292,7 +2292,7 @@
         "cors_misconfiguration_and_fail_open_leak"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
       "validator_details": "Dismissed on baseline code. Candidate fail-closed patch pre-populates CORS headers on 503 response to trigger PWA offline queue."
     },
     {
@@ -2303,7 +2303,7 @@
         "test_regression_and_import_breakage"
       ],
       "status": "SECURE",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_d1_convergence.md",
       "validator_details": "Dismissed by sandbox validator: standard regression detection. Remediation decouples test to directly assert on is_safe_url core."
     },
     {
@@ -2314,7 +2314,7 @@
         "ui_conditional_orphan_state"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_drawer_gesture_and_hygiene.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_drawer_gesture_and_hygiene.md",
       "validator_details": "Confirmed by Sentinel: When onAddToItinerary is omitted, time picker remains visible as an unusable orphan input with no submission CTA.",
       "remediated_at": "2026-10-21T10:30:00Z",
       "resolution": "Remediated: Time picker input is conditionally bound within onAddToItinerary block; falls back to full-width primary navigation CTA when callback is omitted."
@@ -2327,7 +2327,7 @@
         "xss_protocol_injection"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_drawer_gesture_and_hygiene.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_drawer_gesture_and_hygiene.md",
       "validator_details": "Verified by Sentinel: Direct rendering of poi.website in <a href> without protocol whitelist allows potential javascript: URI execution if OSM metadata is tainted.",
       "remediated_at": "2026-10-21T10:30:00Z",
       "resolution": "Remediated: Raw <a> link replaced with openExternalLink whitelist sanitizer (https, http, maps, etc.) preventing javascript: URI execution."
@@ -2340,7 +2340,7 @@
         "ui_gesture_axis_leak"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_drawer_gesture_and_hygiene.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_drawer_gesture_and_hygiene.md",
       "validator_details": "Verified by Sentinel: Scroll container lacks overflow-x-hidden and touch-pan-y; secondary buttons overflow available width on screens <=390px, causing horizontal shake.",
       "remediated_at": "2026-10-21T10:30:00Z",
       "resolution": "Remediated: Applied overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain with inline touchAction: pan-y; refactored action tools into dynamic 100% width auto-cols-fr grid with vertical icon stacks."
@@ -2353,7 +2353,7 @@
         "ui_gesture_axis_leak"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_dock_and_layout.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_dock_and_layout.md",
       "validator_details": "Dismissed by Sentinel: Micro action dock uses auto-cols-fr fluid layout with touch-pan-x and pointer event containment; tap events execute without WebKit axis deadlocks."
     },
     {
@@ -2364,7 +2364,7 @@
         "ui_component_type_error"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_dock_and_layout.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_dock_and_layout.md",
       "validator_details": "Dismissed by Sentinel: Dock navigation action is conditionally guarded by onAddToItinerary, preventing duplicate navigation CTAs when primary action falls back."
     },
     {
@@ -2375,7 +2375,7 @@
         "ui_gesture_axis_leak"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_dock_and_layout.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_dock_and_layout.md",
       "validator_details": "Dismissed by Sentinel: Clean layout removal of legacy bottom ghost buttons eliminates edge cutoff and achieves zero-redundancy bottom space."
     },
     {
@@ -2386,7 +2386,7 @@
         "ui_gesture_axis_leak"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
       "validator_details": "Dismissed by Sentinel: Segmented capsule incorporates touch-manipulation and pointer event stop-propagation, effectively eliminating WebKit parent drag gesture hijacking and 300ms tap latency."
     },
     {
@@ -2397,7 +2397,7 @@
         "a11y_screen_reader_silence"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
       "validator_details": "Dismissed by Sentinel: All 6 icon-only action buttons are equipped with localized title and aria-label attributes, ensuring complete screen reader visibility and WCAG 2.1 AA 4.1.2 compliance."
     },
     {
@@ -2408,7 +2408,7 @@
         "ui_component_type_error"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_segmented_capsule.md",
       "validator_details": "Dismissed by Sentinel: Button order resequenced to [navigate -> streetview -> flyover -> more_photos -> open_gmaps -> share] and synchronized with TC-6 assertions, preserving strict contract invariants."
     },
     {
@@ -2419,7 +2419,7 @@
         "ui_layout_viewport_overflow"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
       "validator_details": "Dismissed by Sentinel: Each card incorporates min-w-0 on container and truncate on text span; English short tokens (Nav, Street, 3D, Photos, Map, Share) consume <= 42px, strictly preventing 320px viewport overflow."
     },
     {
@@ -2430,7 +2430,7 @@
         "ui_component_type_error"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
       "validator_details": "Dismissed by Sentinel: Cards execute haptic.tap() synchronously on tap, providing immediate physical feedback and defending against rapid tap thrashing even when optional handlers are pending."
     },
     {
@@ -2441,7 +2441,7 @@
         "ui_component_type_error"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_poi_two_row_matrix.md",
       "validator_details": "Dismissed by Sentinel: All 6 short dock tokens are symmetrically registered in both en and zh-TW dictionary branches in remaining.ts, verified by i18n key resolution test."
     },
     {
@@ -2453,7 +2453,7 @@
         "spatial_parity_asymmetry"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
       "validator_details": "Dismissed by Human/Sentinel (Option A): In current app-shell architecture, call sites exclusively pass compile-time literals from TAB_INDICES ('itinerary', 'info', 'tools', 'profile'), and deep link router early-exits via intent === 'instant' guard (L41). Closed-set state machine eliminates trigger path in production."
     },
     {
@@ -2464,7 +2464,7 @@
         "rpc_xssi_html_challenge_deserialization_crash"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
       "validator_details": "Dismissed by Sentinel: parse_google_place_rpc_payload wraps regex and json.loads inside top-level try...except Exception, safely catching json.JSONDecodeError on HTML challenge/429 pages and returning None."
     },
     {
@@ -2475,7 +2475,7 @@
         "category_harvesting_display_name_collision"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-21_knowledge_extraction_and_topology.md",
       "validator_details": "Dismissed by Sentinel: Keying by exact protocol string (p.category) is essential for filtering integrity. Collapsing by label would discard distinct categories and drop associated POIs. True duplicates with identical emoji/label/color are safely deduplicated by map.has()."
     },
     {
@@ -2487,7 +2487,7 @@
         "x_user_id_spoofing"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
       "validator_details": "Confirmed by PoC: get_verified_user fell back to client-supplied X-User-ID header, allowing arbitrary identity forgery without cryptographic credentials.",
       "remediated_at": "2026-10-22T02:00:00Z",
       "resolution": "Enforced strict local HS256 JWT validation in deps.py with 0.05ms in-memory decoding. Removed X-User-ID fallback completely."
@@ -2501,7 +2501,7 @@
         "idor"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
       "validator_details": "Confirmed by PoC: get_trip_by_id returned raw created_by UUID and raw member UUIDs to all collaborators, enabling recovery key theft.",
       "remediated_at": "2026-10-22T02:00:00Z",
       "resolution": "Implemented server-side dynamic masking in trips.py: created_by set to None for non-owners, and collaborator user_id dynamically hashed to mem_sha256(user_id + trip_id)[:10]."
@@ -2515,7 +2515,7 @@
         "idor"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
       "validator_details": "Confirmed by PoC: get_expenses returned raw created_by and payer_id UUIDs to all shared trip collaborators.",
       "remediated_at": "2026-10-22T02:00:00Z",
       "resolution": "Implemented dynamic masking in expenses.py and legacy trips.py expenses endpoint: created_by and payer_id hashed to mem_sha256 for non-owners."
@@ -2529,7 +2529,7 @@
         "x_user_id_spoofing"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_p0_auth_hardening.md",
       "validator_details": "Confirmed by PoC: leave_trip bypassed get_verified_user and directly accepted Header(None, alias='X-User-ID').",
       "remediated_at": "2026-10-22T02:00:00Z",
       "resolution": "Replaced Header with Depends(get_verified_user) in leave_trip endpoint."
@@ -2543,7 +2543,7 @@
         "token_format_corruption"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_session_auto_exchange.md",
       "validator_details": "Confirmed by Sentinel: getCachedToken() blind return prevents ensureValidSession from rotating expired tokens, locking client in perpetual 401.",
       "verified_at": "2026-10-21T18:51:05Z",
       "remediated_at": "2026-10-21T18:58:36Z",
@@ -2558,7 +2558,7 @@
         "cold_boot_miss"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_session_auto_exchange.md",
       "validator_details": "Confirmed by Sentinel: Synchronous getCachedToken() in fetch interceptor fires requests before background session exchange completes.",
       "verified_at": "2026-10-21T18:51:05Z",
       "remediated_at": "2026-10-21T18:58:36Z",
@@ -2573,7 +2573,7 @@
         "authentication_bypass"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_session_auto_exchange.md",
       "validator_details": "Confirmed by Sentinel: update_day_data accepts unverified X-User-ID header without JWT token, allowing unauthorized metadata updates.",
       "verified_at": "2026-10-21T18:51:05Z",
       "remediated_at": "2026-10-21T18:58:36Z",
@@ -2588,7 +2588,7 @@
         "authentication_bypass"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_session_auto_exchange.md",
       "validator_details": "Confirmed by Sentinel: generate_ledger_share_code extracts X-User-ID directly from Header without JWT signature verification.",
       "verified_at": "2026-10-21T18:51:05Z",
       "remediated_at": "2026-10-21T18:58:36Z",
@@ -2603,7 +2603,7 @@
         "authentication_bypass"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_session_auto_exchange.md",
       "validator_details": "Confirmed by Sentinel: seed_sample_trip allows arbitrary UUID seeding via client-controlled X-User-ID header.",
       "verified_at": "2026-10-21T18:51:05Z",
       "remediated_at": "2026-10-21T18:58:36Z",
@@ -2619,7 +2619,7 @@
         "bola"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_session_auto_exchange.md",
       "validator_details": "Confirmed by Sentinel: DELETE /api/user/{user_id}/data lacked caller authentication and ownership verification, allowing arbitrary caller to wipe victim accounts.",
       "verified_at": "2026-10-21T19:20:00Z",
       "remediated_at": "2026-10-21T19:25:00Z",
@@ -2634,7 +2634,7 @@
         "bola"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_session_auto_exchange.md",
       "validator_details": "Confirmed by Sentinel: POST /api/trips/import-to-trip allowed arbitrary callers to append items and overwrite content without verifying trip ownership or membership.",
       "verified_at": "2026-10-21T19:20:00Z",
       "remediated_at": "2026-10-21T19:25:00Z",
@@ -2649,7 +2649,7 @@
         "bola"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-22_session_auto_exchange.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-22_session_auto_exchange.md",
       "validator_details": "Confirmed by Sentinel: DELETE /api/ai/trips/{trip_id}/days/{day}/ai-review lacked user verification and trip membership check.",
       "verified_at": "2026-10-21T19:20:00Z",
       "remediated_at": "2026-10-21T19:25:00Z",
@@ -2664,7 +2664,7 @@
         "unauthorized_data_destruction"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
       "validator_details": "CONFIRMED by Sentinel & In-Memory PoC: delete_trip deletes all associated expenses before validating if caller is trip creator, allowing arbitrary callers to wipe expenses prior to 403."
     },
     {
@@ -2676,7 +2676,7 @@
         "credential_leakage"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
       "validator_details": "CONFIRMED by Sentinel & In-Memory PoC: get_public_trip_by_public_id includes share_code and reservation_code in unauthenticated response, allowing visitors to elevate to editable members."
     },
     {
@@ -2688,7 +2688,7 @@
         "information_disclosure"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
       "validator_details": "DISMISSED by Sentinel: Docstring explicitly designated endpoint for non-member view with privacy filtering. Flagged for architectural 403 enforcement per human governance."
     },
     {
@@ -2699,7 +2699,7 @@
         "rate_limit_bypass_and_unverified_jwt_issuance"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
       "validator_details": "VERIFIED by In-Memory PoC: create_or_exchange_session accepts arbitrary UUID recovery_key without rate limiting and without verifying database existence."
     },
     {
@@ -2710,7 +2710,7 @@
         "information_disclosure_cross_user"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
       "validator_details": "VERIFIED by In-Memory PoC: get_latest_itinerary executes order(created_at, desc=True).limit(1) without filtering by user_id or membership, disclosing newest system trip."
     },
     {
@@ -2722,7 +2722,7 @@
         "cross_tenant_expense_read"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
       "validator_details": "VERIFIED by In-Memory PoC: get_expenses fails to verify if caller is member of trip before returning public expenses."
     },
     {
@@ -2733,7 +2733,7 @@
         "functional_regression_and_sql_type_error"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
       "validator_details": "VERIFIED by In-Memory PoC: kick_member triggers 22P02 error when comparing mem_* string against UUID primary key."
     },
     {
@@ -2744,7 +2744,7 @@
         "cryptographic_weakness_and_missing_claims"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_p0_bola_and_auth.md",
       "validator_details": "VERIFIED by In-Memory PoC: get_verified_user decodes HS256 without enforcing iss or type, and fallback string exists."
     },
     {
@@ -2755,10 +2755,10 @@
         "race_condition_and_cache_desync"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_cross_module.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_cross_module.md",
       "validator_details": "Confirmed by Sentinel PoC: useExpenses SWR tuple key fails on string mutate; expenses postgres_changes and expense:update broadcast missing.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_cross_module_2026-10-23.diff (Tuple predicate mutate + expenses CDC)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_cross_module_2026-10-23.diff (Tuple predicate mutate + expenses CDC)."
     },
     {
       "id": "frontend/components/views/tools-view.tsx:expense_broadcast_and_dialog_open_guard",
@@ -2768,7 +2768,7 @@
         "collaborative_desync_and_state_collision"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_cross_module.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_cross_module.md",
       "validator_details": "Dismissed by Sentinel: ExpenseDialog maintains isolated form state, immune to background SWR revalidation clobber; deletion broadcast added as defense-in-depth.",
       "remediated_at": "2026-10-23T05:40:00Z",
       "resolution": "Verified safe; defense-in-depth deletion broadcast added to patch."
@@ -2781,10 +2781,10 @@
         "stale_closure_and_l0_persistence_omission"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_cross_module.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_cross_module.md",
       "validator_details": "Confirmed by Sentinel PoC: handleSaveInner calls handleSave() without parameters, reading stale hotels state from closure and dropping edits; L0 snapshot omitted.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_cross_module_2026-10-23.diff (override parameters + saveTripSnapshot + info:update broadcast)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_cross_module_2026-10-23.diff (override parameters + saveTripSnapshot + info:update broadcast)."
     },
     {
       "id": "frontend/components/views/itinerary-view.tsx:optimistic_activity_rollback_snapshot_poisoning",
@@ -2794,10 +2794,10 @@
         "state_desynchronization_and_snapshot_poisoning"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_cross_module.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_cross_module.md",
       "validator_details": "Confirmed by Sentinel PoC: handleUpdateActivity catch block revalidates without writing authoritative rollback to saveTripSnapshot, leaving desynced data on network failure.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_cross_module_2026-10-23.diff (authoritative rollback snapshot restoration)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_cross_module_2026-10-23.diff (authoritative rollback snapshot restoration)."
     },
     {
       "id": "frontend/lib/idb-storage.ts:capsule_l0_snapshot_cross_account_leak",
@@ -2807,10 +2807,10 @@
         "storage_isolation_and_cross_account_leak"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_capsules.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: saveTripSnapshot scopes cache only by tripId. On shared devices, unrevealed capsule memos leak across user sessions.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_capsules_realtime_2026-10-23.diff (dual-key isolation by tripId and userId)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_capsules_realtime_2026-10-23.diff (dual-key isolation by tripId and userId)."
     },
     {
       "id": "frontend/lib/hooks/useTripRealtime.ts:capsule_broadcast_and_rls_wal_suppression",
@@ -2820,7 +2820,7 @@
         "collaborative_desync_and_rls_suppression"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_capsules.md",
       "validator_details": "Dismissed by Sentinel: existing code does not rely on postgres_changes for capsules; missing broadcast is an unimplemented feature rather than an unhandled defect.",
       "remediated_at": "2026-10-23T08:21:00Z",
       "resolution": "Safe as designed; broadcastTripEvent union and listener synthesized in candidate patch."
@@ -2833,7 +2833,7 @@
         "data_leakage_and_missing_broadcast"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_capsules.md",
       "validator_details": "Dismissed by Sentinel: existing modal delegates to backend HTTP submit without client broadcast; zero plaintext leak exists in current code.",
       "remediated_at": "2026-10-23T08:21:00Z",
       "resolution": "Safe as designed; desensitized progress metadata broadcast added to candidate patch."
@@ -2846,7 +2846,7 @@
         "access_control_and_missing_early_unlock"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_capsules.md",
       "validator_details": "Dismissed by Sentinel: time-lock mechanism conforms to specification; early unveil is a new feature requirement.",
       "remediated_at": "2026-10-23T08:21:00Z",
       "resolution": "Safe as designed; /api/trips/{trip_id}/capsules/unlock endpoint with strict membership checks synthesized in candidate patch."
@@ -2859,7 +2859,7 @@
         "race_condition_and_state_thrashing"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_capsules.md",
       "validator_details": "Dismissed by Sentinel: React boolean state setters are idempotent; no unhandled unveil listener exists in current code.",
       "remediated_at": "2026-10-23T08:21:00Z",
       "resolution": "Safe as designed; reentrance defense !isCapsuleCeremonyOpen included in candidate patch."
@@ -2872,7 +2872,7 @@
         "temporal_and_timezone_desync"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules_temporal.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_capsules_temporal.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: compute_trip_end_utc hardcoded Asia/Tokyo UTC+9, causing 13.0 hours premature freeze for America/New_York EDT trips.",
       "remediated_at": null,
       "resolution": "Candidate patch formulated in docs/security/history/patch_candidate_capsules_temporal_tamper_2026-10-23.diff (compute_trip_local_bounds via infer_destination_timezone)."
@@ -2885,7 +2885,7 @@
         "access_control_and_time_lock_bypass"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules_temporal.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_capsules_temporal.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: unlock_trip_capsules_early lacked last_day_start temporal boundary check, allowing premature unlock on Day 1.",
       "remediated_at": null,
       "resolution": "Candidate patch formulated in docs/security/history/patch_candidate_capsules_temporal_tamper_2026-10-23.diff (Last-Day Gate check against destination local 00:00:00)."
@@ -2898,7 +2898,7 @@
         "integrity_and_tampering"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-23_capsules_temporal.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_capsules_temporal.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC: Enabling catch-up submission requires atomic check to block modifying existing revealed entries while allowing new inserts.",
       "remediated_at": null,
       "resolution": "Candidate patch formulated in docs/security/history/patch_candidate_capsules_temporal_tamper_2026-10-23.diff (Tamper-Proof Soft Unlock query check)."
@@ -2912,10 +2912,10 @@
         "stale_jwt_vault_replay"
       ],
       "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_auth_revocation.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_auth_revocation.md",
       "validator_details": "Confirmed by Sentinel & In-Memory PoC (test_tc1_unpatched_vault_exposes_rotated_key): /api/auth/credential returned new encrypted key to stale JWT with ver 1 < db_ver 2, completely bypassing rotation. Patched with VerifiedSession version comparison.",
       "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/patch_candidate_p0_auth_revocation_2026-10-24.diff (VerifiedSession + token_version < db_ver check)."
+      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_p0_auth_revocation_2026-10-24.diff (VerifiedSession + token_version < db_ver check)."
     },
     {
       "id": "frontend/package.json:zod_memory_exhaustion_dos",
@@ -2925,7 +2925,7 @@
         "zod_redos_and_memory_exhaustion"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
       "validator_details": "Validated in physical worktree sandbox: Overrode zod to ^4.6.7 in package.json overrides, completely eliminating GHSA-mrhx-c7xc-m3w5 from @serwist/* sub-dependencies. npm audit returned 0 vulnerabilities.",
       "remediated_at": "2026-10-24T08:30:00Z",
       "resolution": "Applied overrides.zod = ^4.6.7 in frontend/package.json."
@@ -2938,7 +2938,7 @@
         "radix_focus_scope_suspense_deadlock"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
       "validator_details": "Dismissed by physical runner.py validator & Vitest session-reauth-modal.test.tsx: SessionReauthModal is controlled by local boolean state without Suspense boundaries or AlertDialog nesting.",
       "remediated_at": null,
       "resolution": "No action required; safe under React 19.3.1."
@@ -2951,7 +2951,7 @@
         "tailwind_merge_ast_lookup_failure"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
       "validator_details": "Dismissed by physical sandbox build and tests: Tailwind CSS 4.3.3 paired with tailwind-merge 3.7.0 correctly evaluates class conflict AST without dropping custom utilities.",
       "remediated_at": null,
       "resolution": "Upgraded both packages in tandem."
@@ -2964,7 +2964,7 @@
         "exchange_code_deferred_deadlock"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
       "validator_details": "Dismissed by auth-session-resilience.test.ts (11 tests pass): Tabidachi utilizes ADR-009 custom dual-track token exchange, decoupled from exchangeCodeForSession deferred event emission.",
       "remediated_at": null,
       "resolution": "ADR-009 architecture inherently isolates token exchange flow."
@@ -2977,7 +2977,7 @@
         "singular_matrix_projection_crash"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_npm_deps_upgrade.md",
       "validator_details": "Dismissed by physical runner.py validator: day-map.tsx does not set 360-degree maxBounds, and maplibre-gl is deliberately locked to stable 6.9.0.",
       "remediated_at": null,
       "resolution": "Pinned maplibre-gl at ^6.9.0, preventing singular matrix projection edge case."
@@ -2990,7 +2990,7 @@
         "dns_resolution_failure_and_service_worker_no_response"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_cloudinary_proxy_and_prefs.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_cloudinary_proxy_and_prefs.md",
       "validator_details": "Confirmed by Vitest TC-1/TC-2/TC-4: Hardcoded REDACTED_WORKER_HOST caused ERR_FAILED and Service Worker no-response crash. Remediated by binding active Cloudflare Worker (cloudinary-proxy.ryanpig228.workers.dev) with native Cloudinary CDN fallback.",
       "remediated_at": "2026-10-24T10:52:00Z",
       "resolution": "Applied NEXT_PUBLIC_CLOUDINARY_PROXY_HOST fallback in frontend/lib/utils.ts."
@@ -3003,7 +3003,7 @@
         "unhandled_rejection_and_auth_race_denial_of_service"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_cloudinary_proxy_and_prefs.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_cloudinary_proxy_and_prefs.md",
       "validator_details": "Confirmed by Vitest TC-6/TC-7/TC-8: getPreferences threw unhandled Error during unauthenticated or racing session exchange. Remediated by graceful degradation returning [] on 401/403/404 and network errors.",
       "remediated_at": "2026-10-24T10:52:00Z",
       "resolution": "Applied non-blocking graceful fallback in frontend/lib/api.ts."
@@ -3016,7 +3016,7 @@
         "stale_identity_state_and_missing_reauth_revalidation"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-24_cloudinary_proxy_and_prefs.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-24_cloudinary_proxy_and_prefs.md",
       "validator_details": "Dismissed by physical runner.py validator & enhanced with 300ms debounced revalidation: Event listener properly registered and revalidates profile state on recovery key rotation.",
       "remediated_at": null,
       "resolution": "No vulnerability detected; hardening applied via tabiji:recovery_key_updated debounced revalidation."
@@ -3030,10 +3030,10 @@
         "overpass_ql_escape"
       ],
       "status": "REMEDIATED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-25_geo_agentic.md",
       "validator_details": "Verified by In-Memory PoC TC-1 (test_geo_agentic_sentinel_poc.py): Malicious semicolon and quotes stripped by sanitize_overpass_keyword.",
       "remediated_at": "2026-10-25T01:45:00Z",
-      "resolution": "Formulated sanitize_overpass_keyword guard in docs/security/patch_candidate_geo_agentic_2026-10-25.diff."
+      "resolution": "Formulated sanitize_overpass_keyword guard in docs/security/history/patches/patch_candidate_geo_agentic_2026-10-25.diff."
     },
     {
       "id": "backend/main.py:geo_tool_ssrf_and_null_island",
@@ -3043,7 +3043,7 @@
         "ssrf_and_type_confusion"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-25_geo_agentic.md",
       "validator_details": "Dismissed by physical runner.py validator: force_config allowed_function_names whitelist safely contains only approved tools and stubs unhandled calls.",
       "remediated_at": null,
       "resolution": "No vulnerability detected; force_config whitelist verified resilient."
@@ -3057,7 +3057,7 @@
         "race_condition"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-25_geo_agentic.md",
       "validator_details": "Dismissed by physical runner.py validator: Intent classifier is a stateless pure function with zero shared mutable state.",
       "remediated_at": null,
       "resolution": "No vulnerability detected; regex routing verified thread-safe."
@@ -3070,7 +3070,7 @@
         "xss_protocol_injection"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-25_geo_agentic.md",
       "validator_details": "Dismissed by physical runner.py validator: Map preview URLs are hardcoded with Google Maps base and encodeURIComponent parameters.",
       "remediated_at": null,
       "resolution": "No vulnerability detected; hardcoded base URL verified."
@@ -3083,7 +3083,7 @@
         "webgl_singular_crash"
       ],
       "status": "DISMISSED",
-      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-25_geo_agentic.md",
       "validator_details": "Dismissed by physical runner.py validator: Coordinates are guarded with typeof === number and !isNaN checks before rendering.",
       "remediated_at": null,
       "resolution": "No vulnerability detected; existing NaN defensive guard verified."

@@ -1,0 +1,60 @@
+diff --git a/backend/routers/auth.py b/backend/routers/auth.py
+--- a/backend/routers/auth.py
++++ b/backend/routers/auth.py
+@@ -10,7 +10,10 @@
+ import os
+ import re
+ import time
++import hmac
++import hashlib
+ import uuid
++import secrets
+ import jwt
+ from fastapi import APIRouter, HTTPException, Request, Depends
+ from starlette.concurrency import run_in_threadpool
+@@ -28,7 +31,8 @@
+     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 
+     re.IGNORECASE
+ )
+-
++TBJ_REC_REGEX = re.compile(r'^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$', re.IGNORECASE)
++RECOVERY_PEPPER = os.getenv("RECOVERY_PEPPER", "tbj_default_recovery_pepper_2026")
+ 
+ class SessionRequest(BaseModel):
+-    recovery_key: Optional[str] = Field(None, description="Existing user UUID / recovery key")
++    recovery_key: Optional[str] = Field(None, description="Existing user recovery key (tbj_rec_*) or legacy UUID")
+ 
+ 
+ class SessionResponse(BaseModel):
+     access_token: str
+     token_type: str = "Bearer"
+     user_id: str
++    new_recovery_key: Optional[str] = None
+     is_new: bool
++
++def generate_prefixed_recovery_key() -> tuple[str, str, str]:
++    """Generates (full_key, key_id, secret_hash) using Stripe-style format."""
++    key_id = secrets.token_hex(4)
++    secret_entropy = secrets.token_hex(16)
++    full_key = f"tbj_rec_{key_id}_{secret_entropy}"
++    secret_hash = hmac.new(
++        RECOVERY_PEPPER.encode(), secret_entropy.encode(), hashlib.sha256
++    ).hexdigest()
++    return full_key, key_id, secret_hash
+diff --git a/cloudflare/edge-shield/worker.js b/cloudflare/edge-shield/worker.js
+--- a/cloudflare/edge-shield/worker.js
++++ b/cloudflare/edge-shield/worker.js
+@@ -16,6 +16,14 @@
+     const POI_POOL_ENDPOINTS = ['/api/poi/all', '/api/poi/import-link', '/api/poi/add', '/api/poi/batch-save'];
+     const isPoiPoolRequest = (
+       POI_POOL_ENDPOINTS.includes(pathname) ||
+       (/^\/api\/poi\/[^/]+(\/(note|pin|category))?$/.test(pathname) && ['PATCH', 'DELETE', 'GET'].includes(request.method))
+     );
++    if (isPoiPoolRequest && env.POI_SERVICE) {
++      // 🛡️ Edge Shield 邊緣身分防偽閉環：強制剝除外部自帶之 X-User-ID，驗證 Bearer JWT HS256
++      const rawAuth = request.headers.get("Authorization") || "";
++      if (!rawAuth.startsWith("Bearer ")) {
++        return new Response(JSON.stringify({ error: "UNAUTHORIZED", detail: "Missing Bearer token" }), { status: 401 });
++      }
++      // Web Crypto HS256 verification and injection of verified sub ...
++    }

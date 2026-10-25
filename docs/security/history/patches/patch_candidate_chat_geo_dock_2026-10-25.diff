@@ -1,0 +1,24 @@
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -1245,7 +1245,7 @@
+                             contents=contents,
+                             config=force_config,
+                         ),
+-                        timeout=4.5
++                        timeout=6.5
+                     )
+ 
+                     if first_pass and hasattr(first_pass, 'function_calls') and first_pass.function_calls:
+@@ -1376,6 +1376,7 @@
+ 2. 當提及具體事實、景點或推薦時，請在句末標註對應的來源編號（例如：在地人推薦這家拉麵[1]，而國際社群普遍建議[3]...）。
+ 3. 嚴禁內文與來源脫節（各說各話）。你提及的內容必須能從對應的來源編號中得到印證。若某來源與旅遊無關，切勿採用。
+-4. 若使用者的指示包含將景點、天氣備忘或活動加入行程，請同時調用 add_itinerary_item 工具。
++4. 若使用者的指示包含將景點、天氣備忘或活動加入行程，或系統剛執行過 search_nearby_places 查詢周邊地點，在回覆文字說明的同時，**務必針對最推薦的 1 至 3 個地點調用 add_itinerary_item 工具 (可使用 items 陣列批次呼叫)**，帶入精準真實經緯度 (lat, lng) 與店名，以便前端聊天室直接渲染出地圖卡片與 In-Card MiniMap！
+ [/即時網路搜尋結果]\n"""
+ 
+--- a/frontend/components/chat/POIPreviewCard.tsx
++++ b/frontend/components/chat/POIPreviewCard.tsx
+@@ -192,6 +192,7 @@
+             Number.isFinite(poiData.lat) && Number.isFinite(poiData.lng) &&
++            Math.abs(poiData.lat) <= 90 && Math.abs(poiData.lng) <= 180 &&
+             !(poiData.lat === 0 && poiData.lng === 0)

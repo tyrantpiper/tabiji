@@ -1,0 +1,268 @@
+diff --git a/backend/routers/auth.py b/backend/routers/auth.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/backend/routers/auth.py
+@@ -0,0 +1,95 @@
++"""
++🛡️ Tabiji Authentication & Session Management Router (v2026)
++Implements the 1Password Secret Key / Local-First Recovery Key paradigm.
++Provides:
++- POST /api/auth/session: Silent issuance / exchange of cryptographically signed JWT.
++- POST /api/auth/recover: Landing page recovery key restoration with rate limiting.
++"""
++
++import os
++import time
++import uuid
++import jwt
++from fastapi import APIRouter, HTTPException, Request, Depends
++from pydantic import BaseModel, Field
++from typing import Optional
++from utils.deps import get_session_secret, get_supabase
++from utils.limiter import limiter
++
++router = APIRouter()
++
++
++class SessionRequest(BaseModel):
++    recovery_key: Optional[str] = Field(None, description="Existing user UUID / recovery key")
++
++
++class SessionResponse(BaseModel):
++    access_token: str
++    token_type: str = "Bearer"
++    user_id: str
++    is_new: bool
++
++
++def is_valid_uuid(val: str) -> bool:
++    try:
++        uuid.UUID(str(val))
++        return True
++    except (ValueError, AttributeError, TypeError):
++        return False
++
++
++def create_session_jwt(user_id: str, secret: str) -> str:
++    now = int(time.time())
++    payload = {
++        "sub": user_id,
++        "iss": "tabiji-core",
++        "iat": now,
++        "exp": now + (365 * 86400),  # 1 year long-lived PWA session
++        "type": "device_session"
++    }
++    return jwt.encode(payload, secret, algorithm="HS256")
++
++
++@router.post("/session", response_model=SessionResponse)
++async def create_or_exchange_session(
++    body: SessionRequest,
++    secret: str = Depends(get_session_secret)
++):
++    """
++    ✨ 靜默憑證領取與兌換 (Silent Session Exchange)
++    - 若傳入有效 recovery_key (UUID)：簽發包含該 ID 之 JWT (老用戶無痛換票)
++    - 若未傳入：生成全新 UUID v4 並簽發 JWT (新用戶秒開)
++    """
++    user_id = body.recovery_key
++    is_new = False
++
++    if user_id and is_valid_uuid(user_id):
++        final_uid = str(user_id).strip()
++    else:
++        final_uid = str(uuid.uuid4())
++        is_new = True
++
++    token = create_session_jwt(final_uid, secret)
++    return SessionResponse(
++        access_token=token,
++        user_id=final_uid,
++        is_new=is_new
++    )
++
++
++@router.post("/recover", response_model=SessionResponse)
++@limiter.limit("5/minute")
++async def recover_account_with_key(
++    request: Request,
++    body: SessionRequest,
++    secret: str = Depends(get_session_secret)
++):
++    """
++    🛡️ 首頁專屬恢復金鑰還原帳號 (Restricted Recovery Endpoint)
++    受 SlowAPI 限流保護 (5次/分鐘)，徹底杜絕暴力枚舉。
++    """
++    if not body.recovery_key or not is_valid_uuid(body.recovery_key):
++        raise HTTPException(status_code=400, detail="Invalid recovery key format")
++
++    final_uid = str(body.recovery_key).strip()
++    token = create_session_jwt(final_uid, secret)
++    return SessionResponse(
++        access_token=token,
++        user_id=final_uid,
++        is_new=False
++    )
+diff --git a/backend/utils/deps.py b/backend/utils/deps.py
+index a111111..b222222 100644
+--- a/backend/utils/deps.py
++++ b/backend/utils/deps.py
+@@ -1,7 +1,24 @@
+ import os
++import hashlib
++import jwt
+ from fastapi import Header, HTTPException, Request
+ from supabase import create_client, Client
+ 
+ 
++def get_session_secret() -> str:
++    """獲取 JWT 簽章密鑰，若未設置則衍生自 SUPABASE_KEY 安全雜湊保底"""
++    secret = os.getenv("SESSION_SECRET_KEY")
++    if secret and len(secret) >= 16:
++        return secret
++    supabase_key = os.getenv("SUPABASE_KEY", "")
++    if supabase_key:
++        return hashlib.sha256(f"tabiji-session-salt-{supabase_key}".encode()).hexdigest()
++    return "tabiji-default-dev-fallback-secret-key-32chars!!"
++
++
+ def get_supabase(request: Request) -> Client:
+     """從 app.state 獲取全域 Supabase 客戶端 (使用 Service Role Key)"""
+     return request.app.state.supabase
+@@ -49,42 +66,35 @@ async def get_verified_user(
+     request: Request,
+-    x_user_id: str = Header(None, alias="X-User-ID"),
+     auth_header: str = Header(None, alias="Authorization")
+ ) -> str:
+     """
+-    🛡️ 安全身分驗證依賴 (v2026 Security Hardening)
+-    
+-    邏輯推理：
+-    1. 優先驗證 JWT Token (如果前端有傳)。
+-    2. 如果沒有 Token，暫時允許 X-User-ID (向後相容)，但會在後台標記為「低安全性請求」。
+-    3. 如果 ID 衝突，以 Token 解析出的 ID 為準。
++    🛡️ 嚴格密碼學身分驗證依賴 (JWT-Only)
++    徹底拔除 X-User-ID 明文 Header 回退信任漏洞。
+     """
+-    supabase: Client = request.app.state.supabase
+-    
+-    # 1. 嘗試從 Authorization Header 驗證 (最安全)
+-    if auth_header and auth_header.startswith("Bearer "):
+-        token = auth_header.split(" ")[1]
+-        try:
+-            # 使用 Supabase Auth 驗證 Token
+-            user_res = supabase.auth.get_user(token)
+-            if user_res and user_res.user:
+-                verified_id = str(user_res.user.id)
+-                print(f"🛡️ [Auth] Verified JWT for User: {verified_id}")
+-                # 安全校驗：如果同時傳了 X-User-ID 但不吻合，視為偽造嘗試
+-                if x_user_id and x_user_id != verified_id:
+-                    print(f"🚨 [Security] Identity Mismatch! Token: {verified_id} vs Header: {x_user_id}")
+-                    raise HTTPException(status_code=403, detail="身分令牌不匹配")
+-                return verified_id
+-        except Exception as e:
+-            print(f"⚠️ [Auth] Token verification failed: {e}")
+-            # Token 失效時不直接報錯，回落到 X-User-ID 以維持過度期穩定
+-            
+-    # 2. 回落到 X-User-ID (維持目前的 UX 流暢度)
+-    if x_user_id:
+-        # 🧪 Debug Log: 追蹤 ID 來源
+-        is_uuid = len(x_user_id) == 36 and "-" in x_user_id
+-        print(f"👤 [Identity] Identifying via X-User-ID: {x_user_id} (IsUUID: {is_uuid})")
+-        return x_user_id
+-        
+-    raise HTTPException(status_code=401, detail="無法識別使用者身分")
++    if not auth_header or not auth_header.startswith("Bearer "):
++        raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
++
++    token = auth_header.split(" ")[1].strip()
++    secret = get_session_secret()
++
++    # 1. 本地高速記憶體驗證 (0.05ms)
++    try:
++        payload = jwt.decode(token, secret, algorithms=["HS256"])
++        verified_uid = payload.get("sub")
++        if verified_uid:
++            return str(verified_uid)
++    except jwt.PyJWTError:
++        pass
++
++    # 2. Supabase 官方 Token 相容校驗 (若未來串接 OAuth)
++    try:
++        supabase: Client = request.app.state.supabase
++        user_res = supabase.auth.get_user(token)
++        if user_res and user_res.user:
++            return str(user_res.user.id)
++    except Exception:
++        pass
++
++    raise HTTPException(status_code=401, detail="Invalid or expired token")
+diff --git a/backend/routers/trips.py b/backend/routers/trips.py
+index c333333..d444444 100644
+--- a/backend/routers/trips.py
++++ b/backend/routers/trips.py
+@@ -1,5 +1,6 @@
++import hashlib
+ from fastapi import APIRouter, HTTPException, Header, Depends, Query
+ from utils.deps import get_supabase, get_verified_user
+@@ -282,10 +283,12 @@ async def get_trip_by_id(
+         created_by = trip.get("created_by", "")
+         
+         is_member = False
++        is_owner = False
+         if user_id:
+-            is_member = (user_id == created_by) or any(m.get("user_id") == user_id for m in members)
++            is_owner = (user_id == created_by)
++            is_member = is_owner or any(m.get("user_id") == user_id for m in members)
+-            print(f"🔍 [Trips] user_id={user_id}, is_creator={user_id == created_by}, is_member={is_member}")
++            print(f"🔍 [Trips] user_id={user_id}, is_creator={is_owner}, is_member={is_member}")
+         else:
+             print(f"🔍 [Trips] No user_id provided, treating as non-member")
+@@ -401,5 +404,18 @@ async def get_trip_by_id(
+             "credit_cards": filter_private_cards(content.get("credit_cards", [])),
+-            "is_member": is_member,  # 🆕 告訴前端是否為成員
+-            "members": members,  # 🆕 所有成員列表 (用於成員管理)
+-            "created_by": created_by,  # 🆕 創建者 ID (用於判斷踢人權限)
++            "is_member": is_member,
++            "is_owner": is_owner,
++            # 🛡️ 伺服端動態脫敏：非創立者無法看見真實 UUID，杜絕隊友奪舍
++            "created_by": created_by if is_owner else None,
++            "members": [
++                {
++                    **m,
++                    "user_id": m["user_id"] if m.get("user_id") == user_id else f"mem_{hashlib.sha256((str(m.get('user_id')) + trip_id).encode()).hexdigest()[:10]}"
++                }
++                for m in members
++            ],
+             "days": [{"day": d, "activities": days_map[d]} for d in sorted(days_map.keys())] if days_map else []
+         }
+@@ -1245,3 +1261,3 @@ async def leave_trip(
+     trip_id: str,
+-    user_id: str = Header(None, alias="X-User-ID"),
++    user_id: str = Depends(get_verified_user),
+     supabase=Depends(get_supabase)
+diff --git a/backend/routers/expenses.py b/backend/routers/expenses.py
+index e555555..f666666 100644
+--- a/backend/routers/expenses.py
++++ b/backend/routers/expenses.py
+@@ -1,4 +1,5 @@
++import hashlib
+ from fastapi import APIRouter, HTTPException, Depends, Query, Request
+ from utils.deps import get_supabase, get_verified_user
+@@ -339,4 +340,15 @@ async def get_expenses(
+                 details_schema_version=version,
+                 created_at=str(exp.get("created_at")),
+-                created_by=str(exp.get("created_by")),
++                # 🛡️ 財務端點動態脫敏：非創立者/非本人僅能看見公開名稱，真實 UUID 自動遮蔽
++                created_by=str(exp.get("created_by")) if str(exp.get("created_by")) == user_id else f"mem_{hashlib.sha256((str(exp.get('created_by')) + trip_id).encode()).hexdigest()[:10]}",
+                 creator_name=exp.get("creator_name"),
+                 image_url=exp.get("image_url"),
+                 card_name=exp.get("card_name"),
+                 cashback_rate=exp.get("cashback_rate", 0.0),
+                 custom_icon=exp.get("custom_icon"),
+                 notes=exp.get("notes"),
+-                payer_id=exp.get("payer_id"),
++                payer_id=exp.get("payer_id") if exp.get("payer_id") == user_id else (f"mem_{hashlib.sha256((str(exp.get('payer_id')) + trip_id).encode()).hexdigest()[:10]}" if exp.get("payer_id") else None),
+                 payer_name=exp.get("payer_name")
+             )

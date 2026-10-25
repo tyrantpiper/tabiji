@@ -1,0 +1,147 @@
+diff --git a/frontend/lib/hooks/useTripRealtime.ts b/frontend/lib/hooks/useTripRealtime.ts
+--- a/frontend/lib/hooks/useTripRealtime.ts
++++ b/frontend/lib/hooks/useTripRealtime.ts
+@@ -93,3 +93,3 @@ export const broadcastTripEvent = async (
+     tripId: string,
+-    event: "tip:update" | "tip:typing" | "item:reorder" | "item:mutate" | "checklist:update",
++    event: "tip:update" | "tip:typing" | "item:reorder" | "item:mutate" | "checklist:update" | "expense:update" | "info:update",
+     data: Record<string, unknown>
+@@ -174,2 +174,23 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
+         )
+ 
++        // 3. 💰 補齊公帳盲區：監聽分帳支出異動 (新增、修改、刪除費用)
++        channel.on(
++            "postgres_changes",
++            {
++                event: "*",
++                schema: "public",
++                table: "expenses",
++                filter: `itinerary_id=eq.${tripId}`,
++            },
++            (payload) => {
++                console.log("🔄 [Realtime] Expense updated remotely:", payload.eventType)
++                // 🛡️ 關鍵加固：SWR key 為 Tuple [`/api/trips/${tripId}/expenses`, userId]，採 Predicate 精準刷新
++                mutate((key: unknown) => {
++                    if (Array.isArray(key) && typeof key[0] === "string" && key[0].startsWith(`/api/trips/${tripId}/expenses`)) return true
++                    return false
++                }, undefined, { revalidate: true })
++            }
++        )
++
+         // 3. ⚡ 監聽高頻 Broadcast 記憶體協同事件 (<10ms 鏡像同步)
+@@ -196,2 +217,8 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
+                     })
++                }
++                if (payload.event === "expense:update") {
++                    mutate((key: unknown) => {
++                        if (Array.isArray(key) && typeof key[0] === "string" && key[0].startsWith(`/api/trips/${tripId}/expenses`)) return true
++                        return false
++                    }, undefined, { revalidate: true })
+                 }
+diff --git a/frontend/components/expense-dialog.tsx b/frontend/components/expense-dialog.tsx
+--- a/frontend/components/expense-dialog.tsx
++++ b/frontend/components/expense-dialog.tsx
+@@ -26,2 +26,3 @@ import { expensesApi, aiApi } from "@/lib/api"
++import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
+@@ -493,2 +494,8 @@ export function ExpenseDialog({
+             onOpenChange(false)
++            if (activeTripId) {
++                broadcastTripEvent(activeTripId, "expense:update", {
++                    id: editItem?.id,
++                    action: editItem ? "update" : "create"
++                }).catch(() => {})
++            }
+             onSaveSuccess(payload.expense_date)
+diff --git a/frontend/components/views/tools-view.tsx b/frontend/components/views/tools-view.tsx
+--- a/frontend/components/views/tools-view.tsx
++++ b/frontend/components/views/tools-view.tsx
+@@ -34,2 +34,3 @@ import { ExpenseDialog } from "@/components/expense-dialog"
++import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
+@@ -156,2 +157,14 @@ export function ToolsView({
+     }, [swrExpenses, activeTripId])
++
++    // ⚡ 監聽跨裝置記帳協同廣播 (<10ms 鏡像感知)
++    useEffect(() => {
++        const handleCollab = (e: Event) => {
++            const detail = (e as CustomEvent).detail
++            if (detail?.event === "expense:update" && !isDialogOpen) {
++                reloadExpenses()
++            }
++        }
++        window.addEventListener("tabiji:collab-event", handleCollab)
++        return () => window.removeEventListener("tabiji:collab-event", handleCollab)
++    }, [isDialogOpen, reloadExpenses])
+@@ -562,2 +575,7 @@ export function ToolsView({
+             await expensesApi.delete(id, userId)
++            if (activeTripId) {
++                broadcastTripEvent(activeTripId, "expense:update", {
++                    deleted_id: id,
++                    action: "delete"
++                }).catch(() => {})
++            }
+             reloadExpenses() // 🔄 Use SWR mutate
+diff --git a/frontend/components/views/info-view.tsx b/frontend/components/views/info-view.tsx
+--- a/frontend/components/views/info-view.tsx
++++ b/frontend/components/views/info-view.tsx
+@@ -26,2 +26,4 @@ import { useHaptic, useTripDetail } from "@/lib/hooks"
++import { saveTripSnapshot } from "@/lib/idb-storage"
++import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
+@@ -134,2 +136,2 @@ export function InfoView({
+         setInnerEditing(false)
+-        handleSave() // Sync to backend (Chain-Reaction Trigger)
++        handleSave(newHotels) // 👈 消除 React 非同步更新延遲
+     }
+@@ -218,8 +220,10 @@ export function InfoView({
+-    const handleSave = async () => {
++    const handleSave = async (overrideHotels?: Hotel[], overrideFlights?: Flights) => {
+         if (!activeTripId) return
++        const targetHotels = overrideHotels || hotels
++        const targetFlights = overrideFlights || flights
+         try {
+             const userId = localStorage.getItem("user_uuid") || ""
+ 
+             await tripsApi.updateInfo(activeTripId, {
+-                flight_info: flights,
+-                hotel_info: hotels
++                flight_info: targetFlights,
++                hotel_info: targetHotels
+             }, userId)
+@@ -232,2 +236,15 @@ export function InfoView({
+             await reloadTripDetail()
+             await tripMutate() // 🔄 Refresh global context
++            // 🛡️ L0 快照同步寫入
++            if (activeTripData) {
++                saveTripSnapshot(activeTripId, {
++                    ...activeTripData,
++                    flight_info: targetFlights,
++                    hotel_info: targetHotels
++                })
++            }
++            await broadcastTripEvent(activeTripId, "info:update", {
++                flight_info: targetFlights,
++                hotel_info: targetHotels
++            })
+         } catch (e) {
+diff --git a/frontend/components/views/itinerary-view.tsx b/frontend/components/views/itinerary-view.tsx
+--- a/frontend/components/views/itinerary-view.tsx
++++ b/frontend/components/views/itinerary-view.tsx
+@@ -1284,2 +1284,5 @@ export function ItineraryView({
+             setIsEditOpen(false)
+-            await reloadTripDetail()
++            const updated = await reloadTripDetail()
++            if (updated && currentTrip?.id) {
++                saveTripSnapshot(currentTrip.id, updated)
++            }
+         } catch (e) {
+@@ -1308,2 +1311,3 @@ export function ItineraryView({
+             reloadTripDetail(optimisticData, false)
++            saveTripSnapshot(currentTrip.id, optimisticData)
+         }
+@@ -1322,2 +1326,5 @@ export function ItineraryView({
+             if (!skipRevalidation) {
+-                await reloadTripDetail()
++                const restoredTrip = await reloadTripDetail()
++                if (restoredTrip && currentTrip?.id) {
++                    saveTripSnapshot(currentTrip.id, restoredTrip)
++                }
+             }

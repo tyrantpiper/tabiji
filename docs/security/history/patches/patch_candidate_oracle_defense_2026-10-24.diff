@@ -1,0 +1,100 @@
+--- a/backend/routers/auth.py
++++ b/backend/routers/auth.py
+@@ -47,6 +47,8 @@
+     RECOVERY_PEPPER = "tbj_secret_pepper_auth_recovery_v2_2026"
+ 
++UNIFORM_AUTH_ERROR = "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。"
++
+ class SessionRequest(BaseModel):
+     recovery_key: Optional[str] = Field(None, description="Existing user recovery key (tbj_rec_*) or legacy UUID")
++    expected_user_id: Optional[str] = Field(None, description="Expected user UUID when re-anchoring an existing device session")
+ 
+@@ -207,6 +209,12 @@
+         if not user or not verify_recovery_key(raw_key, user.get("recovery_secret_hash")):
+-            raise HTTPException(status_code=401, detail="Unknown or invalid recovery key")
++            raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
++        
++        # 🛡️ 伺服器端帳號錨定防衛 (Server-Side Expected User ID Gate)
++        # 嚴禁在身分不符時向網路傳輸目標帳號之 JWT 或使用者識別碼，徹底阻絕傳輸外洩與 Oracle 枚舉
++        if body.expected_user_id:
++            if user["id"].strip().lower() != body.expected_user_id.strip().lower():
++                raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
+         
+         token = create_session_jwt(user["id"], secret, user.get("credential_version", 1))
+@@ -219,6 +227,11 @@
+     if is_valid_uuid(raw_key):
+         clean_uid = raw_key.lower()
++        # 🛡️ 舊版 UUID 遷移路徑同樣受 expected_user_id 伺服器端防衛
++        if body.expected_user_id:
++            if clean_uid != body.expected_user_id.strip().lower():
++                raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
++
+         exists = await run_in_threadpool(legacy_identity_exists, supabase, clean_uid)
+         if not exists:
+-            raise HTTPException(status_code=401, detail="Unknown recovery key")
++            raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
+--- a/frontend/lib/auth-session.ts
++++ b/frontend/lib/auth-session.ts
+@@ -17,7 +17,11 @@
+ let isReauthBroadcasting = false;
++let lastRestoredAt = 0;
++
++const UNIFORM_REAUTH_ERROR = "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。";
+ 
+ export function triggerReauthPrompt() {
++    // 🛡️ 重認證後 5 秒冷卻保護：阻斷在途 (in-flight) 舊 401 請求造成的彈窗重複震盪
++    if (Date.now() - lastRestoredAt < 5000) return;
+     if (isReauthBroadcasting) return;
+     isReauthBroadcasting = true;
+@@ -342,7 +346,7 @@
+     const cleanKey = newRecoveryKey.trim();
+     if (!TBJ_REC_REGEX.test(cleanKey)) {
+-        throw new Error("引繼碼格式無效，格式應為 tbj_rec_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
++        throw new Error(UNIFORM_REAUTH_ERROR);
+     }
+ 
+     const currentUuid = typeof window !== "undefined" ? localStorage.getItem(RECOVERY_KEY) : null;
+     const res = await fetch("/api/auth/session", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+-        body: JSON.stringify({ recovery_key: cleanKey })
++        body: JSON.stringify({
++            recovery_key: cleanKey,
++            expected_user_id: currentUuid || undefined,
++        })
+     });
+ 
+     if (!res.ok) {
+-        const errJson = await res.json().catch(() => ({}));
+-        if (res.status === 401) {
+-            throw new Error(errJson.detail || "此引繼碼無效或已被輪替，請確認是否為最新金鑰");
+-        }
+-        throw new Error(errJson.detail || `連線驗證失敗 (${res.status})`);
++        throw new Error(UNIFORM_REAUTH_ERROR);
+     }
+ 
+     const data = await res.json();
+     if (!data?.access_token || !data?.user_id) {
+-        throw new Error("伺服器回傳憑證無效");
++        throw new Error(UNIFORM_REAUTH_ERROR);
+     }
+ 
+-    // 🛡️ Wrong-User Guard：防止拿他人帳號金鑰覆蓋本地旅程
++    // 🛡️ 雙重保險防禦 (Defense-in-Depth)：若伺服器異常回傳他人 ID 立即拋出統一錯誤
+     if (currentUuid && data.user_id.toLowerCase() !== currentUuid.toLowerCase()) {
+-        throw new Error("🚨 身分不相符：此引繼碼屬於另一個帳號！為保護此設備上的現有行程，禁止原地覆蓋。");
++        throw new Error(UNIFORM_REAUTH_ERROR);
+     }
+ 
+     localStorage.setItem(TOKEN_KEY, data.access_token);
+     localStorage.setItem("user_recovery_key", cleanKey);
+     localStorage.setItem(RECOVERY_KEY, data.user_id);
++    lastRestoredAt = Date.now();
+--- a/frontend/components/auth/session-reauth-modal.tsx
++++ b/frontend/components/auth/session-reauth-modal.tsx
+@@ -51,7 +51,7 @@
+         if (!TBJ_REC_REGEX.test(cleanKey)) {
+-            setErrorMessage(zh ? "引繼碼格式無效，應為 tbj_rec_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" : "Invalid format: tbj_rec_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
++            setErrorMessage(zh ? "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。" : "Verification failed. Unable to restore sync on this device. Please verify recovery key.")
+             return
+         }

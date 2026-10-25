@@ -1,0 +1,88 @@
+diff --git a/frontend/lib/auth-session.ts b/frontend/lib/auth-session.ts
+--- a/frontend/lib/auth-session.ts
++++ b/frontend/lib/auth-session.ts
+@@ -21,11 +21,39 @@ export interface SessionInfo {
++function isTokenValid(token: string | null): boolean {
++    if (!token) return false;
++    try {
++        const parts = token.split('.');
++        if (parts.length !== 3) return false;
++        const payloadBase64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
++        const jsonPayload = decodeURIComponent(
++            atob(payloadBase64)
++                .split('')
++                .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
++                .join('')
++        );
++        const payload = JSON.parse(jsonPayload);
++        if (!payload || !payload.exp) return true;
++        const now = Math.floor(Date.now() / 1000);
++        return payload.exp > now + 60;
++    } catch {
++        return false;
++    }
++}
++
+ export function getCachedToken(): string | null {
+     if (typeof window === "undefined") return null;
+     try {
+-        return localStorage.getItem(TOKEN_KEY);
++        const token = localStorage.getItem(TOKEN_KEY);
++        if (!token) return null;
++        if (!isTokenValid(token)) {
++            localStorage.removeItem(TOKEN_KEY);
++            return null;
++        }
++        return token;
+     } catch {
+         return null;
+     }
+ }
++
++export function initSessionLifecycleListener(): () => void {
++    if (typeof window === "undefined") return () => {};
++    const handleReconnectOrResume = () => {
++        if (navigator.onLine && !getCachedToken()) {
++            ensureValidSession().catch(() => {});
++        }
++    };
++    window.addEventListener("online", handleReconnectOrResume);
++    document.addEventListener("visibilitychange", handleReconnectOrResume);
++    handleReconnectOrResume();
++    return () => {
++        window.removeEventListener("online", handleReconnectOrResume);
++        document.removeEventListener("visibilitychange", handleReconnectOrResume);
++    };
++}
+diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
+--- a/frontend/lib/api.ts
++++ b/frontend/lib/api.ts
+@@ -24,4 +24,7 @@ import { getCachedToken, ensureValidSession } from './auth-session';
+ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+-    const token = getCachedToken();
++    let token = getCachedToken();
++    if (!token && typeof window !== "undefined") {
++        token = await ensureValidSession().catch(() => null);
++    }
+     if (token) {
+diff --git a/backend/routers/trips.py b/backend/routers/trips.py
+--- a/backend/routers/trips.py
++++ b/backend/routers/trips.py
+@@ -1118,3 +1118,3 @@ async def update_day_data(
+     trip_id: str, 
+     request: UpdateDayDataRequest, 
+-    x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
++    user_id: str = Depends(get_verified_user),
+@@ -2095,3 +2095,3 @@ async def generate_ledger_share_code(
+     trip_id: str,
+-    x_user_id: str = Header(None, alias="X-User-ID"),
++    user_id: str = Depends(get_verified_user),
+diff --git a/backend/routers/sample_trip.py b/backend/routers/sample_trip.py
+--- a/backend/routers/sample_trip.py
++++ b/backend/routers/sample_trip.py
+@@ -17,2 +17,2 @@
+-from utils.deps import get_supabase
++from utils.deps import get_supabase, get_verified_user
+@@ -190,3 +190,3 @@ async def seed_sample_trip(
+-    x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
++    user_id: str = Depends(get_verified_user),

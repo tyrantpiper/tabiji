@@ -1,0 +1,9 @@
+diff --git a/.github/workflows/deploy-backend.yml b/.github/workflows/deploy-backend.yml
+--- a/.github/workflows/deploy-backend.yml
++++ b/.github/workflows/deploy-backend.yml
+@@ -45,3 +45,3 @@
+-            --set-env-vars "^||^SUPABASE_URL=https://oudnkmigfueuyvxqpqwn.supabase.co||API_VERSION=v1||NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=dnpcnwrcu||CLOUDINARY_API_KEY=996197457174111||TP_API_TOKEN=${{ secrets.TP_API_TOKEN }}||GAS_GEOCODE_URLS=${{ secrets.GAS_GEOCODE_URLS }}||GAS_RESOLVE_LINK_URLS=${{ secrets.GAS_RESOLVE_LINK_URLS }}||CF_WORKER_SEARCH_URL=https://tabidachi-search-proxy.ryanpig228.workers.dev" \
++            --set-env-vars "^||^SUPABASE_URL=${{ secrets.SUPABASE_URL }}||API_VERSION=v1||NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }}||CLOUDINARY_API_KEY=${{ secrets.CLOUDINARY_API_KEY }}||TP_API_TOKEN=${{ secrets.TP_API_TOKEN }}||GAS_GEOCODE_URLS=${{ secrets.GAS_GEOCODE_URLS }}||GAS_RESOLVE_LINK_URLS=${{ secrets.GAS_RESOLVE_LINK_URLS }}||CF_WORKER_SEARCH_URL=${{ secrets.CF_WORKER_SEARCH_URL }}" \
+             --set-secrets "SUPABASE_KEY=supabase-key:latest,ARCGIS_API_KEY=arcgis-api-key:latest,CLOUDINARY_API_SECRET=cloudinary-api-secret:latest" \
+-            --project antigravity-prod-2026
++            --project ${{ secrets.GCP_PROJECT_ID || 'antigravity-prod-2026' }}

@@ -39,7 +39,7 @@ triggers:
   - **Logic & Access Control**: IDOR, Role Escalation, RLS policy bypass, Token leakage.
   - **Edge & Proxies**: SSRF, Request smuggling, Header injection, Unchecked CORS.
   - **Input Sanitization**: ReDoS, Deserialization, Prompt Injection in AI routers.
-- Output candidate hypotheses to `docs/security/candidates_<topic>_<YYYY-MM-DD>.json`:
+- Output candidate hypotheses to `docs/security/history/candidates/candidates_<topic>_<YYYY-MM-DD>.json`:
   ```json
   [
     {
@@ -54,7 +54,7 @@ triggers:
 ### Phase 3: Physical Validator Confrontation (`runner.py`)
 - Execute the harness runner with unbounded parallelism:
   ```bash
-  python .agents/skills/security-sentinel/scripts/runner.py --candidates docs/security/candidates_{topic}_{date}.json --output docs/security/findings_{topic}.json --timeout 120
+  python .agents/skills/security-sentinel/scripts/runner.py --candidates docs/security/history/candidates/candidates_{topic}_{date}.json --output docs/security/history/findings/findings_{topic}.json --timeout 120
   ```
 - Each target is evaluated by an independent background `agy.exe` subprocess in `--sandbox` mode.
 - Results are recorded as `CONFIRMED`, `DISMISSED`, or `INCONCLUSIVE`.
@@ -63,15 +63,15 @@ triggers:
 For any `CONFIRMED` vulnerability:
 1. Synthesize an in-memory PoC reproducing the failure before patch.
 2. Formulate a minimal-invasive candidate fix:
-   - Provide RFC unified diff (`patch_candidate.diff`).
+   - Provide RFC unified diff (`docs/security/history/patches/patch_candidate_{topic}_{YYYY-MM-DD}.diff`).
    - Provide exact block replacement mapping:
      - `target_file`
      - `target_content` (exact lines matching existing code)
      - `replacement_content` (fixed lines)
 
 ### Phase 5: Atomic Ledger Update & Consolidated Report
-1. Atomically update `docs/security/security-coverage-ledger.json` with new targets, audit dates, and verdicts.
-2. Generate markdown artifact `docs/security/reports/security_sentinel_report_{YYYY-MM-DD}.md`:
+1. Atomically update `docs/security/security-coverage-ledger.json` with new targets, audit dates, verdicts, `report_ref` (pointing to `docs/security/reports/{YYYY-MM}/...`), and `resolution` (pointing to `docs/security/history/patches/...`).
+2. Generate markdown artifact in monthly archive `docs/security/reports/{YYYY-MM}/security_sentinel_report_{YYYY-MM-DD}_{topic}.md`:
    - Executive Summary (Total Targets, Confirmed, Dismissed).
    - Attack Surface Coverage Matrix.
    - Confirmed Vulnerability Details with In-Memory PoCs.
@@ -90,5 +90,5 @@ python .agents/skills/security-sentinel/scripts/runner.py \
   --target-file "backend/services/intent_router.py" \
   --vector "prompt_injection" \
   --hypothesis "Sanitizer allows bypassing system instructions via unicode control characters" \
-  --output "docs/security/findings.json"
+  --output "docs/security/history/findings/findings.json"
 ```

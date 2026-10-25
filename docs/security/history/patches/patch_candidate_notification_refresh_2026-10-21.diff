@@ -1,0 +1,169 @@
+diff --git a/frontend/components/notifications/notification-bell.tsx b/frontend/components/notifications/notification-bell.tsx
+--- a/frontend/components/notifications/notification-bell.tsx
++++ b/frontend/components/notifications/notification-bell.tsx
+@@ -2,3 +2,3 @@
+ "use client"
+ 
+-import { useState, useEffect, useCallback } from "react"
++import { useState, useEffect, useCallback, useRef } from "react"
+ import { Bell, CheckCheck, Users, DollarSign, Plane, Megaphone, X, Trash2 } from "lucide-react"
+ import { cn } from "@/lib/utils"
+ import { getSupabaseClient } from "@/lib/supabase"
+ import { useLanguage } from "@/lib/LanguageContext"
+ import { useTheme } from "@/lib/ThemeContext"
+ import { motion, AnimatePresence } from "framer-motion"
+ import { useRouter } from "next/navigation"
+ import { dispatchDeepLink } from "@/lib/hooks/useDeepLinkRouter"
++import { useHaptic } from "@/lib/hooks"
+ 
+@@ -54,4 +56,29 @@ export function NotificationBell() {
+     const router = useRouter()
++    const haptic = useHaptic()
+     const [isOpen, setIsOpen] = useState(false)
++    const [isRinging, setIsRinging] = useState(false)
+     const [notifications, setNotifications] = useState<Notification[]>([])
+     const [unreadCount, setUnreadCount] = useState(0)
++    const lastRefreshRef = useRef<number>(0)
++
++    const handleBellClick = () => {
++        const nextOpen = !isOpen
++        setIsOpen(nextOpen)
++        if (nextOpen) {
++            setIsRinging(true)
++            haptic.selection()
++            fetchNotifications()
++            const now = Date.now()
++            if (now - lastRefreshRef.current >= 2000) {
++                lastRefreshRef.current = now
++                if (typeof window !== "undefined") {
++                    window.dispatchEvent(
++                        new CustomEvent("tabidachi-trigger-refresh", {
++                            detail: { timestamp: now, source: "notification-bell" }
++                        })
++                    )
++                }
++            }
++        }
++    }
+@@ -207,5 +234,13 @@ export function NotificationBell() {
+             {/* Bell Button */}
+             <button
+-                onClick={() => { setIsOpen(!isOpen); if (!isOpen) fetchNotifications(); }}
++                onClick={handleBellClick}
+                 className="relative p-2 rounded-full hover:bg-stone-100 dark:hover:bg-slate-800 transition-colors active:scale-95"
+                 aria-label={zh ? "通知" : "Notifications"}
+             >
+-                <Bell className="w-5 h-5 text-slate-600 dark:text-slate-300" />
++                <motion.div
++                    animate={{ rotate: isRinging ? [0, -14, 14, -10, 10, -5, 5, 0] : 0 }}
++                    transition={{ duration: 0.55, ease: "easeInOut" }}
++                    onAnimationComplete={() => setIsRinging(false)}
++                >
++                    <Bell className="w-5 h-5 text-slate-600 dark:text-slate-300" />
++                </motion.div>
+diff --git a/frontend/components/views/itinerary-view.tsx b/frontend/components/views/itinerary-view.tsx
+--- a/frontend/components/views/itinerary-view.tsx
++++ b/frontend/components/views/itinerary-view.tsx
+@@ -170,2 +170,17 @@ export function ItineraryView() {
+ 
++    // 🔔 全域重新整理事件監聽 (通知鈴鐺連動)
++    useEffect(() => {
++        const handleGlobalRefresh = async () => {
++            try {
++                if (activeTripId) {
++                    await Promise.allSettled([reloadTripDetail(), reloadCapsules()])
++                } else {
++                    await reloadTrips()
++                }
++            } catch (err) {
++                console.warn("[GlobalRefresh] Handled gracefully in ItineraryView:", err)
++            }
++        }
++        window.addEventListener('tabidachi-trigger-refresh', handleGlobalRefresh)
++        return () => window.removeEventListener('tabidachi-trigger-refresh', handleGlobalRefresh)
++    }, [activeTripId, reloadTripDetail, reloadCapsules, reloadTrips])
++
+diff --git a/frontend/components/itinerary/TabijiHomeDashboard.tsx b/frontend/components/itinerary/TabijiHomeDashboard.tsx
+--- a/frontend/components/itinerary/TabijiHomeDashboard.tsx
++++ b/frontend/components/itinerary/TabijiHomeDashboard.tsx
+@@ -25,2 +25,1 @@
+-import { ZenRenew } from "@/components/ui/zen-renew"
+ import { getTripCoverUrl } from "@/lib/destination-covers"
+@@ -140,7 +139,0 @@ export function TabijiHomeDashboard({
+-                    {onRefresh && (
+-                        <ZenRenew 
+-                            onRefresh={onRefresh} 
+-                            successMessage={t('update_success')} 
+-                            errorMessage={t('update_failed')} 
+-                        />
+-                    )}
+diff --git a/frontend/components/itinerary/ItineraryHeader.tsx b/frontend/components/itinerary/ItineraryHeader.tsx
+--- a/frontend/components/itinerary/ItineraryHeader.tsx
++++ b/frontend/components/itinerary/ItineraryHeader.tsx
+@@ -10,2 +10,1 @@
+-import { ZenRenew } from "@/components/ui/zen-renew"
+ import { calculateBiasLocation } from "@/lib/geo-utils"
+@@ -178,2 +177,0 @@ export function ItineraryHeader({
+-
+-                        <ZenRenew onRefresh={onRefresh} successMessage={t('update_success')} errorMessage={t('update_failed')} />
+diff --git a/frontend/components/views/tools-view.tsx b/frontend/components/views/tools-view.tsx
+--- a/frontend/components/views/tools-view.tsx
++++ b/frontend/components/views/tools-view.tsx
+@@ -30,2 +30,1 @@
+-import { ZenRenew } from "@/components/ui/zen-renew"
+ import { TripSwitcher } from "@/components/trip-switcher"
+@@ -155,2 +154,16 @@ export function ToolsView() {
+ 
++    // 🔔 全域重新整理事件監聽 (通知鈴鐺連動)
++    useEffect(() => {
++        const handleGlobalRefresh = async () => {
++            try {
++                const r = await getExchangeRate(selectedCurrency || 'JPY')
++                setRate(r)
++                await Promise.allSettled([reloadExpenses(), tripMutate()])
++            } catch (err) {
++                console.warn("[GlobalRefresh] Handled gracefully in ToolsView:", err)
++            }
++        }
++        window.addEventListener('tabidachi-trigger-refresh', handleGlobalRefresh)
++        return () => window.removeEventListener('tabidachi-trigger-refresh', handleGlobalRefresh)
++    }, [selectedCurrency, reloadExpenses, tripMutate])
++
+@@ -716,10 +729,0 @@ export function ToolsView() {
+-                                <ZenRenew
+-                                    onRefresh={async () => {
+-                                        const r = await getExchangeRate(selectedCurrency || 'JPY')
+-                                        setRate(r)
+-                                        await Promise.all([reloadExpenses(), tripMutate()])
+-                                    }}
+-                                    successMessage={t('tv_receipt_synced')}
+-                                    errorMessage={t('update_failed')}
+-                                    className="text-[#1E2927]/70 dark:text-[#E5EBEA]/70 hover:text-[#0B3026] dark:hover:text-[#E5EBEA]"
+-                                />
+diff --git a/frontend/components/views/info-view.tsx b/frontend/components/views/info-view.tsx
+--- a/frontend/components/views/info-view.tsx
++++ b/frontend/components/views/info-view.tsx
+@@ -23,2 +23,1 @@
+-import { ZenRenew } from "@/components/ui/zen-renew"
+ import { TripSwitcher } from "@/components/trip-switcher"
+@@ -165,2 +164,13 @@ export function InfoView() {
+ 
++    // 🔔 全域重新整理事件監聽 (通知鈴鐺連動)
++    useEffect(() => {
++        const handleGlobalRefresh = async () => {
++            try {
++                await handleRefresh()
++            } catch (err) {
++                console.warn("[GlobalRefresh] Handled gracefully in InfoView:", err)
++            }
++        }
++        window.addEventListener('tabidachi-trigger-refresh', handleGlobalRefresh)
++        return () => window.removeEventListener('tabidachi-trigger-refresh', handleGlobalRefresh)
++    }, [handleRefresh])
++
+@@ -377,5 +387,0 @@ export function InfoView() {
+-                            <ZenRenew
+-                                onRefresh={handleRefresh}
+-                                successMessage={t('update_success')}
+-                                errorMessage={t('update_failed')}
+-                            />

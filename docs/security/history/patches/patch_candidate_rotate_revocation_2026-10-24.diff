@@ -1,0 +1,139 @@
+diff --git a/backend/routers/auth.py b/backend/routers/auth.py
+--- a/backend/routers/auth.py
++++ b/backend/routers/auth.py
+@@ -436,41 +436,99 @@ async def recover_account_with_key(
++class VerifiedSession(BaseModel):
++    user_id: str
++    token_version: int = 1
++
++
++async def get_verified_session_with_grace(
++    request: Request,
++    auth_header: str = Header(None, alias="Authorization"),
++    secret: str = Depends(get_session_secret),
++) -> VerifiedSession:
++    """
++    🛡️ 自癒寬限期身分驗證依賴 (Grace-Period Token Verification)
++    優先標準驗證 (有效 JWT)；若過期但簽名未遭竄改且在 90 天寬限期內，允許存取保險庫自癒。
++    回傳 VerifiedSession 物件以嚴格閉合金鑰輪替後的版本號檢驗。
++    """
++    if not auth_header or not auth_header.startswith("Bearer "):
++        raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
++
++    token = auth_header.split(" ")[1].strip()
++
++    # 1. 優先標準解碼校驗 (未過期)
++    try:
++        payload = jwt.decode(
++            token, 
++            secret, 
++            algorithms=["HS256"],
++            issuer="tabiji-core",
++            options={"require": ["sub", "iss", "iat", "exp", "type"]}
++        )
++        sub = str(payload.get("sub") or "").strip()
++        if payload.get("type") == "device_session" and UUID_V4_REGEX.match(sub):
++            return VerifiedSession(
++                user_id=sub,
++                token_version=int(payload.get("ver") or 1)
++            )
++    except jwt.ExpiredSignatureError:
++        # 2. 🛡️ 寬限期驗簽 (過期 <= 90 天之合法伺服器簽署歷史憑證)
++        try:
++            payload = jwt.decode(
++                token,
++                secret,
++                algorithms=["HS256"],
++                issuer="tabiji-core",
++                options={"verify_exp": False, "require": ["sub", "iss", "iat", "type"]}
++            )
++            now = int(time.time())
++            sub = str(payload.get("sub") or "").strip()
++            if (
++                payload.get("type") == "device_session" 
++                and UUID_V4_REGEX.match(sub)
++                and (now - payload.get("iat", 0) <= 90 * 86400)
++            ):
++                return VerifiedSession(
++                    user_id=sub,
++                    token_version=int(payload.get("ver") or 1)
++                )
++        except Exception:
++            pass
++    except Exception:
++        pass
++
++    raise HTTPException(status_code=401, detail="Invalid or expired token")
++
++
+ @router.post("/rotate", response_model=SessionResponse)
+ @limiter.limit("5/minute")
+ async def rotate_recovery_key(
+     request: Request,
+-    current_user: str = Depends(get_verified_user),
++    session: VerifiedSession = Depends(get_verified_session_with_grace),
+     secret: str = Depends(get_session_secret),
+     supabase: Client = Depends(get_supabase),
+ ):
+     """
+     🔄 憑證輪替與歷史暴露作廢 (Revocation & Key Rotation)
+     核發全新引繼金鑰，立即使所有先前暴露或外洩之金鑰失效。
+     """
+-    user_rec = await run_in_threadpool(get_user_record_by_id, supabase, current_user)
+-    current_ver = (user_rec.get("credential_version", 1) if user_rec else 1) + 1
++    user_rec = await run_in_threadpool(get_user_record_by_id, supabase, session.user_id)
++    if not user_rec:
++        raise HTTPException(status_code=404, detail="User not found")
++
++    db_ver = int(user_rec.get("credential_version") or 1)
++
++    # 🛡️ ADR-009 輪替端點狀態分流硬性撤銷守衛 (Enforce Revocation on Rotation Endpoint)
++    # 若帳號曾受威脅並已輪替 (db_ver > 1)，歷史舊版 Token (token_ver < db_ver) 嚴禁再次發起輪替！
++    if db_ver > 1 and session.token_version < db_ver:
++        raise HTTPException(
++            status_code=401,
++            detail="Credential has been rotated. This session is revoked."
++        )
++
++    current_ver = db_ver + 1
+ 
+     new_full_key, new_key_id, new_secret_hash = generate_prefixed_recovery_key()
+     vault_key = derive_vault_key(secret)
+     new_encrypted_key = encrypt_recovery_key(new_full_key, vault_key)
+     try:
+         await run_in_threadpool(
+             lambda: supabase.table("users").update({
+                 "recovery_key_id": new_key_id,
+                 "recovery_secret_hash": new_secret_hash,
+                 "recovery_key_encrypted": new_encrypted_key,
+                 "credential_version": current_ver,
+                 "recovery_updated_at": "now()"
+-            }).eq("id", current_user).execute()
++            }).eq("id", session.user_id).execute()
+         )
+     except Exception as e:
+         print(f"🔥 [Auth] Failed to rotate recovery credentials: {e}")
+         raise HTTPException(status_code=503, detail="Credential rotation temporarily unavailable")
+ 
+-    new_token = create_session_jwt(current_user, secret, current_ver)
++    new_token = create_session_jwt(session.user_id, secret, current_ver)
+     return SessionResponse(
+         access_token=new_token,
+-        user_id=current_user,
++        user_id=session.user_id,
+         recovery_key=new_full_key,
+         is_new=False,
+     )
+-
+-
+-class VerifiedSession(BaseModel):
+-    user_id: str
+-    token_version: int = 1
+-
+-
+-async def get_verified_session_with_grace(
+-    request: Request,
+-    auth_header: str = Header(None, alias="Authorization"),
+-    secret: str = Depends(get_session_secret),
+-) -> VerifiedSession:
+-... (Hoisted above rotate_recovery_key)

@@ -35,10 +35,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # 🛡️ 嚴格物理排除名單（五大受保護研究/規格檔案，嚴禁讀寫與污染）
 PROTECTED_FILES = {
-    "docs/research/2026-10-17-interoperability-first-byok-zero-marginal-architecture-deep-research.md",
-    "docs/research/2026-10-17-pwa-avant-garde-kill-native-app-movement-deep-research.md",
-    "docs/research/2026-10-17-pwa-permission-sandbox-and-interoperability-matrix.md",
-    "docs/research/2026-10-18-calendar-and-maps-interoperability-deep-research.md",
+    "docs/research/offline_pwa/2026-10-17-interoperability-first-byok-zero-marginal-architecture-deep-research.md",
+    "docs/research/offline_pwa/2026-10-17-pwa-avant-garde-kill-native-app-movement-deep-research.md",
+    "docs/research/offline_pwa/2026-10-17-pwa-permission-sandbox-and-interoperability-matrix.md",
+    "docs/research/offline_pwa/2026-10-18-calendar-and-maps-interoperability-deep-research.md",
     "docs/specs/features/universal-travel-interoperability-hub-spec.md",
 }
 

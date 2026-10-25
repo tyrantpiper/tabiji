@@ -1,0 +1,95 @@
+--- a/frontend/lib/sync-engine.ts
++++ b/frontend/lib/sync-engine.ts
+@@ -25,6 +25,19 @@ function inferEntityType(url: string): 'expense' | 'itinerary_item' | 'trip' |
+ 
++let isSyncEnginePaused = false;
++
++export const SyncEngineControl = {
++    pause: () => {
++        console.warn("🛑 [SyncEngine] Outbox frozen due to auth desync.");
++        isSyncEnginePaused = true;
++    },
++    resume: () => {
++        console.log("▶️ [SyncEngine] Outbox thawed. Resuming sync.");
++        isSyncEnginePaused = false;
++    },
++    isPaused: () => isSyncEnginePaused,
++};
++
+ /**
+  * 🔄 Sync Queue Manager (IndexedDB Wrapper)
+  */
+--- a/frontend/lib/sync-hooks.ts
++++ b/frontend/lib/sync-hooks.ts
+@@ -1,5 +1,6 @@
+ import { useEffect } from 'react';
+-import { SyncQueue, SyncRequest, MAX_RETRIES } from './sync-engine';
++import { SyncQueue, SyncRequest, MAX_RETRIES, SyncEngineControl } from './sync-engine';
+ import { useSyncStatusStore } from './stores/syncStatusStore';
+ import { toast } from 'sonner';
++import { triggerReauthPrompt } from './auth-session';
+@@ -57,3 +58,3 @@ export function useBackgroundSync() {
+         const processQueue = async () => {
+-            if (!navigator.onLine || isProcessing) return;
++            if (!navigator.onLine || isProcessing || SyncEngineControl.isPaused()) return;
+             isProcessing = true;
+@@ -116,3 +117,10 @@ export function useBackgroundSync() {
+                             if (res.status === 401 && typeof window !== 'undefined') {
+-                                console.warn('[SyncEngine] 🔄 401 detected during replay, refreshing session...');
++                                console.error('[SyncEngine] 🚨 401 encountered during replay. Freezing outbox to preserve unsynced data.');
++                                SyncEngineControl.pause();
++                                triggerReauthPrompt();
++                                break; // ❌ 絕對不 incrementRetry，絕對不 dequeue！
+                             }
+--- a/frontend/lib/auth-session.ts
++++ b/frontend/lib/auth-session.ts
+@@ -14,2 +14,12 @@
+ let inFlightSessionPromise: Promise<string | null> | null = null;
++let isReauthBroadcasting = false;
++
++export function triggerReauthPrompt() {
++    if (isReauthBroadcasting) return;
++    isReauthBroadcasting = true;
++    if (typeof window !== "undefined") {
++        window.dispatchEvent(new CustomEvent("tabiji:session_reauth_required"));
++    }
++    setTimeout(() => { isReauthBroadcasting = false; }, 3000);
++}
+@@ -213,2 +223,41 @@ export async function ensureValidSession(): Promise<string | null> {
+ 
++const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
++
++export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<string> {
++    const cleanKey = newRecoveryKey.trim();
++    if (!TBJ_REC_REGEX.test(cleanKey)) {
++        throw new Error("引繼碼格式無效，格式應為 tbj_rec_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
++    }
++    const currentUuid = typeof window !== "undefined" ? localStorage.getItem(RECOVERY_KEY) : null;
++    const res = await fetch("/api/auth/session", {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify({ recovery_key: cleanKey })
++    });
++    if (!res.ok) {
++        if (res.status === 401) {
++            throw new Error("此引繼碼無效或已被輪替，請確認是否為最新金鑰");
++        }
++        throw new Error(`連線驗證失敗 (${res.status})`);
++    }
++    const data = await res.json();
++    if (!data?.access_token || !data?.user_id) {
++        throw new Error("伺服器回傳憑證無效");
++    }
++    if (currentUuid && data.user_id.toLowerCase() !== currentUuid.toLowerCase()) {
++        throw new Error("🚨 身分不相符：此引繼碼屬於另一個帳號！為保護此設備上的現有行程，禁止原地覆蓋。");
++    }
++    localStorage.setItem(TOKEN_KEY, data.access_token);
++    localStorage.setItem("user_recovery_key", cleanKey);
++    localStorage.setItem(RECOVERY_KEY, data.user_id);
++    if (typeof window !== "undefined") {
++        window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", { detail: { recoveryKey: cleanKey } }));
++        window.dispatchEvent(new CustomEvent("tabiji:session_restored"));
++    }
++    SyncEngineControl.resume();
++    return data.access_token;
++}

@@ -55,7 +55,7 @@ backend/migrations/20260308_security_hardening.sql
 !docs/security/**/*.json
 !.agents/skills/**/*.json
 # Sentinel 中間產物排除 (避免追蹤臨時 scan findings)
-docs/security/findings_*.json
+docs/security/**/findings_*.json
 gcp-sa-key.json
 
 # Scratch, Diff & Backup files

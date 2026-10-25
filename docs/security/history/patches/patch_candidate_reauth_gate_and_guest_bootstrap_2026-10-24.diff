@@ -1,0 +1,92 @@
+diff --git a/frontend/lib/auth-session.ts b/frontend/lib/auth-session.ts
+--- a/frontend/lib/auth-session.ts
++++ b/frontend/lib/auth-session.ts
+@@ -32,7 +32,23 @@ export function dismissReauthPrompt() {
+     lastDismissedAt = Date.now();
+ }
+ 
++/**
++ * 🛡️ 檢查當前本機是否具備完整之登入使用者身分 (已登入狀態機閘門)
++ */
++export function isUserLoggedIn(): boolean {
++    if (typeof window === "undefined") return false;
++    try {
++        return Boolean(localStorage.getItem("user_nickname") && localStorage.getItem(RECOVERY_KEY));
++    } catch {
++        return false;
++    }
++}
++
+ export function triggerReauthPrompt(reason?: string) {
++    // 🛡️ 訪客/未登入者硬阻斷：未登入者絕不具備重認證上下文，嚴禁廣播彈窗
++    if (!isUserLoggedIn()) {
++        console.warn("🛡️ [Auth] Suppressed triggerReauthPrompt: User is not logged in.");
++        return;
++    }
+     // 🛡️ 重認證成功後 5 秒冷卻，或使用者點擊「稍後驗證」關閉後 5 秒輕量冷卻防震盪
+     if (Date.now() - lastRestoredAt < 5000) return;
+     if (Date.now() - lastDismissedAt < 5000) return;
+@@ -203,9 +219,17 @@ export async function ensureValidSession(): Promise<string | null> {
+                 console.warn(`⚠️ [Auth] Session exchange returned HTTP ${res.status}`);
+                 if (res.status === 401) {
+-                    lastExchangeFailedAt = Date.now();
+-                    const err = await res.json().catch(() => ({}));
+-                    const detail = typeof err.detail === "string" ? err.detail : undefined;
+-                    // 🛡️ 凡換票收到 401，立即攜帶原因喚醒重認證彈窗，拒絕靜默假死
+-                    triggerReauthPrompt(detail);
++                    if (isUserLoggedIn()) {
++                        lastExchangeFailedAt = Date.now();
++                        const err = await res.json().catch(() => ({}));
++                        const detail = typeof err.detail === "string" ? err.detail : undefined;
++                        // 🛡️ 凡換票收到 401，立即攜帶原因喚醒重認證彈窗，拒絕靜默假死
++                        triggerReauthPrompt(detail);
++                    } else {
++                        // 🛡️ 訪客自癒機制：無效孤兒 UUID 立即物理清除，重置冷卻，絕不觸發彈窗！
++                        console.warn("🛡️ [Auth] Purging invalid orphan identity for unauthenticated visitor.");
++                        localStorage.removeItem(TOKEN_KEY);
++                        localStorage.removeItem("user_recovery_key");
++                        localStorage.removeItem(RECOVERY_KEY);
++                        lastExchangeFailedAt = 0; // 🔓 立即解開冷卻，保證使用者輸入暱稱時可秒開換票
++                    }
+                 }
+                 return null;
+             }
+diff --git a/frontend/components/auth/session-reauth-modal.tsx b/frontend/components/auth/session-reauth-modal.tsx
+--- a/frontend/components/auth/session-reauth-modal.tsx
++++ b/frontend/components/auth/session-reauth-modal.tsx
+@@ -33,6 +33,14 @@ export function SessionReauthModal() {
+     useEffect(() => {
+         const handleReauthRequired = (e: Event) => {
++            // 🛡️ 硬閘門防衛：若使用者根本尚未登入（無暱稱或無 UUID），絕對不開啟彈窗
++            const hasLoggedInIdentity = typeof window !== "undefined" && Boolean(
++                localStorage.getItem("user_nickname") && localStorage.getItem("user_uuid")
++            );
++            if (!hasLoggedInIdentity) {
++                console.warn("🛡️ [Auth] Suppressed SessionReauthModal: User is not logged in yet.");
++                return;
++            }
+             const customEvent = e as CustomEvent<{ reason?: string }>;
+             const reason = customEvent.detail?.reason;
+             setCustomReason(reason || null);
+diff --git a/frontend/components/views/landing-page.tsx b/frontend/components/views/landing-page.tsx
+--- a/frontend/components/views/landing-page.tsx
++++ b/frontend/components/views/landing-page.tsx
+@@ -109,7 +109,14 @@ export function LandingPage() {
+     const handleLogin = async () => {
+         if (!nickname.trim()) { toast.warning(t('landing_please_enter_nickname')); return }
+-        let uuid = localStorage.getItem("user_uuid")
++        localStorage.setItem("user_nickname", nickname)
++
++        // 1. 若連線正常，優先透過 ensureValidSession 讓伺服器正規派發合法憑證與使用者 ID (若本機已有則複用)
++        let uuid = localStorage.getItem("user_uuid")
++        if (!uuid && navigator.onLine) {
++            await ensureValidSession().catch(() => null)
++            uuid = localStorage.getItem("user_uuid")
++        }
++
++        // 2. 📴 離線防衛降級路徑：完全斷網時本機安全派發離線 UUID，保證 100% 正常進入 AppShell
+         if (!uuid) {
+             uuid = generateUUID()
+             localStorage.setItem("user_uuid", uuid)
+         }
+-        localStorage.setItem("user_nickname", nickname)

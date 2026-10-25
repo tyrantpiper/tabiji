@@ -1,0 +1,134 @@
+diff --git a/supabase/migrations/20261022_data_api_explicit_grants.sql b/supabase/migrations/20261022_data_api_explicit_grants.sql
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/supabase/migrations/20261022_data_api_explicit_grants.sql
+@@ -0,0 +1,52 @@
++-- Migration: 20261022_data_api_explicit_grants.sql
++-- Description: Hardening Data API grants for Supabase 2026-10-30 breaking change,
++--              enforcing RLS on user_preferences, and securing public schema tables, views, and sequences.
++
++-- 1. 補齊 user_preferences 遺漏之 RLS 防線 (杜絕敏感偏好洩漏)
++ALTER TABLE IF EXISTS public.user_preferences ENABLE ROW LEVEL SECURITY;
++
++DO $$
++BEGIN
++    DROP POLICY IF EXISTS "Users can read own preferences" ON public.user_preferences;
++    DROP POLICY IF EXISTS "Users can manage own preferences" ON public.user_preferences;
++END $$;
++
++CREATE POLICY "Users can read own preferences" ON public.user_preferences
++    FOR SELECT USING (auth.uid()::text = user_id);
++
++CREATE POLICY "Users can manage own preferences" ON public.user_preferences
++    FOR ALL USING (auth.uid()::text = user_id);
++
++-- 2. 針對現有核心業務資料表進行顯式 GRANT (PostgREST DAC 前置檢查)
++DO $$
++DECLARE
++    tbl text;
++    tables text[] := ARRAY[
++        'app_settings',
++        'expenses',
++        'itineraries',
++        'itinerary_items',
++        'medicines',
++        'notifications',
++        'profiles',
++        'push_subscriptions',
++        'trip_capsule_entries',
++        'trip_members',
++        'user_preferences',
++        'users'
++    ];
++BEGIN
++    FOREACH tbl IN ARRAY tables LOOP
++        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = tbl) THEN
++            EXECUTE format('GRANT SELECT ON TABLE public.%I TO anon;', tbl);
++            EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO authenticated;', tbl);
++            EXECUTE format('GRANT ALL PRIVILEGES ON TABLE public.%I TO service_role;', tbl);
++        END IF;
++    END LOOP;
++END $$;
++
++-- 3. 針對業務 View 進行顯式授權
++GRANT SELECT ON public.user_trips_view TO anon, authenticated, service_role;
++
++-- 4. 針對 Sequence 授予存取權限 (保障自增 ID 寫入正常)
++GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+diff --git a/backend/tests/test_supabase_grants_sentinel.py b/backend/tests/test_supabase_grants_sentinel.py
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/backend/tests/test_supabase_grants_sentinel.py
+@@ -0,0 +1,63 @@
++"""
++Supabase Data API Grant Sentinel (Post-2026-10-30 Breaking Change Defense)
++Ensures that any PostgreSQL table or view created in public schema explicitly 
++includes GRANT statements and RLS activation in the same migration file.
++"""
++import re
++from pathlib import Path
++import pytest
++
++ROOT_DIR = Path(__file__).resolve().parent.parent.parent
++MIGRATION_DIRS = [
++    ROOT_DIR / "supabase" / "migrations",
++    ROOT_DIR / "backend" / "migrations",
++]
++
++TABLE_CREATE_PATTERN = re.compile(
++    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?([a-zA-Z0-9_]+)",
++    re.IGNORECASE
++)
++VIEW_CREATE_PATTERN = re.compile(
++    r"CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(?:public\.)?([a-zA-Z0-9_]+)",
++    re.IGNORECASE
++)
++
++def test_all_future_migrations_contain_explicit_grants():
++    """
++    Asserts that any table created in migrations has corresponding GRANT statements.
++    """
++    violations = []
++    
++    for mig_dir in MIGRATION_DIRS:
++        if not mig_dir.exists():
++            continue
++        for sql_file in mig_dir.glob("*.sql"):
++            content = sql_file.read_text(encoding="utf-8")
++            
++            tables = TABLE_CREATE_PATTERN.findall(content)
++            for table in tables:
++                if table.lower().startswith("temp_"):
++                    continue
++                
++                grant_pattern = re.compile(
++                    rf"GRANT\s+.*ON\s+(?:TABLE\s+)?(?:public\.)?{table}\s+TO\s+(?:authenticated|service_role)",
++                    re.IGNORECASE
++                )
++                rls_pattern = re.compile(
++                    rf"ALTER\s+TABLE\s+(?:public\.)?{table}\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
++                    re.IGNORECASE
++                )
++                
++                has_grant = bool(grant_pattern.search(content))
++                has_rls = bool(rls_pattern.search(content))
++                
++                if sql_file.name >= "20261022" and not (has_grant and has_rls):
++                    violations.append(
++                        f"[{sql_file.name}] Table '{table}' missing explicit GRANT or RLS statement."
++                    )
++
++            views = VIEW_CREATE_PATTERN.findall(content)
++            for view in views:
++                view_grant_pattern = re.compile(
++                    rf"GRANT\s+SELECT\s+ON\s+(?:VIEW\s+)?(?:public\.)?{view}\s+TO",
++                    re.IGNORECASE
++                )
++                if sql_file.name >= "20261022" and not view_grant_pattern.search(content):
++                    violations.append(
++                        f"[{sql_file.name}] View '{view}' missing explicit GRANT SELECT statement."
++                    )
++
++    assert not violations, "🚨 Supabase 10/30 Data API 違規：\n" + "\n".join(violations)

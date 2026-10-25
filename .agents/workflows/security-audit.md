@@ -77,13 +77,13 @@ Dispatches the composite `security-sentinel` skill:
 3. **Physical Validator Confrontation**:
    - Run the Python harness runner to launch background `agy.exe` subagents in `--sandbox` mode:
      ```bash
-     python .agents/skills/security-sentinel/scripts/runner.py --candidates candidates.json --output docs/security/findings.json --timeout 120
+     python .agents/skills/security-sentinel/scripts/runner.py --candidates docs/security/history/candidates/candidates_{topic}_{date}.json --output docs/security/history/findings/findings_{topic}.json --timeout 120
      ```
 4. **Mantis Patch & In-Memory PoC Synthesis**:
-   - For confirmed vulnerabilities, generate in-memory `pytest` reproduction tests and candidate patches with exact block replacement instructions.
+   - For confirmed vulnerabilities, generate in-memory `pytest` reproduction tests and candidate patches with exact block replacement instructions in `docs/security/history/patches/`.
 5. **Ledger Atomic Update & Reporting**:
    - Update `docs/security/security-coverage-ledger.json`.
-   - Produce `docs/security/reports/security_sentinel_report_{YYYY-MM-DD}.md`.
+   - Produce `docs/security/reports/{YYYY-MM}/security_sentinel_report_{YYYY-MM-DD}.md`.
 6. **Human Gate**:
    - Present findings to human developer. Await authorization before delegating to `@dev` for fixes and `@qa` for regression testing.
 
