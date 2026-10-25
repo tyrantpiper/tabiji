@@ -87,6 +87,55 @@
 
 ---
 
+### 里程碑六：機構級反向投資審查（Counter Due-Diligence）防禦體系 (AD-188)
+
+1. **戰略背景與創意收割者防禦**：
+   - 鑑於 Web3、AI 領域充斥以「孵化中心」或「天使專題」為幌子的刷單中介，試圖誘使團隊上傳未公開 Prompt 拓撲、Schema 與財務架構。
+   - 於 [`docs/legal/investment/spec_investor_counter_due_diligence_response.md`](file:///d:/Project/tabiji/travel-pwa/docs/legal/investment/spec_investor_counter_due_diligence_response.md) 實裝三道不可妥協的機構級合規試金石（Gate 1: 官方機構企業域名通訊；Gate 2: 雙向非公開保密協議 NDA；Gate 3: 100% 純現金股權出資確認，明確排除內部算力/流量券等 In-Kind Credit）。
+2. **正式回函標準化範本**：
+   - 制定中英標準覆函文本，維護專案商業安全與嚴肅性。
+
+---
+
+### 里程碑七：TIPO 商標註冊佈局與《巴黎公約》6 個月跨國優先權 (AD-189)
+
+1. **核心類別封鎖**：
+   - 於 [`docs/legal/trademark/2026-tipo-trademark-filing-and-paris-convention-spec.md`](file:///d:/Project/tabiji/travel-pwa/docs/legal/trademark/2026-tipo-trademark-filing-and-paris-convention-spec.md) 完成第 09 類（行動電話應用與電子行程表）、第 39 類（觀光旅遊安排與客票代售預訂）、第 42 類（AIaaS、SaaS 與地圖託管）之精準 NCL 尼斯分類佈局。
+2. **跨國優先權時鐘與零紙本隱私防禦**：
+   - 依《巴黎公約》第 4 條鎖定 2026-10-12 至 2027-04-12 跨國優先權窗口，未來可無縫延展至日本特許廳 (JPO)；
+   - 全流程採用 TIPO e-Filing 電子送達，杜絕實體平信寄送至戶籍住址，落實創辦人個人極致隱私保護。
+
+---
+
+### 里程碑八：教育部 U-start 35 萬開辦費合規提領與 Vercel 商業雷區防禦 (AD-190)
+
+1. **35 萬創業開辦費合法公轉私架構**：
+   - 於 [`docs/specs/business/2026-ustart-grant-allocation-and-cloud-compliance.md`](file:///d:/Project/tabiji/travel-pwa/docs/specs/business/2026-ustart-grant-allocation-and-cloud-compliance.md) 明確劃分：上限 70%（約 24.5 萬元）透過聘僱核心架構師合法提領研發薪資，檢附 Git Commit、日誌與所得扣繳；30%（約 10.5 萬元）用於會計師簽證、商標規費與雲端年費實報實銷。
+2. **Vercel Hobby 商業停機雷區防禦**：
+   - 識別掛載導購或收費後 Vercel 觸發 `503 DEPLOYMENT_PAUSED` 風險，確立「以 U-start 業務費升級 Vercel Pro」與「零成本備援遷移至 Cloudflare Pages」之雙保險策略。
+
+---
+
+### 里程碑九：聯盟行銷多網域歸因與出款審核 (Payout Audit) SOP (AD-191)
+
+1. **換網域零斷流底層原理**：
+   - 於 [`docs/specs/business/affiliate-payout-and-multi-domain-attribution-guide.md`](file:///d:/Project/tabiji/travel-pwa/docs/specs/business/affiliate-payout-and-multi-domain-attribution-guide.md) 確立 Travelpayouts / Klook 分潤取決於 URL 內的 Marker Token 與目標端 30~90 天 Cookie，遷移自訂網域 `tabijiapp.com` 不會中斷歸因。
+2. **雙渠道並存（Two-Channel Architecture）**：
+   - 正式站與測試站並存白名單，徹底防禦首次請款人工稽核（Payout Audit）卡單風險。
+
+---
+
+### 里程碑十：AaaS 焦油坑逃脫、YC Startup School 申請與敏感訊息脫敏 (AD-192)
+
+1. **矽谷焦油坑定理（Tarpit Idea）與破局解法**：
+   - 於 [`docs/research/2026-10-24-aaas-travel-tarpit-and-u-start-audit.md`](file:///d:/Project/tabiji/travel-pwa/docs/research/2026-10-24-aaas-travel-tarpit-and-u-start-audit.md) 深度剖析泛用型 B2C 旅遊規劃之低頻與高 CAC 死穴，確立 Tabiji 轉向「弱網離線自癒 + 跨國醫療移動照護」高防禦性利基。
+2. **YC Startup School Taipei 2026 申請答題包**：
+   - 於 [`docs/research/2026-yc-startup-school-taipei-application-pack.md`](file:///d:/Project/tabiji/travel-pwa/docs/research/2026-yc-startup-school-taipei-application-pack.md) 針對 Garry Tan 率領之 YC 旗艦活動產出高密度英中文申請規格。
+3. **全域敏感訊息淨化 (Zero Leakage)**：
+   - 全面清洗所有個人私密通訊、身分證號與內部金鑰佔位符，確認 Git 暫存區 100% 安全無虞。
+
+---
+
 ## 🏛️ 架構決策紀錄 (Architecture Decision Records)
 
 - **AD-182 (Map-in-Chat Decoupling)**: 嚴禁在對話框內初始化重量級 WebGL Canvas 實例。一律採用靜態 Web Mercator 瓦片切片渲染 MiniMap，並透過 Window CustomEvent 向單例 MasterMap 派發相機運鏡指令。
@@ -95,6 +144,11 @@
 - **AD-185 (Edge Proxy & Multi-Engine Onion Fallback)**: 外部搜尋引擎一律視為不可信且隨時可能觸發 429/403/202。實施本地多引擎並行 (Tier 1) -> Cloudflare Anycast (Tier 2) -> Wikipedia API (Tier 4) 的階梯式無損降級。
 - **AD-186 (Mobile Viewport Docking Standard)**: 行動端 (< 768px) 對話介面必須提供高度小於等於 60px 的 Docked Mini-Bar 狀態，保證隨時可還原底層地圖操作。
 - **AD-187 (Next.js 16 Partial Prefetching Compliance)**: 使用 Next.js 16 Cache Components 時，必須顯式宣告 `partialPrefetching: true`，消除框架潛在配置偏離。
+- **AD-188 (Counter Due-Diligence Institutional Protocol)**: 面對外部投資邀請，強制執行企業域名、雙向 NDA 與 100% 現金確認三道門檻，防禦技術與架構被無償收割。
+- **AD-189 (Paris Convention Trademark Priority Moat)**: 以 TIPO 雙案送件確立優先權基點（第 09、39、42 類），捨棄審查高風險的動態商標，以平面商標結合代碼軟體著作權築起跨國護城河。
+- **AD-190 (Grant Capital Allocation & Cloud Compliance)**: U-start 35 萬創業開辦費採取 70% 研發薪資公轉私 + 30% 業務費合規實報實銷架構，並建立 Vercel 商業升級與 Cloudflare Pages 遷移備援。
+- **AD-191 (Multi-Domain Affiliate Payout Attribution)**: 建立生產站與測試站雙渠道並存架構，確保網域遷移後 Cookie 歸因不斷流並通過出款風控審核。
+- **AD-192 (AaaS Tarpit Escape & High-Resilience Domain Pivot)**: 確立擺脫泛用型消費旅遊焦油坑戰略，以端側 WebGL 空間拓撲與弱網離線自癒建立差異化，並備妥 YC Startup School 國際賽道申請資料。
 
 ---
 
@@ -106,6 +160,9 @@
 - **FP-29: 佔位符未提供本機環境隔離**
   - **Symptom**: 資安脫敏審查將網址改為 `REDACTED_WORKER_HOST`，導致本機執行時遭遇 DNS `getaddrinfo failed` 警告。
   - **Lesson**: 任何佔位符字串在進入網路請求前，必須有 `if "REDACTED" in url: return fallback` 的安全短路守衛。
+- **FP-30: 誤將自訂網域視為通過 Vercel 商用檢驗**
+  - **Symptom**: 誤以為花錢買網域綁在 Vercel Hobby 上即可合法商用，忽略其自動爬蟲對聯盟行銷與收費行為之偵測。
+  - **Lesson**: 一旦涉及真實商業或導購代碼，必須以公司預算升級 Vercel Pro 或遷移至完全支援免費商用的 Cloudflare Pages。
 
 ---
 
@@ -114,6 +171,7 @@
 1. **離線地圖離線瓦片快取擴充**：評估 Serwist Service Worker 快取 Esri/OpenFreeMap 瓦片之 LRU 上限（目標 50MB）。
 2. **三源 POI 文化資訊多語系同步**：確保日語、繁中與英文在 In-Card MiniMap 與 POI 卡片切換時流暢無縫。
 3. **雲端發布與 Cloud Run CI/CD 監控**：持續追蹤 Cloudflare Edge Search Proxy 之連線延遲（維持在 300ms 內）。
+4. **YC Startup School 台北實體活動送件**：確認英文申請欄位與 Demo 網址體驗，於截止前完成線上投遞。
 
 ---
 
@@ -154,6 +212,20 @@
     "id": "INV-SEC-015",
     "title": "Redacted Host Short-Circuit Guard",
     "content": "Any proxy URL configuration using REDACTED placeholders must short-circuit gracefully to fallback mechanisms without triggering getaddrinfo DNS network exceptions."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-SEC-016",
+    "title": "Counter Due-Diligence Tri-Gate Defense",
+    "content": "All unsolicited inbound investment/incubation inquiries must satisfy corporate email domain, bilateral NDA, and 100% legal tender cash affirmation before sharing proprietary architecture or schemas."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-SEC-017",
+    "title": "Commercial Cloud Compliance and Deployment Guard",
+    "content": "Any production build utilizing commercial affiliate redirect or monetization tokens must operate on Vercel Pro or Cloudflare Pages to prevent 503 DEPLOYMENT_PAUSED fair-use suspension."
   },
   {
     "domain": "ios_ui",
