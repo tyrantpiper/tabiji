@@ -3,6 +3,12 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **Multi-Agent Cross-Session Physical Isolation**: Pre-commit workflows in multi-agent environments must never use sweeping globs or git add . to prevent accidental contamination from concurrent active sessions. Staging must be whitelist-driven and strictly bounded to session scope.
+
+- **Security Coverage Ledger Pointer Conservation**: Any relocation of historical security reports or patch artifacts must be accompanied by an atomic update to docs/security/security-coverage-ledger.json, maintaining 100% target conservation verified via python scripts/validate_security_ledger.py.
+
+- **Directory-Aware Security Sentinel Artifact Emission**: All future Security Sentinel runs and /security-audit workflows must emit candidate diffs to docs/security/history/patches/, candidates to docs/security/history/candidates/, findings to docs/security/history/findings/, and reports to docs/security/reports/YYYY-MM/ to preserve root hygiene.
+
 - **Commercial Cloud Compliance and Deployment Guard**: Any production build utilizing commercial affiliate redirect or monetization tokens must operate on Vercel Pro or Cloudflare Pages to prevent 503 DEPLOYMENT_PAUSED fair-use suspension.
 
 - **Counter Due-Diligence Tri-Gate Defense**: All unsolicited inbound investment/incubation inquiries must satisfy corporate email domain, bilateral NDA, and 100% legal tender cash affirmation before sharing proprietary architecture or schemas.
