@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Two-Pass Geo Tool-Calling Injection Mandate**: Whenever nearby search executes in First-Pass, the coordinates and candidate places must be explicitly injected into the Second-Pass User Content with an unconditioned mandate to call add_itinerary_item.
+
 - **State-Bifurcated Revocation Guard on /api/auth/rotate Endpoint**: POST /api/auth/rotate must depend on get_verified_session_with_grace. When db_ver > 1 (credential rotated), any incoming token where session.token_version < db_ver must be immediately rejected with HTTP 401 'Credential has been rotated. This session is revoked.', preventing revocation bypass attacks.
 
 - **Projection Invariant for Encrypted Recovery Key**: get_user_record_by_id in backend/routers/auth.py must explicitly project 'recovery_key_encrypted' in Supabase select query to prevent vault decrypt returning None on legitimate upgrades.

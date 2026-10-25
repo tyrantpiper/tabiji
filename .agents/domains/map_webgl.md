@@ -3,6 +3,10 @@
 > **所屬領域**: MapLibre GL JS, WebGL Canvas, 3D Globe, 大圓航線, 手勢隔離, CSP Worker
 
 ## 🏛️ 架構決策 (Decisions)
+- **Cross-Component FlyTo Event Bus**: Component-level location previews must dispatch tabidachi:map-flyto custom events with bounded lat/lng rather than opening external map windows.
+
+- **In-Card MiniMap Lightweight Tile Rendering**: Chat POI preview cards must use Web Mercator tile URL calculations (https://server.arcgisonline.com/.../15/{y}/{x}) instead of initializing full WebGL MapLibre instances to prevent GPU memory pressure.
+
 - **Explicit maxzoom 12 Bound on Mapterhorn 3D DEM Raster Source**: Mapterhorn GLO-30 DEM elevation slices only exist up to Zoom 12 globally. TileJSON defaults to maxzoom: null which triggers MapLibre's maxzoom 22 default, causing massive 404 tile request storms when camera pitch >= 30 deg. All raster-dem sources using Mapterhorn must explicitly inject maxzoom: 12 to eliminate invalid network fetches and rely on GPU bilinear shader overzooming.
 
 - **Pinned Lock for MapLibre GL (^6.9.0) and Lucide React (^0.473.0)**: MapLibre GL must be pinned to ^6.9.0 to prevent mat4.invert singular projection crashes in >=6.10, and Lucide React must be pinned to ^0.473.0 to prevent icon renaming breaking changes. Never blindly bulk-upgrade major dependencies in Dependabot without standalone sandboxed verification.

@@ -338,6 +338,35 @@ GET_WORLD_TIME_DECL = types.FunctionDeclaration(
 )
 GET_WORLD_TIME_TOOL = types.Tool(function_declarations=[GET_WORLD_TIME_DECL])
 
+# 🌐 2026 空間感知地理查詢工具宣告 (基於 Photon + Overpass 雙軌韌性代理)
+SEARCH_NEARBY_PLACES_DECL = types.FunctionDeclaration(
+    name="search_nearby_places",
+    description="Search real-world points of interest (restaurants, convenience stores, attractions, pharmacies) near a landmark, address, or coordinates. Use this to ground recommendations in factual spatial data.",
+    parameters=types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "anchor_place": types.Schema(
+                type=types.Type.STRING,
+                description="Landmark, station, or address name (e.g., '淺草寺', '新宿車站', 'Tokyo Station')."
+            ),
+            "category": types.Schema(
+                type=types.Type.STRING,
+                description="Category of places: 'restaurant', 'cafe', 'convenience', 'pharmacy', 'attraction', 'supermarket', 'shopping'."
+            ),
+            "keyword": types.Schema(
+                type=types.Type.STRING,
+                description="Optional specific cuisine or item (e.g., '拉麵', '鰻魚飯', '藥妝', '抹茶')."
+            ),
+            "radius_meters": types.Schema(
+                type=types.Type.INTEGER,
+                description="Search radius in meters (default 500, max 1500)."
+            )
+        },
+        required=["anchor_place"]
+    )
+)
+SEARCH_NEARBY_PLACES_TOOL = types.Tool(function_declarations=[SEARCH_NEARBY_PLACES_DECL])
+
 # 組合工具集 (維持既有引用相容)
 NEURAL_LINK_TOOLS = [
     types.Tool(
@@ -349,7 +378,7 @@ NEURAL_LINK_TOOLS = [
     )
 ]
 
-# 🌐 2026: 全功能神經連結 + 聯網工具集 (行程/刪除/記帳/搜尋/精讀/世界時間一應俱全)
+# 🌐 2026: 全功能神經連結 + 聯網工具集 (行程/刪除/記帳/搜尋/精讀/世界時間/地理感知一應俱全)
 ALL_CHAT_TOOLS = [
     types.Tool(
         function_declarations=[
@@ -359,6 +388,7 @@ ALL_CHAT_TOOLS = [
             SEARCH_WEB_DECL,
             FETCH_WEBPAGE_DECL,
             GET_WORLD_TIME_DECL,
+            SEARCH_NEARBY_PLACES_DECL,
         ]
     )
 ]
@@ -372,6 +402,7 @@ SEARCH_CHAT_TOOLS = [
             SEARCH_WEB_DECL,
             FETCH_WEBPAGE_DECL,
             GET_WORLD_TIME_DECL,
+            SEARCH_NEARBY_PLACES_DECL,
         ]
     )
 ]

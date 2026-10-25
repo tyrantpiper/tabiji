@@ -12,6 +12,7 @@ const nextConfig = {
         root: __dirname,      // 物理座標鎖定
     },
     cacheComponents: true,       // 🚀 [2026 Stable] 開啟組件級緩存與局部預渲染 (PPR)
+    partialPrefetching: true,    // ⚡ [2026 Stable] 消除 Warning，開啟局部預抓取 (Partial Prefetching) 實現秒開跳轉
     experimental: {
         optimizePackageImports: [
             "lucide-react",

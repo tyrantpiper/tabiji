@@ -403,6 +403,7 @@ def format_temporal_header(temporal_info: Dict[str, Any]) -> str:
         lines.append(f"- 行程目的地時間: 同使用者時區 ({dest_str})")
 
     lines.append(f"- 行程生命週期: {temporal_info['lifecycle_desc']}")
+    lines.append("  (注意：無論行程日期是否已結束或尚未開始，使用者隨時可能進行模擬規劃、編輯或調整。當使用者詢問周邊或推薦具體美食/景點時，務必照常調用 add_itinerary_item 派發空間卡片供使用者自由加入行程)")
 
     if temporal_info.get("is_today_completed"):
         lines.append("- 當前活動狀態: 🌙 【今日排定活動已全部結束】(使用者詢問時請主動確認，並可建議休息或夜間自由活動)")

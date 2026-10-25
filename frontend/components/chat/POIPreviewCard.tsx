@@ -75,13 +75,14 @@ export default function POIPreviewCard({
     const [selectedDay, setSelectedDay] = useState(poiData.day_number || 1)
     const [selectedTime, setSelectedTime] = useState(poiData.time_slot || "12:00")
 
+    // 🛡️ 防空虛島：檢查是否具有非 (0,0) 的有效經緯度坐標
+    const hasValidCoords = Boolean(poiData.lat && poiData.lng && !(poiData.lat === 0 && poiData.lng === 0))
+
     // 🆕 v3.7: 自動獲取三源整合資料
     useEffect(() => {
         const fetchEnrichedData = async () => {
             if (!poiData.place_name) return
 
-            // 🛡️ 防空虛島：當 AI 沒給有效座標時跳過三源豐富化，避免 (0,0) 查到 Null Island
-            const hasValidCoords = !!(poiData.lat && poiData.lng && !(poiData.lat === 0 && poiData.lng === 0))
             if (!hasValidCoords) {
                 debugLog("跳過三源豐富化：無有效座標", poiData.place_name)
                 return
@@ -108,7 +109,7 @@ export default function POIPreviewCard({
         }
 
         fetchEnrichedData()
-    }, [poiData.place_name, poiData.category, poiData.lat, poiData.lng, userId])
+    }, [poiData.place_name, poiData.category, poiData.lat, poiData.lng, userId, hasValidCoords])
 
     // 分類顏色映射
     const categoryColors: Record<string, string> = {
@@ -184,14 +185,27 @@ export default function POIPreviewCard({
     }
 
     /**
-     * 在地圖上預覽
+     * 在地圖上預覽 (優先觸發內部 MapLibre 視圖平滑運鏡)
      */
     const handlePreviewOnMap = () => {
-        if (poiData.lat && poiData.lng) {
-            const url = `https://www.google.com/maps/search/?api=1&query=${poiData.lat},${poiData.lng}`
-            openExternalLink(url)
-        } else {
-            // 用地名搜尋
+        const hasValidCoords = typeof poiData.lat === 'number' && typeof poiData.lng === 'number' &&
+            Number.isFinite(poiData.lat) && Number.isFinite(poiData.lng) &&
+            Math.abs(poiData.lat) <= 90 && Math.abs(poiData.lng) <= 180 &&
+            !(poiData.lat === 0 && poiData.lng === 0)
+
+        if (hasValidCoords && typeof window !== "undefined") {
+            // 🟢 內部 MapLibre 平滑運鏡事件，不再彈出外跳視窗打斷沉浸體驗
+            window.dispatchEvent(new CustomEvent("tabidachi:map-flyto", {
+                detail: {
+                    lng: poiData.lng,
+                    lat: poiData.lat,
+                    zoom: 16,
+                    place_name: poiData.place_name
+                }
+            }))
+            toast.info(zh ? `📍 已聚焦：${poiData.place_name}` : `📍 Focused: ${poiData.place_name}`)
+        } else if (poiData.place_name) {
+            // 兜底降級：僅在無精確座標時允許安全外部搜尋
             const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(poiData.place_name)}`
             openExternalLink(url)
         }
@@ -248,6 +262,56 @@ export default function POIPreviewCard({
                     )}
                 </div>
             </div>
+
+            {/* 🗺️ In-Card MiniMap 內嵌微型地圖小窗 */}
+            {hasValidCoords && poiData.lat && poiData.lng && (
+                <div
+                    onClick={handlePreviewOnMap}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handlePreviewOnMap() }}
+                    className="relative mx-3 mb-2.5 h-28 rounded-lg overflow-hidden border border-tabiji-forest/15 dark:border-white/10 group cursor-pointer shadow-inner bg-slate-100 dark:bg-slate-900 select-none transition-transform active:scale-[0.99]"
+                    title={zh ? "點擊使主地圖平滑運鏡至此地點" : "Click to fly to this location on the master map"}
+                >
+                    {/* 背景街道瓦片底圖 */}
+                    <div
+                        className="absolute inset-0 bg-cover bg-center transition-transform duration-700 ease-out group-hover:scale-110"
+                        style={{
+                            backgroundImage: `url(https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${(() => {
+                                const zoom = 15
+                                const n = Math.pow(2, zoom)
+                                const x = Math.floor(((poiData.lng! + 180) / 360) * n)
+                                const latRad = (poiData.lat! * Math.PI) / 180
+                                const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n)
+                                return `${zoom}/${y}/${x}`
+                            })()})`,
+                            backgroundColor: '#e2e8f0'
+                        }}
+                    />
+                    {/* 微妙漸層遮罩 */}
+                    <div className="absolute inset-0 bg-linear-to-t from-black/40 via-transparent to-black/10 group-hover:from-black/50 transition-colors" />
+
+                    {/* 中心微縮標記與呼吸光圈 */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="relative flex items-center justify-center">
+                            <span className="absolute w-8 h-8 rounded-full bg-red-500/35 animate-ping" />
+                            <span className="relative z-10 p-1.5 rounded-full bg-red-600 text-white shadow-lg ring-2 ring-white">
+                                <MapPin className="w-3.5 h-3.5" />
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* 底部浮動膠囊標籤 */}
+                    <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
+                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-black/65 backdrop-blur-xs text-white/95 font-medium flex items-center gap-1 shadow-xs border border-white/10">
+                            🛰️ {poiData.lat.toFixed(4)}, {poiData.lng.toFixed(4)}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-600 text-white font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-xs flex items-center gap-1">
+                            {zh ? "全景運鏡 ↗" : "FlyTo ↗"}
+                        </span>
+                    </div>
+                </div>
+            )}
 
             {/* Body */}
             {/* 🆕 v3.7: 三源整合顯示 */}

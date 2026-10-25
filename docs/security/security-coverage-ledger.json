@@ -1,15 +1,29 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-24T11:30:00Z",
+  "last_audit_date": "2026-10-25T09:02:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 238,
-    "audited_targets": 238,
+    "total_targets": 244,
+    "audited_targets": 244,
     "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 45,
-    "dismissed_hypotheses": 142
+    "remediated_vulnerabilities": 47,
+    "dismissed_hypotheses": 146
   },
   "targets": [
+    {
+      "id": "backend/main.py:second_pass_prompt_disconnect",
+      "target_type": "backend_llm_stream",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "logic_flow_bypass",
+        "dos_timeout_collapse"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_chat_geo_dock.md",
+      "validator_details": "Verified: unprompted Second-Pass bypassed POIPreviewCard generation on pure recommendation queries. Resolved via patch_candidate_chat_geo_dock_2026-10-25.diff with explicit add_itinerary_item generation mandate and 6.5s timeout buffer.",
+      "remediated_at": "2026-10-25T09:02:00Z",
+      "resolution": "Enforced batch add_itinerary_item tool calling in second-pass grounding prompt and increased first-pass timeout from 4.5s to 6.5s."
+    },
     {
       "id": "frontend/lib/auth-session.ts:reauth_gate_and_guest_bootstrap",
       "target_type": "frontend_session_manager",
@@ -3006,6 +3020,73 @@
       "validator_details": "Dismissed by physical runner.py validator & enhanced with 300ms debounced revalidation: Event listener properly registered and revalidates profile state on recovery key rotation.",
       "remediated_at": null,
       "resolution": "No vulnerability detected; hardening applied via tabiji:recovery_key_updated debounced revalidation."
+    },
+    {
+      "id": "backend/services/poi_service.py:overpass_ql_injection",
+      "target_type": "backend_service",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "injection",
+        "overpass_ql_escape"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "validator_details": "Verified by In-Memory PoC TC-1 (test_geo_agentic_sentinel_poc.py): Malicious semicolon and quotes stripped by sanitize_overpass_keyword.",
+      "remediated_at": "2026-10-25T01:45:00Z",
+      "resolution": "Formulated sanitize_overpass_keyword guard in docs/security/patch_candidate_geo_agentic_2026-10-25.diff."
+    },
+    {
+      "id": "backend/main.py:geo_tool_ssrf_and_null_island",
+      "target_type": "backend_chat_stream",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "ssrf_and_type_confusion"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "validator_details": "Dismissed by physical runner.py validator: force_config allowed_function_names whitelist safely contains only approved tools and stubs unhandled calls.",
+      "remediated_at": null,
+      "resolution": "No vulnerability detected; force_config whitelist verified resilient."
+    },
+    {
+      "id": "backend/services/intent_router.py:geo_intent_bypass_and_tool_leak",
+      "target_type": "backend_intent_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "intent_bypass",
+        "race_condition"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "validator_details": "Dismissed by physical runner.py validator: Intent classifier is a stateless pure function with zero shared mutable state.",
+      "remediated_at": null,
+      "resolution": "No vulnerability detected; regex routing verified thread-safe."
+    },
+    {
+      "id": "frontend/components/chat/POIPreviewCard.tsx:xss_link_url_protocol",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "xss_protocol_injection"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "validator_details": "Dismissed by physical runner.py validator: Map preview URLs are hardcoded with Google Maps base and encodeURIComponent parameters.",
+      "remediated_at": null,
+      "resolution": "No vulnerability detected; hardcoded base URL verified."
+    },
+    {
+      "id": "frontend/components/itinerary/MultiDayMasterMap.tsx:maplibre_nan_flyto_crash",
+      "target_type": "frontend_map_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "webgl_singular_crash"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/security_sentinel_report_2026-10-25_geo_agentic.md",
+      "validator_details": "Dismissed by physical runner.py validator: Coordinates are guarded with typeof === number and !isNaN checks before rendering.",
+      "remediated_at": null,
+      "resolution": "No vulnerability detected; existing NaN defensive guard verified."
     }
   ]
 }

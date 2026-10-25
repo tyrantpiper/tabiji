@@ -3,6 +3,8 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **Redacted Host Short-Circuit Guard**: Any proxy URL configuration using REDACTED placeholders must short-circuit gracefully to fallback mechanisms without triggering getaddrinfo DNS network exceptions.
+
 - **Dependabot Group Scope Restricted to Minor & Patch Updates**: Dependabot groups must specify 'update-types: ["minor", "patch"]' to strictly isolate breaking major upgrades into standalone PRs, preventing monolithic group PRs from breaking the entire test and compilation pipeline.
 
 - **Pinned Transitive Package Alignment in Dependabot & npm Overrides**: When direct dependencies strictly pin internal sub-packages (e.g. vitest strictly pinning @vitest/mocker), Dependabot single-package transitive updates fail with exit code 1. Root dependencies must be bumped in unison with npm overrides incrementally merged to guarantee 0 vulnerabilities and 0 container resolution crashes.

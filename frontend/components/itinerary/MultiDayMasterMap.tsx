@@ -116,6 +116,46 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
 
     const mapRef = useRef<MapRef>(null)
 
+    // 🌐 2026 神經地圖雙向聯動監聽器 (接收 ChatWidget / POIPreviewCard 運鏡信號)
+    useEffect(() => {
+        if (typeof window === "undefined") return
+
+        const handleFlyToEvent = (e: Event) => {
+            const customEv = e as CustomEvent<{ lng: number; lat: number; zoom?: number; place_name?: string }>
+            if (!customEv.detail) return
+            const { lng, lat, zoom = 16, place_name = "" } = customEv.detail
+
+            // 🛡️ WebGL 奇異矩陣與邊界守衛防禦
+            if (
+                typeof lng !== "number" || typeof lat !== "number" ||
+                !Number.isFinite(lng) || !Number.isFinite(lat) ||
+                (lng === 0 && lat === 0) ||
+                lng < -180 || lng > 180 || lat < -85.051129 || lat > 85.051129
+            ) {
+                console.warn("[NeuralMap] Ignored invalid flyTo coordinates:", lng, lat)
+                return
+            }
+
+            // 更新跳動大頭針標記
+            setSearchResultMarker({ lat, lng, name: place_name || "選定地點" })
+
+            const map = mapRef.current?.getMap()
+            if (map) {
+                mapRef.current?.flyTo({
+                    center: [lng, lat],
+                    zoom,
+                    duration: 1800,
+                    essential: true
+                })
+            }
+        }
+
+        window.addEventListener("tabidachi:map-flyto", handleFlyToEvent)
+        return () => {
+            window.removeEventListener("tabidachi:map-flyto", handleFlyToEvent)
+        }
+    }, [])
+
     // 🆕 處理底圖 POI 點擊 (MapLibre queryRenderedFeatures 查詢)
     const handleMapClick = useCallback((e: MapLayerMouseEvent) => {
         const map = mapRef.current?.getMap()

@@ -3,10 +3,11 @@ POI 服務層 - 整合 OSM Overpass + OpenTripMap API
 提供附近設施搜索功能，並優化 AI Token 消耗
 """
 
+import os
 import httpx
 import asyncio
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from math import radians, cos, sin, sqrt, atan2
 from urllib.parse import quote
 from datetime import datetime
@@ -15,6 +16,15 @@ import logging
 from utils.url_safety import is_safe_url
 
 logger = logging.getLogger("poi-service")
+
+# 🛡️ [Security Sentinel Guard] Overpass QL Injection & Character Sanitizer
+def sanitize_overpass_keyword(keyword: str) -> str:
+    """Strip dangerous Overpass QL characters (quotes, semicolons, brackets) to prevent QL injection."""
+    if not keyword:
+        return ""
+    sanitized = re.sub(r'[\";\[\]\(\)\{\}\<\>]', '', str(keyword))
+    sanitized = sanitized.replace('\n', '').replace('\r', '')
+    return sanitized.strip()[:64]
 
 # 🆕 Phase 1 Observability (Lazy Loading to prevent Windows import deadlock)
 _POI_METRICS = {"latency": None, "requests": None}
@@ -257,8 +267,11 @@ async def search_opentripmap(
     """
     kind = CATEGORY_OPENTRIPMAP_MAP.get(category, "interesting_places")
     
-    # 注意：OpenTripMap 免費版需要 API Key，但額度很高
-    # 如果沒有 key，嘗試無 key 請求
+    # 🛡️ 2026 防護：OpenTripMap 現行規範強制要求 API Key，無 Key 立即短路返回以杜絕 401 慢阻斷
+    effective_key = api_key or os.getenv("OPENTRIPMAP_API_KEY", "")
+    if not effective_key:
+        return []
+
     url = f"{OPENTRIPMAP_API}/radius"
     params = {
         "radius": radius,
@@ -266,10 +279,9 @@ async def search_opentripmap(
         "lat": lat,
         "kinds": kind,
         "format": "json",
-        "limit": 20
+        "limit": 20,
+        "apikey": effective_key
     }
-    if api_key:
-        params["apikey"] = api_key
     
     # [SAFETY] SSRF Protection
     if not is_safe_url(url):
@@ -1022,3 +1034,169 @@ def get_source_urls(poi: Dict, place_name: str) -> list:
         })
     
     return sources
+
+
+async def execute_resilient_nearby_search(
+    anchor_place: str,
+    category: str = "restaurant",
+    keyword: str = "",
+    radius_meters: int = 500
+) -> List[Dict[str, Any]]:
+    """
+    🌐 2026 雙軌韌性周邊搜尋執行器 (執行於伺服端 First-Pass 工具調用中)
+    1. 驗證 anchor_place 防禦 SSRF 與超長字串
+    2. 調用 Photon 毫秒級定位真實經緯度 (杜絕 Null Island)
+    3. 清洗 keyword 防禦 Overpass QL 注入
+    4. 呼叫 search_poi_combined (帶 3.0s 嚴格超時熔斷)
+    5. 壓縮輸出 Top 4 地點，杜絕 Token 浪費
+    """
+    import math
+    clean_anchor = (anchor_place or "").strip()
+    if not clean_anchor or len(clean_anchor) > 120:
+        return []
+        
+    # SSRF 與協議守衛
+    if re.search(r'^(https?://|ftp://|file://|//|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', clean_anchor, re.I):
+        return []
+    if "169.254.169.254" in clean_anchor or "metadata.google.internal" in clean_anchor:
+        return []
+
+    # 1. 座標錨定 (優先 Photon)
+    lat, lng = None, None
+    try:
+        from services.geocode_service import geocode_with_photon
+        photon_res = await geocode_with_photon(clean_anchor, limit=1)
+        if photon_res and len(photon_res) > 0:
+            first = photon_res[0]
+            lat = first.get("lat")
+            lng = first.get("lng")
+    except Exception as geo_err:
+        logger.warning(f"[NearbySearch] Photon anchor lookup failed for '{clean_anchor}': {geo_err}")
+
+    if lat is None or lng is None:
+        return []
+
+    # 座標數值與 Null Island 防禦
+    try:
+        f_lat = float(lat)
+        f_lng = float(lng)
+    except (TypeError, ValueError):
+        return []
+
+    if not math.isfinite(f_lat) or not math.isfinite(f_lng):
+        return []
+    if not (-90.0 <= f_lat <= 90.0) or not (-180.0 <= f_lng <= 180.0):
+        return []
+    if abs(f_lat) < 1e-5 and abs(f_lng) < 1e-5:
+        return []
+
+    # 2. 清洗關鍵字
+    clean_kw = sanitize_overpass_keyword(keyword)
+    safe_radius = max(100, min(int(radius_meters), 1500))
+
+    # 3. 雙軌查詢 (優先嘗試 search_poi_combined，超時 2.5s)
+    raw_pois = []
+    try:
+        raw_pois = await asyncio.wait_for(
+            search_poi_combined(f_lat, f_lng, category=category, radius=safe_radius),
+            timeout=2.5
+        )
+    except Exception as search_err:
+        logger.warning(f"[NearbySearch] search_poi_combined timeout/error: {search_err}")
+        raw_pois = []
+
+    # 🛡️ 關鍵極速兜底：若 Overpass 逾時/429 或為空，立即啟動 Photon 毫秒級周邊模糊查詢
+    if not raw_pois:
+        try:
+            # 依關鍵字與類別判斷最佳 osm_tag 與 search_term (相容台灣、日本與歐美跨國圖資)
+            clean_kw = sanitize_overpass_keyword(keyword)
+            osm_tag = None
+            term = clean_kw or category
+            
+            # 智能映射 OSM Tag 與清洗通用虛詞
+            if category in ["restaurant", "food"] or any(k in term for k in ["拉麵", "美食", "餐廳", "小吃", "飯", "麵"]):
+                osm_tag = "amenity:restaurant"
+                term = clean_kw if clean_kw and clean_kw not in ["美食", "特色美食", "必吃美食"] else "restaurant"
+            elif category == "cafe" or "咖啡" in term:
+                osm_tag = "amenity:cafe"
+                term = clean_kw if clean_kw and clean_kw != "咖啡" else "cafe"
+            elif category in ["attraction", "sightseeing"] or any(k in term for k in ["景點", "必訪", "好玩", "參觀"]):
+                osm_tag = "tourism:attraction"
+                term = clean_kw if clean_kw and clean_kw not in ["景點", "必訪景點"] else "attraction"
+            elif category == "pharmacy" or any(k in term for k in ["藥局", "藥妝", "藥店"]):
+                osm_tag = "amenity:pharmacy"
+                term = clean_kw if clean_kw and clean_kw not in ["藥局", "藥妝"] else "pharmacy"
+            elif category == "convenience" or any(k in term for k in ["超商", "便利", "便利店", "便利商店"]):
+                osm_tag = "shop:convenience"
+                term = clean_kw if clean_kw and clean_kw not in ["超商", "便利店"] else "convenience"
+
+            user_agent = os.getenv("APP_USER_AGENT", "TabidachiTravelApp/2.0 (contact@tabidachi.app)")
+            params = {
+                "q": term,
+                "lat": f_lat,
+                "lon": f_lng,
+                "limit": 6
+            }
+            if osm_tag:
+                params["osm_tag"] = osm_tag
+
+            async with httpx.AsyncClient(timeout=3.0, headers={"User-Agent": user_agent}) as client:
+                photon_resp = await client.get("https://photon.komoot.io/api/", params=params)
+                p_data = photon_resp.json() if photon_resp.status_code == 200 else {}
+                
+                # 🛡️ 容錯雙軌：若帶特定 osm_tag 查無資料，自動去除 osm_tag 重試廣域查詢
+                if not p_data.get("features") and osm_tag:
+                    fallback_resp = await client.get(
+                        "https://photon.komoot.io/api/",
+                        params={"q": clean_kw or category, "lat": f_lat, "lon": f_lng, "limit": 6}
+                    )
+                    if fallback_resp.status_code == 200:
+                        p_data = fallback_resp.json()
+
+                for f in p_data.get("features", []):
+                    props = f.get("properties", {})
+                    coords = f.get("geometry", {}).get("coordinates", [])
+                    if len(coords) >= 2:
+                        poi_lng, poi_lat = coords[0], coords[1]
+                        dist = round(haversine_distance(f_lat, f_lng, poi_lat, poi_lng))
+                        raw_pois.append({
+                            "name": props.get("name") or props.get("street") or "周邊設施",
+                            "category": category,
+                            "lat": poi_lat,
+                            "lng": poi_lng,
+                            "distance": dist,
+                            "rating": None,
+                            "source": "photon"
+                        })
+        except Exception as photon_err:
+            logger.warning(f"[NearbySearch] Photon fallback error: {photon_err}")
+
+    # 4. 若有特定關鍵字，進行本機模糊篩選
+    filtered = []
+    if clean_kw:
+        for p in raw_pois:
+            name = p.get("name", "")
+            desc = p.get("desc", "")
+            if clean_kw.lower() in name.lower() or clean_kw.lower() in desc.lower():
+                filtered.append(p)
+    if not filtered:
+        filtered = raw_pois
+
+    # 5. 格式壓縮輸出 Top 4 地點 (剔除多邊形與雜項頂點)
+    compact_results = []
+    for item in filtered[:4]:
+        p_lat = item.get("lat")
+        p_lng = item.get("lng")
+        if p_lat is None or p_lng is None:
+            continue
+        compact_results.append({
+            "name": item.get("name", "未命名設施"),
+            "category": item.get("category", category),
+            "lat": round(float(p_lat), 6),
+            "lng": round(float(p_lng), 6),
+            "distance_m": int(item.get("distance", 0)),
+            "rating": round(float(item["rating"]), 1) if item.get("rating") else None
+        })
+
+    return compact_results
+

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "backend/services/poi_service.py:overpass_ql_injection",
+    "file_path": "backend/services/poi_service.py",
+    "attack_vector": "injection",
+    "hypothesis": "User-supplied keywords or place names containing quotes or semicolon sequences (e.g., '\"; out; node...') can escape parameterized templates and inject arbitrary Overpass QL commands, causing syntax crashes or upstream server DoS.",
+    "start_line": 50,
+    "end_line": 150
+  },
+  {
+    "id": "backend/main.py:geo_tool_ssrf_and_null_island",
+    "file_path": "backend/main.py",
+    "attack_vector": "ssrf_and_type_confusion",
+    "hypothesis": "search_nearby_places passing maliciously crafted anchor addresses (e.g. metadata IPs, invalid Unicode, or empty strings) without strict schema validation causes SSRF, unhandled exceptions, or falls back to Null Island (0,0) contaminating the AI reasoning context.",
+    "start_line": 1220,
+    "end_line": 1285
+  },
+  {
+    "id": "backend/services/intent_router.py:geo_intent_bypass_and_tool_leak",
+    "file_path": "backend/services/intent_router.py",
+    "attack_vector": "intent_bypass",
+    "hypothesis": "Dual-intent queries (e.g. 'Spent 500 JPY on ramen near Sensoji') can cause intent router race conditions where geo-search tools are evicted or expense tools are prematurely triggered in a search context.",
+    "start_line": 35,
+    "end_line": 100
+  },
+  {
+    "id": "frontend/components/chat/POIPreviewCard.tsx:xss_link_url_protocol",
+    "file_path": "frontend/components/chat/POIPreviewCard.tsx",
+    "attack_vector": "xss_protocol_injection",
+    "hypothesis": "POIPreviewCard rendering or launching link_url provided by AI tool calls without validating against http/https whitelist permits javascript: or data: URI execution.",
+    "start_line": 180,
+    "end_line": 230
+  },
+  {
+    "id": "frontend/components/itinerary/MultiDayMasterMap.tsx:maplibre_nan_flyto_crash",
+    "file_path": "frontend/components/itinerary/MultiDayMasterMap.tsx",
+    "attack_vector": "webgl_singular_crash",
+    "hypothesis": "Map event listeners receiving non-finite (NaN, Infinity) or out-of-range coordinates from AI map_action SSE triggers MapLibre transform singular matrix invert crash.",
+    "start_line": 30,
+    "end_line": 95
+  }
+]

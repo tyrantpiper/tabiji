@@ -171,5 +171,5 @@ async def test_workhorse_classify_timeout():
 
     with patch("services.intent_router.call_extraction_server", side_effect=slow_mock):
         intent = await _workhorse_classify("這是一句極度複雜且難以辨識的自然語言提問")
-        # 應於 1.0s 超時後降級為 CHAT
-        assert intent == "CHAT"
+        # 🛡️ 關鍵可用性防禦：逾時後平滑降級為具備全工具的 SEARCH 意圖，保持工具可用性
+        assert intent == "SEARCH"

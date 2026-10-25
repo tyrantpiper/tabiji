@@ -3,6 +3,8 @@
 > **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
 
 ## 🏛️ 架構決策 (Decisions)
+- **Mobile Viewport Mini-Bar Auto-Dock**: On mobile screens (< 768px), floating chat dialogs must support docking into a <= 60px mini-bar to preserve underlying map interaction without losing conversation state.
+
 - **5000ms Dismiss Cooldown for Reauth Modal**: When user clicks 'Dismiss (Stay Offline)' in SessionReauthModal, dismissReauthPrompt must set a 5000ms cooldown timestamp to prevent rapid background SWR requests from reopening the modal immediately.
 
 - **UX 機能融合與雙軌自癒備援法則 (AD-151)**: 極簡行動端 UI 應避免突兀的孤立重整控制項。在即時長連線（增量廣播）與快照拉取（全量權威）的雙軌架構中，手動重整應無痕依附於使用者既有高頻操作（如點擊通知鈴鐺、下拉手勢），兼顧介面極致留白美感與 100% 狀態自癒備援。

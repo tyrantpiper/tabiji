@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backend/main.py:first_pass_timeout_collapse",
+    "file_path": "backend/main.py",
+    "attack_vector": "dos_timeout_collapse",
+    "hypothesis": "First-pass generate_content timeout (4.5s) combined with search_nearby_places downstream HTTP latency causes unhandled asyncio.TimeoutError and drops spatial grounding context, falling back to ungrounded hallucination."
+  },
+  {
+    "id": "backend/main.py:second_pass_prompt_disconnect",
+    "file_path": "backend/main.py",
+    "attack_vector": "logic_flow_bypass",
+    "hypothesis": "System instruction in Second-Pass instructs add_itinerary_item ONLY if user explicitly commanded itinerary addition. For recommendation queries like 'nearby ramen', LLM produces raw text without function call, bypassing POIPreviewCard generation."
+  },
+  {
+    "id": "frontend/components/chat/POIPreviewCard.tsx:map_flyto_nan_injection",
+    "file_path": "frontend/components/chat/POIPreviewCard.tsx",
+    "attack_vector": "input_validation",
+    "hypothesis": "Dispatching tabidachi:map-flyto with malicious or NaN / infinite lat/lng values causes MapLibre WebGL canvas to throw unhandled exception or crash rendering pipeline."
+  },
+  {
+    "id": "frontend/components/chat-widget.tsx:mobile_dock_state_leak",
+    "file_path": "frontend/components/chat-widget.tsx",
+    "attack_vector": "ux_state_race",
+    "hypothesis": "Receiving map fly-to event in mobile viewport while chat is full-screen obscures master map. If docked state lacks keyboard event restoration or backdrop trap, user cannot return to chat or history scrolls uncontrollably."
+  }
+]

@@ -253,13 +253,22 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
+    // 🆕 v5.3: 行動端 Auto-Dock 狀態 (地圖運鏡時自動下潛收合，避免遮擋主地圖)
+    const [isDocked, setIsDocked] = useState(false)
     // 🆕 v3.5: AbortController for stopping generation
     const abortControllerRef = useRef<AbortController | null>(null)
 
     // 🛡️ Cleanup AbortController on unmount to prevent memory leaks
     useEffect(() => {
+        const handleMapFlyTo = () => {
+            if (typeof window !== "undefined" && window.innerWidth < 768) {
+                setIsDocked(true)
+            }
+        }
+        window.addEventListener("tabidachi:map-flyto", handleMapFlyTo)
         return () => {
             abortControllerRef.current?.abort()
+            window.removeEventListener("tabidachi:map-flyto", handleMapFlyTo)
         }
     }, [])
 
@@ -892,7 +901,27 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
         <>
             {/* Chat Window - Fullscreen Immersive with Desktop Centering & Dark Mode */}
             {isOpen && (
-                <div className="fixed inset-0 z-110 flex flex-col bg-black/35 backdrop-blur-xs animate-in fade-in duration-200">
+                isDocked ? (
+                    <div
+                        onClick={() => setIsDocked(false)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter') setIsDocked(false) }}
+                        className="fixed bottom-4 left-4 right-4 z-110 h-14 bg-tabiji-forest/95 dark:bg-[#182320]/95 backdrop-blur-md text-tabiji-paper rounded-2xl shadow-2xl flex items-center justify-between px-4 cursor-pointer animate-in slide-in-from-bottom duration-200 border border-white/20 active:scale-[0.98] select-none"
+                    >
+                        <div className="flex items-center gap-2.5 text-sm font-medium">
+                            <span className="relative flex h-3 w-3 shrink-0">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+                            </span>
+                            <span className="truncate">{zh ? "📍 正在地圖預覽地點... 點擊返回對話" : "📍 Previewing on map... Tap to resume"}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0 text-xs bg-white/20 hover:bg-white/30 text-white font-medium px-3 py-1.5 rounded-xl transition-all">
+                            <span>{zh ? "展開對話" : "Open"}</span>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="fixed inset-0 z-110 flex flex-col bg-black/35 backdrop-blur-xs animate-in fade-in duration-200">
                     <div className="w-full max-w-3xl mx-auto h-full flex flex-col bg-tabiji-paper dark:bg-tabiji-dark shadow-2xl md:border-x md:border-tabiji-forest/10 dark:md:border-white/10 overflow-hidden">
                         {/* Header - 和紙透光微毛玻璃手帳風 */}
                         <div className="bg-tabiji-paper/85 dark:bg-tabiji-dark/85 backdrop-blur-md p-4 flex justify-between items-center shrink-0 border-b border-tabiji-forest/10 dark:border-white/10">
@@ -1169,6 +1198,54 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
 
                         {/* Input Area */}
                         <div className="p-3 md:p-4 bg-tabiji-paper/95 dark:bg-tabiji-dark/95 border-t border-tabiji-forest/10 dark:border-white/10 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                            {/* 🌐 空間感知與探索快捷晶片 (Quick Action Chips) */}
+                            <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none select-none text-[11px]">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const prompt = zh ? "推薦這附近最熱門的必訪景點與特色美食" : "Recommend popular places and food nearby"
+                                        setInput(prompt)
+                                        textareaRef.current?.focus()
+                                    }}
+                                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-white/10 text-tabiji-forest dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-all active:scale-95 shadow-2xs cursor-pointer font-medium"
+                                >
+                                    <span>📍</span>
+                                    <span>{zh ? "探索周邊" : "Explore Nearby"}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInput(zh ? "推薦周圍道地的必吃拉麵與排隊名店" : "Recommend authentic ramen nearby")
+                                        textareaRef.current?.focus()
+                                    }}
+                                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-white/10 text-tabiji-charcoal dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-all active:scale-95 shadow-2xs cursor-pointer"
+                                >
+                                    <span>🍜</span>
+                                    <span>{zh ? "必吃拉麵" : "Ramen"}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInput(zh ? "查詢周邊最近的藥妝店或免稅超市" : "Find nearby pharmacies or supermarkets")
+                                        textareaRef.current?.focus()
+                                    }}
+                                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-white/10 text-tabiji-charcoal dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-all active:scale-95 shadow-2xs cursor-pointer"
+                                >
+                                    <span>💊</span>
+                                    <span>{zh ? "應急藥妝" : "Pharmacy"}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInput(zh ? "找附近安靜舒適的特色咖啡廳" : "Find cozy cafes nearby")
+                                        textareaRef.current?.focus()
+                                    }}
+                                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-white/10 text-tabiji-charcoal dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-all active:scale-95 shadow-2xs cursor-pointer"
+                                >
+                                    <span>☕</span>
+                                    <span>{zh ? "特色咖啡" : "Cafe"}</span>
+                                </button>
+                            </div>
                             {selectedImage && (
                                 <div className="mb-2 relative inline-block">
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1244,6 +1321,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                         </div>
                     </div>
                 </div>
+                )
             )}
 
             {/* Toggle Button - 2D Edge Draggable Liquid Glass */}

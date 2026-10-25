@@ -137,10 +137,10 @@ async def _workhorse_classify(message: str, api_key: Optional[str] = None) -> st
     eval_text = user_input_match.group(1).strip() if user_input_match else message
     prompt = CHAT_INTENT_PROMPT.format(message=eval_text[:200])
     try:
-        # 使用 1.0 秒超時保護，避免網路卡頓拖累對話首包時間
+        # 🛡️ 放寬至 1.8 秒超時保護，兼顧首包延遲與跨國網路穩定性
         raw_text = await asyncio.wait_for(
             call_extraction_server(prompt, intent_type="INTENT_PARSE", api_key=api_key),
-            timeout=1.0
+            timeout=1.8
         )
         match = re.search(r'\{[\s\S]*\}', raw_text)
         if match:
@@ -158,11 +158,12 @@ async def _workhorse_classify(message: str, api_key: Optional[str] = None) -> st
             if intent in intent_map:
                 return intent_map[intent]
     except asyncio.TimeoutError:
-        print("⏱️ [IntentRouter] 31B 工作馬分類逾時 (>1.0s)，平滑降級為 CHAT")
+        print("⏱️ [IntentRouter] 31B 工作馬分類逾時 (>1.8s)，平滑降級為全功能 SEARCH 意圖保持工具可用性")
     except Exception as e:
-        print(f"⚠️ [IntentRouter] 31B 工作馬分類失敗: {e}")
+        print(f"⚠️ [IntentRouter] 31B 工作馬分類失敗: {e}，平滑降級為 SEARCH 意圖")
 
-    return "CHAT"
+    # 🛡️ 容錯兜底：未明確短路為純問候語之對話，逾時時一律保留全功能 SEARCH 意圖交由 Gemini 模型自決
+    return "SEARCH"
 
 
 async def classify_chat_intent(

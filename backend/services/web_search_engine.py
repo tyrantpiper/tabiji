@@ -96,7 +96,7 @@ def is_safe_external_url(url: str) -> bool:
 
 
 # Cloudflare 邊緣檢索執行器配置 (Tier 2)
-CF_WORKER_SEARCH_URL = os.environ.get("CF_WORKER_SEARCH_URL", "https://tabidachi-search-proxy.REDACTED_WORKER_HOST")
+CF_WORKER_SEARCH_URL = os.environ.get("CF_WORKER_SEARCH_URL", "https://tabidachi-search-proxy.ryanpig228.workers.dev")
 CF_PROXY_SECRET = os.environ.get("CF_PROXY_SECRET", "")
 
 
@@ -105,7 +105,7 @@ async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict
     第 2 層保險：Cloudflare 邊緣檢索器 (Anycast IP 洗白)
     由全球 300+ 邊緣節點直接抓取並回傳結構化 JSON，零機房 IP 封鎖風險。
     """
-    if not CF_WORKER_SEARCH_URL:
+    if not CF_WORKER_SEARCH_URL or "REDACTED" in CF_WORKER_SEARCH_URL:
         return []
     client = get_search_client()
     headers = {"x-tabidachi-key": CF_PROXY_SECRET} if CF_PROXY_SECRET else {}
