@@ -50,12 +50,15 @@ blob-report/
 /.agents/*.log
 /implementation_plan.md
 .worktrees/
-/.agents/skills/
-/.agents/workflows/
+/.agents/skills/*
+!/.agents/skills/security-sentinel/
+/.agents/workflows/*
+!/.agents/workflows/push.md
 
 backend/migrations/20260308_security_hardening.sql
 *.json
 !docs/security/**/*.json
+!/.agents/skills/security-sentinel/**/*.json
 # Sentinel 中間產物排除 (避免追蹤臨時 scan findings)
 docs/security/**/findings_*.json
 gcp-sa-key.json
