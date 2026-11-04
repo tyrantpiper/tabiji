@@ -52,8 +52,15 @@ blob-report/
 .worktrees/
 /.agents/skills/*
 !/.agents/skills/security-sentinel/
+!/.agents/skills/audit/
+!/.agents/skills/daily-report/
+!/.agents/skills/fix/
+!/.agents/skills/push/
+!/.agents/skills/security-audit/
+!/.agents/skills/test/
+!/.agents/skills/ui-optimize/
+!/.agents/skills/verify-e2e/
 /.agents/workflows/*
-!/.agents/workflows/push.md
 
 backend/migrations/20260308_security_hardening.sql
 *.json

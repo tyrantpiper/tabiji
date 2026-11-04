@@ -5,7 +5,7 @@ import path from 'path'
 describe('🛡️ Security Sentinel: Root Hygiene and Artifact Governance Audit', () => {
     const repoRoot = path.resolve(__dirname, '..', '..')
     const skillPath = path.resolve(repoRoot, '.agents', 'skills', 'security-sentinel', 'SKILL.md')
-    const pushWorkflowPath = path.resolve(repoRoot, '.agents', 'workflows', 'push.md')
+    const pushWorkflowPath = path.resolve(repoRoot, '.agents', 'skills', 'push', 'SKILL.md')
     const runnerPath = path.resolve(repoRoot, '.agents', 'skills', 'security-sentinel', 'scripts', 'runner.py')
 
     it('TC-1: candidates.json in repo root MUST be relocated to docs/security/', () => {
