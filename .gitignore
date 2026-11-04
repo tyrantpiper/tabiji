@@ -52,6 +52,9 @@ blob-report/
 .worktrees/
 /.agents/skills/*
 !/.agents/skills/security-sentinel/
+!/.agents/skills/bug-hunter/
+!/.agents/skills/tdd-orchestrator/
+!/.agents/skills/self-healing-agent/
 !/.agents/skills/audit/
 !/.agents/skills/daily-report/
 !/.agents/skills/fix/
