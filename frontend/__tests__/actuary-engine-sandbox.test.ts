@@ -58,12 +58,23 @@ describe("🛡️ Global Tax Actuary Sandbox Engine Verification", () => {
             amount: 5500,
             isTaxInclusive: true,
             countryRule: jpRule,
-            exchangeRate: 0.22
+            exchangeRate: 0.22,
+            targetDate: new Date("2026-10-15T00:00:00Z") // 驗證 2026/11/01 改制前日本 100% 現折
         })
 
         expect(qualifiedRes.thresholdStatus).toBe("QUALIFIED")
         expect(qualifiedRes.shortfall).toBe(0)
-        expect(qualifiedRes.estimatedNetRefund).toBe(500) // 日本 100% 現折
+        expect(qualifiedRes.estimatedNetRefund).toBe(500) // 日本改制前 100% 現折
+
+        // 同步驗證改制後（2026/11/01 起）機場退稅扣除 5% 代辦手續費 = 475
+        const postReformRes = calculateTaxActuary({
+            amount: 5500,
+            isTaxInclusive: true,
+            countryRule: jpRule,
+            exchangeRate: 0.22,
+            targetDate: new Date("2026-11-05T00:00:00Z")
+        })
+        expect(postReformRes.estimatedNetRefund).toBe(475)
     })
 
     it("4. 驗證義大利 OTELLO 2.0 新制 €70.01 含稅門檻 (Tax-Inclusive Basis)", () => {

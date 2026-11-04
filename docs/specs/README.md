@@ -34,6 +34,8 @@ docs/specs/
 | [**`offline-emergency-medical-sentinel-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/architecture/offline-emergency-medical-sentinel-spec.md) | 🟢 Active | 海外突發急症中日英對照卡、AED/24H 藥局空間拓撲、跨時區慢病服藥生理時差排程。 | `backend/services/poi_service.py`<br>`scripts/simulations/simulate_emergency_medical.py` |
 | [**`cross-border-antimeridian-spatial-engine-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/architecture/cross-border-antimeridian-spatial-engine-spec.md) | 🟢 Active | 跨經度 180° 換日線短弧判定、Pacific-Centered BBox 消除 4.77x 螞蟻點視角崩潰、緯度鉗位防衛。 | `frontend/lib/geo-multi-day.ts`<br>`frontend/components/itinerary/MultiDayMasterMap.tsx` |
 | [**`offline-outbox-multi-master-convergence-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/architecture/offline-outbox-multi-master-convergence-spec.md) | 🟢 Active | 離線連續操作臨時 ID 級聯依賴解析、401 認證中斷物理凍結防丟失、行程分組並行重播。 | `frontend/lib/sync-engine.ts`<br>`frontend/lib/sync-hooks.ts` |
+| [**`single-origin-multi-persona-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/core-architecture/single-origin-multi-persona-spec.md) | 🟡 Draft | 單一源多形態架構 (SPEC-ARCH-002)：路徑動態分流、流體膠囊切換、統一 IndexedDB 隱私遮蔽與 100% 離線瓦片共享。 | `frontend/lib/stores/persona-store.ts`<br>`frontend/app/` |
+| [**`agy-worktree-sentinel-orchestration-spec.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/specs/core-architecture/agy-worktree-sentinel-orchestration-spec.md) | 🟢 Active | AGY CLI Boost & Teamwork Worktree 物理隔離與分層對抗哨兵架構 (SPEC-AGY-002)：解決 AD-194 跨會話碰撞、Attacker vs Defender 對抗閉環。 | `.agents/skills/security-sentinel/`<br>`docs/security/` |
 
 
 ### 1. 🧠 AI 智能與意圖模組 (`ai/`)

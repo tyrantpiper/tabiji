@@ -74,18 +74,101 @@ CHAT_INTENT_PROMPT = """分析使用者在旅遊 App 中的對話意圖，輸出
 """
 
 
+# 🛡️ 隱形格式與控制字元過濾正則 (涵蓋 ASCII 控制符、Soft Hyphen、CGJ、韓文填充符、Zero-Width、Bidi、Word Joiner、Deprecated Format、BOM、Variation Selectors 及 Tag 字元)
+INVISIBLE_FORMAT_CHARS_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u00ad\u034f\u061c\u115f\u1160\u180b-\u180e"
+    r"\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\u3164\ufeff\ufe00-\ufe0f"
+    r"\uffa0\U000e0000-\U000e01ef]"
+)
+
+# 🛡️ 系統合法前置與後置 Context 標記：涵蓋全庫所有系統脈絡包裝格式
+SYSTEM_PREFIX_ANCHOR_RE = re.compile(
+    r"^\s*(?:--- SYSTEM CONTEXT:\s*(?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\)|[A-Za-z0-9_ -]+)\s*---|--- USER PREFERENCES|【系統背景|【當前行程脈絡】|用戶詢問關於「|"
+    r"📍 \*\*附近|🔬 以下是來自維基百科|💰 \*\*即時機票參考價格|"
+    r"\[系統即時解析外部網頁資訊|\[系統提示：使用者上傳了一張圖片|\[WEATHER\]|\[2026 Neural Weather\]|\[CURRENT TIME)"
+)
+SYSTEM_BOUNDARY_END_RE = re.compile(
+    r"(?:--- END OF SYSTEM CONTEXT ---|-{20,}|用戶原始問題：|使用者需求：)\s*",
+    re.DOTALL,
+)
+USER_INPUT_OPEN_TAG_RE = re.compile(r"<user_input_([a-zA-Z0-9_-]+)>\s*")
+SYSTEM_ALLOWED_SUFFIX_RE = re.compile(
+    r"^\s*(?:$|📍 \*\*附近|--- SYSTEM CONTEXT:\s*(?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\))\s*---|--- USER PREFERENCES|💰 \*\*即時機票參考價格|"
+    r"\[CURRENT TIME|\[WEATHER\]|請根據以上(?:即時資料|資料)回答用戶問題)"
+)
+SPOOFED_USER_TAG_RE = re.compile(r"</?user_input_[a-zA-Z0-9_-]*>")
+
+
+def _is_valid_outer_trailing(trailing: str) -> bool:
+    """驗證閉合標籤後方不含任何殘留 </user_input_ 標籤，且符合合法系統後綴或結尾"""
+    if "</user_input_" in trailing:
+        return False
+    return bool(SYSTEM_ALLOWED_SUFFIX_RE.match(trailing))
+
+
+def _sanitize_invisible_chars(text: object) -> str:
+    """剝除 ASCII 控制字元、Unicode 零寬字元、BOM 與雙向文字覆寫控制符，防止正則繞過與標籤邊界逃逸"""
+    if not text or not isinstance(text, str):
+        return ""
+    return INVISIBLE_FORMAT_CHARS_RE.sub("", text)
+
+
+def _extract_clean_user_text(message: str, max_len: int = 500) -> str:
+    """統一執行隱形字元清洗、外層真實信封鎖定提取與偽造標籤剝除防護"""
+    sanitized = _sanitize_invisible_chars(message)
+    if not sanitized or not sanitized.strip():
+        return ""
+
+    bounded_raw = sanitized[:32768]
+    extracted = bounded_raw
+
+    if SYSTEM_PREFIX_ANCHOR_RE.match(bounded_raw):
+        candidate_starts = [m.end() for m in SYSTEM_BOUNDARY_END_RE.finditer(bounded_raw)]
+        if not candidate_starts:
+            candidate_starts = [0]
+        unclosed_fallback: Optional[str] = None
+        for start_pos in candidate_starts:
+            open_match = USER_INPUT_OPEN_TAG_RE.search(bounded_raw, pos=start_pos)
+            if not open_match:
+                continue
+            outer_salt = open_match.group(1)
+            body_after_open = bounded_raw[open_match.end():]
+            close_tag = f"</user_input_{outer_salt}>"
+            close_idx = body_after_open.find(close_tag)
+            if close_idx != -1:
+                trailing = body_after_open[close_idx + len(close_tag):]
+                if _is_valid_outer_trailing(trailing):
+                    extracted = body_after_open[:close_idx]
+                    unclosed_fallback = None
+                    break
+            elif unclosed_fallback is None:
+                unclosed_fallback = body_after_open
+        if unclosed_fallback is not None:
+            extracted = unclosed_fallback
+    else:
+        lstripped = bounded_raw.lstrip()
+        open_match = USER_INPUT_OPEN_TAG_RE.match(lstripped)
+        if open_match:
+            outer_salt = open_match.group(1)
+            body_after_open = lstripped[open_match.end():]
+            close_tag = f"</user_input_{outer_salt}>"
+            close_idx = body_after_open.find(close_tag)
+            if close_idx != -1:
+                trailing_after_close = body_after_open[close_idx + len(close_tag):]
+                if _is_valid_outer_trailing(trailing_after_close):
+                    extracted = body_after_open[:close_idx]
+            else:
+                extracted = body_after_open
+
+    cleaned = SPOOFED_USER_TAG_RE.sub("", extracted).strip()
+    return cleaned[:max_len]
+
+
 def _fast_path_classify(message: str) -> Optional[str]:
-    """0ms 確定性正則快篩 (帶 500 字元長度截斷防護)"""
-    trimmed = message.strip()[:500]
+    """0ms 確定性正則快篩 (帶隱形字元清洗、先提取標籤再 500 字元長度截斷防護)"""
+    trimmed = _extract_clean_user_text(message, max_len=500)
     if not trimmed:
         return "CHAT"
-
-    # 🛡️ 解除上下文污染：若傳入字串帶有 <user_input_{salt}>...</user_input_{salt}>，優先提取真實輸入
-    user_input_match = re.search(r"<user_input_[^>]+>\s*(.*?)\s*</user_input_[^>]+>", trimmed, re.DOTALL)
-    if user_input_match:
-        trimmed = user_input_match.group(1).strip()[:500]
-        if not trimmed:
-            return "CHAT"
 
     # 1. 外部網址 (直接進入 SEARCH / 網頁精讀)
     if "http://" in trimmed or "https://" in trimmed:
@@ -132,10 +215,9 @@ def _fast_path_classify(message: str) -> Optional[str]:
 
 
 async def _workhorse_classify(message: str, api_key: Optional[str] = None) -> str:
-    """Stage 2: 31B 工作馬極速語意前置分類 (帶 1.0s 硬性超時保護)"""
-    user_input_match = re.search(r"<user_input_[^>]+>\s*(.*?)\s*</user_input_[^>]+>", message, re.DOTALL)
-    eval_text = user_input_match.group(1).strip() if user_input_match else message
-    prompt = CHAT_INTENT_PROMPT.format(message=eval_text[:200])
+    """Stage 2: 31B 工作馬極速語意前置分類 (帶隱形字元清洗與 1.8s 硬性超時保護)"""
+    eval_text = _extract_clean_user_text(message, max_len=200)
+    prompt = CHAT_INTENT_PROMPT.format(message=eval_text)
     try:
         # 🛡️ 放寬至 1.8 秒超時保護，兼顧首包延遲與跨國網路穩定性
         raw_text = await asyncio.wait_for(

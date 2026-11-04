@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-10-25T09:02:00Z",
+  "last_audit_date": "2026-11-04T01:08:45Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 244,
-    "audited_targets": 244,
+    "total_targets": 246,
+    "audited_targets": 246,
     "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 47,
+    "remediated_vulnerabilities": 49,
     "dismissed_hypotheses": 146
   },
   "targets": [
@@ -3087,6 +3087,39 @@
       "validator_details": "Dismissed by physical runner.py validator: Coordinates are guarded with typeof === number and !isNaN checks before rendering.",
       "remediated_at": null,
       "resolution": "No vulnerability detected; existing NaN defensive guard verified."
+    },
+    {
+      "id": "backend/services/intent_router.py:tag_salt_spoofing_and_shy",
+      "target_type": "backend_intent_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "tag_boundary_truncation_hijack",
+        "soft_hyphen_and_variation_selector_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-04_intent_router_worktree.md",
+      "validator_details": "Confirmed by Dual-Tier Native Subagents (Red-Team aff9f462 & Blue-Team 8ad8cfcc) and Physical GitWorktreePool Red-Green pytest (exit code 1 -> 0): Unbackreferenced <user_input_[^>]+> regex allowed premature closing tag spoofing (</user_input_fake>) to truncate extraction into CHAT, and omitted Soft Hyphen (\\u00ad) / Variation Selectors (\\ufe00-\\ufe0f) bypassed REMOVE_PATTERN.",
+      "remediated_at": "2026-11-04T01:08:45Z",
+      "resolution": "docs/security/history/patches/patch_candidate_intent_router_worktree_2026-11-04.diff"
+    },
+    {
+      "id": "backend/tests/test_worktree_pool.py:path_containment_and_src_escape",
+      "target_type": "backend_security_harness",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "cwe22_sibling_prefix_collision",
+        "unbounded_src_mirror_escape"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-04_intent_router_worktree.md",
+      "validator_details": "Confirmed by Dual-Tier Native Subagents (Red-Team aff9f462 & Blue-Team 8ad8cfcc) and Physical GitWorktreePool Red-Green pytest (exit code 1 -> 0): str(dst).startswith(str(wt_path.resolve())) permitted CWE-22 sibling prefix collision (../sentinel-xxxx_evil/pwn.py) and unchecked src path resolution.",
+      "remediated_at": "2026-11-04T01:08:45Z",
+      "resolution": "docs/security/history/patches/patch_candidate_intent_router_worktree_2026-11-04.diff"
     }
-  ]
+  ],
+  "known_design_intents": {
+    "expenses.py": "Single Source of Truth (SSOT): total amount calculation is dynamically aggregated from item splits. Direct manual total modification without split balance is strictly avoided to prevent split-brain ledger drift.",
+    "chat-widget.tsx": "Trip switching deliberately resets AI chat stream and conversation memory to avoid cross-itinerary prompt injection and context poisoning.",
+    "backend/main.py": "Second-pass tool unloading is deliberately enforced to eliminate hallucinated tool calls during open-ended generative summary."
+  }
 }

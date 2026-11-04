@@ -77,6 +77,7 @@ export interface ActuaryInput {
     cards?: CreditCardItem[]          // User's configured credit cards
     customVatRate?: number            // Optional user override for VAT rate
     customThreshold?: number          // Optional user override for threshold
+    targetDate?: Date                 // Optional date for temporal transition rules
 }
 
 export interface CardCalculation {

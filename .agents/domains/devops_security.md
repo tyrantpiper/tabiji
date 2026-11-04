@@ -3,6 +3,12 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **Chesterton's Fence 3-Question Code Archaeology & Bidirectional Path.is_relative_to Guard (AD-197, AD-198)**: Every finding or patch deleting or altering existing code must populate code_archaeology (legacy_function, design_intent, regression_risk). All worktree file mirroring and block replacements must validate both source and destination paths using Path.resolve().is_relative_to(root.resolve()), strictly forbidding string .startswith() to prevent CWE-22 sibling prefix traversal.
+
+- **Mantis-Advise Historical Design Intent Pre-Ingestion & Harness2 Conservation (AD-196)**: Security Sentinel runner.py must automatically load known_design_intents and historical DISMISSED targets from docs/security/security-coverage-ledger.json into validator prompts to prevent relitigating intentional architecture (e.g. SSOT dynamic expense aggregation, trip-switch chat reset, 2nd-pass tool unloading), and must enforce assert_findings_conservation (confirmed + dismissed + inconclusive == total_validated == len(findings)) before output.
+
+- **Mantis Block G Benign Control & Dual-Stage Pytest Disambiguation (AD-196)**: When verifying security PoCs and patches in GitWorktreePool, exploit tests and benign control tests (test_benign*) must be split via _split_poc_test_names. Red verification must run pytest -k 'not benign' to prevent broken benign assertions from triggering False Red Confirmation; Green verification must pass both exploit and benign tests, automatically rejecting and rolling back any lobotomized patch that breaks benign functionality.
+
 - **Multi-Agent Cross-Session Physical Isolation**: Pre-commit workflows in multi-agent environments must never use sweeping globs or git add . to prevent accidental contamination from concurrent active sessions. Staging must be whitelist-driven and strictly bounded to session scope.
 
 - **Security Coverage Ledger Pointer Conservation**: Any relocation of historical security reports or patch artifacts must be accompanied by an atomic update to docs/security/security-coverage-ledger.json, maintaining 100% target conservation verified via python scripts/validate_security_ledger.py.
@@ -62,6 +68,8 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Windows Python newline='\r\n' Double Carriage Return (\r\r\n) Binary Classification Trap (FP-36)**: Passing newline='\r\n' to open() while writing '\r\n' translates '\n' into '\r\n', producing '\r\r\n' (lone CR). Git classifies files containing lone CR as w/-text (binary), disabling core.autocrlf and causing git diff to flag the entire file as deleted. Always normalize CRLF via raw bytes: raw.replace(b'\r\r\n', b'\r\n').replace(b'\r\n', b'\n').replace(b'\n', b'\r\n').
+
 - **Windows PowerShell Subprocess CLI Character Overflow Trap**: Passing entire multi-line source files into agy.exe CLI arguments exceeds Windows command buffer limits; candidates must be sliced with line numbers.
 
 - **Blind 400 Rejection Inducing Authentication Deadlock Trap**: Strictly rejecting legacy identifiers after account upgrade prevents legitimate legacy devices from receiving sessions or accessing the vault.

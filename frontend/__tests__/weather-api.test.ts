@@ -56,7 +56,8 @@ describe('weather-api: generateHourlyCurve', () => {
     })
 
     it('should have highest temperature around 14:00 (default)', () => {
-        const curve = generateHourlyCurve(10, 20)
+        // Explicitly supply month 4 (April) to test standard spring/autumn peak around 14:00
+        const curve = generateHourlyCurve(10, 20, 6, 18, 4)
 
         let maxTemp = -Infinity
         let maxHour = -1

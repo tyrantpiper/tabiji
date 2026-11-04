@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Tag-First Extraction & Invisible Character Stripping Before Length Truncation (AD-199)**: In hybrid intent routing and admin hijack guardrails, user input wrapped in <user_input_{salt}> must first strip zero-width/Bidi control characters (INVISIBLE_CHARS_RE), advance past SYSTEM_BOUNDARY_END_RE, and extract content matching the exact closing outer_salt tag with trailing whitelist validation BEFORE applying 500-character ReDoS truncation.
+
 - **Windows Terminal UTF-8 Reconfiguration Guard**: All standalone Python CLI utility scripts and test harnesses must include sys.stdout.reconfigure(encoding='utf-8') at initialization to prevent cp950 encoding crashes during stdout streaming on Windows platforms.
 
 - **Two-Pass Geo Tool-Calling Injection Mandate**: Whenever nearby search executes in First-Pass, the coordinates and candidate places must be explicitly injected into the Second-Pass User Content with an unconditioned mandate to call add_itinerary_item.

@@ -1,0 +1,63 @@
+diff --git a/backend/services/intent_router.py b/backend/services/intent_router.py
+--- a/backend/services/intent_router.py
++++ b/backend/services/intent_router.py
+@@ -77,5 +77,10 @@
+-# 🛡️ 隱形格式控制字元過濾正則 (涵蓋 Zero-Width Space/Joiner \u200b-\u200f、Bidi 雙向覆寫 \u202a-\u202e / \u2066-\u2069、Word Joiner \u2060-\u2064 及 BOM \ufeff)
++# 🛡️ 隱形格式控制字元過濾正則 (涵蓋 Soft Hyphen \u00ad、CGJ \u034f、Zero-Width \u200b-\u200f、Bidi \u202a-\u202e / \u2066-\u2069、Word Joiner \u2060-\u2064、BOM \ufeff、Variation Selectors \ufe00-\ufe0f 及 Tag 字元)
+ INVISIBLE_FORMAT_CHARS_RE = re.compile(
+-    r"[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]"
++    r"[\u00ad\u034f\u061c\u180b-\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufe00-\ufe0f\U000e0000-\U000e01ef]"
++)
++
++# 🛡️ 嚴格反向引用標籤匹配：強制首尾 <user_input_{salt}> 與 </user_input_{salt}> 之 salt 完全一致，防禦偽造閉合標籤提前截斷
++USER_INPUT_TAG_RE = re.compile(
++    r"<user_input_([a-zA-Z0-9_-]+)>\s*(.*?)\s*</user_input_\1>",
++    re.DOTALL,
+ )
+@@ -96,5 +101,5 @@ def _fast_path_classify(message: str) -> Optional[str]:
+     bounded_raw = sanitized[:8192]
+-    user_input_match = re.search(r"<user_input_[^>]+>\s*(.*?)\s*</user_input_[^>]+>", bounded_raw, re.DOTALL)
++    user_input_match = USER_INPUT_TAG_RE.search(bounded_raw)
+     if user_input_match:
+-        trimmed = user_input_match.group(1).strip()[:500]
++        trimmed = user_input_match.group(2).strip()[:500]
+     else:
+@@ -151,5 +156,5 @@ async def _workhorse_classify(message: str, api_key: Optional[str] = None) -> st
+     sanitized = _sanitize_invisible_chars(message)[:8192]
+-    user_input_match = re.search(r"<user_input_[^>]+>\s*(.*?)\s*</user_input_[^>]+>", sanitized, re.DOTALL)
+-    eval_text = user_input_match.group(1).strip() if user_input_match else sanitized.strip()
++    user_input_match = USER_INPUT_TAG_RE.search(sanitized)
++    eval_text = user_input_match.group(2).strip() if user_input_match else sanitized.strip()
+     prompt = CHAT_INTENT_PROMPT.format(message=eval_text[:200])
+diff --git a/.agents/skills/security-sentinel/scripts/lib/worktree_pool.py b/.agents/skills/security-sentinel/scripts/lib/worktree_pool.py
+--- a/.agents/skills/security-sentinel/scripts/lib/worktree_pool.py
++++ b/.agents/skills/security-sentinel/scripts/lib/worktree_pool.py
+@@ -92,8 +92,13 @@ class GitWorktreePool:
+         # Mirror uncommitted local modifications of target files into the detached worktree
++        wt_resolved = wt_path.resolve()
+         for rel_path in (mirror_files or []):
+             if not rel_path or os.path.isabs(str(rel_path)):
+                 continue
+             src = (self.repo_root / rel_path).resolve()
+-            dst = (wt_path / rel_path).resolve()
+-            # Path traversal guard: ensure destination stays strictly inside wt_path
+-            if src.is_file() and str(dst).startswith(str(wt_path.resolve())):
++            dst = (wt_resolved / rel_path).resolve()
++            # CWE-22 Path containment guard: use is_relative_to() on both source and destination
++            if (
++                src.is_relative_to(self.repo_root)
++                and dst.is_relative_to(wt_resolved)
++                and src.is_file()
++            ):
+                 dst.parent.mkdir(parents=True, exist_ok=True)
+diff --git a/.agents/skills/security-sentinel/scripts/lib/adversarial_team.py b/.agents/skills/security-sentinel/scripts/lib/adversarial_team.py
+--- a/.agents/skills/security-sentinel/scripts/lib/adversarial_team.py
++++ b/.agents/skills/security-sentinel/scripts/lib/adversarial_team.py
+@@ -100,4 +100,5 @@ def apply_block_replacement_in_worktree(
+-    target_path = (wt_path / rel_file).resolve()
+-    if not str(target_path).startswith(str(wt_path.resolve())) or not target_path.is_file():
++    wt_resolved = wt_path.resolve()
++    target_path = (wt_resolved / rel_file).resolve()
++    if not target_path.is_relative_to(wt_resolved) or not target_path.is_file():
+         return False
+

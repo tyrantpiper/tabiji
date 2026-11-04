@@ -260,17 +260,22 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
 
     // 🛡️ Cleanup AbortController on unmount to prevent memory leaks
     useEffect(() => {
+        return () => {
+            abortControllerRef.current?.abort()
+        }
+    }, [])
+
+    useEffect(() => {
         const handleMapFlyTo = () => {
-            if (typeof window !== "undefined" && window.innerWidth < 768) {
+            if (isOpen && typeof window !== "undefined" && window.innerWidth < 768) {
                 setIsDocked(true)
             }
         }
         window.addEventListener("tabidachi:map-flyto", handleMapFlyTo)
         return () => {
-            abortControllerRef.current?.abort()
             window.removeEventListener("tabidachi:map-flyto", handleMapFlyTo)
         }
-    }, [])
+    }, [isOpen])
 
     // ----------------------------------------------------------------------
     // 🆕 修復：當使用者切換不同行程時，強制清除上一個行程的對話記憶與摘要
@@ -370,8 +375,10 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
 
     // Auto-scroll
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-    }, [messages, isOpen])
+        if (isOpen && !isDocked) {
+            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+        }
+    }, [messages, isOpen, isDocked])
 
     // Handle drag start
     const handleDragStart = useCallback((clientX: number, clientY: number) => {
@@ -803,7 +810,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
         }
 
         // 🔄 Fallback: 如果 streaming 失敗或有圖片，使用原有 API
-        if (!streamingSuccess) {
+        if (!streamingSuccess && !abortControllerRef.current?.signal.aborted) {
             try {
                 let token = getCachedToken()
                 if (!token && typeof window !== "undefined") {
@@ -901,7 +908,8 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
         <>
             {/* Chat Window - Fullscreen Immersive with Desktop Centering & Dark Mode */}
             {isOpen && (
-                isDocked ? (
+                <>
+                {isDocked && (
                     <div
                         onClick={() => setIsDocked(false)}
                         role="button"
@@ -920,8 +928,8 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                             <span>{zh ? "展開對話" : "Open"}</span>
                         </div>
                     </div>
-                ) : (
-                    <div className="fixed inset-0 z-110 flex flex-col bg-black/35 backdrop-blur-xs animate-in fade-in duration-200">
+                )}
+                    <div className={cn("fixed inset-0 z-110 flex flex-col bg-black/35 backdrop-blur-xs animate-in fade-in duration-200", isDocked && "hidden pointer-events-none")}>
                     <div className="w-full max-w-3xl mx-auto h-full flex flex-col bg-tabiji-paper dark:bg-tabiji-dark shadow-2xl md:border-x md:border-tabiji-forest/10 dark:md:border-white/10 overflow-hidden">
                         {/* Header - 和紙透光微毛玻璃手帳風 */}
                         <div className="bg-tabiji-paper/85 dark:bg-tabiji-dark/85 backdrop-blur-md p-4 flex justify-between items-center shrink-0 border-b border-tabiji-forest/10 dark:border-white/10">
@@ -938,7 +946,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                     <p className="text-[10px] text-tabiji-slate opacity-90">{t('ai_subtitle')}</p>
                                 </div>
                             </div>
-                            <button onClick={() => setIsOpen(false)} className="hover:bg-tabiji-forest/5 dark:hover:bg-white/10 p-1.5 rounded-full text-tabiji-slate hover:text-tabiji-charcoal dark:hover:text-tabiji-paper transition-colors cursor-pointer">
+                            <button onClick={() => { setIsOpen(false); setIsDocked(false) }} className="hover:bg-tabiji-forest/5 dark:hover:bg-white/10 p-1.5 rounded-full text-tabiji-slate hover:text-tabiji-charcoal dark:hover:text-tabiji-paper transition-colors cursor-pointer">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
@@ -1321,7 +1329,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                         </div>
                     </div>
                 </div>
-                )
+                </>
             )}
 
             {/* Toggle Button - 2D Edge Draggable Liquid Glass */}
@@ -1347,7 +1355,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                         isIdle && !isOpen && !isDragging ? "opacity-40 hover:opacity-100" : "opacity-100",
                         isDragging && "scale-110 shadow-2xl"
                     )}
-                    onClick={() => !hasMovedRef.current && setIsOpen(!isOpen)}
+                    onClick={() => { if (!hasMovedRef.current) { setIsOpen(!isOpen); setIsDocked(false) } }}
                     onMouseDown={handleMouseDown}
                     onTouchStart={handleTouchStart}
                 >

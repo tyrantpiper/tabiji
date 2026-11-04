@@ -110,6 +110,8 @@ docs/research/
 | [**`investment_due_diligence_linkincubator_analysis_2026.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/research/business_strategy/investment_due_diligence_linkincubator_analysis_2026.md) | 領投機構盡職調查反查、商業可行性與技術壁壘防禦策略。 |
 | [**`tabiji-ip-protection-licensing-trademark-research-2026.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/research/business_strategy/tabiji-ip-protection-licensing-trademark-research-2026.md) | 智慧財產權佈局、開源授權相容性與商標侵權預防指南。 |
 | [**`tabiji-rebranding-trademark-github-pwa-research-2026.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/research/business_strategy/tabiji-rebranding-trademark-github-pwa-research-2026.md) | 品牌重構 (Rebranding)、GitHub 專案更名與 PWA 清單跨版本遷移技術。 |
+| [**`2026-10-26-vc-multimillion-fundraising-mechanics-and-market-reality.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/research/business_strategy/2026-10-26-vc-multimillion-fundraising-mechanics-and-market-reality.md) | 全球創投 (VC) 千萬美元級募資真相、Cap Table 稀釋演算法與 Travel/AI 殘酷現實。 |
+| [**`2026-10-26-subdomain-matrix-vs-single-origin-architecture-reality-audit.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/research/business_strategy/2026-10-26-subdomain-matrix-vs-single-origin-architecture-reality-audit.md) | 網域前綴矩陣 (Subdomain Matrix) vs 單一源多形態 (Single-Origin Multi-Persona) 深度調研。 |
 | [**`universal_global_tax_refund_and_rate_actuary_dossier_2026.md`**](file:///d:/Project/Tabidachi/travel-pwa/docs/research/business_strategy/universal_global_tax_refund_and_rate_actuary_dossier_2026.md) | 全球 110+ 國退稅費率精算矩陣、手續費扣除公式與端側離線計算。 |
 
 ---
@@ -117,6 +119,8 @@ docs/research/
 ## 🧠 Google NotebookLM 外部知識庫對齊
 
 本目錄所有先導調研均於 Google NotebookLM 建立專屬深度研究筆記本進行跨文獻對齊：
+- **VC 千萬美元募資與 CapTable 稀釋演算法**: NotebookLM UUID `7b86a78a-be3f-441a-969d-19c4129643d1`
+- **網域前綴矩陣 vs 單一源多形態架構**: NotebookLM UUID `35c60e2b-d5a9-4d6d-850a-b092e1b5be79`
 - **Cloudflare 邊緣防護罩與 Vercel / Cloud Run 流量降壓**: NotebookLM UUID `c8678e26-6915-4810-ac3c-6da18999ea0c`
 - **離線秒開與 PWA 架構**: NotebookLM UUID `df7b08bd-66d2-48f0-9cac-eabeeba57869`
 - **旅遊搜尋 RAG 與 Grounding**: NotebookLM UUID `b67a1904-fdc3-4c89-8e2a-3835082bf106`

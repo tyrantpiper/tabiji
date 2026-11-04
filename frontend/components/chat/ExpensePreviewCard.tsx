@@ -56,6 +56,7 @@ export default function ExpensePreviewCard({ expenseData, onDismiss }: ExpensePr
     }
 
     const handleConfirmExpense = async () => {
+        if (isAdding || isAdded) return
         if (!activeTripId) {
             toast.error(zh ? "請先選擇一個行程" : "Please select a trip first")
             return

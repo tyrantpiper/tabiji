@@ -251,7 +251,7 @@ async def add_expense(
             "currency": request.currency,
             "category": request.category,
             "is_public": request.is_public,
-            "created_by": request.created_by,
+            "created_by": request.created_by or user_id,
             "creator_name": request.creator_name,
             "payment_method": request.payment_method,
             "exchange_rate": request.exchange_rate,

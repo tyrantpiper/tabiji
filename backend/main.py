@@ -681,7 +681,10 @@ def detect_admin_hijack_attempt(text: str) -> Optional[str]:
     if not text or not isinstance(text, str):
         return None
     
-    normalized = text.lower().replace(" ", "").replace("_", "").replace("-", "")
+    import unicodedata
+    from services.intent_router import _sanitize_invisible_chars
+    cleaned = unicodedata.normalize("NFKC", _sanitize_invisible_chars(text))
+    normalized = re.sub(r"[\s_\-\.]+", "", cleaned.lower())
     
     # 1. 偵測管理員身分劫持與資料庫模式偽裝
     admin_patterns = [
@@ -817,6 +820,7 @@ async def chat_with_ryan(
         hijack_reply = detect_admin_hijack_attempt(body.message)
         if hijack_reply:
             return {
+                "response": hijack_reply,
                 "text": hijack_reply,
                 "raw_parts": [{"text": hijack_reply}],
                 "model_used": "security-guardrail",
@@ -930,7 +934,7 @@ async def chat_with_ryan(
         enhanced_message = safe_message + poi_context + itinerary_context + memory_context + price_context
         
         # [NEW] 混合雙層意圖與工具動態分流 (Hybrid Intent & Tool Router)
-        resolved_intent, resolved_tools = await classify_chat_intent(body.message, api_key=api_key)
+        resolved_intent, resolved_tools = await classify_chat_intent(safe_message, api_key=api_key)
         intent_type = resolved_intent
         
         if intent_type == "DIAGNOSIS":
@@ -1096,7 +1100,7 @@ async def stream_chat_generator(
     await asyncio.sleep(0)  # Force flush
     
     # 🛡️ 2026: 確定性守衛 (Deterministic Guardrail) — 串流模式物理阻斷
-    hijack_reply = detect_admin_hijack_attempt(message)
+    hijack_reply = detect_admin_hijack_attempt(raw_user_message or message)
     if hijack_reply:
         yield f'event: text\ndata: {json.dumps({"text": hijack_reply})}\n\n'
         done_data = {
@@ -1137,8 +1141,9 @@ async def stream_chat_generator(
         # - 若為短問候語 (len <= 8 且命中 GREETING_PATTERN)：卸載工具以防幻覺
         # - 若為 SEARCH 意圖：掛載 SEARCH_CHAT_TOOLS (具備搜尋/精讀 + 行程新增刪除，物理排除 add_expense 杜絕誤彈記帳卡片)
         # - 其餘所有情況：100% 常駐掛載 NEURAL_LINK_TOOLS (行程新增、刪除、記帳永遠就緒)
-        trimmed_eval = eval_message.strip()
-        is_pure_greeting = len(trimmed_eval) <= 8 and bool(GREETING_PATTERN.match(trimmed_eval))
+        from services.intent_router import _extract_clean_user_text
+        trimmed_eval = _extract_clean_user_text(eval_message)
+        is_pure_greeting = not trimmed_eval or (len(trimmed_eval) <= 8 and bool(GREETING_PATTERN.match(trimmed_eval)))
         
         if is_pure_greeting:
             active_tools = None
@@ -1231,7 +1236,13 @@ async def stream_chat_generator(
                     executed_world_time = set()
                     executed_geo_results = []
                     executed_geo_anchor = ""
-                    trip_city = dest_meta.get("matched_destination") if 'dest_meta' in locals() and dest_meta else None
+                    # 雙軌目的地識別與關鍵字生成 (提前至 First-Pass 前初始化，防止 search_nearby_places 讀取 dest_name 拋出 UnboundLocalError)
+                    local_q, global_q, dest_meta = generate_dual_queries(eval_message, history=history)
+                    dest_code = dest_meta.get("destination_code", "GLOBAL")
+                    dest_name = dest_meta.get("matched_destination", "當地")
+                    local_reg = dest_meta.get("local_region", "tw-tzh")
+                    global_reg = dest_meta.get("global_region", "us-en")
+                    trip_city = dest_name if dest_name and dest_name != "當地" else None
 
                     try:
                         # 策略 1: 優先嘗試由 Gemini First-Pass 提煉精確搜尋詞與世界時間查詢 (mode=ANY 強制鎖定)
@@ -1312,12 +1323,7 @@ async def stream_chat_generator(
                     except Exception as first_pass_err:
                         print(f"⚠️ [StreamChat] First-Pass 未能產生搜尋詞 ({first_pass_err})，啟動雙軌在地與全球檢索...")
 
-                    # 雙軌目的地識別與關鍵字生成 (在地論壇/官網 + 全球旅人社群)
-                    local_q, global_q, dest_meta = generate_dual_queries(eval_message, history=history)
-                    dest_code = dest_meta.get("destination_code", "GLOBAL")
-                    dest_name = dest_meta.get("matched_destination", "當地")
-                    local_reg = dest_meta.get("local_region", "tw-tzh")
-                    global_reg = dest_meta.get("global_region", "us-en")
+                    # 雙軌目的地識別已於 First-Pass 入口處完成初始化
 
                     # 執行搜尋策略：
                     # 若 First-Pass 產出了特定 Function Call (例如指定單一 query)，優先呼叫單一檢索以保持相容性；
@@ -1437,7 +1443,7 @@ async def stream_chat_generator(
 
                 # 🛡️ 關鍵守護：若為 SEARCH 意圖或剛執行過地理檢索，搜尋已完成且資料已注入 contents，卸載伺服端搜尋工具 (防止二次聯網)，
                 # 但保留行程工具 (ADD/REMOVE) 供「查詢並加入行程」或「空間卡片展示」使用
-                if detected_intent == "SEARCH" or ('executed_geo_results' in locals() and executed_geo_results):
+                if (detected_intent == "SEARCH" or ('executed_geo_results' in locals() and executed_geo_results)) and safe_config.tools is not None:
                     safe_config.tools = [
                         genai.types.Tool(function_declarations=[ADD_ITINERARY_DECL, REMOVE_ITINERARY_DECL])
                     ]

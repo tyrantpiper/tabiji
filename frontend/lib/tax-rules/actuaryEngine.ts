@@ -190,7 +190,7 @@ export function calculateTaxActuary(input: ActuaryInput): ActuaryResult {
     const rawRate = Number.isFinite(input.exchangeRate) && input.exchangeRate > 0 ? input.exchangeRate : 1.0
 
     // Resolve temporal rules (e.g., Japan 2026/11 transition)
-    const effectiveRule: CountryTaxRule = resolveEffectiveTaxRule(input.countryRule)
+    const effectiveRule: CountryTaxRule = resolveEffectiveTaxRule(input.countryRule, input.targetDate)
 
     // User-overridable VAT rate & Threshold
     const vatRate = Number.isFinite(input.customVatRate) && (input.customVatRate ?? -1) >= 0
