@@ -1,0 +1,21 @@
+[
+  {
+    "id": "scripts/lib/adversarial_team.py:missing_attacker_defender_duel_orchestrator",
+    "file_path": "scripts/lib/adversarial_team.py",
+    "attack_vector": "architectural_disconnect_and_bypass",
+    "hypothesis": "adversarial_team.py exports TEAMWORK_ATTACKER_PROMPT and TEAMWORK_DEFENDER_PROMPT but lacks an integrated orchestrate_adversarial_duel coordinator that connects Attacker PoC generation, physical red-checking, Defender Chesterton archaeology validation, and Mantis Block G patch verification in an automated loop."
+  },
+  {
+    "id": ".agents/skills/security-sentinel/scripts/runner.py:unintegrated_mode_switch_and_duel_dispatch",
+    "file_path": ".agents/skills/security-sentinel/scripts/runner.py",
+    "attack_vector": "missing_cli_duel_mode_dispatch",
+    "hypothesis": "runner.py only dispatches a generic static single reviewer and lacks a --mode {adaptive,duel,fast} CLI switch, preventing developers and automated CI from executing the physical Attacker-vs-Defender confrontation on demand."
+  },
+  {
+    "id": ".agents/skills/security-sentinel/SKILL.md:fragmented_subagent_and_runner_documentation",
+    "file_path": ".agents/skills/security-sentinel/SKILL.md",
+    "attack_vector": "governance_specification_drift",
+    "hypothesis": "SKILL.md documents Tier 1 and Tier 2 as fragmented, manual steps without formalizing --mode duel as the unified entry point, causing cognitive friction between standalone subagents and runner.py."
+  }
+]
+

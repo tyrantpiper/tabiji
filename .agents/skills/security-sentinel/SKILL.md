@@ -65,19 +65,26 @@ Sentinel 不僅在程式碼完工後執行防禦審查，**更能在開工前進
   ]
   ```
 
-### Phase 3: Dual-Tier Physical Validator Confrontation (`runner.py` ✕ Native Subagents)
+### Phase 3: Dual-Mode Physical Validator Confrontation (`runner.py --mode duel` ✕ Native Subagents)
 - **Gate A: Blue Team 考古證偽 (Chesterton Archaeology Gate)**:
   藍軍防禦者 (`sentinel-defender`) 必須對紅軍假說進行切斯特頓圍欄三問驗證。若代碼為故意設計（如 SSOT 分拆單一來源計算、行程切換狀態重刷、二階段工具卸載），藍軍即刻出具考古反推證據，以 `verdict: "DISMISSED"` 駁回誤判，避免過度修正。
-- **Tier 1 (CLI Batch Fast-Screening & Worktree Pool)**:
-  Execute the harness runner for parallel batch screening and automatic `GitWorktreePool` Red-Green verification on `high`/`critical` targets:
-  ```bash
-  python .agents/skills/security-sentinel/scripts/runner.py --candidates docs/security/history/candidates/candidates_{topic}_{date}.json --output docs/security/history/findings/findings_{topic}.json --timeout 120
-  ```
-- **Tier 2 (IDE Native Red-vs-Blue Subagent Confrontation — v2.6.0+)**:
-  For high-severity or subtle architectural targets inside the IDE, dynamically register and spawn parallel native subagents via `define_subagent` and `invoke_subagent`:
-  1. `sentinel-attacker` (Red Team): Construct deterministic in-memory `pytest` PoC inputs that break the target's sanitizer/boundary (or execute inside `Workspace="share"` isolated worktree).
-  2. `sentinel-defender` (Blue Team, `EnableWriteTools=False`): Independently audit existing regex/middleware guards and line ordering to either disprove the hypothesis (`DISMISSED`) or confirm the exact failure point (`CONFIRMED`).
-  3. Cleanly terminate subagents via `manage_subagents(Action="kill_all")` once reports are collected.
+- **Tier 1 (CLI Dual-Core Adversarial Automation — v2.4.0+)**:
+  支援三種執行模式 (`--mode {adaptive,duel,fast}`)：
+  1. **`--mode duel` (紅藍軍對抗全自動工作流)**：
+     為每個假說自動分配隔離的 `GitWorktreePool`，依序執行四階段對抗：
+     - *Phase 1*: 紅軍產出 PoC 測試 (`test_sentinel_poc`) 與良性對照 (`test_benign_*`)。
+     - *Phase 2*: 實體 Worktree 紅燈檢驗 (執行 `pytest -k "not benign"`，要求嚴格 `exit code == 1` 擊穿)。
+     - *Phase 3*: 藍軍切斯特頓圍欄考古審查，舉證刻意架構者駁回 (`DISMISSED`)。
+     - *Phase 4*: 補丁合成與 Mantis Block G 良性對照綠燈驗證 (要求雙測全過 `exit code == 0`)。
+     ```bash
+     python .agents/skills/security-sentinel/scripts/runner.py --candidates docs/security/history/candidates/candidates_{topic}_{date}.json --mode duel --output docs/security/history/findings/findings_{topic}.json --timeout 120
+     ```
+  2. **`--mode adaptive` (自適應模式，預設)**：
+     靜態審查所有候選目標，僅對 `high`/`critical` 或 `escalate_teamwork` 目標自動啟用 Worktree 實體紅綠驗證。
+  3. **`--mode fast` (快速審查模式)**：
+     純靜態驗證，跳過 Worktree 建立與實體 pytest 執行。
+- **Tier 2 (IDE Native Red-vs-Blue Subagent Confrontation — 對話式互動)**:
+  在 IDE 交談環境中，亦可手動透過 `define_subagent` 與 `invoke_subagent` 動態調度 `sentinel-attacker` 與 `sentinel-defender` 進行人機協同審核。
 - Results are recorded as `CONFIRMED`, `DISMISSED`, or `INCONCLUSIVE` (enforcing strict `pytest` `exit code == 1` for Red confirmation).
 - **Cloudflare Action-Binding Blockers**: If an external dependency blocks immediate confirmation, the verdict MUST be `INCONCLUSIVE` with explicit `validation_blocker` and `validation_plan`.
 - **Mantis Marginal Capability Defense**: Issues confined strictly to self-impact or requiring impossible preconditions are capped to Low or `DISMISSED`.

@@ -1,0 +1,38 @@
+[
+  {
+    "target_file": "frontend/components/app-client-layer.tsx",
+    "target_content": "import { initSessionLifecycleListener, fetchLatestRecoveryKey } from \"@/lib/auth-session\"\nimport { getSupabaseClient } from \"@/lib/supabase\"",
+    "replacement_content": "import { initSessionLifecycleListener, fetchLatestRecoveryKey, isUserLoggedIn } from \"@/lib/auth-session\"\nimport { getSupabaseClient } from \"@/lib/supabase\""
+  },
+  {
+    "target_file": "frontend/components/app-client-layer.tsx",
+    "target_content": "        // 🔔 監聽金鑰本機更新事件並彈出輕量通知\n        const handleKeyUpdated = () => {\n            toast.info(zh ? \"✨ 帳號引繼碼已自其他裝置同步更新\" : \"✨ Recovery key synced from another device\");\n        };\n        window.addEventListener(\"tabiji:recovery_key_updated\", handleKeyUpdated);",
+    "replacement_content": "        // 🔔 監聽金鑰本機更新事件並彈出輕量通知\n        const handleKeyUpdated = (e: Event) => {\n            const customEvent = e as CustomEvent<{ recoveryKey?: string; source?: string }>;\n            if (!isUserLoggedIn()) return;\n            if (customEvent.detail?.source !== \"remote_sync\") return;\n            toast.info(zh ? \"✨ 帳號引繼碼已自其他裝置同步更新\" : \"✨ Recovery key synced from another device\");\n        };\n        window.addEventListener(\"tabiji:recovery_key_updated\", handleKeyUpdated);"
+  },
+  {
+    "target_file": "frontend/lib/auth-session.ts",
+    "target_content": "export function isUserLoggedIn(): boolean {\n    if (typeof window === \"undefined\") return false;\n    try {\n        const hasNicknameAndId = Boolean(localStorage.getItem(\"user_nickname\") && localStorage.getItem(RECOVERY_KEY));\n        const hasModernRecoveryKey = Boolean(localStorage.getItem(\"user_recovery_key\"));\n        return hasNicknameAndId || hasModernRecoveryKey;\n    } catch {\n        return false;\n    }\n}",
+    "replacement_content": "export function isUserLoggedIn(): boolean {\n    if (typeof window === \"undefined\") return false;\n    try {\n        const nickname = localStorage.getItem(\"user_nickname\");\n        const hasLegacyId = Boolean(localStorage.getItem(RECOVERY_KEY));\n        const hasModernRecoveryKey = Boolean(localStorage.getItem(\"user_recovery_key\"));\n        return Boolean(nickname && (hasLegacyId || hasModernRecoveryKey));\n    } catch {\n        return false;\n    }\n}"
+  },
+  {
+    "target_file": "frontend/lib/auth-session.ts",
+    "target_content": "    const handleReconnectOrResume = () => {\n        if (!navigator.onLine) return;\n\n        if (!getCachedToken()) {\n            console.log(\"🛰️ [Auth] Network restored or resumed, auto-exchanging session token...\");\n            ensureValidSession().catch(() => {});\n        } else if (Date.now() - lastVaultSyncTime > 15000) {\n            lastVaultSyncTime = Date.now();\n            fetchLatestRecoveryKey().catch(() => {});\n        }\n    };",
+    "replacement_content": "    const handleReconnectOrResume = () => {\n        if (!navigator.onLine) return;\n        if (!isUserLoggedIn()) return;\n\n        if (!getCachedToken()) {\n            console.log(\"🛰️ [Auth] Network restored or resumed, auto-exchanging session token...\");\n            ensureValidSession().catch(() => {});\n        } else if (Date.now() - lastVaultSyncTime > 15000) {\n            lastVaultSyncTime = Date.now();\n            fetchLatestRecoveryKey().catch(() => {});\n        }\n    };"
+  },
+  {
+    "target_file": "frontend/lib/auth-session.ts",
+    "target_content": "                        if (typeof window !== \"undefined\") {\n                            window.dispatchEvent(new CustomEvent(\"tabiji:recovery_key_updated\", {\n                                detail: { recoveryKey: data.recovery_key }\n                            }));\n                        }",
+    "replacement_content": "                        if (typeof window !== \"undefined\") {\n                            window.dispatchEvent(new CustomEvent(\"tabiji:recovery_key_updated\", {\n                                detail: {\n                                    recoveryKey: data.recovery_key,\n                                    source: data.is_new ? \"initial_bootstrap\" : \"session_exchange\"\n                                }\n                            }));\n                        }"
+  },
+  {
+    "target_file": "frontend/lib/auth-session.ts",
+    "target_content": "                if (typeof window !== \"undefined\") {\n                    window.dispatchEvent(new CustomEvent(\"tabiji:recovery_key_updated\", {\n                        detail: { recoveryKey: data.recovery_key }\n                    }));\n                }",
+    "replacement_content": "                if (typeof window !== \"undefined\") {\n                    window.dispatchEvent(new CustomEvent(\"tabiji:recovery_key_updated\", {\n                        detail: {\n                            recoveryKey: data.recovery_key,\n                            source: \"remote_sync\"\n                        }\n                    }));\n                }"
+  },
+  {
+    "target_file": "frontend/lib/auth-session.ts",
+    "target_content": "        window.dispatchEvent(new CustomEvent(\"tabiji:recovery_key_updated\", { detail: { recoveryKey: cleanKey } }));",
+    "replacement_content": "        window.dispatchEvent(new CustomEvent(\"tabiji:recovery_key_updated\", { detail: { recoveryKey: cleanKey, source: \"local_reanchor\" } }));"
+  }
+]
+

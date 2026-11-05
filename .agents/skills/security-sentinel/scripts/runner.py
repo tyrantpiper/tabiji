@@ -202,8 +202,9 @@ async def run_single_validator(
     target: Dict[str, Any],
     timeout_seconds: int = 45,
     workspace_root: Optional[Path] = None,
+    mode: str = "adaptive",
 ) -> Dict[str, Any]:
-    """Execute a single agy.exe subagent with embedded code snippet."""
+    """Execute a single validator subagent or adversarial duel."""
     target_id = target.get("id", "unknown")
     file_path = target.get("file_path", target_id)
     hypothesis = target.get("hypothesis", "")
@@ -226,6 +227,46 @@ async def run_single_validator(
             "poc_script": None,
             "remediation_hint": None,
         }
+
+    target_cwd = workspace_root if workspace_root else Path.cwd()
+
+    if mode == "duel":
+        try:
+            try:
+                from scripts.lib.worktree_pool import GitWorktreePool
+                from scripts.lib.adversarial_team import orchestrate_adversarial_duel
+            except ImportError:
+                from lib.worktree_pool import GitWorktreePool
+                from lib.adversarial_team import orchestrate_adversarial_duel
+
+            pool = GitWorktreePool(target_cwd)
+            wt_path = await pool.acquire(mirror_files=[normalized_file])
+            try:
+                return await orchestrate_adversarial_duel(
+                    wt_path=wt_path,
+                    target=target,
+                    timeout_seconds=min(timeout_seconds, 45),
+                )
+            finally:
+                await pool.release(wt_path)
+        except Exception as duel_exc:
+            return {
+                "target_id": target_id,
+                "verdict": "INCONCLUSIVE",
+                "reasoning": f"Adversarial duel failed: {duel_exc}",
+                "validation_blocker": str(duel_exc),
+                "validation_plan": "Check git worktree setup and retry.",
+                "poc_type": "none",
+                "poc_script": None,
+                "code_archaeology": {
+                    "legacy_function": None,
+                    "design_intent": None,
+                    "regression_risk": None,
+                },
+                "remediation_hint": None,
+                "worktree_verified": False,
+                "mode": "duel_worktree",
+            }
 
     code_snippet = ""
     try:
@@ -331,8 +372,11 @@ async def run_single_validator(
                     "regression_risk": None,
                 }
             needs_worktree = (
-                str(target.get("severity", "")).lower() in ("high", "critical")
-                or bool(target.get("escalate_teamwork"))
+                mode != "fast"
+                and (
+                    str(target.get("severity", "")).lower() in ("high", "critical")
+                    or bool(target.get("escalate_teamwork"))
+                )
             )
             if needs_worktree and parsed.get("verdict") == "CONFIRMED":
                 try:
@@ -420,13 +464,16 @@ async def run_parallel_validators(
     timeout_seconds: int = 45,
     workspace_root: Optional[Path] = None,
     max_concurrency: int = MAX_CONCURRENT_VALIDATORS,
+    mode: str = "adaptive",
 ) -> List[Dict[str, Any]]:
     """Run validators in parallel with bounded Semaphore concurrency."""
     sem = asyncio.Semaphore(max(1, max_concurrency))
 
     async def _bounded_validate(cand: Dict[str, Any]) -> Dict[str, Any]:
         async with sem:
-            return await run_single_validator(cand, timeout_seconds, workspace_root)
+            return await run_single_validator(
+                cand, timeout_seconds=timeout_seconds, workspace_root=workspace_root, mode=mode
+            )
 
     tasks = [_bounded_validate(cand) for cand in candidates]
     results = await asyncio.gather(*tasks, return_exceptions=False)
@@ -439,6 +486,13 @@ def main():
     parser.add_argument("--target-file", type=str, help="Single target file path to audit")
     parser.add_argument("--hypothesis", type=str, help="Hypothesis for single target audit")
     parser.add_argument("--vector", type=str, default="logic_boundary", help="Audit category")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["adaptive", "duel", "fast"],
+        default="adaptive",
+        help="Validation mode: 'adaptive' (worktree for high/critical), 'duel' (mandatory red-vs-blue duel in worktree), 'fast' (in-memory static only)",
+    )
     parser.add_argument("--output", type=str, default=None, help="Path to write findings JSON output")
     parser.add_argument("--timeout", type=int, default=45, help="Per-agent timeout in seconds")
     args = parser.parse_args()
@@ -475,13 +529,16 @@ def main():
         print("Error: Must provide either --candidates or (--target-file and --hypothesis)", file=sys.stderr)
         sys.exit(1)
 
-    print(f"[*] Security Sentinel Harness: launching {len(candidates)} validator(s) in parallel...", file=sys.stderr)
+    print(f"[*] Security Sentinel Harness: launching {len(candidates)} validator(s) in parallel (mode: {args.mode})...", file=sys.stderr)
     results = asyncio.run(
-        run_parallel_validators(candidates, timeout_seconds=args.timeout, workspace_root=workspace_root)
+        run_parallel_validators(
+            candidates, timeout_seconds=args.timeout, workspace_root=workspace_root, mode=args.mode
+        )
     )
 
     output_data = {
-        "audit_version": "2.3.0",
+        "audit_version": "2.4.0",
+        "mode": args.mode,
         "total_validated": len(results),
         "confirmed_count": sum(1 for r in results if r.get("verdict") == "CONFIRMED"),
         "dismissed_count": sum(1 for r in results if r.get("verdict") == "DISMISSED"),

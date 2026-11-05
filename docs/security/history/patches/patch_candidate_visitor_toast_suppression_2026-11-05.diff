@@ -1,0 +1,54 @@
+diff --git a/frontend/components/app-client-layer.tsx b/frontend/components/app-client-layer.tsx
+index 0814a2e..1234567 100644
+--- a/frontend/components/app-client-layer.tsx
++++ b/frontend/components/app-client-layer.tsx
+@@ -5,3 +5,3 @@ import { Suspense, useEffect } from "react"
+-import { initSessionLifecycleListener, fetchLatestRecoveryKey } from "@/lib/auth-session"
++import { initSessionLifecycleListener, fetchLatestRecoveryKey, isUserLoggedIn } from "@/lib/auth-session"
+ import { getSupabaseClient } from "@/lib/supabase"
+@@ -46,3 +46,6 @@ export function AppClientLayer() {
+-        const handleKeyUpdated = () => {
++        const handleKeyUpdated = (e: Event) => {
++            const customEvent = e as CustomEvent<{ recoveryKey?: string; source?: string }>;
++            if (!isUserLoggedIn()) return;
++            if (customEvent.detail?.source !== "remote_sync") return;
+             toast.info(zh ? "✨ 帳號引繼碼已自其他裝置同步更新" : "✨ Recovery key synced from another device");
+         };
+diff --git a/frontend/lib/auth-session.ts b/frontend/lib/auth-session.ts
+index c6f37df..7654321 100644
+--- a/frontend/lib/auth-session.ts
++++ b/frontend/lib/auth-session.ts
+@@ -38,5 +38,5 @@ export function isUserLoggedIn(): boolean {
+     try {
+-        const hasNicknameAndId = Boolean(localStorage.getItem("user_nickname") && localStorage.getItem(RECOVERY_KEY));
+-        const hasModernRecoveryKey = Boolean(localStorage.getItem("user_recovery_key"));
+-        return hasNicknameAndId || hasModernRecoveryKey;
++        const nickname = localStorage.getItem("user_nickname");
++        const hasLegacyId = Boolean(localStorage.getItem(RECOVERY_KEY));
++        const hasModernRecoveryKey = Boolean(localStorage.getItem("user_recovery_key"));
++        return Boolean(nickname && (hasLegacyId || hasModernRecoveryKey));
+     } catch {
+@@ -137,2 +137,3 @@ export function initSessionLifecycleListener(): () => void {
+         if (!navigator.onLine) return;
++        if (!isUserLoggedIn()) return;
+ 
+@@ -249,2 +250,5 @@ export async function ensureValidSession(): Promise<string | null> {
+                             window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", {
+-                                detail: { recoveryKey: data.recovery_key }
++                                detail: { 
++                                    recoveryKey: data.recovery_key,
++                                    source: data.is_new ? "initial_bootstrap" : "session_exchange"
++                                }
+                             }));
+@@ -376,2 +380,5 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
+                     window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", {
+-                        detail: { recoveryKey: data.recovery_key }
++                        detail: { 
++                            recoveryKey: data.recovery_key,
++                            source: "remote_sync"
++                        }
+                     }));
+@@ -436,1 +443,1 @@ export async function reanchorSessionWithKey(inputKey: string): Promise<boolean>
+-        window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", { detail: { recoveryKey: cleanKey } }));
++        window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", { detail: { recoveryKey: cleanKey, source: "local_reanchor" } }));
+

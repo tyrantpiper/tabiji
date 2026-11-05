@@ -1,15 +1,92 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-04T01:08:45Z",
+  "last_audit_date": "2026-11-05T22:42:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 246,
-    "audited_targets": 246,
+    "total_targets": 252,
+    "audited_targets": 252,
     "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 49,
-    "dismissed_hypotheses": 146
+    "remediated_vulnerabilities": 54,
+    "dismissed_hypotheses": 147
   },
   "targets": [
+    {
+      "id": "scripts/lib/adversarial_team.py:missing_attacker_defender_duel_orchestrator",
+      "target_type": "security_automation_engine",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "architectural_disconnect_and_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-05_sentinel_duel_fusion.md",
+      "validator_details": "Confirmed by pytest test_sentinel_duel_orchestrator.py: implemented 4-phase orchestrate_adversarial_duel coordinator integrating Attacker PoC, Worktree Red Check, Defender Chesterton archaeology, and Mantis Block G Green Check.",
+      "remediated_at": "2026-11-05T22:42:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_sentinel_duel_fusion_2026-11-05.diff"
+    },
+    {
+      "id": ".agents/skills/security-sentinel/scripts/runner.py:unintegrated_mode_switch_and_duel_dispatch",
+      "target_type": "security_automation_cli",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "missing_cli_duel_mode_dispatch"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-05_sentinel_duel_fusion.md",
+      "validator_details": "Confirmed by runner.py test suite: implemented --mode {adaptive,duel,fast} CLI switch and wired GitWorktreePool to automatic duel orchestrator dispatch.",
+      "remediated_at": "2026-11-05T22:42:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_sentinel_duel_fusion_2026-11-05.diff"
+    },
+    {
+      "id": ".agents/skills/security-sentinel/SKILL.md:fragmented_subagent_and_runner_documentation",
+      "target_type": "governance_specification",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "governance_specification_drift"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-05_sentinel_duel_fusion.md",
+      "validator_details": "Dismissed by physical validator with Chesterton Archaeology: Phase 3 explicitly formalizes --mode duel under Tier 1 for CLI batch runs and preserves Tier 2 for interactive IDE subagent workflows.",
+      "resolution": "Historical Verified Dismissal (Intentional complementary architectural tiers)"
+    },
+    {
+      "id": "frontend/components/app-client-layer.tsx:unauthenticated_visitor_synced_toast_leak",
+      "target_type": "frontend_ui_boundary",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "unauthenticated_visitor_false_alarm"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-05_visitor_toast_suppression.md",
+      "validator_details": "Confirmed by Physical Validator runner.py and In-Memory PoC TC-1, TC-2, TC-4: AppClientLayer unconditionally triggered toast on tabiji:recovery_key_updated event for unauthenticated visitors.",
+      "remediated_at": "2026-11-05T22:02:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_visitor_toast_suppression_2026-11-05.diff"
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:unauthenticated_visitor_background_exchange_waste",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "unnecessary_guest_session_exchange"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-05_visitor_toast_suppression.md",
+      "validator_details": "Confirmed by Physical Validator runner.py and In-Memory PoC TC-5: initSessionLifecycleListener() automatically invoked ensureValidSession() on mount for unauthenticated visitors without isUserLoggedIn() check.",
+      "remediated_at": "2026-11-05T22:02:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_visitor_toast_suppression_2026-11-05.diff"
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:is_user_logged_in_operator_precedence_flaw",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "broken_access_control_identity_assertion"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-05_visitor_toast_suppression.md",
+      "validator_details": "Confirmed by Physical Validator runner.py and In-Memory PoC TC-3: (hasNickname && hasLegacyKey) || hasModernRecoveryKey evaluated to true when user_recovery_key existed without user_nickname.",
+      "remediated_at": "2026-11-05T22:02:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_visitor_toast_suppression_2026-11-05.diff"
+    },
     {
       "id": "backend/main.py:second_pass_prompt_disconnect",
       "target_type": "backend_llm_stream",

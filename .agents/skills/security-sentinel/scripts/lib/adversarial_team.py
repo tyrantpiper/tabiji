@@ -19,6 +19,8 @@ from scripts.lib.adversarial_team import (
     execute_worktree_pytest,
     normalize_code_archaeology,
     verify_candidate_in_worktree,
+    orchestrate_adversarial_duel,
+    extract_json_payload,
 )
 
 __all__ = [
@@ -30,4 +32,6 @@ __all__ = [
     "execute_worktree_pytest",
     "apply_block_replacement_in_worktree",
     "verify_candidate_in_worktree",
+    "orchestrate_adversarial_duel",
+    "extract_json_payload",
 ]

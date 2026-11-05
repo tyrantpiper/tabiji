@@ -3,6 +3,8 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **Unified Dual-Core CLI Adversarial Duel Integration (--mode duel)**: Security Sentinel CLI (runner.py) supports --mode {adaptive,duel,fast}. In --mode duel, runner.py dynamically acquires an isolated GitWorktreePool and executes orchestrate_adversarial_duel across 4 phases: (1) Attacker pytest PoC generation; (2) Physical Red Check with pytest -k 'not benign' (exit code 1); (3) Defender Chesterton's Fence archaeology evaluation (DISMISSED if proven intentional design); (4) Block replacement patch synthesis with Mantis Block G Benign Control green check (exit code 0).
+
 - **Chesterton's Fence 3-Question Code Archaeology & Bidirectional Path.is_relative_to Guard (AD-197, AD-198)**: Every finding or patch deleting or altering existing code must populate code_archaeology (legacy_function, design_intent, regression_risk). All worktree file mirroring and block replacements must validate both source and destination paths using Path.resolve().is_relative_to(root.resolve()), strictly forbidding string .startswith() to prevent CWE-22 sibling prefix traversal.
 
 - **Mantis-Advise Historical Design Intent Pre-Ingestion & Harness2 Conservation (AD-196)**: Security Sentinel runner.py must automatically load known_design_intents and historical DISMISSED targets from docs/security/security-coverage-ledger.json into validator prompts to prevent relitigating intentional architecture (e.g. SSOT dynamic expense aggregation, trip-switch chat reset, 2nd-pass tool unloading), and must enforce assert_findings_conservation (confirmed + dismissed + inconclusive == total_validated == len(findings)) before output.
@@ -68,6 +70,10 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Large File Prompt Token Exhaustion in Sentinel Validator Subagent**: Passing entire 60k character source files to agy.exe subagent in batch runner runs exhausts the default output token limit on chain-of-thought thinking tokens (e.g. 586 thinking tokens / 622 total tokens), leaving insufficient tokens for JSON emission. Always constrain target inspection with start_line and end_line targeted code snippets.
+
+- **agy.exe CLI Flag Precedence with -p Option under Windows PowerShell**: When invoking agy.exe CLI via subprocess under Windows PowerShell, placing -p before other flags (e.g., agy.exe -p <prompt> --sandbox) causes agy.exe to interpret '--sandbox' as the prompt string itself. Always format prompt as -p=<cli_prompt> and place flags (--sandbox, --disable-slash-commands, --output-format json) upfront.
+
 - **Windows Python newline='\r\n' Double Carriage Return (\r\r\n) Binary Classification Trap (FP-36)**: Passing newline='\r\n' to open() while writing '\r\n' translates '\n' into '\r\n', producing '\r\r\n' (lone CR). Git classifies files containing lone CR as w/-text (binary), disabling core.autocrlf and causing git diff to flag the entire file as deleted. Always normalize CRLF via raw bytes: raw.replace(b'\r\r\n', b'\r\n').replace(b'\r\n', b'\n').replace(b'\n', b'\r\n').
 
 - **Windows PowerShell Subprocess CLI Character Overflow Trap**: Passing entire multi-line source files into agy.exe CLI arguments exceeds Windows command buffer limits; candidates must be sliced with line numbers.

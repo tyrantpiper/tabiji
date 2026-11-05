@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic"
 import { Suspense, useEffect } from "react"
-import { initSessionLifecycleListener, fetchLatestRecoveryKey } from "@/lib/auth-session"
+import { initSessionLifecycleListener, fetchLatestRecoveryKey, isUserLoggedIn } from "@/lib/auth-session"
 import { getSupabaseClient } from "@/lib/supabase"
 import { useLanguage } from "@/lib/LanguageContext"
 import { toast } from "sonner"
@@ -43,7 +43,10 @@ export function AppClientLayer() {
         }
 
         // 🔔 監聽金鑰本機更新事件並彈出輕量通知
-        const handleKeyUpdated = () => {
+        const handleKeyUpdated = (e: Event) => {
+            const customEvent = e as CustomEvent<{ recoveryKey?: string; source?: string }>;
+            if (!isUserLoggedIn()) return;
+            if (customEvent.detail?.source !== "remote_sync") return;
             toast.info(zh ? "✨ 帳號引繼碼已自其他裝置同步更新" : "✨ Recovery key synced from another device");
         };
         window.addEventListener("tabiji:recovery_key_updated", handleKeyUpdated);

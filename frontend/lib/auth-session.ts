@@ -134,6 +134,7 @@ export function initSessionLifecycleListener(): () => void {
 
     const handleReconnectOrResume = () => {
         if (!navigator.onLine) return;
+        if (!isUserLoggedIn()) return;
 
         if (!getCachedToken()) {
             console.log("🛰️ [Auth] Network restored or resumed, auto-exchanging session token...");
@@ -247,7 +248,10 @@ export async function ensureValidSession(): Promise<string | null> {
                         localStorage.setItem("user_recovery_key", data.recovery_key);
                         if (typeof window !== "undefined") {
                             window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", {
-                                detail: { recoveryKey: data.recovery_key }
+                                detail: { 
+                                    recoveryKey: data.recovery_key,
+                                    source: data.is_new ? "initial_bootstrap" : "session_exchange"
+                                }
                             }));
                         }
                     }
@@ -374,7 +378,10 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
                 localStorage.setItem("user_recovery_key", data.recovery_key);
                 if (typeof window !== "undefined") {
                     window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", {
-                        detail: { recoveryKey: data.recovery_key }
+                        detail: { 
+                            recoveryKey: data.recovery_key,
+                            source: "remote_sync"
+                        }
                     }));
                 }
             }
@@ -433,7 +440,7 @@ export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<st
     lastExchangeFailedAt = 0;
 
     if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", { detail: { recoveryKey: cleanKey } }));
+        window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", { detail: { recoveryKey: cleanKey, source: "local_reanchor" } }));
         window.dispatchEvent(new CustomEvent("tabiji:session_restored"));
     }
 

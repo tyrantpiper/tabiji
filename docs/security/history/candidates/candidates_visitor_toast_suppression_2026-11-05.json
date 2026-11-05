@@ -1,0 +1,26 @@
+[
+  {
+    "id": "frontend/components/app-client-layer.tsx:unauthenticated_visitor_synced_toast_leak",
+    "file_path": "frontend/components/app-client-layer.tsx",
+    "start_line": 24,
+    "end_line": 56,
+    "attack_vector": "unauthenticated_visitor_false_alarm",
+    "hypothesis": "AppClientLayer attaches a global listener to tabiji:recovery_key_updated that unconditionally displays a toast stating '✨ 帳號引繼碼已自其他裝置同步更新' without asserting isUserLoggedIn() or checking the event detail source. Consequently, whenever an unauthenticated visitor opens the root page and ensureValidSession() boots a new session, the visitor is falsely notified that their key was synced from another device."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:unauthenticated_visitor_background_exchange_waste",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 132,
+    "end_line": 157,
+    "attack_vector": "unnecessary_guest_session_exchange",
+    "hypothesis": "initSessionLifecycleListener() invokes ensureValidSession() on mount whenever getCachedToken() is null, without checking isUserLoggedIn(). This forces an unauthenticated visitor to fire a POST /api/auth/session call, creating unnecessary orphan user records in Supabase and writing guest tokens to localStorage before onboarding begins."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:is_user_logged_in_operator_precedence_flaw",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 34,
+    "end_line": 46,
+    "attack_vector": "broken_access_control_identity_assertion",
+    "hypothesis": "isUserLoggedIn() evaluates 'hasNicknameAndId || hasModernRecoveryKey'. When a user_recovery_key exists without user_nickname, it evaluates to true instead of requiring user_nickname && (hasLegacyId || hasModernRecoveryKey). This allows half-initialized or orphan sessions to be mistakenly recognized as logged in."
+  }
+]

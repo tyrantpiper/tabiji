@@ -3,6 +3,10 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **isUserLoggedIn() Operator Precedence & In-Place Reauth Boundary**: In frontend/lib/auth-session.ts, isUserLoggedIn() MUST maintain backward compatibility for orphan recovery keys (where user_recovery_key exists without nickname) so that 401 triggers in-place re-auth modal (auth-session-resilience TC-10/TC-11). Do NOT conflate visitor mount suppression with isUserLoggedIn definition.
+
+- **Unauthenticated Visitor Session Lifecycle & Recovery Toast Isolation**: In frontend/components/app-client-layer.tsx and frontend/lib/auth-session.ts, unauthenticated visitors accessing '/' MUST NOT trigger toast notifications for '✨ 帳號引繼碼已自其他裝置同步更新' or automatically call ensureValidSession() on mount/reconnect. All tabiji:recovery_key_updated custom events MUST carry a detail.source tag ('initial_bootstrap', 'session_exchange', 'remote_sync', 'local_reanchor'). AppClientLayer MUST filter strictly with 'if (!isUserLoggedIn()) return;' and 'if (customEvent.detail?.source !== "remote_sync") return;'.
+
 - **Temporal Lifecycle Non-Inhibition Invariant**: Temporal service lifecycle status (BEFORE_TRIP, IN_TRIP, AFTER_TRIP) must never inhibit mutation tool calling. The prompt must explicitly state that users have full simulation and planning permissions regardless of dates.
 
 - **Unauthenticated Visitor Reauth Suppression & Identity Self-Healing**: triggerReauthPrompt and SessionReauthModal must strictly verify isUserLoggedIn() (checking user_nickname && user_uuid || user_recovery_key) before broadcasting or opening. In ensureValidSession, 401 for unauthenticated visitors purges orphan UUIDs and resets lastExchangeFailedAt = 0, unlocking login. LandingPage handleLogin must implement dual-track bootstrap (online: ensureValidSession server registration, offline: generateUUID fallback).

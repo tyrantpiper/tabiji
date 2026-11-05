@@ -12,12 +12,13 @@ Implements SPEC-AGY-002:
 4. Physical Red-Green verification inside an isolated GitWorktreePool directory.
 """
 
+import json
 import os
 import re
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .safe_subprocess import ProcessResult, run_streaming_process
 
@@ -26,6 +27,39 @@ DEFAULT_CODE_ARCHAEOLOGY: Dict[str, Optional[str]] = {
     "design_intent": None,
     "regression_risk": None,
 }
+
+
+def extract_json_payload(raw_output: str) -> Optional[Dict[str, Any]]:
+    """Extract JSON object from stdout, ignoring any leading/trailing CLI banners."""
+    if not raw_output or not raw_output.strip():
+        return None
+    try:
+        data = json.loads(raw_output.strip())
+        if isinstance(data, dict):
+            if "response" in data and isinstance(data["response"], str):
+                inner = extract_json_payload(data["response"])
+                if inner:
+                    return inner
+            if "verdict" in data:
+                return data
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    fallback_dict: Optional[Dict[str, Any]] = None
+    for idx, ch in enumerate(raw_output):
+        if ch == "{":
+            try:
+                cand, _ = decoder.raw_decode(raw_output[idx:])
+                if isinstance(cand, dict):
+                    if "verdict" in cand:
+                        return cand
+                    if fallback_dict is None:
+                        fallback_dict = cand
+            except json.JSONDecodeError:
+                continue
+
+    return fallback_dict
 
 
 def normalize_code_archaeology(raw_arch: Any) -> Dict[str, Optional[str]]:
@@ -339,3 +373,386 @@ async def verify_candidate_in_worktree(
                     target_path.write_bytes(original_bytes)
 
     return candidate_result
+
+
+def _read_target_code_snippet(wt_path: Path, target: Dict[str, Any]) -> str:
+    rel_file = target.get("file_path", target.get("id", ""))
+    full_path = (wt_path / rel_file).resolve()
+    if not full_path.is_file():
+        return ""
+    try:
+        if target.get("code_snippet"):
+            return str(target["code_snippet"])[:60000]
+        elif target.get("start_line") and target.get("end_line"):
+            lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            s_line = max(0, int(target["start_line"]) - 1)
+            e_line = min(len(lines), int(target["end_line"]))
+            return "\n".join(lines[s_line:e_line])
+        else:
+            return full_path.read_text(encoding="utf-8", errors="replace")[:60000]
+    except Exception as e:
+        return f"# Error reading file: {e}"
+
+
+async def dispatch_subagent_prompt(
+    prompt: str,
+    cwd: Path,
+    timeout_seconds: float = 45.0,
+) -> Optional[Dict[str, Any]]:
+    use_stdin = len(prompt) > 24000
+    cli_prompt = (
+        "Read the target metadata and code snippet from standard input (stdin) and return ONLY the JSON result object."
+        if use_stdin
+        else prompt
+    )
+    stdin_payload = prompt if use_stdin else None
+    cmd = [
+        "agy.exe",
+        "--sandbox",
+        "--disable-slash-commands",
+        "--print-timeout",
+        f"{int(timeout_seconds)}s",
+        "--output-format",
+        "json",
+        f"-p={cli_prompt}",
+    ]
+    try:
+        res = await run_streaming_process(
+            cmd=cmd,
+            payload=stdin_payload,
+            timeout_seconds=float(timeout_seconds + 5),
+            cwd=cwd,
+        )
+        if res.timed_out or not res.stdout:
+            return None
+        return extract_json_payload(res.stdout)
+    except Exception:
+        return None
+
+
+async def default_attacker_subagent(
+    wt_path: Path,
+    target: Dict[str, Any],
+    timeout_seconds: float = 45.0,
+) -> Dict[str, Any]:
+    target_id = target.get("id", "unknown")
+    rel_file = target.get("file_path", target_id)
+    hypothesis = target.get("hypothesis", "")
+    attack_vector = target.get("attack_vector", "general")
+    code_snippet = _read_target_code_snippet(wt_path, target)
+
+    prompt = (
+        f"{TEAMWORK_ATTACKER_PROMPT}\n\n"
+        f"--- TARGET METADATA ---\n"
+        f"Target ID: {target_id}\n"
+        f"File: {rel_file}\n"
+        f"Hypothesis: {hypothesis}\n"
+        f"Audit Category: {attack_vector}\n\n"
+        f"--- CODE TO ATTACK (IN WORKTREE) ---\n"
+        f"```\n{code_snippet}\n```\n\n"
+        f"Evaluate the code above. Return ONLY the JSON result object."
+    )
+    parsed = await dispatch_subagent_prompt(prompt, cwd=wt_path, timeout_seconds=timeout_seconds)
+    if parsed and isinstance(parsed, dict) and "verdict" in parsed:
+        parsed["target_id"] = target_id
+        return parsed
+    return {
+        "target_id": target_id,
+        "verdict": "INCONCLUSIVE",
+        "reasoning": "Attacker subagent did not produce a structured verdict.",
+        "poc_script": None,
+        "code_archaeology": dict(DEFAULT_CODE_ARCHAEOLOGY),
+    }
+
+
+async def default_defender_subagent(
+    wt_path: Path,
+    target: Dict[str, Any],
+    attacker_res: Optional[Dict[str, Any]] = None,
+    timeout_seconds: float = 45.0,
+) -> Dict[str, Any]:
+    target_id = target.get("id", "unknown")
+    rel_file = target.get("file_path", target_id)
+    hypothesis = target.get("hypothesis", "")
+    code_snippet = _read_target_code_snippet(wt_path, target)
+
+    claim = (
+        attacker_res.get("reasoning", "Vulnerability suspected")
+        if attacker_res
+        else "Vulnerability suspected"
+    )
+    poc_code = (
+        attacker_res.get("poc_script", "None")
+        if attacker_res
+        else "None"
+    )
+
+    prompt = (
+        f"{TEAMWORK_DEFENDER_PROMPT}\n\n"
+        f"--- TARGET METADATA ---\n"
+        f"Target ID: {target_id}\n"
+        f"File: {rel_file}\n"
+        f"Hypothesis: {hypothesis}\n"
+        f"Attacker Claim: {claim}\n\n"
+        f"--- ATTACKER POC ---\n"
+        f"```python\n{poc_code}\n```\n\n"
+        f"--- CODE UNDER DEFENSE (IN WORKTREE) ---\n"
+        f"```\n{code_snippet}\n```\n\n"
+        f"Evaluate against Chesterton's Fence. Return ONLY the JSON result object."
+    )
+    parsed = await dispatch_subagent_prompt(prompt, cwd=wt_path, timeout_seconds=timeout_seconds)
+    if parsed and isinstance(parsed, dict) and "verdict" in parsed:
+        parsed["target_id"] = target_id
+        return parsed
+    return {
+        "target_id": target_id,
+        "verdict": "CONFIRMED",
+        "reasoning": "Defender subagent could not disprove vulnerability.",
+        "code_archaeology": dict(DEFAULT_CODE_ARCHAEOLOGY),
+    }
+
+
+async def orchestrate_adversarial_duel(
+    wt_path: Path,
+    target: Dict[str, Any],
+    timeout_seconds: float = 30.0,
+    attacker_fn: Optional[Any] = None,
+    defender_fn: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Orchestrate full 4-phase Red-vs-Blue confrontation protocol with Mantis Block G:
+    Phase 1: Attacker evaluates code and formulates pytest PoC.
+    Phase 2: Physical Red Check inside isolated GitWorktreePool directory.
+    Phase 3: Defender Chesterton Archaeology Gate evaluation.
+    Phase 4: Block Replacement Patch synthesis & Mantis Block G Benign Control Green Check.
+    """
+    target_id = target.get("id", "unknown")
+    rel_file = target.get("file_path", target_id)
+
+    # Phase 1: Attacker evaluation (Red Team)
+    if attacker_fn is not None:
+        try:
+            attacker_res = await attacker_fn(wt_path=wt_path, target=target)
+        except TypeError:
+            try:
+                attacker_res = await attacker_fn(wt_path, target)
+            except TypeError:
+                attacker_res = await attacker_fn(target)
+    else:
+        attacker_res = await default_attacker_subagent(
+            wt_path=wt_path, target=target, timeout_seconds=timeout_seconds
+        )
+
+    if not isinstance(attacker_res, dict):
+        return {
+            "target_id": target_id,
+            "verdict": "INCONCLUSIVE",
+            "reasoning": "Attacker returned non-dict response.",
+            "poc_type": "none",
+            "poc_script": None,
+            "code_archaeology": dict(DEFAULT_CODE_ARCHAEOLOGY),
+            "worktree_verified": False,
+            "patch_test_passed": False,
+            "benign_control_passed": None,
+            "mode": "duel_worktree",
+        }
+
+    code_archaeology = normalize_code_archaeology(attacker_res.get("code_archaeology"))
+
+    # Early exit if attacker dismissed the claim
+    if attacker_res.get("verdict") == "DISMISSED":
+        return {
+            "target_id": target_id,
+            "verdict": "DISMISSED",
+            "reasoning": attacker_res.get(
+                "reasoning",
+                "[Attacker Pre-Screening] Code is already defended or intentional design."
+            ),
+            "poc_type": "none",
+            "poc_script": None,
+            "code_archaeology": code_archaeology,
+            "worktree_verified": False,
+            "patch_test_passed": False,
+            "benign_control_passed": None,
+            "mode": "duel_worktree",
+        }
+
+    if attacker_res.get("verdict") != "CONFIRMED":
+        return {
+            "target_id": target_id,
+            "verdict": attacker_res.get("verdict", "INCONCLUSIVE"),
+            "reasoning": attacker_res.get("reasoning", "Attacker verdict inconclusive."),
+            "poc_type": "none",
+            "poc_script": None,
+            "code_archaeology": code_archaeology,
+            "worktree_verified": False,
+            "patch_test_passed": False,
+            "benign_control_passed": None,
+            "mode": "duel_worktree",
+        }
+
+    poc_script = attacker_res.get("poc_script")
+    if not isinstance(poc_script, str) or not poc_script.strip():
+        return {
+            "target_id": target_id,
+            "verdict": "DISMISSED",
+            "reasoning": "[Disprove-by-Default Circuit Breaker] CONFIRMED verdict lacked an executable pytest poc_script.",
+            "poc_type": "none",
+            "poc_script": None,
+            "code_archaeology": code_archaeology,
+            "worktree_verified": False,
+            "patch_test_passed": False,
+            "benign_control_passed": None,
+            "mode": "duel_worktree",
+        }
+
+    # Phase 2: Physical Red Check in Worktree
+    exploit_tests, benign_tests = _split_poc_test_names(poc_script)
+    has_separate_benign = bool(exploit_tests and benign_tests)
+    red_k = "not benign" if has_separate_benign else None
+
+    red_res = await execute_worktree_pytest(
+        wt_path, poc_script, timeout_seconds=float(timeout_seconds), k_expr=red_k
+    )
+    red_status = classify_pytest_outcome(red_res)
+
+    if red_status == "GREEN_SAFE":
+        return {
+            "target_id": target_id,
+            "verdict": "DISMISSED",
+            "reasoning": (
+                f"[Worktree Physical Defense Proof] Proposed PoC passed with exit code 0 "
+                f"(defense already holds). Original claim disproved."
+            ),
+            "poc_type": "none",
+            "poc_script": None,
+            "code_archaeology": code_archaeology,
+            "worktree_verified": True,
+            "patch_test_passed": False,
+            "benign_control_passed": None,
+            "mode": "duel_worktree",
+        }
+
+    if red_status == "INVALID_POC":
+        return {
+            "target_id": target_id,
+            "verdict": "DISMISSED",
+            "reasoning": (
+                f"[Disprove-by-Default Circuit Breaker] Attacker PoC failed to execute cleanly "
+                f"(exit code {red_res.returncode}, expected 1 for AssertionError). "
+                f"Output: {(red_res.stdout or red_res.stderr)[:240]}"
+            ),
+            "poc_type": "none",
+            "poc_script": None,
+            "code_archaeology": code_archaeology,
+            "worktree_verified": True,
+            "patch_test_passed": False,
+            "benign_control_passed": None,
+            "mode": "duel_worktree",
+        }
+
+    # Mantis Block G: Check unpatched benign baseline
+    unpatched_benign_valid = True
+    if has_separate_benign:
+        benign_base_res = await execute_worktree_pytest(
+            wt_path, poc_script, timeout_seconds=float(timeout_seconds), k_expr="benign"
+        )
+        if classify_pytest_outcome(benign_base_res) != "GREEN_SAFE":
+            unpatched_benign_valid = False
+
+    # Phase 3: Defender Archaeology Evaluation (Blue Team)
+    defender_res = None
+    if defender_fn is not None:
+        try:
+            defender_res = await defender_fn(wt_path=wt_path, target=target)
+        except TypeError:
+            try:
+                defender_res = await defender_fn(wt_path, target)
+            except TypeError:
+                defender_res = await defender_fn(target)
+    else:
+        defender_res = await default_defender_subagent(
+            wt_path=wt_path,
+            target=target,
+            attacker_res=attacker_res,
+            timeout_seconds=timeout_seconds,
+        )
+
+    if isinstance(defender_res, dict) and defender_res.get("verdict") == "DISMISSED":
+        def_arch = normalize_code_archaeology(defender_res.get("code_archaeology"))
+        return {
+            "target_id": target_id,
+            "verdict": "DISMISSED",
+            "reasoning": defender_res.get(
+                "reasoning",
+                "[Defender Archaeology Gate] Intentional architecture design proved by Blue Team."
+            ),
+            "poc_type": "none",
+            "poc_script": None,
+            "code_archaeology": def_arch,
+            "worktree_verified": True,
+            "patch_test_passed": False,
+            "benign_control_passed": None,
+            "mode": "duel_worktree",
+        }
+
+    # Phase 4: Patch Synthesis and Mantis Block G Green Check
+    def_arch = (
+        defender_res.get("code_archaeology")
+        if (isinstance(defender_res, dict) and defender_res.get("code_archaeology"))
+        else None
+    )
+    final_arch = normalize_code_archaeology(def_arch or attacker_res.get("code_archaeology"))
+
+    raw_block_rep = attacker_res.get("block_replacement")
+    block_rep = raw_block_rep if isinstance(raw_block_rep, dict) else {}
+    t_content = block_rep.get("target_content")
+    r_content = block_rep.get("replacement_content")
+
+    patch_test_passed = False
+    benign_control_passed = None
+
+    if t_content and r_content is not None:
+        wt_resolved = wt_path.resolve()
+        target_path = (wt_resolved / rel_file).resolve()
+        original_bytes = (
+            target_path.read_bytes()
+            if target_path.is_relative_to(wt_resolved) and target_path.is_file()
+            else None
+        )
+        applied = apply_block_replacement_in_worktree(wt_path, rel_file, t_content, r_content)
+        if applied:
+            green_res = await execute_worktree_pytest(
+                wt_path, poc_script, timeout_seconds=float(timeout_seconds)
+            )
+            if classify_pytest_outcome(green_res) == "GREEN_SAFE":
+                patch_test_passed = True
+                if has_separate_benign and unpatched_benign_valid:
+                    benign_control_passed = True
+            else:
+                patch_test_passed = False
+                if has_separate_benign and unpatched_benign_valid:
+                    benign_control_passed = False
+                if original_bytes is not None:
+                    target_path.write_bytes(original_bytes)
+
+    confirmed_reason = (
+        defender_res.get("reasoning")
+        if (isinstance(defender_res, dict) and defender_res.get("reasoning"))
+        else attacker_res.get("reasoning", "Vulnerability empirically confirmed by adversarial duel.")
+    )
+
+    return {
+        "target_id": target_id,
+        "verdict": "CONFIRMED",
+        "reasoning": confirmed_reason,
+        "poc_type": "pytest_in_memory",
+        "poc_script": poc_script,
+        "code_archaeology": final_arch,
+        "block_replacement": block_rep,
+        "remediation_hint": attacker_res.get("remediation_hint"),
+        "worktree_verified": True,
+        "patch_test_passed": patch_test_passed,
+        "benign_control_passed": benign_control_passed,
+        "mode": "duel_worktree",
+    }

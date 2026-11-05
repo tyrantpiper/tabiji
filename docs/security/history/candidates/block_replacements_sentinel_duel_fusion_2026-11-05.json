@@ -1,0 +1,45 @@
+[
+  {
+    "target_id": "scripts/lib/adversarial_team.py:missing_attacker_defender_duel_orchestrator",
+    "file_path": "scripts/lib/adversarial_team.py",
+    "block_replacement": {
+      "target_file": "scripts/lib/adversarial_team.py",
+      "target_content": "from typing import Any, Dict, List, Optional, Tuple",
+      "replacement_content": "from typing import Any, Callable, Dict, List, Optional, Tuple"
+    },
+    "code_archaeology": {
+      "legacy_function": "Type imports for adversarial team.",
+      "design_intent": "Added Callable for custom attacker/defender function injection in unit tests and duel loops.",
+      "regression_risk": "None, backward-compatible type hint expansion."
+    }
+  },
+  {
+    "target_id": ".agents/skills/security-sentinel/scripts/runner.py:unintegrated_mode_switch_and_duel_dispatch",
+    "file_path": ".agents/skills/security-sentinel/scripts/runner.py",
+    "block_replacement": {
+      "target_file": ".agents/skills/security-sentinel/scripts/runner.py",
+      "target_content": "async def run_single_validator(\n    target: Dict[str, Any],\n    timeout_seconds: int = 45,\n    workspace_root: Optional[Path] = None,\n) -> Dict[str, Any]:",
+      "replacement_content": "async def run_single_validator(\n    target: Dict[str, Any],\n    timeout_seconds: int = 45,\n    workspace_root: Optional[Path] = None,\n    mode: str = \"adaptive\",\n) -> Dict[str, Any]:"
+    },
+    "code_archaeology": {
+      "legacy_function": "Single validator execution.",
+      "design_intent": "Accepts mode parameter to route between adaptive (default), duel (full worktree Red-vs-Blue), and fast (static only).",
+      "regression_risk": "None, defaults to 'adaptive' keeping full backward compatibility."
+    }
+  },
+  {
+    "target_id": ".agents/skills/security-sentinel/SKILL.md:fragmented_subagent_and_runner_documentation",
+    "file_path": ".agents/skills/security-sentinel/SKILL.md",
+    "block_replacement": {
+      "target_file": ".agents/skills/security-sentinel/SKILL.md",
+      "target_content": "### Phase 3: Dual-Tier Physical Validator Confrontation (`runner.py` ✕ Native Subagents)",
+      "replacement_content": "### Phase 3: Dual-Mode Physical Validator Confrontation (`runner.py --mode duel` ✕ Native Subagents)"
+    },
+    "code_archaeology": {
+      "legacy_function": "Documents validation workflow.",
+      "design_intent": "Unifies CLI automation under --mode duel while preserving Tier 2 native subagent conversational interface.",
+      "regression_risk": "None, clarifies execution modes across CLI and chat."
+    }
+  }
+]
+
