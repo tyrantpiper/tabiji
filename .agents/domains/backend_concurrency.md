@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Fast-Lite Fallback Strategy for High-Latency Note Extraction**: In note extraction endpoints, routing_strategy MUST prioritize 'gemini-3.1-flash-lite' before 'gemini-3.5-flash-lite' and 'gemini-3.8-flash' to prevent Next.js dev server proxy from encountering 500 ECONNRESET (socket hang up) during upstream model retry backoffs.
+
 - **RFC 7518 HMAC-SHA256 Minimum Key Length Threshold**: All HMAC-SHA256 (HS256) secrets in tests and production code MUST be at least 32 bytes (256 bits) long to comply with RFC 7518 Section 3.2 and eliminate PyJWT InsecureKeyLengthWarning.
 
 - **Tag-First Extraction & Invisible Character Stripping Before Length Truncation (AD-199)**: In hybrid intent routing and admin hijack guardrails, user input wrapped in <user_input_{salt}> must first strip zero-width/Bidi control characters (INVISIBLE_CHARS_RE), advance past SYSTEM_BOUNDARY_END_RE, and extract content matching the exact closing outer_salt tag with trailing whitelist validation BEFORE applying 500-character ReDoS truncation.
@@ -57,6 +59,10 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Action Noise False Geocoding Query Overhead**: Submitting activity notes like '集合/搭乘/休息/退稅' to geocoding services causes rate limit exhaustion and erroneous coordinates. Filter out items matching ACTION_NOISE_KEYWORDS before geocoding.
+
+- **Next.js Dev Proxy Socket Hang Up under Gemini 3.8 Multi-Tier Backoff**: When calling Gemini 3.8 Flash for long markdown extraction, upstream 503 errors trigger exponential backoff exceeding 30s, causing Next.js dev proxy to drop connections with ECONNRESET. Use gemini-3.1-flash-lite (0.9s response) as the primary extraction model.
+
 - **Strict Expire Lockout on Recovery Vault Trap**: Strictly enforcing 30-day token expiration on vault endpoints blocks offline or dormant devices from pulling updated credentials.
 
 - **Post-Unveil Entry Modification Tampering Trap**: Allowing edits after early unveiling breaks trust. Existing entries must be locked upon unlock while allowing pending members to submit.

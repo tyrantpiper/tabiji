@@ -1,15 +1,67 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-06T14:32:00Z",
+  "last_audit_date": "2026-11-06T16:21:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 255,
-    "audited_targets": 255,
+    "total_targets": 259,
+    "audited_targets": 259,
     "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 54,
+    "remediated_vulnerabilities": 58,
     "dismissed_hypotheses": 150
   },
   "targets": [
+    {
+      "id": "backend/routers/ai.py:untrusted_url_ssrf_and_dos",
+      "target_type": "backend_api_route",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "ssrf_and_dos"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_parse_md_geocoding.md",
+      "validator_details": "Confirmed by in-memory PoC test_ssrf_and_malicious_url_rejection: User-supplied link_url in notes required strict is_allowed_google_maps_url domain whitelisting and is_safe_url check to eliminate SSRF.",
+      "remediated_at": "2026-11-06T16:21:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_parse_md_geocoding_2026-11-06.diff"
+    },
+    {
+      "id": "backend/routers/ai.py:concurrency_stall_and_timeout_leak",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "dos_resource_exhaustion"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_parse_md_geocoding.md",
+      "validator_details": "Confirmed by in-memory PoC test_concurrency_and_timeout_resilience: Gated batch geocoding with asyncio.Semaphore(10) and per-item 2.5s hard timeout shielding request workers.",
+      "remediated_at": "2026-11-06T16:21:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_parse_md_geocoding_2026-11-06.diff"
+    },
+    {
+      "id": "backend/routers/ai.py:schema_drift_and_type_confusion",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "type_confusion_data_integrity"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_parse_md_geocoding.md",
+      "validator_details": "Confirmed by in-memory PoC test_type_confusion_defense: Filtered string numerals, null, None, and NaN inputs through _safe_float parser.",
+      "remediated_at": "2026-11-06T16:21:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_parse_md_geocoding_2026-11-06.diff"
+    },
+    {
+      "id": "backend/routers/ai.py:anchor_cold_start_and_structure_recovery",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "logic_bypass_and_spatial_drift"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_parse_md_geocoding.md",
+      "validator_details": "Confirmed by in-memory PoC test_structure_flattening_and_dynamic_anchor_bootstrap: Enforced pre-geocode flattening and bootstrapped proximity bias anchor from first resolved item coordinate.",
+      "remediated_at": "2026-11-06T16:21:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_parse_md_geocoding_2026-11-06.diff"
+    },
     {
       "id": "skills/spec-dag-engine:path_traversal_in_prototype_sandbox",
       "target_type": "governance_specification",

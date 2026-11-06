@@ -1,16 +1,18 @@
-# 📅 Daily Report - 2026-11-06 (Unauthenticated Visitor Toast Suppression, Unified CLI Duel Automation, Dual-Track Spec DAG Engine & Pytest Warnings Zero-Tolerance)
+# 📅 Daily Report - 2026-11-06 (Unauthenticated Visitor Toast Suppression, Unified CLI Duel Automation, Dual-Track Spec DAG Engine, Deep Geocoding Pipeline & Subdomain SSRF Hardening)
 
-> **系統狀態**：🟢 Production Ready & Security Sentinel v2.4.0 Hardened, 0 TypeScript Errors (`tsc --noEmit`), 0 ESLint Warnings, 100% Tests Green (Frontend Vitest: 88/88 Files, 589/589 Tests Passed; Backend Pytest: 14/14 Collected, 11 Passed, 3 Skipped, 0 Warnings; Root Hygiene Sentinel: Clean), Security Ledger 255 Targets (54 Remediated, 51 Verified, 150 Dismissed, 100% 數學守恆 + `known_design_intents` 歷史決策防線).
+> **系統狀態**：🟢 Production Ready & Security Sentinel v2.5.0 Hardened, 0 TypeScript Errors (`tsc --noEmit`), 0 ESLint Warnings, 100% Tests Green (Frontend Vitest: 88/88 Files, 589/589 Tests Passed; Backend Pytest: 357 Collected, 352 Passed, 5 Skipped, 0 Warnings; Root Hygiene Sentinel: Clean), Security Ledger 259 Targets (58 Remediated, 51 Verified, 150 Dismissed, 100% 數學守恆 + `known_design_intents` 歷史決策防線).
 > **今日關鍵研發範疇 (Core Focus)**：
 > - 🛡️ **未登入訪客首頁虛警 Toast 根因修復與事件源標籤過濾閉環 (Unauthenticated Visitor Toast False Alarm Suppression & Event Source Tagging, AD-201, SPEC-AUTH-003)**：徹底排查未登入訪客首次進入網站首頁 (`/`) 即彈出「✨ 帳號引繼碼已自其他裝置同步更新」之惡性誤報。透過重構事件承載契約，標註四種來源並於 `AppClientLayer` 與 `auth-session.ts` 建立雙層防衛，訪客不再受到虛警打擾。
 > - ⚔️ **紅藍軍對抗全自動工作流原生整合至 Sentinel CLI (`runner.py --mode duel`, SPEC-AGY-002 v1.4.0, AD-202)**：深度融合 Red Team 與 Blue Team，於 [`scripts/lib/adversarial_team.py`](file:///d:/Project/tabiji/travel-pwa/scripts/lib/adversarial_team.py) 實作 `orchestrate_adversarial_duel` 四階段全自動協調器，並為 `runner.py` 擴充 `--mode {adaptive,duel,fast}` 命令列參數，自動調度 `GitWorktreePool` 執行實體沙盒對抗閉環。
 > - 🧬 **次世代雙螺旋工程規格引擎 (Dual-Track Spec DAG Engine, AD-204, SPEC-AGY-003)**：融合 Google (Non-Goals/Alternatives Matrix)、Anthropic (階梯式蘇格拉底探針)、Perplexity (外部情報雷達)、Cloudflare/Supabase (RLS 安全矩陣與 50ms 邊緣故障模型) 與 GitHub MADR 規範。重構 `/Idea to Spec` 與 `/grill-me`，建立「宏觀確定性 DAG ✕ 微觀隨機自適應 Agent Loop」架構，以 Fast-Track（保留 1 輪速成優勢）與 Deep-DAG（5 節點防衛管線）雙軌並存，徹底摧毀 Vibe Coding 崩塌與 100K Token Dumb Zone 智商衰竭。
 > - 🧹 **後端 Pytest 測試警訊清零與加密/Mock 規範合規 (AD-205, SPEC-DEF-002)**：全面根治 `backend/tests/` 內殘留之 4 項 Pytest 警訊。將 `test_phase4_sync_deadlock_poc.py` 的偽造 HS256 金鑰提升至 39 位元組，嚴格合規 RFC 7518 Section 3.2（$\ge 32$ bytes）；重構 `test_poi_lifespan.py`，廢除 `with mocker.patch(...)` 雙重上下文語法，改採 `mock_labels.return_value = ...` 重新賦值，使測試輸出達成純淨零警告。
-> - 📊 **資安覆蓋台帳擴展至 255 項目標與數學守恆 100% 達成 (Ledger Guard Identity Assertion, SPEC-AGY-002)**：新增針對規格 DAG 引擎之目錄穿越、人類門禁跳過與外部檢索無限阻塞等 3 項候選假說審計，完成 In-Memory PoC 實證（[`test_spec_dag_sentinel_poc.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_spec_dag_sentinel_poc.py)），台帳維持 54 Remediated + 51 Verified + 150 Dismissed = 255 Total Targets 的絕對數學守恆。
-
----
-
-## 🏆 深度專案復盤：四大核心工程里程碑 (Four Core Milestones)
+> - 🧭 **筆記文字匯入深層空間定位管線（Deep Geocoding Pipeline for Markdown Note Import, AD-206, SPEC-GEO-004）**：全鏈路重構 `/api/ai/parse-md` 端點，補齊以往遺漏的經緯度自動檢索能力。整合 `MolecularParser` 零成本 URL 直解、自癒型母體空間偏置推算、Semaphore(10) + 2.5s 逾時並發保護、動作噪音過濾與確定性貨幣推斷。經真實 Chrome DevTools MCP 與 Supabase 落盤遙測，經緯度覆蓋率達 **90.5%**（19/21 筆精準取得），MapLibre WebGL 正確渲染 69.2 km 路線與 15h 24m 交通耗時。
+> - ⚡ **模型路由快速降級策略消除 Next.js Dev API Proxy 503/ECONNRESET 逾時（AD-207）**：針對 Google 雲端模型擁塞引發之代理逾時（socket hang up），顯式指定 `routing_strategy=["gemini-3.1-flash-lite", ...]` 優先調用 0.9s 極速模型，將筆記結構解析縮減至 1~2s 內完成。
+> - 🛡️ **次級網域偽造 SSRF 邊界加固與 Security Sentinel 6 階段完整閉環 (AD-208, SPEC-AGY-002 v1.5.0)**：發掘正則表達式缺失結尾錨點（`maps.app.goo.gl.attacker.com` 繞過），升級為 `(?:/|\?|$)` 封死漏洞；擴展資安台帳至 259 項目標（58 Remediated + 51 Verified + 150 Dismissed），維持絕對數學守恆。
+> 
+> ---
+> 
+> ## 🏆 深度專案復盤：七大核心工程里程碑 (Seven Core Milestones)
 
 ---
 
@@ -111,6 +113,50 @@
 
 ---
 
+### 里程碑七：筆記文字匯入深層空間定位管線（Deep Geocoding Pipeline for Markdown Note Import, AD-206, SPEC-GEO-004）
+
+1. **問題現象與使用者直覺印證**：
+   - 使用者提問：「為什麼 AI 生成行程 (`/generate-trip`) 經緯度準確率極高，但筆記文字匯入 (`/parse-md`) 解析後完全不抓取各自的經緯度？」
+   - **實證分析**：
+     - AI 生成行程之所以精準，是因為具備標準名詞收斂、提示詞初階座標注入、母體中心點偏置 (`bias_lat`, `bias_lng`) 以及後端 `_safe_geocode` (Semaphore + Timeout) 批次補齊。
+     - 過去筆記匯入端點僅執行純文字擷取，完全未對接 Geocoding 管線或 `MolecularParser`，回傳座標全數為 `null`，造成地圖標記無法渲染且路線里程為 0。
+2. **端點內聚架構實作**：
+   - 在 [`backend/routers/ai.py`](file:///d:/Project/tabiji/travel-pwa/backend/routers/ai.py) 實作深層定位管線：
+     - **Step 1 (MolecularParser 零成本 URL 直解)**：利用正規表達式與 CID 向量，直接自 Google Maps URL 秒解精準座標，完全不發送網路請求。
+     - **Step 2 (自癒型動態空間偏置推算)**：若筆記標題為「5天4夜自由行」等泛稱，自動將首個已解出座標之項目晉升為母體中心點（Self-Bootstrapping Anchor），解決全域空間漂移。
+     - **Step 3 (並發檢索與短網址救援)**：以 `asyncio.Semaphore(10)` 與單項 2.5s 超時熔斷防護，過濾「集合/搭乘/休息/退稅」等動作噪音，專注查詢實體景點。
+     - **Step 4 (確定性幣別與日期注入)**：根據目的地推斷 ISO 貨幣代碼。
+3. **實體遙測與驗收**：
+   - 經 Chrome DevTools MCP 與 Supabase DB 遙測（行程 `3747ac9a-2672-4a0d-bba7-719af754f2ad`）：21 項景點中 19 筆獲得精準座標（**90.5% 覆蓋率**），MapLibre WebGL 渲染全圖釘、里程 69.2 km、交通耗時 15h 24m。
+
+---
+
+### 里程碑八：模型路由快速降級策略消除 Next.js Dev API Proxy 503/ECONNRESET 逾時（AD-207）
+
+1. **問題現象**：
+   - 長文或多日筆記送出解析時，Next.js API proxy 偶發出現 500 `socket hang up` (ECONNRESET)。
+2. **根因剖析**：
+   - Google 雲端 `gemini-3.8-flash` 偶發遭遇 503 伺服器端過載，後端模型管理器在多層級退避時耗時超過 30 秒，觸發 Next.js dev server proxy 連線中斷。
+3. **修復措施**：
+   - 於 `call_extraction` 顯式注入優先快速路由 `routing_strategy=["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash"]`。
+   - 由 0.9 秒極速回傳之 `gemini-3.1-flash-lite` 作為第一道防線，消除長文逾時中斷風險。
+
+---
+
+### 里程碑九：Security Sentinel 對抗審查與次級網域偽造 SSRF 邊界加固（AD-208, SPEC-AGY-002 v1.5.0）
+
+1. **對抗審核與實體沙盒刺探**：
+   - 建立候選假說與實體沙盒測試 [`backend/tests/test_parse_md_geocoding_sentinel_poc.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_parse_md_geocoding_sentinel_poc.py) (4/4 passed in 2.54s)。
+   - 驗證 SSRF 拒絕、型別混淆防禦 (`_safe_float`)、自癒動態錨點、並發 Semaphore 與 2.5s 逾時熔斷。
+2. **深層次級網域偽造漏洞發掘與即刻加固**：
+   - 原始正則 `r'^https?://(maps\.app\.goo\.gl|...)'` 缺失主機名結尾邊界，允許 `https://maps.app.goo.gl.attacker.com` 繞過白名單。
+   - 立即追加 `(?:/|\?|$)` 邊界錨點，並於測試案例中加入對抗測資驗證封堵。
+3. **台帳守恆與審核報告**：
+   - 資安覆蓋台帳更新至 259 項目標（58 Remediated + 51 Verified + 150 Dismissed），`validate_security_ledger.py` 綠燈守恆。
+   - 產出審查報告 [`docs/security/reports/2026-11/security_sentinel_report_2026-11-06_parse_md_geocoding.md`](file:///d:/Project/tabiji/travel-pwa/docs/security/reports/2026-11/security_sentinel_report_2026-11-06_parse_md_geocoding.md)。
+
+---
+
 ## 🏛️ 架構決策紀錄 (Architecture Decision Records)
 
 - **AD-201 (Event Source Tagging & Dual-Guard Toast Suppression - SPEC-AUTH-003)**:
@@ -133,6 +179,18 @@
   - **Context**: 後端測試執行時出現 4 項警告（PyJWT 密鑰過短警告與 pytest-mock 雙重上下文退出警告），影響 CI 乾淨度。
   - **Decision**: 密鑰生成強制遵守 RFC 7518（長度 $\ge 32$ 位元組）；全面統一使用 pytest-mock 標準模式管理 mock 生命週期，禁止在 fixture 上疊加 `with` 語法。
   - **Trade-offs**: 稍微增加測試字串長度，但換取完全零警告的乾淨測試環境。
+- **AD-206 (Deep Geocoding Pipeline & Self-Bootstrapping Proximity Bias for Markdown Import - SPEC-GEO-004)**:
+  - **Context**: 過去 `/api/ai/parse-md` 僅擷取文字，無經緯度座標，導致匯入之行程地圖無法渲染、路線無距離。前端多次非同步補查架構脆弱且引發大量競態。
+  - **Decision**: 採用端點內聚架構，於後端依序串接：(1) MolecularParser 零成本 URL 直解；(2) 動態空間偏置（若標題泛稱則自動從首個已解出座標自癒晉升為母體中心點）；(3) `asyncio.Semaphore(10)` 與 2.5s 逾時熔斷之並發檢索；(4) 動作噪音過濾；(5) 確定性貨幣與日期推斷。
+  - **Trade-offs**: 後端解析耗時微幅增加（+0.5~1.5s），但前端獲得完整的結構化資料，完全消除二階段異步補查之競態與覆蓋黑洞。
+- **AD-207 (Fast-Lite Fallback Strategy for High-Latency Note Extraction)**:
+  - **Context**: 預設調用 `gemini-3.8-flash` 偶發遇到 Google 雲端 503 超時與退避，耗時 > 30s 導致 Next.js Dev API Proxy 觸發 `socket hang up` (ECONNRESET)。
+  - **Decision**: 在 `parse_markdown` 中顯式傳入 `routing_strategy=["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash"]`，優先由 0.9s 回傳之極速模型處理長文擷取。
+  - **Trade-offs**: 稍微限制單次輸出的極度長文複雜度，但徹底杜絕 Proxy 500 連線崩潰。
+- **AD-208 (Subdomain Boundary Hardening on URL Whitelist)**:
+  - **Context**: 檢查 Google Maps 網址之正則表達式缺失主機邊界錨點，允許 `https://maps.app.goo.gl.attacker.com` 繞過白名單發起外部請求。
+  - **Decision**: 在正規表達式主機結尾強制追加 `(?:/|\?|$)`，並將此測資固化於 Sentinel 對抗測試套件中。
+  - **Trade-offs**: 無。零成本提升 SSRF 防禦邊界。
 
 ---
 
@@ -153,6 +211,15 @@
 - **FP-016 (Pytest-mock Context Manager Double-Exit Warning Trap)**:
   - **Symptom**: 在 pytest 測試函式中使用 `with mocker.patch(...)` 會觸發 `PytestMockWarning`，因為 `mocker` fixture 已經在函式層級自動託管了生命週期。
   - **Resolution**: 移除 `with` 語法，跨情境直接透過 `mock_obj.return_value = ...` 重新指定模擬值。
+- **FP-017 (Next.js Dev Proxy Socket Hang Up under Gemini 3.8 Multi-Tier Backoff)**:
+  - **Symptom**: 前端調用 `/api/ai/parse-md` 偶發出現 500 ECONNRESET，排查發現後端因 Google 雲端 503 重試超過 30 秒，觸發前端 Next.js http-proxy 逾時中斷。
+  - **Resolution**: 顯式指定極速模型路由策略 `routing_strategy=["gemini-3.1-flash-lite", ...]`，0.9 秒回傳排除逾時。
+- **FP-018 (Subdomain Spoofing in Unanchored Domain Regex Whitelist)**:
+  - **Symptom**: 正則表達式 `r'^https?://(maps\.app\.goo\.gl|...)'` 允許 `maps.app.goo.gl.attacker.com` 匹配成功，產生 SSRF 穿透盲區。
+  - **Resolution**: 必須在主機名稱結尾嚴格錨定 `(?:/|\?|$)`。
+- **FP-019 (Action Noise False Geocoding Query Overhead)**:
+  - **Symptom**: 行程筆記中的「集合/搭乘/休息/退稅」等動作項目被送往地理編碼，造成無效網路開銷與錯誤座標。
+  - **Resolution**: 建立 `ACTION_NOISE_KEYWORDS` 過濾機制，阻斷動作項目發起地理查詢。
 
 ---
 
@@ -229,6 +296,48 @@
     "id": "FP-016",
     "title": "Pytest-mock Context Manager Double-Exit Warning Trap",
     "content": "Wrapping mocker.patch() in a 'with' block triggers PytestMockWarning due to redundant context exit calls. Manage test branching via return_value mutation instead of context managers."
+  },
+  {
+    "domain": "map_webgl",
+    "type": "INVARIANT_RULE",
+    "id": "INV-GEO-001",
+    "title": "Self-Bootstrapping Spatial Proximity Bias for Markdown Import",
+    "content": "In parse_markdown (/api/ai/parse-md), when trip title is generic (e.g. '5天4夜自由行'), proximity bias MUST dynamically bootstrap (bias_lat, bias_lng) from the first successfully resolved item coordinate to anchor subsequent geocoding queries and eliminate global coordinate drift."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-SEC-002",
+    "title": "Strict Hostname Boundary Regex for Whitelisted Redirect URLs",
+    "content": "When whitelisting external redirect or maps URLs via regular expressions, the hostname expression MUST end with an explicit boundary anchor '(?:/|\\?|$)' to prevent subdomain spoofing bypasses such as 'https://maps.app.goo.gl.attacker.com'."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AI-001",
+    "title": "Fast-Lite Fallback Strategy for High-Latency Note Extraction",
+    "content": "In note extraction endpoints, routing_strategy MUST prioritize 'gemini-3.1-flash-lite' before 'gemini-3.5-flash-lite' and 'gemini-3.8-flash' to prevent Next.js dev server proxy from encountering 500 ECONNRESET (socket hang up) during upstream model retry backoffs."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "FAILED_PATH",
+    "id": "FP-017",
+    "title": "Next.js Dev Proxy Socket Hang Up under Gemini 3.8 Multi-Tier Backoff",
+    "content": "When calling Gemini 3.8 Flash for long markdown extraction, upstream 503 errors trigger exponential backoff exceeding 30s, causing Next.js dev proxy to drop connections with ECONNRESET. Use gemini-3.1-flash-lite (0.9s response) as the primary extraction model."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-018",
+    "title": "Subdomain Spoofing in Unanchored Domain Regex Whitelist",
+    "content": "Writing regex like '^https?://(maps\\.app\\.goo\\.gl|...)' allows attackers to construct 'maps.app.goo.gl.attacker.com' and bypass SSRF domain whitelisting. Always append '(?:/|\\?|$)'."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "FAILED_PATH",
+    "id": "FP-019",
+    "title": "Action Noise False Geocoding Query Overhead",
+    "content": "Submitting activity notes like '集合/搭乘/休息/退稅' to geocoding services causes rate limit exhaustion and erroneous coordinates. Filter out items matching ACTION_NOISE_KEYWORDS before geocoding."
   }
 ]
 ```

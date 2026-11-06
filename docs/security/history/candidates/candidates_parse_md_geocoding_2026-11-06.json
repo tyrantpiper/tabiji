@@ -1,0 +1,31 @@
+[
+  {
+    "id": "backend/routers/ai.py:untrusted_url_ssrf_and_dos",
+    "file_path": "backend/routers/ai.py",
+    "attack_vector": "ssrf_and_dos",
+    "trust_boundary": "browser_to_edge",
+    "hypothesis": "User-supplied link_url in notes could point to internal metadata endpoints or unverified domains, leading to SSRF or infinite redirects if passed unchecked to link resolvers."
+  },
+  {
+    "id": "backend/routers/ai.py:concurrency_stall_and_timeout_leak",
+    "file_path": "backend/routers/ai.py",
+    "attack_vector": "dos_resource_exhaustion",
+    "trust_boundary": "authenticated_to_internal",
+    "hypothesis": "Concurrent geocoding of large batches without per-item semaphore and hard timeout could exhaust backend connections or hang during external geocoder degradation."
+  },
+  {
+    "id": "backend/routers/ai.py:schema_drift_and_type_confusion",
+    "file_path": "backend/routers/ai.py",
+    "attack_vector": "type_confusion_data_integrity",
+    "trust_boundary": "authenticated_to_internal",
+    "hypothesis": "LLM hallucinations outputting string numbers, null, or NaN for lat/lng could bypass validation and corrupt database decimal columns or break downstream maps."
+  },
+  {
+    "id": "backend/routers/ai.py:anchor_cold_start_and_structure_recovery",
+    "file_path": "backend/routers/ai.py",
+    "attack_vector": "logic_bypass_and_spatial_drift",
+    "trust_boundary": "authenticated_to_internal",
+    "hypothesis": "Generic trip titles lack city anchors causing global coordinate drift, and hallucinated nested 'days' structures bypass geocoding if executed prior to flattening."
+  }
+]
+

@@ -3,6 +3,8 @@
 > **所屬領域**: MapLibre GL JS, WebGL Canvas, 3D Globe, 大圓航線, 手勢隔離, CSP Worker
 
 ## 🏛️ 架構決策 (Decisions)
+- **Self-Bootstrapping Spatial Proximity Bias for Markdown Import**: In parse_markdown (/api/ai/parse-md), when trip title is generic (e.g. '5天4夜自由行'), proximity bias MUST dynamically bootstrap (bias_lat, bias_lng) from the first successfully resolved item coordinate to anchor subsequent geocoding queries and eliminate global coordinate drift.
+
 - **Cross-Component FlyTo Event Bus**: Component-level location previews must dispatch tabidachi:map-flyto custom events with bounded lat/lng rather than opening external map windows.
 
 - **In-Card MiniMap Lightweight Tile Rendering**: Chat POI preview cards must use Web Mercator tile URL calculations (https://server.arcgisonline.com/.../15/{y}/{x}) instead of initializing full WebGL MapLibre instances to prevent GPU memory pressure.

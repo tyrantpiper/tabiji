@@ -1,0 +1,141 @@
+--- a/backend/routers/ai.py
++++ b/backend/routers/ai.py
+@@ -303,4 +303,5 @@
+             "title": "行程標題",
++            "destination": "目標主要城市或區域 (如 東京/京都/首爾/台北)",
+             "start_date": "YYYY-MM-DD",
+             "end_date": "YYYY-MM-DD",
+             "items": [
+@@ -314,4 +315,6 @@
+                     "desc": "以專業導遊角度提供的在地洞察，嚴禁醫療建議",
+                     "tags": ["必吃", "米其林"],
++                    "lat": 35.6654,
++                    "lng": 139.7707,
+                     "sub_items": [
+                         { "name": "🥇 まいばすけっと", "checked": false, "desc": "07:00-23:00 | 出站直達", "link": "https://www.google.com/maps/..." },
+@@ -376,3 +379,103 @@
+                 data["items"] = flat_items
+ 
++        raw_items = data.get("items", [])
++        if raw_items:
++            import math
++            from utils.molecular_parser import get_molecular_parser
++            from utils.url_safety import is_safe_url
++            from services.link_resolver import resolve_google_maps_link
++            from services.geocode_service import (
++                smart_geocode_logic,
++                extract_region_for_search,
++                detect_country_from_keywords,
++                infer_currency_from_destination
++            )
++
++            mol_parser = get_molecular_parser()
++
++            def _safe_float(val):
++                try:
++                    if val is not None and str(val).strip().lower() not in ("none", "null", "n/a", ""):
++                        f = float(val)
++                        return f if (f != 0.0 and not math.isnan(f)) else None
++                except (ValueError, TypeError):
++                    pass
++                return None
++
++            def _is_allowed_maps_url(url: Optional[str]) -> bool:
++                if not url or not is_safe_url(url):
++                    return False
++                return bool(re.search(r'^https?://(?:maps\.app\.goo\.gl|goo\.gl/maps|(?:www\.)?google\.(?:com|co\.jp|com\.tw)/maps)(?:/|\?|$)', url))
++
++            # Step 1: 零成本 URL 座標直解
++            for it in raw_items:
++                it["lat"] = _safe_float(it.get("lat"))
++                it["lng"] = _safe_float(it.get("lng"))
++                link = it.get("link_url")
++                if not it["lat"] and link and _is_allowed_maps_url(link):
++                    coords = mol_parser.parse_url(link)
++                    if coords:
++                        it["lat"] = coords["lat"]
++                        it["lng"] = coords["lng"]
++
++            # Step 2: 自癒型母體空間偏置推算
++            raw_dest = data.get("destination") or data.get("title") or ""
++            dest_query = extract_region_for_search(raw_dest) or raw_dest
++            bias_lat, bias_lng = None, None
++            dest_country = detect_country_from_keywords(dest_query) or detect_country_from_keywords(raw_dest)
++
++            if dest_query:
++                try:
++                    dest_geo = await smart_geocode_logic(query=dest_query, limit=1)
++                    if dest_geo and dest_geo.get("results"):
++                        first_dest = dest_geo["results"][0]
++                        bias_lat = first_dest.get("lat")
++                        bias_lng = first_dest.get("lng")
++                        dest_country = first_dest.get("country") or dest_country
++                except Exception as e:
++                    print(f"⚠️ [Dynamic Anchor] Destination anchor resolution skipped: {e}")
++
++            if not bias_lat:
++                for it in raw_items:
++                    if it.get("lat") and it.get("lng"):
++                        bias_lat, bias_lng = it["lat"], it["lng"]
++                        break
++
++            # Step 3: 並發安全檢索與短網址救援 (Semaphore 10 + 2.5s Timeout)
++            sem = asyncio.Semaphore(10)
++            ACTION_NOISE_KEYWORDS = ("集合", "搭乘", "休息", "抵達", "出發", "退稅", "check-in", "check-out")
++
++            async def _safe_geocode_item(item: dict) -> dict:
++                if item.get("lat") and item.get("lng"):
++                    return item
++
++                link = item.get("link_url")
++                if link and _is_allowed_maps_url(link) and ("maps.app.goo.gl" in link or "goo.gl/maps" in link):
++                    async with sem:
++                        try:
++                            resolved = await asyncio.wait_for(resolve_google_maps_link(link), timeout=2.5)
++                            if resolved and resolved.get("lat") and resolved.get("lng"):
++                                item["lat"] = resolved["lat"]
++                                item["lng"] = resolved["lng"]
++                                return item
++                        except Exception:
++                            pass
++
++                place_name = item.get("place_name") or item.get("original_name") or ""
++                if not place_name or any(noise in place_name for noise in ACTION_NOISE_KEYWORDS):
++                    return item
++
++                async with sem:
++                    try:
++                        geo_res = await asyncio.wait_for(
++                            smart_geocode_logic(
++                                query=place_name,
++                                limit=1,
++                                trip_title=data.get("title"),
++                                region=dest_query,
++                                lat=bias_lat,
++                                lng=bias_lng,
++                                country=dest_country
++                            ),
++                            timeout=2.5
++                        )
++                        if geo_res and geo_res.get("results"):
++                            first_match = geo_res["results"][0]
++                            item["lat"] = first_match["lat"]
++                            item["lng"] = first_match["lng"]
++                    except Exception as e:
++                        print(f"⚠️ [Safe Geocode] Item '{place_name}' skipped: {e}")
++                return item
++
++            data["items"] = await asyncio.gather(*[_safe_geocode_item(it) for it in raw_items])
++
++            # Step 4: 確定性幣別與日期注入
++            inferred_currency = infer_currency_from_destination(
++                dest=raw_dest or dest_query or (body.markdown_text or "")[:50],
++                declared_currency=data.get("currency")
++            )
++            data["currency"] = inferred_currency
++            for item in data["items"]:
++                if not item.get("currency"):
++                    item["currency"] = inferred_currency
++
+         return data
+
