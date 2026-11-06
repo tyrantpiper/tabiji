@@ -300,17 +300,17 @@ async def get_trip_by_id(
         # 2. 抓該行程的所有細項 (按 time_slot 排序，確保符合時間軸)
         items_res = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip["id"]).order("day_number").order("time_slot").order("sort_order").execute()
         
-        # 3. 整理成前端要的格式 (含隱私過濾)
-        creator_id = trip.get("created_by")
+        # 3. 整理成前端要的格式 (含隱私過濾：Option A 行程擁有者視角)
+        is_owner = bool(user_id) and (
+            (bool(trip.get("created_by")) and str(trip.get("created_by")) == str(user_id)) or
+            (bool(trip.get("user_id")) and str(trip.get("user_id")) == str(user_id))
+        )
         days_map = {}
         if items_res.data:
             for item in items_res.data:
-                # 🛡️ 隱私過濾邏輯：1. 公開 2. 自己是設定者 3. 自己是行程創立者
-                is_private = item.get("is_private", False)
-                owner_id = item.get("private_owner_id")
-                
-                if is_private and owner_id != user_id:
-                    # 🛡️ 絕對隱私：除了設定者以外，誰都不能看（包含創立者）
+                # 🛡️ 隱私過濾邏輯：只有行程創立者可見私人項目 (is_private: true)，協作者/訪客一律過濾
+                is_private = bool(item.get("is_private", False))
+                if is_private and not is_owner:
                     continue
                 
                 d = item["day_number"]
@@ -340,23 +340,18 @@ async def get_trip_by_id(
                     "sort_order": item.get("sort_order", 0),
                     "is_highlight": item.get("is_highlight", False),
                     "is_private": is_private,
-                    "private_owner_id": owner_id
+                    "private_owner_id": item.get("private_owner_id")
                 })
         
-        # 🆕 隱私過濾輔助函數（修正版：使用 private_owner_id + 創立者特權）
+        # 🆕 隱私過濾輔助函數（Option A 行程擁有者視角）
         def filter_private_items(items_dict: dict) -> dict:
-            """過濾私人項目：只有設定者本人或行程創立者可見"""
+            """過濾私人項目：行程擁有者可見全部項目，非擁有者過濾 is_private 項目"""
             filtered = {}
-            # 取得該行程的創立者 (來自 trip 物件)
-            creator_id = trip.get("created_by")
-            
             for day_key, items_list in items_dict.items():
                 if isinstance(items_list, list):
-                    # 通過條件：1. 公開 2. 自己是設定者 3. 自己是行程創立者
                     filtered[day_key] = [
                         item for item in items_list 
-                        if not item.get("is_private") or  # 公開項目
-                           item.get("private_owner_id") == user_id # 或是自己的私人項目
+                        if not item.get("is_private") or is_owner or (item.get("private_owner_id") and item.get("private_owner_id") == user_id)
                     ]
                 else:
                     filtered[day_key] = items_list
@@ -740,17 +735,17 @@ async def get_latest_itinerary(
         # 2. 抓該行程的所有細項 (按 sort_order 排序，支援拖曳)
         items_res = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip["id"]).order("day_number").order("sort_order").order("time_slot").execute()
         
-        # 3. 整理成前端要的格式 (含隱私過濾)
-        creator_id = trip.get("created_by")
+        # 3. 整理成前端要的格式 (含隱私過濾：Option A 行程擁有者視角)
+        is_owner = bool(user_id) and (
+            (bool(trip.get("created_by")) and str(trip.get("created_by")) == str(user_id)) or
+            (bool(trip.get("user_id")) and str(trip.get("user_id")) == str(user_id))
+        )
         days_map = {}
         if items_res.data:
             for item in items_res.data:
-                # 🛡️ 隱私過濾：主畫面只顯示公開或本人的項目
-                is_private = item.get("is_private", False)
-                owner_id = item.get("private_owner_id")
-                
-                if is_private and owner_id != user_id:
-                    # 🛡️ 絕對隱私：包含主畫面也嚴格過濾
+                # 🛡️ 隱私過濾：主畫面只顯示公開或行程擁有者的私人項目
+                is_private = bool(item.get("is_private", False))
+                if is_private and not is_owner:
                     continue
                     
                 d = item["day_number"]
@@ -775,7 +770,7 @@ async def get_latest_itinerary(
                     "image_url": item.get("image_url"),
                     "image_urls": item.get("image_urls") or ([item.get("image_url")] if item.get("image_url") else []),
                     "is_private": is_private,
-                    "private_owner_id": owner_id
+                    "private_owner_id": item.get("private_owner_id")
                 })
             
         # 轉成陣列
@@ -1064,8 +1059,6 @@ async def import_to_trip(
         # C. 合併 AI 審核 (保留原有的或更新)
         if request.ai_review:
             updated_content["ai_review"] = request.ai_review
-            # 🛡️ v7.1: 同步至頂層欄位，確保全域讀取一致性
-            supabase.table("itineraries").update({"ai_review": request.ai_review}).eq("id", request.trip_id).execute()
         
         # 3. 更新主行程 content
         supabase.table("itineraries").update({"content": updated_content}).eq("id", request.trip_id).execute()

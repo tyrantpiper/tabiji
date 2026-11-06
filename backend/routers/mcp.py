@@ -13,6 +13,7 @@ Provides:
 """
 
 import os
+import re
 import uuid
 import logging
 import urllib.parse
@@ -148,13 +149,44 @@ async def mcp_server_card(request: Request):
         }
     }
 
+UUID_REGEX = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+
+def is_valid_uuid(val: Any) -> bool:
+    """驗證字串是否為合法的 UUID 格式 (防範 PostgreSQL 22P02 語法錯誤)"""
+    if not val or not isinstance(val, str):
+        return False
+    return bool(UUID_REGEX.match(val.strip()))
+
+def is_trusted_redirect_uri(redirect_uri: str) -> bool:
+    """驗證 OAuth redirect_uri 是否屬於受信信任之網域，嚴防 Open Redirect 與 Account Takeover"""
+    if not redirect_uri:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(redirect_uri)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return False
+        if hostname in ("localhost", "127.0.0.1", "testserver"):
+            return True
+        if hostname == "google.com" or hostname.endswith(".google.com"):
+            return True
+        if hostname == "googleusercontent.com" or hostname.endswith(".googleusercontent.com"):
+            return True
+        if hostname == "tabijiapp.com" or hostname.endswith(".tabijiapp.com"):
+            return True
+        if hostname == "tabiji.app" or hostname.endswith(".tabiji.app"):
+            return True
+        if hostname == "travel-pwa-five.vercel.app" or hostname.endswith(".vercel.app"):
+            return True
+        return False
+    except Exception:
+        return False
+
 def calculate_trip_days(trip: Dict[str, Any]) -> int:
-    """計算行程總天數 (支援 content.daily_locations 與 start_date/end_date 日期跨度)"""
-    content = trip.get("content") or {}
-    if isinstance(content, dict):
-        daily_locs = content.get("daily_locations")
-        if isinstance(daily_locs, dict) and len(daily_locs) > 0:
-            return len(daily_locs)
+    """計算行程總天數 (綜合比較日期跨度、daily_locations 筆數與 total_days)"""
+    date_span = 0
     start = trip.get("start_date")
     end = trip.get("end_date")
     if start and end:
@@ -164,10 +196,39 @@ def calculate_trip_days(trip: Dict[str, Any]) -> int:
             d2 = date.fromisoformat(str(end).split("T")[0])
             delta = (d2 - d1).days + 1
             if delta > 0:
-                return delta
+                date_span = delta
         except Exception:
             pass
-    return 1
+
+    daily_locations_count = 0
+    content = trip.get("content")
+    if isinstance(content, str):
+        try:
+            import json
+            content = json.loads(content)
+        except Exception:
+            content = {}
+    if isinstance(content, dict):
+        daily_locs = content.get("daily_locations")
+        if isinstance(daily_locs, dict):
+            daily_locations_count = len(daily_locs)
+            try:
+                max_key = max([int(k) for k in daily_locs.keys() if str(k).isdigit()] or [0])
+                daily_locations_count = max(daily_locations_count, max_key)
+            except Exception:
+                pass
+        elif isinstance(daily_locs, list):
+            daily_locations_count = len(daily_locs)
+
+    total_days = 0
+    try:
+        raw_td = trip.get("total_days")
+        if raw_td is not None:
+            total_days = int(raw_td)
+    except (ValueError, TypeError):
+        pass
+
+    return max(date_span, daily_locations_count, total_days, 1)
 
 def sanitize_coordinates(lat: Any, lng: Any) -> tuple[Optional[float], Optional[float]]:
     """驗證並過濾經緯度座標，防範 AI 幻覺、超出物理邊界與 Null Island (0, 0)"""
@@ -201,6 +262,10 @@ async def oauth_authorize(
     # 驗證 code_challenge_method (RFC 7636 / OAuth 2.1 規範強制 S256)
     if code_challenge_method and code_challenge_method != "S256":
         raise HTTPException(status_code=400, detail="Unsupported code_challenge_method: only 'S256' is supported")
+
+    # 🛡️ 驗證 redirect_uri 安全白名單 (RFC 6749 防範 Open Redirect 與 Account Takeover)
+    if not is_trusted_redirect_uri(redirect_uri):
+        raise HTTPException(status_code=400, detail="Invalid redirect_uri: untrusted domain")
 
     # 自動清理超過 5 分鐘之過期授權碼 (防範記憶體洩漏)
     now = time.time()
@@ -409,6 +474,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                             "type": "object",
                             "properties": {
                                 "trip_id": {"type": "string", "description": "行程 UUID"},
+                                "item_id": {"type": "string", "description": "特定景點 UUID (選填，用於精確修改或刪除指定景點)"},
                                 "day_index": {"type": "integer", "description": "第幾天 (從 1 開始)"},
                                 "action": {"type": "string", "enum": ["add", "remove", "update"]},
                                 "places": {
@@ -417,6 +483,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                                     "items": {
                                         "type": "object",
                                         "properties": {
+                                            "item_id": {"type": "string", "description": "景點 UUID (選填，用於指定特定項目)"},
                                             "place_name": {"type": "string", "description": "地點名稱"},
                                             "arrival_time": {"type": "string", "description": "到達時間 (HH:MM)"},
                                             "notes": {"type": "string", "description": "備註事項"},
@@ -589,6 +656,8 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         trip_id = args.get("trip_id")
         if not trip_id or not isinstance(trip_id, str):
             return {"jsonrpc": "2.0", "id": req_id, "result": format_mcp_tool_result("缺少必要的行程識別碼 (trip_id)", is_error=True)}
+        if not is_valid_uuid(trip_id):
+            return {"jsonrpc": "2.0", "id": req_id, "result": format_mcp_tool_result(f"無效的行程識別碼「{trip_id}」：必須為合法的 UUID 格式。若您傳入的是行程名稱，請先調用 list_user_trips 工具查詢行程 UUID", is_error=True)}
 
         if not supabase:
             return {"jsonrpc": "2.0", "id": req_id, "result": format_mcp_tool_result("資料庫連線不可用", is_error=True)}
@@ -616,19 +685,39 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                 return {"jsonrpc": "2.0", "id": req_id, "result": format_mcp_tool_result("權限不足：您無權存取此行程", is_error=True)}
 
         day_filter = args.get("day_index")
+        day_number = None
+        if day_filter is not None and str(day_filter).strip().lower() not in ("", "none", "null", "all", "整本", "全部"):
+            try:
+                day_number = int(day_filter)
+            except (ValueError, TypeError):
+                m = re.search(r'\d+', str(day_filter))
+                if m:
+                    try:
+                        day_number = int(m.group(0))
+                    except Exception:
+                        day_number = None
+                else:
+                    day_number = None
+
         items_res = None
         try:
             q = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip_id)
-            if day_filter is not None:
-                q = q.eq("day_number", int(day_filter))
+            if day_number is not None:
+                q = q.eq("day_number", day_number)
             items_res = q.order("day_number").order("time_slot").order("sort_order").execute()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[MCP] Failed to fetch itinerary items for {trip_id}: {e}")
             items_res = None
 
         items = (items_res.data if items_res else []) or []
+        # 🛡️ 隱私過濾：Option A 行程擁有者視角 (非擁有者隱藏 is_private 項目)
+        is_owner = bool(user_id) and bool(owner_id) and (str(owner_id) == str(user_id))
+        if not is_owner:
+            items = [it for it in items if not it.get("is_private")]
+
         trip_title = trip.get("title") or "未命名行程"
         if not items:
-            day_text = f"第 {day_filter} 天" if day_filter else "整本行程"
+            day_text = f"第 {day_number} 天" if day_number is not None else "整本行程"
             return {"jsonrpc": "2.0", "id": req_id, "result": format_mcp_tool_result(f"行程「{trip_title}」{day_text}目前尚未排定任何景點節點。")}
 
         days_map = {}
@@ -660,6 +749,20 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                 "id": req_id,
                 "result": format_mcp_tool_result("缺少必要的行程識別碼 (trip_id)", is_error=True)
             }
+        if not is_valid_uuid(trip_id):
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": format_mcp_tool_result(f"無效的行程識別碼「{trip_id}」：必須為合法的 UUID 格式。若您傳入的是行程名稱，請先調用 list_user_trips 工具查詢行程 UUID", is_error=True)
+            }
+
+        target_item_id = args.get("item_id")
+        if target_item_id and not is_valid_uuid(target_item_id):
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": format_mcp_tool_result("無效的景點識別碼 (item_id 必須為合法的 UUID 格式)", is_error=True)
+            }
 
         day_idx = args.get("day_index", 1)
         try:
@@ -667,7 +770,25 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         except (ValueError, TypeError):
             day_idx = 1
 
-        action = str(args.get("action") or "add").lower()
+        raw_action = str(args.get("action") or "add").lower().strip()
+        action_map = {
+            "delete": "remove",
+            "del": "remove",
+            "remove": "remove",
+            "edit": "update",
+            "modify": "update",
+            "update": "update",
+            "add": "add",
+            "create": "add",
+            "insert": "add"
+        }
+        action = action_map.get(raw_action)
+        if not action:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": format_mcp_tool_result(f"不支援的操作類型 (action: '{raw_action}')，僅支援 'add'、'update'、'remove'", is_error=True)
+            }
 
         if not supabase:
             return {"jsonrpc": "2.0", "id": req_id, "result": format_mcp_tool_result("資料庫連線不可用", is_error=True)}
@@ -688,7 +809,8 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         
         trip = trip_res.data[0]
         owner_id = trip.get("created_by") or trip.get("user_id")
-        if owner_id != user_id:
+        is_owner = bool(user_id) and bool(owner_id) and (str(owner_id) == str(user_id))
+        if not is_owner:
             is_collab = False
             try:
                 mem_chk = supabase.table("trip_members").select("id, user_id").eq("itinerary_id", trip_id).eq("user_id", user_id).execute()
@@ -732,6 +854,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
             if single_name:
                 raw_places = [{
                     "place_name": single_name,
+                    "item_id": target_item_id,
                     "arrival_time": args.get("arrival_time"),
                     "notes": args.get("notes"),
                     "lat": args.get("lat"),
@@ -742,43 +865,138 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
             else:
                 raw_places = []
 
+        def rows_were_affected(res_obj: Any) -> bool:
+            """判斷資料庫操作是否實質影響了至少 1 筆紀錄"""
+            if not res_obj or res_obj.data is None:
+                return False
+            if isinstance(res_obj.data, list):
+                return len(res_obj.data) > 0
+            return bool(res_obj.data)
+
         if action == "remove":
             removed_names = []
-            for p in raw_places:
-                pn = str(p.get("place_name", "")).strip()
-                if pn:
-                    try:
-                        supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("day_number", day_idx).eq("place_name", pn).execute()
-                        removed_names.append(pn)
-                    except Exception:
-                        pass
-            msg = f"已成功為您在第 {day_idx} 天移除景點：「{', '.join(removed_names) if removed_names else '指定景點'}」。"
+            if target_item_id:
+                try:
+                    q = supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("id", target_item_id)
+                    if not is_owner:
+                        q = q.eq("is_private", False)
+                    res = q.execute()
+                    if rows_were_affected(res):
+                        name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or target_item_id
+                        removed_names.append(name)
+                except Exception as e:
+                    logger.warning(f"[MCP] Delete by item_id {target_item_id} failed: {e}")
+            else:
+                for p in raw_places:
+                    p_id = p.get("item_id")
+                    pn = str(p.get("place_name", "")).strip()
+                    if p_id and is_valid_uuid(p_id):
+                        try:
+                            q = supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("id", p_id)
+                            if not is_owner:
+                                q = q.eq("is_private", False)
+                            res = q.execute()
+                            if rows_were_affected(res):
+                                name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or pn or p_id
+                                removed_names.append(name)
+                        except Exception:
+                            pass
+                    elif pn:
+                        try:
+                            q = supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("day_number", day_idx).eq("place_name", pn)
+                            if not is_owner:
+                                q = q.eq("is_private", False)
+                            res = q.execute()
+                            if rows_were_affected(res):
+                                removed_names.append(pn)
+                        except Exception:
+                            pass
+
+            if not removed_names:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": format_mcp_tool_result(f"未找到指定的景點項目，無法在第 {day_idx} 天移除", is_error=True)
+                }
+
+            msg = f"已成功為您在第 {day_idx} 天移除景點：「{', '.join(removed_names)}」。"
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "result": format_mcp_tool_result(msg, is_error=False)
             }
 
-        if action == "update":
+        elif action == "update":
             updated_names = []
-            for p in raw_places:
-                pn = str(p.get("place_name", "")).strip()
-                if pn:
-                    up_data = {}
-                    if p.get("arrival_time"):
-                        up_data["time_slot"] = p.get("arrival_time")
-                    if p.get("notes"):
-                        up_data["notes"] = p.get("notes")
-                    p_lat, p_lng = sanitize_coordinates(p.get("lat"), p.get("lng"))
-                    if p_lat is not None and p_lng is not None:
-                        up_data["location_lat"] = p_lat
-                        up_data["location_lng"] = p_lng
+
+            def build_update_payload(place_dict: dict, has_id_selector: bool) -> dict:
+                up = {}
+                if place_dict.get("arrival_time"):
+                    up["time_slot"] = place_dict.get("arrival_time")
+                if place_dict.get("notes") is not None:
+                    up["notes"] = place_dict.get("notes")
+                if place_dict.get("category"):
+                    up["category"] = place_dict.get("category")
+                if has_id_selector and place_dict.get("place_name"):
+                    up["place_name"] = str(place_dict.get("place_name")).strip()
+                p_lat, p_lng = sanitize_coordinates(place_dict.get("lat"), place_dict.get("lng"))
+                if p_lat is not None and p_lng is not None:
+                    up["location_lat"] = p_lat
+                    up["location_lng"] = p_lng
+                if not up and place_dict.get("place_name"):
+                    up["place_name"] = str(place_dict.get("place_name")).strip()
+                return up
+
+            if target_item_id:
+                single_place = raw_places[0] if raw_places else args
+                up_data = build_update_payload(single_place, has_id_selector=True)
+                if up_data:
+                    try:
+                        q = supabase.table("itinerary_items").update(up_data).eq("itinerary_id", trip_id).eq("id", target_item_id)
+                        if not is_owner:
+                            q = q.eq("is_private", False)
+                        res = q.execute()
+                        if rows_were_affected(res):
+                            name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or str(single_place.get("place_name") or target_item_id)
+                            updated_names.append(name)
+                    except Exception as e:
+                        logger.warning(f"[MCP] Update by item_id {target_item_id} failed: {e}")
+            else:
+                for p in raw_places:
+                    p_id = p.get("item_id")
+                    pn = str(p.get("place_name", "")).strip()
+                    has_id = bool(p_id and is_valid_uuid(p_id))
+                    up_data = build_update_payload(p, has_id_selector=has_id)
                     if up_data:
-                        try:
-                            supabase.table("itinerary_items").update(up_data).eq("itinerary_id", trip_id).eq("day_number", day_idx).eq("place_name", pn).execute()
-                            updated_names.append(pn)
-                        except Exception:
-                            pass
+                        if has_id:
+                            try:
+                                q = supabase.table("itinerary_items").update(up_data).eq("itinerary_id", trip_id).eq("id", p_id)
+                                if not is_owner:
+                                    q = q.eq("is_private", False)
+                                res = q.execute()
+                                if rows_were_affected(res):
+                                    name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or pn or p_id
+                                    updated_names.append(name)
+                            except Exception:
+                                pass
+                        elif pn:
+                            try:
+                                q = supabase.table("itinerary_items").update(up_data).eq("itinerary_id", trip_id).eq("day_number", day_idx).eq("place_name", pn)
+                                if not is_owner:
+                                    q = q.eq("is_private", False)
+                                res = q.execute()
+                                if rows_were_affected(res):
+                                    updated_names.append(pn)
+                            except Exception:
+                                pass
+
+            if not updated_names:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": format_mcp_tool_result(f"未找到指定的景點項目，無法在第 {day_idx} 天更新", is_error=True)
+                }
+
             first_target = updated_names[0] if updated_names else "日本景點"
             quoted_place = urllib.parse.quote(first_target)
             affiliate_url = f"https://tabiji.app/go/klook/{trip_id}?item={quoted_place}"
@@ -789,59 +1007,67 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                 "result": format_mcp_tool_result(msg, is_error=False)
             }
 
-        # action == "add" (新增或批量新增)
-        curr_items = None
-        try:
-            curr_items = supabase.table("itinerary_items").select("sort_order").eq("itinerary_id", trip_id).eq("day_number", day_idx).order("sort_order", desc=True).limit(1).execute()
-        except Exception:
+        elif action == "add":
             curr_items = None
-        start_order = (curr_items.data[0].get("sort_order") or 0) if (curr_items and curr_items.data) else 0
-
-        inserted_names = []
-        for i, p in enumerate(raw_places):
-            pn = str(p.get("place_name", "未知景點")).strip()
-            p_lat, p_lng = sanitize_coordinates(p.get("lat"), p.get("lng"))
-            
-            # 若 AI 未提供座標或經緯度無效，嘗試後端智慧 Geocoder
-            if p_lat is None or p_lng is None:
-                try:
-                    from services.geocode_service import smart_geocode_logic
-                    geo_res = await smart_geocode_logic(query=pn, limit=1)
-                    if geo_res and geo_res.get("results"):
-                        p_lat = geo_res["results"][0].get("lat")
-                        p_lng = geo_res["results"][0].get("lng")
-                except Exception:
-                    p_lat, p_lng = None, None
-
-            item_data = {
-                "itinerary_id": trip_id,
-                "day_number": day_idx,
-                "place_name": pn,
-                "time_slot": p.get("arrival_time") or "09:00",
-                "notes": p.get("notes") or "",
-                "category": p.get("category") or "sightseeing",
-                "location_lat": p_lat,
-                "location_lng": p_lng,
-                "sort_order": start_order + (i + 1) * 10
-            }
             try:
-                res = supabase.table("itinerary_items").insert(item_data).execute()
-                if res and res.data:
-                    inserted_names.append(pn)
-            except Exception as ins_err:
-                logger.error(f"Failed to insert itinerary item {pn}: {ins_err}")
+                curr_items = supabase.table("itinerary_items").select("sort_order").eq("itinerary_id", trip_id).eq("day_number", day_idx).order("sort_order", desc=True).limit(1).execute()
+            except Exception:
+                curr_items = None
+            start_order = (curr_items.data[0].get("sort_order") or 0) if (curr_items and curr_items.data) else 0
 
-        first_place = inserted_names[0] if inserted_names else "日本景點"
-        quoted_place = urllib.parse.quote(first_place)
-        affiliate_url = f"https://tabiji.app/go/klook/{trip_id}?item={quoted_place}"
-        count = len(inserted_names)
-        msg = f"已成功為您在第 {day_idx} 天新增 {count} 個景點：「{', '.join(inserted_names)}」！已自動定位座標並同步更新地圖。\n推薦優惠票券：[點此預訂快速通關]({affiliate_url})"
-        
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": format_mcp_tool_result(msg, is_error=False)
-        }
+            inserted_names = []
+            for i, p in enumerate(raw_places):
+                pn = str(p.get("place_name", "未知景點")).strip()
+                p_lat, p_lng = sanitize_coordinates(p.get("lat"), p.get("lng"))
+                
+                # 若 AI 未提供座標或經緯度無效，嘗試後端智慧 Geocoder (經消毒驗證)
+                if p_lat is None or p_lng is None:
+                    try:
+                        from services.geocode_service import smart_geocode_logic
+                        geo_res = await smart_geocode_logic(query=pn, limit=1)
+                        if geo_res and geo_res.get("results"):
+                            raw_geo_lat = geo_res["results"][0].get("lat")
+                            raw_geo_lng = geo_res["results"][0].get("lng")
+                            p_lat, p_lng = sanitize_coordinates(raw_geo_lat, raw_geo_lng)
+                    except Exception:
+                        p_lat, p_lng = None, None
+
+                item_data = {
+                    "itinerary_id": trip_id,
+                    "day_number": day_idx,
+                    "place_name": pn,
+                    "time_slot": p.get("arrival_time") or "09:00",
+                    "notes": p.get("notes") or "",
+                    "category": p.get("category") or "sightseeing",
+                    "location_lat": p_lat,
+                    "location_lng": p_lng,
+                    "sort_order": start_order + (i + 1) * 10
+                }
+                try:
+                    res = supabase.table("itinerary_items").insert(item_data).execute()
+                    if res and res.data:
+                        inserted_names.append(pn)
+                except Exception as ins_err:
+                    logger.error(f"Failed to insert itinerary item {pn}: {ins_err}")
+
+            first_place = inserted_names[0] if inserted_names else "日本景點"
+            quoted_place = urllib.parse.quote(first_place)
+            affiliate_url = f"https://tabiji.app/go/klook/{trip_id}?item={quoted_place}"
+            count = len(inserted_names)
+            msg = f"已成功為您在第 {day_idx} 天新增 {count} 個景點：「{', '.join(inserted_names)}」！已自動定位座標並同步更新地圖。\n推薦優惠票券：[點此預訂快速通關]({affiliate_url})"
+            
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": format_mcp_tool_result(msg, is_error=False)
+            }
+
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": format_mcp_tool_result(f"不支援的操作類型 (action: '{action}')", is_error=True)
+            }
 
     if tool_name == "recommend_tickets":
         place_name = str(args.get("place_name") or "未知景點")

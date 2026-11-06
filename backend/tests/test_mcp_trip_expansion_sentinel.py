@@ -49,6 +49,7 @@ def test_sentinel_poc_list_user_trips_idor_isolation():
     mock_supabase.table.return_value = mock_table
     mock_table.select.return_value = mock_table
     mock_table.eq.return_value = mock_table
+    mock_table.or_.return_value = mock_table
     mock_table.in_.return_value = mock_table
     mock_table.order.return_value = mock_table
 
@@ -62,6 +63,7 @@ def test_sentinel_poc_list_user_trips_idor_isolation():
         t = MagicMock()
         t.select.return_value = t
         t.eq.return_value = t
+        t.or_.return_value = t
         t.in_.return_value = t
         t.order.return_value = t
         if table_name == "itineraries":
