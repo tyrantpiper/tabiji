@@ -153,6 +153,10 @@
   - *Symptom*: 在 Gemini 網頁端輸入 MCP URL，瀏覽器 Console 出現 `CORS error`，連線立即中斷。
   - *Root Cause*: FastAPI CORSMiddleware 未包含 `https://gemini.google.com` 等 AI 平台來源，OPTIONS 預檢遭 400 Bad Request 阻斷。
   - *Lesson*: 必須配置 `allow_origin_regex` 放行合法 AI 網域（`google.com`, `perplexity.ai`, `anthropic.com`）。
+- **FP-66 (Cloudflare Edge Worker Server-Side OAuth Redirect Interception)**:
+  - *Symptom*: Gemini 連線 MCP 同意授權後，出現 `502 Backend Edge Proxy Error: Too many redirects`。
+  - *Root Cause*: Cloudflare Worker (`tabijiapp-edge-shield`) 在呼叫後端時預設採用 `redirect: 'follow'`。當 `/api/oauth/authorize` 回傳 302 跳轉至 `oauth-redirect.googleusercontent.com` 時，Worker 在伺服端自行跟隨重定向，但缺少用戶端 Google Session Cookie，觸發 Google 防爬蟲驗證頁面 (`/sorry/index`)，造成 20 次死循環熔斷。
+  - *Lesson*: 反向代理 Worker 轉發 upstream 請求時**必須強制設定 `redirect: 'manual'`**，並將 302 原樣回傳瀏覽器，嚴禁在邊緣代理層自行代為跳轉。
 
 ---
 
@@ -201,6 +205,13 @@
     "id": "INV-UI-004",
     "title": "Multi-Action Input Right Padding Minimum Scale",
     "content": "Form inputs housing 3 or more absolute right action buttons (e.g. Refresh, Eye Toggle, Copy) MUST enforce at least pr-44 (11rem / 176px) to guarantee zero character overlap with button icons."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-EDGE-008",
+    "title": "Reverse Proxy Fetch Redirect Manual Invariant",
+    "content": "Cloudflare Workers acting as reverse proxies MUST set redirect: 'manual' when fetching upstream origins. Allowing the proxy to follow redirects server-side intercepts OAuth authorization code 302 responses, forfeits user browser cookies, and induces Google anti-bot redirect loops."
   },
   {
     "domain": "devops_security",
