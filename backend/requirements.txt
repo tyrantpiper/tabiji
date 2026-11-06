@@ -15,8 +15,8 @@ beautifulsoup4
 Pillow
 pillow-heif
 prometheus-client
-ddgs>=9.16.0
-tzdata>=2026.5
+ddgs>=9.16.1
+tzdata>=2026.6
 
 # Production Server
 gunicorn
