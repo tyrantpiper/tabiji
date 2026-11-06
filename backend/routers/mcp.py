@@ -92,6 +92,8 @@ def format_mcp_tool_result(text_content: str, is_error: bool = False) -> Dict[st
     }
 
 @router.get("/.well-known/oauth-authorization-server")
+@router.head("/.well-known/oauth-authorization-server")
+@router.options("/.well-known/oauth-authorization-server")
 async def oauth_metadata(request: Request):
     """Google Connected Apps 所需之 OAuth 2.1 Discovery 端點 (RFC 8414)"""
     base_url = get_public_base_url(request)
@@ -105,12 +107,45 @@ async def oauth_metadata(request: Request):
     }
 
 @router.get("/.well-known/oauth-protected-resource")
-async def oauth_protected_resource(request: Request):
+@router.get("/.well-known/oauth-protected-resource/{full_path:path}")
+@router.head("/.well-known/oauth-protected-resource")
+@router.head("/.well-known/oauth-protected-resource/{full_path:path}")
+@router.options("/.well-known/oauth-protected-resource")
+@router.options("/.well-known/oauth-protected-resource/{full_path:path}")
+async def oauth_protected_resource(request: Request, full_path: Optional[str] = None):
     """Model Context Protocol (2026-07-28 規範) 所需之 RFC 9728 Protected Resource Metadata 端點"""
     base_url = get_public_base_url(request)
+    resource_url = f"{base_url}/api/mcp"
+    if full_path:
+        resource_url = f"{base_url}/{full_path.lstrip('/')}"
     return {
-        "resource": f"{base_url}/api/mcp",
+        "resource": resource_url,
         "authorization_servers": [base_url]
+    }
+
+@router.get("/.well-known/mcp")
+@router.get("/.well-known/mcp.json")
+@router.head("/.well-known/mcp")
+@router.head("/.well-known/mcp.json")
+@router.options("/.well-known/mcp")
+@router.options("/.well-known/mcp.json")
+async def mcp_server_card(request: Request):
+    """MCP 官方伺服器宣告卡片 (SEP-1649 / SEP-1960 Discovery)"""
+    base_url = get_public_base_url(request)
+    return {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json",
+        "mcp_version": "1.0",
+        "server_name": "tabiji-mcp-server",
+        "server_version": "1.0.0",
+        "description": "Tabiji Smart Travel Companion - Itineraries, Nodes, and Recommendations",
+        "endpoints": {
+            "http": f"{base_url}/api/mcp"
+        },
+        "capabilities": {
+            "tools": True,
+            "resources": False,
+            "prompts": False
+        }
     }
 
 def sanitize_coordinates(lat: Any, lng: Any) -> tuple[Optional[float], Optional[float]]:
@@ -231,11 +266,15 @@ async def oauth_token(request: Request):
 
     user_id = code_record["user_id"]
     secret = get_session_secret()
+    now = int(time.time())
     access_token = jwt.encode(
         {
             "sub": user_id,
-            "exp": int(time.time()) + 3600 * 24 * 30,
-            "type": "session"
+            "iss": "tabiji-core",
+            "iat": now,
+            "exp": now + 3600 * 24 * 30,
+            "ver": 1,
+            "type": "device_session"
         },
         secret,
         algorithm="HS256"
@@ -248,10 +287,11 @@ async def oauth_token(request: Request):
 
 @router.get("/api/mcp")
 @router.head("/api/mcp")
+@router.options("/api/mcp")
 async def handle_mcp_probe(request: Request):
     """
     Google Connected Apps 與外部 MCP 連通性健康檢查端點。
-    支援 Streamable HTTP 規範探針與連線前置探測。
+    支援 Streamable HTTP 規範探針、OPTIONS 預檢與連線前置探測。
     """
     return JSONResponse(
         status_code=200,
@@ -261,6 +301,22 @@ async def handle_mcp_probe(request: Request):
             "version": "1.0.0",
             "transport": "streamable-http",
             "supported_protocol_versions": SUPPORTED_MCP_VERSIONS
+        }
+    )
+
+@router.get("/api/mcp/sse")
+@router.post("/api/mcp/sse")
+@router.options("/api/mcp/sse")
+async def handle_mcp_sse_fallback(request: Request):
+    """向下相容 SSE 探針：明確告知客戶端優先使用 Streamable HTTP"""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "server": "tabiji-mcp-server",
+            "transport": "streamable-http",
+            "endpoint": "/api/mcp",
+            "notice": "Please use Streamable HTTP POST at /api/mcp"
         }
     )
 
@@ -401,6 +457,33 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
             user_id = await get_verified_user(authorization)
         except Exception:
             user_id = None
+
+    # Fallback: 支援 Recovery Key 直通 (PAT 模式)
+    if not user_id and authorization.startswith("Bearer "):
+        token_str = authorization.split(" ")[1].strip()
+        if token_str.startswith("tbj_rec_"):
+            from routers.auth import is_valid_tbj_rec, get_user_record_by_key_id, verify_recovery_key
+            if is_valid_tbj_rec(token_str):
+                parts = token_str.split("_")
+                if len(parts) == 4:
+                    key_id = parts[2]
+                    supabase_client = None
+                    try:
+                        supabase_client = get_supabase(request)
+                    except Exception:
+                        pass
+                    if not supabase_client:
+                        try:
+                            supabase_client = get_supabase()
+                        except Exception:
+                            supabase_client = None
+                    if supabase_client:
+                        try:
+                            user = get_user_record_by_key_id(supabase_client, key_id)
+                            if user and verify_recovery_key(token_str, user.get("recovery_secret_hash")):
+                                user_id = user["id"]
+                        except Exception:
+                            pass
 
     if not user_id:
         return {

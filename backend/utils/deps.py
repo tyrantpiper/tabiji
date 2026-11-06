@@ -135,6 +135,22 @@ async def get_verified_user(
     except jwt.PyJWTError:
         pass
 
+    # 1.5 寬容驗證 (容錯相容 MCP OAuth Session 憑證與過渡期 Token)
+    try:
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            options={"require": ["sub", "exp"]}
+        )
+        token_type = payload.get("type")
+        sub = str(payload.get("sub") or "").strip()
+
+        if token_type in ["device_session", "session", "mcp_session"] and UUID_V4_REGEX.match(sub):
+            return sub
+    except jwt.PyJWTError:
+        pass
+
     # 2. Supabase 官方 Token 相容校驗 (若未來串接 OAuth)
     try:
         supabase: Optional[Client] = get_supabase(request)

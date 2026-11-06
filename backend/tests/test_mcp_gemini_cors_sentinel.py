@@ -160,16 +160,108 @@ def test_sentinel_poc_protocol_version_negotiation():
 def test_sentinel_poc_http_get_head_probes():
     """
     Target: backend/routers/mcp.py:http_get_head_discovery_probe_blocked
-    Verifies that GET and HEAD requests to /api/mcp return 200 OK for connectivity verification.
+    Verifies that GET, HEAD, and OPTIONS requests to /api/mcp and discovery endpoints return 200 OK.
     """
-    # 1. GET probe
+    # 1. GET & HEAD probe for /api/mcp
     resp_get = client.get("/api/mcp")
     assert resp_get.status_code == 200
     get_data = resp_get.json()
     assert get_data["status"] == "ok"
     assert "tabiji-mcp-server" in get_data.get("server", "")
 
-    # 2. HEAD probe
     resp_head = client.head("/api/mcp")
     assert resp_head.status_code == 200
+
+    resp_opt = client.options("/api/mcp")
+    assert resp_opt.status_code == 200
+
+    # 2. RFC 9728 Section 3 Path-based discovery: /.well-known/oauth-protected-resource/api/mcp
+    resp_rfc9728_path = client.get("/.well-known/oauth-protected-resource/api/mcp")
+    assert resp_rfc9728_path.status_code == 200
+    rfc_data = resp_rfc9728_path.json()
+    assert "resource" in rfc_data
+    assert "authorization_servers" in rfc_data
+
+    # 3. SEP-1649 MCP Manifest discovery: /.well-known/mcp.json and /.well-known/mcp
+    resp_mcp_card = client.get("/.well-known/mcp.json")
+    assert resp_mcp_card.status_code == 200
+    card_data = resp_mcp_card.json()
+    assert card_data["server_name"] == "tabiji-mcp-server"
+    assert "endpoints" in card_data
+
+    resp_mcp_raw = client.get("/.well-known/mcp")
+    assert resp_mcp_raw.status_code == 200
+
+    # 4. SSE endpoint probe fallback
+    resp_sse = client.get("/api/mcp/sse")
+    assert resp_sse.status_code == 200
+
+
+def test_sentinel_poc_legacy_and_modern_token_verification():
+    """
+    Target: backend/utils/deps.py:mcp_oauth_jwt_claims_tolerance
+    Verifies that both legacy MCP OAuth tokens (holding type='session' without iss)
+    and modern device_session tokens pass get_verified_user and do not trigger -32000 Unauthorized.
+    """
+    import jwt
+    import time
+    from utils.deps import get_session_secret
+
+    secret = get_session_secret()
+    test_uid = "3f7abf22-b447-4281-b240-584549c79943"
+
+    # 1. Token format Gemini is holding right now (type='session', no iss)
+    legacy_token = jwt.encode(
+        {
+            "sub": test_uid,
+            "exp": int(time.time()) + 3600 * 24 * 30,
+            "type": "session"
+        },
+        secret,
+        algorithm="HS256"
+    )
+
+    resp_legacy = client.post(
+        "/api/mcp",
+        headers={"Authorization": f"Bearer {legacy_token}"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "tools/call",
+            "params": {"name": "list_user_trips", "arguments": {}}
+        }
+    )
+    assert resp_legacy.status_code == 200
+    data_legacy = resp_legacy.json()
+    # Must NOT return Unauthorized: Invalid session or expired token
+    assert "error" not in data_legacy or data_legacy["error"]["code"] != -32000, f"Got error: {data_legacy}"
+
+    # 2. Modern token format with iss='tabiji-core' and type='device_session'
+    now = int(time.time())
+    modern_token = jwt.encode(
+        {
+            "sub": test_uid,
+            "iss": "tabiji-core",
+            "iat": now,
+            "exp": now + 3600 * 24 * 30,
+            "ver": 1,
+            "type": "device_session"
+        },
+        secret,
+        algorithm="HS256"
+    )
+
+    resp_modern = client.post(
+        "/api/mcp",
+        headers={"Authorization": f"Bearer {modern_token}"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 100,
+            "method": "tools/call",
+            "params": {"name": "list_user_trips", "arguments": {}}
+        }
+    )
+    assert resp_modern.status_code == 200
+    data_modern = resp_modern.json()
+    assert "error" not in data_modern or data_modern["error"]["code"] != -32000, f"Got error: {data_modern}"
 
