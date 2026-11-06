@@ -205,7 +205,7 @@ export default {
     const initOptions = {
       method: request.method,
       headers: newHeaders,
-      redirect: 'follow',
+      redirect: 'manual', // 🛡️ 嚴禁在邊緣代理層跟隨 302 重定向，必須將 OAuth / 外部跳轉直接回傳用戶端瀏覽器
       body: isBodyAllowed ? request.body : undefined,
     };
 
@@ -219,7 +219,18 @@ export default {
       const responseHeaders = new Headers(response.headers);
       responseHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
 
-      return new Response(response.body, {
+      // 🛡️ 邊緣防撕裂：若後端回傳包含內部 Cloud Run 主機的 Location，重寫為公開自訂網域
+      if (responseHeaders.has('location')) {
+        const loc = responseHeaders.get('location');
+        if (loc.startsWith(`https://${TARGET_HOST}`) || loc.startsWith(`http://${TARGET_HOST}`)) {
+          responseHeaders.set('location', loc.replace(`https://${TARGET_HOST}`, `https://${url.hostname}`).replace(`http://${TARGET_HOST}`, `https://${url.hostname}`));
+        }
+      }
+
+      // 🛡️ HTTP 規範防衛：無實體狀態碼（101, 204, 205, 304）嚴禁傳遞 body
+      const body = [101, 204, 205, 304].includes(response.status) ? null : response.body;
+
+      return new Response(body, {
         status: response.status,
         statusText: response.statusText,
         headers: responseHeaders,
