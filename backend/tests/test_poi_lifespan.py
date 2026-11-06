@@ -128,21 +128,21 @@ async def test_bcp47_fallback_chain(mocker):
     from services.poi_service import enrich_poi_complete
     
     # 情境 1: 只有中港繁體
-    with mocker.patch("services.poi_service.get_wikidata_labels", return_value={
+    mock_labels = mocker.patch("services.poi_service.get_wikidata_labels", return_value={
         "labels": {"zh-HK": "香港名稱"}, "website": ""
-    }):
-        mocker.patch("services.poi_service.get_wikipedia_summary", return_value=("", ""))
-        mocker.patch("services.poi_service.search_wikivoyage", return_value=None)
-        
-        result = await enrich_poi_complete({"name": "Test", "wikidata_id": "Q1"})
-        assert result["display_name"]["primary"] == "香港名稱"
+    })
+    mocker.patch("services.poi_service.get_wikipedia_summary", return_value=("", ""))
+    mocker.patch("services.poi_service.search_wikivoyage", return_value=None)
+    
+    result = await enrich_poi_complete({"name": "Test", "wikidata_id": "Q1"})
+    assert result["display_name"]["primary"] == "香港名稱"
 
     # 情境 2: 只有日文 + 英文
-    with mocker.patch("services.poi_service.get_wikidata_labels", return_value={
+    mock_labels.return_value = {
         "labels": {"ja-JP": "金閣寺", "en-US": "Kinkaku-ji"}, "website": ""
-    }):
-        result = await enrich_poi_complete({"name": "Kinkaku-ji", "wikidata_id": "Q1"})
-        assert "金閣寺" in result["display_name"]["secondary"]
-        assert "Kinkaku-ji" in result["display_name"]["secondary"]
+    }
+    result = await enrich_poi_complete({"name": "Kinkaku-ji", "wikidata_id": "Q1"})
+    assert "金閣寺" in result["display_name"]["secondary"]
+    assert "Kinkaku-ji" in result["display_name"]["secondary"]
         
     print("✅ Complex BCP 47 fallback chain verified.")

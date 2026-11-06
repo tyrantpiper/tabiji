@@ -1,0 +1,143 @@
+--- a/C:/Users/Ryan su/.gemini/config/skills/idea-to-spec/SKILL.md
++++ b/C:/Users/Ryan su/.gemini/config/skills/idea-to-spec/SKILL.md
+@@ -1,70 +1,118 @@
+ ---
+ name: "Idea to Spec"
+-description: "Transforms conversational user requests and raw ideas into rigorous engineering specifications with edge cases, user flows, and acceptance criteria."
+-version: "1.0.0"
++description: "Transforms conversational user requests and raw ideas into rigorous engineering specifications with edge cases, user flows, and acceptance criteria. Supports Fast-Track and Deep-DAG execution modes."
++version: "2.1.0"
+ triggers:
+   - "/spec"
++  - "/grill-me"
+   - "規格化"
+   - "需求梳理"
+   - "設計規格"
+ ---
+ 
+-# Idea to Spec (Product & Architecture Specification Master)
++# Idea to Spec 2.1 (Dual-Track Spec Engine)
+ 
+ ## Purpose
+-Bridge the gap between raw user ideas and deterministic implementation. Turns high-level requests into a structured, ambiguity-free `mini_design_doc` before writing code.
++Bridge the gap between raw user ideas and deterministic implementation. Eliminates Vibe Coding, prevents context degradation into the "Dumb Zone", and produces an ambiguity-free, production-ready `Mini Design Doc` before any production code is written.
+ 
+ ---
+ 
+-## 📋 Standard Specification Schema
++## 🔀 雙軌執行路由 (Execution Mode Routing)
+ 
+-Whenever invoked, generate a structured markdown document with the following sections:
++在執行開始時，依據使用者指令或任務複雜度自動切換：
++- **軌道 A: Fast-Track (輕量單輪模式 - 保留原始優勢)**
++  - 觸發：單純 `/spec`、改動範圍限於單一檔案、或使用者要求快速草稿。
++  - 行為：不進行多輪盤問，以本地程式碼為事實來源，直接合成 5 段式標準規格。
++- **軌道 B: Deep-DAG (深度架構模式 - 啟動 DAG 局部循環)**
++  - 觸發：`/grill-me`、`/spec --deep`、或改動跨越 2 個以上微服務/架構邊界。
++  - 行為：執行下方完整 DAG 節點排程。
+ 
+-### 1. Problem Statement & Core Value (問題陳述與核心價值)
+-- **User Problem**: What pain point does this feature solve?
+-- **Success Metric**: How do we know this feature is working as intended?
++---
+ 
+-### 2. User Journey & Core Flow (使用者旅程與操作流程)
+-- Step-by-step user interaction flow.
+-- Visual Mermaid sequence diagram if multiple actors/services are involved.
++## 🧭 Phase 1: Pre-flight Grounding & External Radar
+ 
+-### 3. Architecture & Data Model (架構與資料模型)
+-- Database schema changes (Tables, Columns, Indexes).
+-- API Endpoints (`Method`, `Path`, `Request Body`, `Response Body`).
+-- State management (`Zustand` store updates).
++Before initiating inquiries or generating specifications:
++1. **Facts First (Codebase Grounding)**: Read relevant schemas, store files, and route handlers. If a fact exists in code, never ask the user.
++2. **NotebookLM Retrieval**: 定向檢索歷史決策與架構踩坑經驗（嚴禁使用 `all=true`，採用標籤過濾）：
++   ```json
++   call_mcp_tool("notebooklm", "cross_notebook_query", {
++     "tags": "tabidachi,architecture",
++     "query": "<具體功能模組之歷史限制與設計邊界>"
++   })
++   ```
++3. **External Intelligence Radar (GitHub / Context7)**:
++   - 檢索目標套件最新 RFC 與已知地雷。
++   - **Circuit Breaker**: 若外部 MCP 工具回應延遲超過 5 秒或遭遇 Rate Limit，立即放棄外部檢索，靜默降級為「純本地 Codebase 靜態探勘」，絕不中斷 DAG。
+ 
+-### 4. Edge Cases & Boundary Conditions (邊界條件與異常處理)
+-- **Network Failures**: Offline behavior, timeout retry policies.
+-- **Data Edge Cases**: Empty states, oversized payloads, invalid currency / CJK character handling.
+-- **Permission & Security**: Auth token expiration, RLS policy enforcement.
++---
+ 
+-### 5. Acceptance Criteria (驗收標準清單)
+-```markdown
+-- [ ] AC-1: Given [initial state], when [action], then [expected result].
+-- [ ] AC-2: Given [error condition], when [action], then [graceful fallback].
+-```
++## 🎙️ Phase 2: Adaptive Socratic Interview (`/grill-me`)
++
++Follow the Hierarchical Elenchus protocol:
++1. **Single Question at a Time**: Ask exactly one question per turn using `ask_question`.
++2. **Always Provide Recommended Answer**: State the architectural recommendation prefixed with `(Recommended)` and provide the trade-off rationale.
++3. **Strict Hierarchy (階梯式分層)**:
++   - **L1 (Intent & Non-Goals)**: 核心痛點、非目標（本次絕不做什麼）、衡量指標。
++   - **L2 (Boundaries & Contracts)**: 資料流向、RSC 邊界、API 介面、Supabase RLS 矩陣。
++   - **L3 (Failure Budgets & Edges)**: Cloudflare Worker 限制、離線自癒衝突解決、網路超時重試策略。
++   *Rule: Never ask L2/L3 questions before L1 consensus is achieved.*
++4. **Fidelity Matching & Sandbox Isolation**:
++   - **Low-Fidelity**: 業務邏輯、資料型態 ➔ 直接於對話中敲定。
++   - **High-Fidelity**: UI 視覺反饋、手勢微動效 ➔ 暫停文字辯論，於 `<conversation_dir>/scratch/proto/` 產出獨立預覽檔案，待使用者確認視覺後立即回填結論並清除臨時檔案。嚴禁目錄穿越 (`../`)。
++5. **Escape Hatch (短路逃生艙)**:
++   - 若使用者回覆「照推薦執行」、「直接出規格」或連續 2 題選擇推薦項，立即終止盤問循環，自動承接現有決策並將未解分支標記為 `[DEFERRED_TO_DEV]`，直接進入 Phase 3。
+ 
+ ---
+ 
+-## 💡 Pre-Ideation Knowledge Retrieval (via @mcp:notebooklm)
++## 📋 Phase 3: Industrial Mini Design Doc Schema (7 大模組)
+ 
+-> 在需求規劃與架構梳理前，調用 `@mcp:notebooklm` 跨筆記檢索過往沉澱的技術調研與產品靈感：
+-
+-1. **標籤過濾查詢 (防禦 Rate Limit 暴衝)**:
+-   - 嚴禁盲目使用 `all=true`；必須透過標籤或筆記本名稱定向檢索：
+-     ```json
+-     call_mcp_tool("notebooklm", "cross_notebook_query", {
+-       "tags": "tabidachi,architecture",
+-       "query": "離線地圖與航線快取之歷史設計思路與限制"
+-     })
+-     ```
+-2. **靈感注入**: 將檢索到的歷史架構決策與邊界發現，直接回填入規格書之「Problem Statement & Background Inspiration」。
++Whenever generating the specification artifact, output the following structure into `implementation_plan.md` (stored strictly in the artifact directory, never raw in root):
++1. **核心意圖、指標與非目標 (Problem, Metrics & Non-Goals)**
++2. **被否決方案與權衡矩陣 (Alternatives & Trade-offs)**
++3. **組件拓撲與 RSC 邊界 (Architecture & Component Topology)**
++4. **資料模型與安全矩陣 (Data Contract & Security Matrix)** (含 Supabase RLS 矩陣)
++5. **邊緣與離線故障模型 (Edge & Offline Failure Budget)** (Cloudflare CPU < 50ms, 自癒)
++6. **有限狀態機 (FSM) 與狀態轉移 (State Machine & SWR)**
++7. **可執行驗收標準 (Executable Acceptance Criteria)** (含 PBT 屬性守恆與邊界隔離測試)
+ 
+ ---
+ 
+-## 🚀 Execution Workflow
+-1. **Retrieve Inspiration**: (可選) 透過 NotebookLM 提取過往架構靈感。
+-2. **Interview & Clarify**: Identify unspecified assumptions using targeted questions.
+-3. **Draft Mini Design Doc**: Synthesize into `implementation_plan.md` or standalone spec artifact.
+-4. **Obtain Approval**: Wait for human confirmation before passing the spec to `@dev` or `tdd-orchestrator`.
++## 🛡️ Phase 4: Pre-Approval Adversarial Review (紅軍審查循環)
++
++在呈現給人類簽核前，規格草稿必須在內部通過以下驗證：
++1. **RLS 完整性**：所有涉及的 Table 均明確標記 RLS Policy。
++2. **Edge 故障預算**：無違反 Cloudflare 50ms CPU 或 D1 序列化寫入之設計。
++3. **可執行 AC**：驗收標準包含至少 1 項 Property-Based Testing (屬性守恆) 與狀態機轉移清單。
++最多允許自我修正 2 次。若仍未通過，標註警告清單交由人類裁決。
++
++---
++
++## 🚀 Phase 5: Human Confirmation Gate & Tracer-Bullet Handoff
++
++1. **Approval Gate (絕對人類主權門禁)**:
++   - 產出之 `implementation_plan.md` 嚴禁裸存於根目錄，必須存於工件目錄。
++   - 阻斷執行，等待人類明確同意後方可進入實作。
++   - **絕對守衛**：無論是 Fast-Track 或 Deep-DAG，未獲人類核准前，嚴禁呼叫 `@dev` 或直接修改程式庫。
++2. **Tracer Bullets 拆解**: 拆解為貫穿「DB ➔ API ➔ UI」的垂直切片。
++3. **Maker-Checker 交棒**: 交付獨立上下文之 `@dev` 實作與唯讀 `@qa` 驗證。
+

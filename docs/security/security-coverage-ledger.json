@@ -1,15 +1,54 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-05T22:42:00Z",
+  "last_audit_date": "2026-11-06T14:32:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 252,
-    "audited_targets": 252,
+    "total_targets": 255,
+    "audited_targets": 255,
     "verified_vulnerabilities": 51,
     "remediated_vulnerabilities": 54,
-    "dismissed_hypotheses": 147
+    "dismissed_hypotheses": 150
   },
   "targets": [
+    {
+      "id": "skills/spec-dag-engine:path_traversal_in_prototype_sandbox",
+      "target_type": "governance_specification",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "path_traversal_and_sandbox_escape"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_spec_dag_engine.md",
+      "validator_details": "Dismissed with Chesterton Archaeology: markdown prompt specification contains no executable I/O; verified via in-memory PoC test_red_path_traversal_in_prototype_sandbox.",
+      "remediated_at": null,
+      "resolution": "Historical Verified Dismissal (Path containment enforced in scratch sandbox)"
+    },
+    {
+      "id": "skills/spec-dag-engine:fast_track_approval_gate_bypass",
+      "target_type": "governance_specification",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "privilege_escalation_and_gate_bypass"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_spec_dag_engine.md",
+      "validator_details": "Dismissed with Chesterton Archaeology: dual-track router strictly preserves Gate 5 Human Confirmation Gate prior to @dev handoff; verified via test_red_fast_track_approval_gate_bypass.",
+      "remediated_at": null,
+      "resolution": "Historical Verified Dismissal (L0 human sovereignty preserved across both modes)"
+    },
+    {
+      "id": "skills/spec-dag-engine:unbounded_grounding_timeout_denial_of_service",
+      "target_type": "governance_specification",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "resource_exhaustion_and_dos"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_spec_dag_engine.md",
+      "validator_details": "Dismissed with Chesterton Archaeology: knowledge retrieval is marked optional without infinite retry loop; verified via test_red_and_benign_grounding_circuit_breaker.",
+      "remediated_at": null,
+      "resolution": "Historical Verified Dismissal (5.0s circuit breaker fallback pattern verified)"
+    },
     {
       "id": "scripts/lib/adversarial_team.py:missing_attacker_defender_duel_orchestrator",
       "target_type": "security_automation_engine",

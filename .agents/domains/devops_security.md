@@ -3,6 +3,10 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **pytest-mock Fixture Lifecycle Hygiene**: Mocks created via pytest-mock fixture (mocker.patch) MUST NOT be wrapped in 'with' context manager statements. Use direct assignment and modify 'mock.return_value' across test branches.
+
+- **Dual-Track Spec DAG Engine & Approval Gate Precedence**: In idea-to-spec skill, specification generation supports Fast-Track (single-turn) and Deep-DAG (5-node pipeline). In Deep-DAG, automated adversarial red-team audit and property-based test invariant assertions MUST occur strictly BEFORE Gate 5 Human Approval Gate, guaranteeing that human confirmation is the sole irreversible handover boundary to @dev.
+
 - **Unified Dual-Core CLI Adversarial Duel Integration (--mode duel)**: Security Sentinel CLI (runner.py) supports --mode {adaptive,duel,fast}. In --mode duel, runner.py dynamically acquires an isolated GitWorktreePool and executes orchestrate_adversarial_duel across 4 phases: (1) Attacker pytest PoC generation; (2) Physical Red Check with pytest -k 'not benign' (exit code 1); (3) Defender Chesterton's Fence archaeology evaluation (DISMISSED if proven intentional design); (4) Block replacement patch synthesis with Mantis Block G Benign Control green check (exit code 0).
 
 - **Chesterton's Fence 3-Question Code Archaeology & Bidirectional Path.is_relative_to Guard (AD-197, AD-198)**: Every finding or patch deleting or altering existing code must populate code_archaeology (legacy_function, design_intent, regression_risk). All worktree file mirroring and block replacements must validate both source and destination paths using Path.resolve().is_relative_to(root.resolve()), strictly forbidding string .startswith() to prevent CWE-22 sibling prefix traversal.
@@ -70,6 +74,10 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Pytest-mock Context Manager Double-Exit Warning Trap**: Wrapping mocker.patch() in a 'with' block triggers PytestMockWarning due to redundant context exit calls. Manage test branching via return_value mutation instead of context managers.
+
+- **Gate Sequence Inversion Trap in Multi-Stage Agent Pipelines**: Placing human approval gates before automated adversarial patch refinement leads to post-approval specification drift where unapproved automated changes reach developers. Automated contract and security verification must strictly precede the human approval gate.
+
 - **Large File Prompt Token Exhaustion in Sentinel Validator Subagent**: Passing entire 60k character source files to agy.exe subagent in batch runner runs exhausts the default output token limit on chain-of-thought thinking tokens (e.g. 586 thinking tokens / 622 total tokens), leaving insufficient tokens for JSON emission. Always constrain target inspection with start_line and end_line targeted code snippets.
 
 - **agy.exe CLI Flag Precedence with -p Option under Windows PowerShell**: When invoking agy.exe CLI via subprocess under Windows PowerShell, placing -p before other flags (e.g., agy.exe -p <prompt> --sandbox) causes agy.exe to interpret '--sandbox' as the prompt string itself. Always format prompt as -p=<cli_prompt> and place flags (--sandbox, --disable-slash-commands, --output-format json) upfront.

@@ -1,11 +1,12 @@
-# 📅 Daily Report - 2026-11-06 (Unauthenticated Visitor Toast False Alarm Suppression, Unified CLI Red-vs-Blue Adversarial Duel Automation, Mantis Block G & Chesterton Archaeology Dual-Lock Convergence)
+# 📅 Daily Report - 2026-11-06 (Unauthenticated Visitor Toast Suppression, Unified CLI Duel Automation, Dual-Track Spec DAG Engine & Pytest Warnings Zero-Tolerance)
 
-> **系統狀態**：🟢 Production Ready & Security Sentinel v2.4.0 Hardened, 0 TypeScript Errors (`tsc --noEmit`), 0 ESLint Warnings, 100% Tests Green (Frontend Vitest: 88/88 Files, 589/589 Tests Passed; Backend Pytest: 27/27 Passed; Root Hygiene Sentinel: 6/6 Passed), Security Ledger 252 Targets (54 Remediated, 51 Verified, 147 Dismissed, 100% 數學守恆 + `known_design_intents` 歷史決策防線).
+> **系統狀態**：🟢 Production Ready & Security Sentinel v2.4.0 Hardened, 0 TypeScript Errors (`tsc --noEmit`), 0 ESLint Warnings, 100% Tests Green (Frontend Vitest: 88/88 Files, 589/589 Tests Passed; Backend Pytest: 14/14 Collected, 11 Passed, 3 Skipped, 0 Warnings; Root Hygiene Sentinel: Clean), Security Ledger 255 Targets (54 Remediated, 51 Verified, 150 Dismissed, 100% 數學守恆 + `known_design_intents` 歷史決策防線).
 > **今日關鍵研發範疇 (Core Focus)**：
-> - 🛡️ **未登入訪客首頁虛警 Toast 根因修復與事件源標籤過濾閉環 (Unauthenticated Visitor Toast False Alarm Suppression & Event Source Tagging, AD-201, SPEC-AUTH-003)**：徹底排查未登入訪客首次進入網站首頁 (`/`) 即彈出「✨ 帳號引繼碼已自其他裝置同步更新」之惡性誤報。根本原因在於 `AppClientLayer` 掛載無差別監聽 `tabiji:recovery_key_updated`，而 `auth-session.ts` 內 `initSessionLifecycleListener()` 在未登入訪客無憑證時自動換票引發廣播。透過重構事件承載契約，全域事件標註四種來源 (`initial_bootstrap`、`session_exchange`、`remote_sync`、`local_reanchor`)，並於 `AppClientLayer` 建立 `if (!isUserLoggedIn()) return;` 與 `if (customEvent.detail?.source !== "remote_sync") return;` 雙層防衛，訪客不再受到虛警打擾且避免多餘背景請求。
-> - ⚔️ **紅藍軍對抗全自動工作流原生整合至 Sentinel CLI (`runner.py --mode duel`, SPEC-AGY-002 v1.4.0, AD-202)**：響應架構演進方案一，深度融合 Red Team (`sentinel-attacker`) 與 Blue Team (`sentinel-defender`)，於 [`scripts/lib/adversarial_team.py`](file:///d:/Project/tabiji/travel-pwa/scripts/lib/adversarial_team.py) 實作 `orchestrate_adversarial_duel` 四階段全自動對抗協調器，並為 [`.agents/skills/security-sentinel/scripts/runner.py`](file:///d:/Project/tabiji/travel-pwa/.agents/skills/security-sentinel/scripts/runner.py) 擴充 `--mode {adaptive,duel,fast}` 命令列參數，自動調度 `GitWorktreePool` 沙盒執行「攻擊 PoC 擊穿 (`exit 1`) ➔ 藍軍切斯特頓考古抗辯 (`DISMISSED`) ➔ 補丁合成 ➔ Mantis Block G 良性對照綠燈驗證 (`exit 0`)」全自動化閉環。
-> - 🔬 **Mantis Block G 良性對照與切斯特頓圍欄考古雙重閉環 (Mantis Block G Benign Control & Chesterton's Fence Archaeology, AD-203)**：全方位落實先紅後綠與防閹割補丁驗證，編寫 [`frontend/__tests__/unauth-visitor-toast-sentinel-poc.test.ts`](file:///d:/Project/tabiji/travel-pwa/frontend/__tests__/unauth-visitor-toast-sentinel-poc.test.ts)（5/5 通過，驗證訪客遮罩與合法跨裝置同步不受閹割）及 [`backend/tests/test_sentinel_duel_orchestrator.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_sentinel_duel_orchestrator.py)（7/7 通過，涵蓋早退、未擊穿、藍軍考古駁回、實體綠燈轉化與 runner 模式調度）。
-> - 📊 **資安覆蓋台帳擴展至 252 項目標與數學守恆 100% 達成 (Ledger Guard Identity Assertion, SPEC-AGY-002)**：新增 3 項針對對抗編排器、CLI 模式開關與治理規範之候選假說審計，完成補丁落地與切斯特頓考古舉證，台帳維持 54 Remediated + 51 Verified + 147 Dismissed = 252 Total Targets 的絕對數學守恆。
+> - 🛡️ **未登入訪客首頁虛警 Toast 根因修復與事件源標籤過濾閉環 (Unauthenticated Visitor Toast False Alarm Suppression & Event Source Tagging, AD-201, SPEC-AUTH-003)**：徹底排查未登入訪客首次進入網站首頁 (`/`) 即彈出「✨ 帳號引繼碼已自其他裝置同步更新」之惡性誤報。透過重構事件承載契約，標註四種來源並於 `AppClientLayer` 與 `auth-session.ts` 建立雙層防衛，訪客不再受到虛警打擾。
+> - ⚔️ **紅藍軍對抗全自動工作流原生整合至 Sentinel CLI (`runner.py --mode duel`, SPEC-AGY-002 v1.4.0, AD-202)**：深度融合 Red Team 與 Blue Team，於 [`scripts/lib/adversarial_team.py`](file:///d:/Project/tabiji/travel-pwa/scripts/lib/adversarial_team.py) 實作 `orchestrate_adversarial_duel` 四階段全自動協調器，並為 `runner.py` 擴充 `--mode {adaptive,duel,fast}` 命令列參數，自動調度 `GitWorktreePool` 執行實體沙盒對抗閉環。
+> - 🧬 **次世代雙螺旋工程規格引擎 (Dual-Track Spec DAG Engine, AD-204, SPEC-AGY-003)**：融合 Google (Non-Goals/Alternatives Matrix)、Anthropic (階梯式蘇格拉底探針)、Perplexity (外部情報雷達)、Cloudflare/Supabase (RLS 安全矩陣與 50ms 邊緣故障模型) 與 GitHub MADR 規範。重構 `/Idea to Spec` 與 `/grill-me`，建立「宏觀確定性 DAG ✕ 微觀隨機自適應 Agent Loop」架構，以 Fast-Track（保留 1 輪速成優勢）與 Deep-DAG（5 節點防衛管線）雙軌並存，徹底摧毀 Vibe Coding 崩塌與 100K Token Dumb Zone 智商衰竭。
+> - 🧹 **後端 Pytest 測試警訊清零與加密/Mock 規範合規 (AD-205, SPEC-DEF-002)**：全面根治 `backend/tests/` 內殘留之 4 項 Pytest 警訊。將 `test_phase4_sync_deadlock_poc.py` 的偽造 HS256 金鑰提升至 39 位元組，嚴格合規 RFC 7518 Section 3.2（$\ge 32$ bytes）；重構 `test_poi_lifespan.py`，廢除 `with mocker.patch(...)` 雙重上下文語法，改採 `mock_labels.return_value = ...` 重新賦值，使測試輸出達成純淨零警告。
+> - 📊 **資安覆蓋台帳擴展至 255 項目標與數學守恆 100% 達成 (Ledger Guard Identity Assertion, SPEC-AGY-002)**：新增針對規格 DAG 引擎之目錄穿越、人類門禁跳過與外部檢索無限阻塞等 3 項候選假說審計，完成 In-Memory PoC 實證（[`test_spec_dag_sentinel_poc.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_spec_dag_sentinel_poc.py)），台帳維持 54 Remediated + 51 Verified + 150 Dismissed = 255 Total Targets 的絕對數學守恆。
 
 ---
 
@@ -77,11 +78,36 @@
    - `.agents/skills/security-sentinel/SKILL.md:fragmented_subagent_and_runner_documentation` ➔ `DISMISSED`（藍軍切斯特頓考古證實 Tier 1 CLI 自動化與 Tier 2 IDE 交談式協同為互補分層架構，非規格漂移）。
 2. **台帳守恆性校驗**：
    - 執行 `python scripts/validate_security_ledger.py`：
-   - `total_targets`: 252
+   - `total_targets`: 255
    - `remediated_vulnerabilities`: 54
    - `verified_vulnerabilities`: 51
-   - `dismissed_hypotheses`: 147
-   - 數學恆等式：$54 + 51 + 147 = 252$ 完全閉環。
+   - `dismissed_hypotheses`: 150
+   - 數學恆等式：$54 + 51 + 150 = 255$ 完全閉環。
+
+---
+
+### 里程碑五：次世代雙螺旋工程規格引擎 (Dual-Track Spec DAG Engine, AD-204, SPEC-AGY-003)
+
+1. **核心動機與全球頂尖巨頭範式融合**：
+   - 針對 `/Idea to Spec` 與 `/grill-me` 進行地毯式架構重構，汲取 Google (Non-Goals、Alternatives Considered 權衡矩陣)、Anthropic (階梯式蘇格拉底探針 L1 ➔ L2 ➔ L3)、Perplexity (外部情報接地)、Cloudflare/Supabase (RLS 安全矩陣與 50ms 邊緣故障模型)、Vercel (RSC 邊界拓撲) 與 GitHub MADR 規範。
+2. **宏觀 DAG ✕ 微觀 Agent Loop 臨床診療指引模型**：
+   - 採用臨床 ACLS（進階心臟救命術）處置樹類比：宏觀骨架由確定性 DAG 掌管拓撲推進與硬性門禁，微觀節點嵌入有界的 Agent 自適應循環（如 CPR 2 分鐘循環），並透過「Facts vs Decisions」原則（代碼庫查得到的絕不發問）大幅縮減無謂對話。
+3. **雙軌執行模式 (Fast-Track vs Deep-DAG)**：
+   - **Fast-Track**：保留原本單輪速成的輕量規格體驗，零摩擦生成 5 段式規格。
+   - **Deep-DAG**：啟動 5 節點深度防衛管線，整合外部 5 秒熔斷器、短路逃生艙、抛棄式 UI 沙盒實驗（`<conversation_dir>/scratch/proto/` 嚴防目錄穿越），以及簽核前的自動化紅軍合約審查。
+4. **實裝與本機配置升級**：
+   - 成功更新本機全域技能 [`C:\Users\Ryan su\.gemini\config\skills\idea-to-spec\SKILL.md`](file:///C:/Users/Ryan%20su/.gemini/config/skills/idea-to-spec/SKILL.md) 至 v2.1.0。
+
+---
+
+### 里程碑六：後端 Pytest 測試警訊清零與加密/Mock 規範合規 (AD-205, SPEC-DEF-002)
+
+1. **RFC 7518 HS256 金鑰長度安全閾值修復**：
+   - 在 [`backend/tests/test_phase4_sync_deadlock_poc.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_phase4_sync_deadlock_poc.py) L200 與 L231 中，將模擬攻擊者偽造 Token 的金鑰由 22/11 位元組提升至 39 位元組（`attacker_forged_secret_key_32bytes_long!` 與 `fake_secret_key_minimum_32_bytes_long!`），完全合規 RFC 7518 Section 3.2 對 HMAC-SHA256 的 32 位元組下限，徹底清零 `InsecureKeyLengthWarning`。
+2. **pytest-mock 生命週期語法除垢**：
+   - 在 [`backend/tests/test_poi_lifespan.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_poi_lifespan.py) L131/L141 中，移除 `with mocker.patch(...)` 雙重上下文語法，改採 `mock_labels.return_value = ...` 重新賦值，使 pytest 框架乾淨接管 mock 恢復，徹底清零 `PytestMockWarning`。
+3. **測試輸出純淨度**：
+   - 14 項測試收集：11 passed, 3 skipped, **0 warnings**（警告完全歸零）。
 
 ---
 
@@ -99,6 +125,14 @@
   - **Context**: 修復未登入訪客 Toast 時，若修復手段為粗暴刪除監聽器或全面禁止 Toast，將破壞合法多裝置使用者在雲端金鑰輪替時的知情權（閹割補丁）。
   - **Decision**: 嚴格遵守 Mantis Block G，在測試與補丁中設立良性對照組（`TC-2`），確認合法登入用戶接收 `remote_sync` 時仍能正常顯示 Toast，守護既有業務能力。
   - **Trade-offs**: 必須在測試套件中維護雙重狀態 Mock，但確保代碼品質達到零降級（Zero-Regression）。
+- **AD-204 (Dual-Track Spec DAG Engine & Socratic Ingestion Architecture - SPEC-AGY-003)**:
+  - **Context**: 舊版 `idea-to-spec` 與 `/grill-me` 為線性對話，缺乏 DAG 剪枝容易引發決策疲勞；同時長對話超過 100K Token 進入 Dumb Zone 智商衰減，且文字爭論高精細度 UI 動效效率極低。
+  - **Decision**: 建立確定性 DAG 骨架並在局部嵌入 Agent Loop；嚴格實施階梯質詢（L1 ➔ L2 ➔ L3）；遇高精細度 UI 即刻分流至拋棄式沙盒實驗；以 Fast-Track 保留單輪速成，以 Deep-DAG 承接大型架構設計；紅軍自動稽核移至人類簽核之前以杜絕簽核後漂移。
+  - **Trade-offs**: 深度模式對話前置思考密度較高，但消除 90% 下游返工與架構腐敗。
+- **AD-205 (Pytest Mock Lifecycle & Cryptographic Key Length Hygiene - SPEC-DEF-002)**:
+  - **Context**: 後端測試執行時出現 4 項警告（PyJWT 密鑰過短警告與 pytest-mock 雙重上下文退出警告），影響 CI 乾淨度。
+  - **Decision**: 密鑰生成強制遵守 RFC 7518（長度 $\ge 32$ 位元組）；全面統一使用 pytest-mock 標準模式管理 mock 生命週期，禁止在 fixture 上疊加 `with` 語法。
+  - **Trade-offs**: 稍微增加測試字串長度，但換取完全零警告的乾淨測試環境。
 
 ---
 
@@ -113,6 +147,12 @@
 - **FP-014 (`isUserLoggedIn()` 跨測試依賴隱藏邊界 - 孤兒金鑰陷阱)**:
   - **Symptom**: 最初嘗試將 `isUserLoggedIn()` 簡化為嚴格要求 `user_nickname && user_uuid`，導致 `auth-session-resilience.test.ts` 的 TC-10 與 TC-11 失敗。
   - **Resolution**: 原來 TC-10/TC-11 刻意設計了「僅有 `user_recovery_key` 但缺乏 `user_nickname`」的極端情況，期望在 401 時觸發 `SessionReauthModal` 原地重錨，而非直接靜默清空會話。修復時必須區分 `handleReconnectOrResume`（僅服務具備完整身分之活躍用戶）與 `isUserLoggedIn` 本身的型別容錯定義。
+- **FP-015 (Gate Sequence Inversion Trap in Multi-Stage Agent Pipelines)**:
+  - **Symptom**: 在設計自動化規格流水線時，若將「人類簽核門禁」置於「紅軍自動合約修補」之前，一旦紅軍自動套用 Patch 修補漏洞，最終交付實作的規格將未經人類審批，架空 L0 人類主權。
+  - **Resolution**: 紅軍修補與合約自檢必須在內部完全收斂（Green），人類簽核永遠是交付實作前的最後一棒（Final Gate）。
+- **FP-016 (Pytest-mock Context Manager Double-Exit Warning Trap)**:
+  - **Symptom**: 在 pytest 測試函式中使用 `with mocker.patch(...)` 會觸發 `PytestMockWarning`，因為 `mocker` fixture 已經在函式層級自動託管了生命週期。
+  - **Resolution**: 移除 `with` 語法，跨情境直接透過 `mock_obj.return_value = ...` 重新指定模擬值。
 
 ---
 
@@ -154,6 +194,41 @@
     "id": "FP-013",
     "title": "Large File Prompt Token Exhaustion in Sentinel Validator Subagent",
     "content": "Passing entire 60k character source files to agy.exe subagent in batch runner runs exhausts the default output token limit on chain-of-thought thinking tokens (e.g. 586 thinking tokens / 622 total tokens), leaving insufficient tokens for JSON emission. Always constrain target inspection with start_line and end_line targeted code snippets."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-AGY-001",
+    "title": "Dual-Track Spec DAG Engine & Approval Gate Precedence",
+    "content": "In idea-to-spec skill, specification generation supports Fast-Track (single-turn) and Deep-DAG (5-node pipeline). In Deep-DAG, automated adversarial red-team audit and property-based test invariant assertions MUST occur strictly BEFORE Gate 5 Human Approval Gate, guaranteeing that human confirmation is the sole irreversible handover boundary to @dev."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEV-001",
+    "title": "RFC 7518 HMAC-SHA256 Minimum Key Length Threshold",
+    "content": "All HMAC-SHA256 (HS256) secrets in tests and production code MUST be at least 32 bytes (256 bits) long to comply with RFC 7518 Section 3.2 and eliminate PyJWT InsecureKeyLengthWarning."
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-DEV-002",
+    "title": "pytest-mock Fixture Lifecycle Hygiene",
+    "content": "Mocks created via pytest-mock fixture (mocker.patch) MUST NOT be wrapped in 'with' context manager statements. Use direct assignment and modify 'mock.return_value' across test branches."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-015",
+    "title": "Gate Sequence Inversion Trap in Multi-Stage Agent Pipelines",
+    "content": "Placing human approval gates before automated adversarial patch refinement leads to post-approval specification drift where unapproved automated changes reach developers. Automated contract and security verification must strictly precede the human approval gate."
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-016",
+    "title": "Pytest-mock Context Manager Double-Exit Warning Trap",
+    "content": "Wrapping mocker.patch() in a 'with' block triggers PytestMockWarning due to redundant context exit calls. Manage test branching via return_value mutation instead of context managers."
   }
 ]
 ```

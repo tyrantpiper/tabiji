@@ -1,0 +1,8 @@
+[
+  {
+    "target_file": "C:\\Users\\Ryan su\\.gemini\\config\\skills\\idea-to-spec\\SKILL.md",
+    "target_content": "name: \"Idea to Spec\"\ndescription: \"Transforms conversational user requests and raw ideas into rigorous engineering specifications with edge cases, user flows, and acceptance criteria.\"\nversion: \"1.0.0\"\ntriggers:\n  - \"/spec\"\n  - \"規格化\"\n  - \"需求梳理\"\n  - \"設計規格\"\n---\n\n# Idea to Spec (Product & Architecture Specification Master)",
+    "replacement_content": "name: \"Idea to Spec\"\ndescription: \"Transforms conversational user requests and raw ideas into rigorous engineering specifications with edge cases, user flows, and acceptance criteria. Supports Fast-Track and Deep-DAG execution modes.\"\nversion: \"2.1.0\"\ntriggers:\n  - \"/spec\"\n  - \"/grill-me\"\n  - \"規格化\"\n  - \"需求梳理\"\n  - \"設計規格\"\n---\n\n# Idea to Spec 2.1 (Dual-Track Spec Engine)"
+  }
+]
+

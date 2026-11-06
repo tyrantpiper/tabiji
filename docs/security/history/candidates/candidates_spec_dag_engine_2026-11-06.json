@@ -1,0 +1,21 @@
+[
+  {
+    "id": "skills/spec-dag-engine:path_traversal_in_prototype_sandbox",
+    "file_path": "C:\\Users\\Ryan su\\.gemini\\config\\skills\\idea-to-spec\\SKILL.md",
+    "attack_vector": "path_traversal_and_sandbox_escape",
+    "hypothesis": "Throwaway UI prototype generation in Node 3 writes to .scratch/proto/ without canonical path resolution and confinement check, allowing directory traversal to overwrite root config files."
+  },
+  {
+    "id": "skills/spec-dag-engine:fast_track_approval_gate_bypass",
+    "file_path": "C:\\Users\\Ryan su\\.gemini\\config\\skills\\idea-to-spec\\SKILL.md",
+    "attack_vector": "privilege_escalation_and_gate_bypass",
+    "hypothesis": "Dual-track router allowing Fast-Track mode could be coerced into handing over execution directly to @dev without human confirmation gate, violating L0 human sovereignty."
+  },
+  {
+    "id": "skills/spec-dag-engine:unbounded_grounding_timeout_denial_of_service",
+    "file_path": "C:\\Users\\Ryan su\\.gemini\\config\\skills\\idea-to-spec\\SKILL.md",
+    "attack_vector": "resource_exhaustion_and_dos",
+    "hypothesis": "Node 2 Pre-flight Grounding loop calling NotebookLM and GitHub MCP lacks an enforced timeout circuit breaker, leading to infinite agent stall when network partitions or rate limits occur."
+  }
+]
+

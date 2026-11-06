@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **RFC 7518 HMAC-SHA256 Minimum Key Length Threshold**: All HMAC-SHA256 (HS256) secrets in tests and production code MUST be at least 32 bytes (256 bits) long to comply with RFC 7518 Section 3.2 and eliminate PyJWT InsecureKeyLengthWarning.
+
 - **Tag-First Extraction & Invisible Character Stripping Before Length Truncation (AD-199)**: In hybrid intent routing and admin hijack guardrails, user input wrapped in <user_input_{salt}> must first strip zero-width/Bidi control characters (INVISIBLE_CHARS_RE), advance past SYSTEM_BOUNDARY_END_RE, and extract content matching the exact closing outer_salt tag with trailing whitelist validation BEFORE applying 500-character ReDoS truncation.
 
 - **Windows Terminal UTF-8 Reconfiguration Guard**: All standalone Python CLI utility scripts and test harnesses must include sys.stdout.reconfigure(encoding='utf-8') at initialization to prevent cp950 encoding crashes during stdout streaming on Windows platforms.

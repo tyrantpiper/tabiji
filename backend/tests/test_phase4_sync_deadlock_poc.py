@@ -196,8 +196,8 @@ def test_tc1_hardened_anti_ato_preservation():
         hardened_session_exchange(req, auth_header=None)
     assert exc.value.status_code == 401
 
-    # 2. Forged token with invalid secret
-    fake_token = create_mock_jwt(uid, "attacker_forged_secret")
+    # 2. Forged token with invalid secret (>= 32 bytes to adhere to RFC 7518)
+    fake_token = create_mock_jwt(uid, "attacker_forged_secret_key_32bytes_long!")
     with pytest.raises(HTTPException) as exc:
         hardened_session_exchange(req, auth_header=f"Bearer {fake_token}")
     assert exc.value.status_code == 401
@@ -227,6 +227,6 @@ def test_tc2_dormant_device_grace_period_vault_recovery():
     ancient_token = create_mock_jwt(uid, TEST_SECRET, issued_offset_days=100, expire_days=30)
     assert extract_user_with_grace_period(f"Bearer {ancient_token}", TEST_SECRET) is None
 
-    # Forged token fails grace period
-    forged = create_mock_jwt(uid, "fake_secret", issued_offset_days=40, expire_days=30)
+    # Forged token fails grace period (>= 32 bytes to adhere to RFC 7518)
+    forged = create_mock_jwt(uid, "fake_secret_key_minimum_32_bytes_long!", issued_offset_days=40, expire_days=30)
     assert extract_user_with_grace_period(f"Bearer {forged}", TEST_SECRET) is None
