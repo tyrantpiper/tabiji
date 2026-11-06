@@ -40,6 +40,9 @@ describe('MCPConnectorDialog Test Suite', () => {
         render(<MCPConnectorDialog open={true} onOpenChange={vi.fn()} />)
 
         await waitFor(() => {
+            const tokenInput = document.querySelector('input[value="' + mockJwt + '"]') as HTMLInputElement | null
+            expect(tokenInput).not.toBeNull()
+            expect(tokenInput?.type).toBe('password')
             expect(screen.getByTitle(/顯示憑證|Show Token/i)).toBeDefined()
         })
 
@@ -50,13 +53,19 @@ describe('MCPConnectorDialog Test Suite', () => {
 
         // Click eye to reveal
         fireEvent.click(toggleBtn)
-        tokenInput = document.querySelector('input[value="' + mockJwt + '"]') as HTMLInputElement
-        expect(tokenInput.type).toBe('text')
+        await waitFor(() => {
+            tokenInput = document.querySelector('input[value="' + mockJwt + '"]') as HTMLInputElement
+            expect(tokenInput).not.toBeNull()
+            expect(tokenInput.type).toBe('text')
+        })
 
         // Click eye to hide
         fireEvent.click(toggleBtn)
-        tokenInput = document.querySelector('input[value="' + mockJwt + '"]') as HTMLInputElement
-        expect(tokenInput.type).toBe('password')
+        await waitFor(() => {
+            tokenInput = document.querySelector('input[value="' + mockJwt + '"]') as HTMLInputElement
+            expect(tokenInput).not.toBeNull()
+            expect(tokenInput.type).toBe('password')
+        })
     })
 
     it('TDD-3: Server URL is rendered and copy triggers clipboard API and toast', async () => {
