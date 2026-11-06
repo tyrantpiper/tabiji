@@ -148,6 +148,27 @@ async def mcp_server_card(request: Request):
         }
     }
 
+def calculate_trip_days(trip: Dict[str, Any]) -> int:
+    """計算行程總天數 (支援 content.daily_locations 與 start_date/end_date 日期跨度)"""
+    content = trip.get("content") or {}
+    if isinstance(content, dict):
+        daily_locs = content.get("daily_locations")
+        if isinstance(daily_locs, dict) and len(daily_locs) > 0:
+            return len(daily_locs)
+    start = trip.get("start_date")
+    end = trip.get("end_date")
+    if start and end:
+        try:
+            from datetime import date
+            d1 = date.fromisoformat(str(start).split("T")[0])
+            d2 = date.fromisoformat(str(end).split("T")[0])
+            delta = (d2 - d1).days + 1
+            if delta > 0:
+                return delta
+        except Exception:
+            pass
+    return 1
+
 def sanitize_coordinates(lat: Any, lng: Any) -> tuple[Optional[float], Optional[float]]:
     """驗證並過濾經緯度座標，防範 AI 幻覺、超出物理邊界與 Null Island (0, 0)"""
     if lat is None or lng is None:
@@ -514,26 +535,26 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         
         owned_res = None
         try:
-            owned_res = supabase.table("itineraries").select("id, title, total_days, start_date, created_by").eq("created_by", user_id).execute()
-        except Exception:
-            pass
+            owned_res = supabase.table("itineraries").select("id, title, start_date, end_date, created_by, user_id, content").or_(f"created_by.eq.{user_id},user_id.eq.{user_id}").execute()
+        except Exception as e:
+            logger.warning(f"[MCP] Failed to fetch owned itineraries for user {user_id}: {e}")
 
         member_trip_ids = []
         try:
             mem_res = supabase.table("trip_members").select("itinerary_id").eq("user_id", user_id).execute()
             if mem_res and mem_res.data:
                 member_trip_ids = [m["itinerary_id"] for m in mem_res.data if m.get("itinerary_id")]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[MCP] Failed to fetch member trip ids for user {user_id}: {e}")
 
         collab_trips = []
         if member_trip_ids:
             try:
-                collab_res = supabase.table("itineraries").select("id, title, total_days, start_date, created_by").in_("id", member_trip_ids).execute()
+                collab_res = supabase.table("itineraries").select("id, title, start_date, end_date, created_by, user_id, content").in_("id", member_trip_ids).execute()
                 if collab_res and collab_res.data:
                     collab_trips = collab_res.data
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[MCP] Failed to fetch collab trips for user {user_id}: {e}")
 
         all_trips_dict = {}
         if owned_res and owned_res.data:
@@ -554,7 +575,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         for idx, t in enumerate(all_trips, 1):
             t_id = t.get("id")
             title = t.get("title") or "未命名行程"
-            days = t.get("total_days") or 1
+            days = calculate_trip_days(t)
             start = t.get("start_date") or "尚未設定日期"
             lines.append(f"{idx}. 「{title}」\n   • 行程識別碼 (trip_id): `{t_id}`\n   • 總天數: {days} 天 | 出發日: {start}")
         
@@ -574,9 +595,9 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
 
         trip_res = None
         try:
-            trip_res = supabase.table("itineraries").select("id, created_by, title, total_days").eq("id", trip_id).execute()
-        except Exception:
-            pass
+            trip_res = supabase.table("itineraries").select("id, created_by, user_id, title, start_date, end_date, content").eq("id", trip_id).execute()
+        except Exception as e:
+            logger.warning(f"[MCP] Failed to fetch trip {trip_id}: {e}")
 
         if not trip_res or not trip_res.data:
             return {"jsonrpc": "2.0", "id": req_id, "result": format_mcp_tool_result("行程不存在或已被移除", is_error=True)}
@@ -654,9 +675,9 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         # 租戶邊界查詢 (防範 IDOR 與 BOLA)
         trip_res = None
         try:
-            trip_res = supabase.table("itineraries").select("id, created_by, title, total_days").eq("id", trip_id).execute()
-        except Exception:
-            pass
+            trip_res = supabase.table("itineraries").select("id, created_by, user_id, title, start_date, end_date, content").eq("id", trip_id).execute()
+        except Exception as e:
+            logger.warning(f"[MCP] Failed to fetch trip {trip_id}: {e}")
 
         if not trip_res or not trip_res.data:
             return {
@@ -683,19 +704,26 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                     "result": format_mcp_tool_result("權限不足：您無權修改他人行程", is_error=True)
                 }
 
-        # 天數邊界守衛 (若行程有設定 total_days，防範超出上限之孤兒節點)
-        total_days = trip.get("total_days")
-        if total_days is not None:
-            try:
-                t_days = int(total_days)
-                if t_days > 0 and (day_idx < 1 or day_idx > t_days):
-                    return {
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "result": format_mcp_tool_result(f"天數錯誤：該行程共 {t_days} 天，無法操作第 {day_idx} 天", is_error=True)
-                    }
-            except (ValueError, TypeError):
-                pass
+        # 天數邊界守衛 (若有明確日期或景點資料，防範超出上限之孤兒節點)
+        if day_idx < 1:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": format_mcp_tool_result("天數錯誤：天數必須大於等於 1", is_error=True)
+            }
+
+        t_days = calculate_trip_days(trip)
+        has_explicit_days = (
+            bool(trip.get("start_date") and trip.get("end_date")) or 
+            bool(isinstance(trip.get("content"), dict) and trip["content"].get("daily_locations")) or
+            (trip.get("total_days") is not None)
+        )
+        if has_explicit_days and t_days > 0 and day_idx > t_days:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": format_mcp_tool_result(f"天數錯誤：該行程共 {t_days} 天，無法操作第 {day_idx} 天", is_error=True)
+            }
 
         # 雙模入參解析 (支援 places 陣列與單筆 place_name)
         raw_places = args.get("places")

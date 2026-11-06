@@ -676,5 +676,58 @@ def test_real_oauth_parameter_validation_and_errors():
     assert "Invalid or expired authorization code" in res_expired.json()["detail"]
 
 
+def test_mcp_list_user_trips_schema_tolerance():
+    """驗證 list_user_trips 不依賴不存在的 total_days 欄位，且支援 or_(created_by, user_id) 檢索"""
+    mock_supabase = MagicMock()
+    mock_itineraries = MagicMock()
+    mock_members = MagicMock()
+
+    def table_router(table_name):
+        if table_name == "itineraries":
+            return mock_itineraries
+        elif table_name == "trip_members":
+            return mock_members
+        return MagicMock()
+
+    mock_supabase.table.side_effect = table_router
+    mock_itineraries.select.return_value = mock_itineraries
+    mock_itineraries.or_.return_value = mock_itineraries
+    mock_itineraries.execute.return_value = MagicMock(data=[
+        {
+            "id": "trip-tokyo-18",
+            "title": "2026 東京家族之旅",
+            "start_date": "2026-02-02",
+            "end_date": "2026-02-19",
+            "created_by": ALICE_UUID,
+            "user_id": None,
+            "content": {"daily_locations": {str(i): {} for i in range(1, 19)}}
+        }
+    ])
+
+    mock_members.select.return_value = mock_members
+    mock_members.eq.return_value = mock_members
+    mock_members.execute.return_value = MagicMock(data=[])
+
+    with patch("routers.mcp.get_verified_user", return_value=ALICE_UUID), \
+         patch("routers.mcp.get_supabase", return_value=mock_supabase):
+        resp = client.post(
+            "/api/mcp",
+            headers={"Authorization": "Bearer valid_alice_token"},
+            json={
+                "jsonrpc": "2.0",
+                "id": 999,
+                "method": "tools/call",
+                "params": {"name": "list_user_trips", "arguments": {}}
+            }
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["result"]["isError"] is False
+        text = data["result"]["content"][0]["text"]
+        assert "2026 東京家族之旅" in text
+        assert "18 天" in text
+        assert "trip-tokyo-18" in text
+
+
 
 
