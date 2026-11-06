@@ -33,6 +33,52 @@ logger = logging.getLogger("tabiji-mcp")
 # 記憶體授權碼儲存庫 (有效期 300 秒，一次性消費)
 OAUTH_CODES: Dict[str, Dict[str, Any]] = {}
 
+SUPPORTED_MCP_VERSIONS = [
+    "2026-07-28",
+    "2025-11-25",
+    "2025-03-26",
+    "2024-11-05"
+]
+
+TRUSTED_BASE_DOMAINS = {
+    "tabijiapp.com",
+    "www.tabijiapp.com",
+    "travel-pwa-five.vercel.app",
+    "localhost",
+    "127.0.0.1",
+    "testserver"
+}
+
+def get_public_base_url(request: Request) -> str:
+    """
+    動態且安全地取得 MCP 客戶端可訪問的公開 Base URL。
+    解析反向代理（Cloudflare / Vercel）之 X-Forwarded-Host 與 X-Forwarded-Proto 標頭，
+    嚴防 RFC 9728 協定撕裂與 Host Header 偽造注入。
+    """
+    forwarded_host = request.headers.get("x-forwarded-host")
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    host = request.headers.get("host")
+    
+    if forwarded_host:
+        raw_f_host = forwarded_host.split(",")[0].strip()
+        clean_f_host = raw_f_host.split(":")[0]
+        if clean_f_host in TRUSTED_BASE_DOMAINS:
+            proto = forwarded_proto or ("http" if clean_f_host in {"localhost", "127.0.0.1", "testserver"} else "https")
+            return f"{proto}://{raw_f_host}".rstrip("/")
+    
+    if host:
+        clean_host = host.split(":")[0]
+        if clean_host in ["tabijiapp.com", "www.tabijiapp.com", "travel-pwa-five.vercel.app"]:
+            return f"https://{host}".rstrip("/")
+        if clean_host in ["localhost", "127.0.0.1", "testserver"]:
+            proto = "http" if "testserver" in host or "localhost" in host or "127.0.0.1" in host else "https"
+            return f"{proto}://{host}".rstrip("/")
+
+    raw_base = str(request.base_url).rstrip("/")
+    if "tabijiapp.com" in raw_base and raw_base.startswith("http://"):
+        raw_base = "https://" + raw_base[7:]
+    return raw_base
+
 def format_mcp_tool_result(text_content: str, is_error: bool = False) -> Dict[str, Any]:
     """遵循 MCP 官方規範的標準 ToolResult Content Envelope"""
     return {
@@ -48,7 +94,7 @@ def format_mcp_tool_result(text_content: str, is_error: bool = False) -> Dict[st
 @router.get("/.well-known/oauth-authorization-server")
 async def oauth_metadata(request: Request):
     """Google Connected Apps 所需之 OAuth 2.1 Discovery 端點 (RFC 8414)"""
-    base_url = str(request.base_url).rstrip("/")
+    base_url = get_public_base_url(request)
     return {
         "issuer": base_url,
         "authorization_endpoint": f"{base_url}/api/oauth/authorize",
@@ -61,7 +107,7 @@ async def oauth_metadata(request: Request):
 @router.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource(request: Request):
     """Model Context Protocol (2026-07-28 規範) 所需之 RFC 9728 Protected Resource Metadata 端點"""
-    base_url = str(request.base_url).rstrip("/")
+    base_url = get_public_base_url(request)
     return {
         "resource": f"{base_url}/api/mcp",
         "authorization_servers": [base_url]
@@ -200,6 +246,24 @@ async def oauth_token(request: Request):
         "expires_in": 3600 * 24 * 30
     }
 
+@router.get("/api/mcp")
+@router.head("/api/mcp")
+async def handle_mcp_probe(request: Request):
+    """
+    Google Connected Apps 與外部 MCP 連通性健康檢查端點。
+    支援 Streamable HTTP 規範探針與連線前置探測。
+    """
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "server": "tabiji-mcp-server",
+            "version": "1.0.0",
+            "transport": "streamable-http",
+            "supported_protocol_versions": SUPPORTED_MCP_VERSIONS
+        }
+    )
+
 @router.post("/api/mcp")
 async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header(None)):
     """處理 Google Gemini 與 Perplexity 之 MCP JSON-RPC 2.0 請求"""
@@ -219,11 +283,13 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
 
     # 1. 握手與協商方法 (無需身分驗證)
     if method == "initialize":
+        requested_version = params.get("protocolVersion")
+        negotiated_version = requested_version if requested_version in SUPPORTED_MCP_VERSIONS else "2024-11-05"
         return {
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": negotiated_version,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": "tabiji-mcp-server", "version": "1.0.0"}
             }

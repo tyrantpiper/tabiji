@@ -3,10 +3,10 @@
   "last_audit_date": "2026-11-07T01:20:00.000000+00:00",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 273,
-    "audited_targets": 273,
+    "total_targets": 277,
+    "audited_targets": 277,
     "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 72,
+    "remediated_vulnerabilities": 76,
     "dismissed_hypotheses": 150
   },
   "targets": [
@@ -3472,6 +3472,61 @@
       "validator_details": "Implemented RFC 9728 /.well-known/oauth-protected-resource endpoint complying with Model Context Protocol 2026-07-28 discovery standards.",
       "remediated_at": "2026-11-07T01:20:00Z",
       "resolution": "docs/security/history/patches/patch_candidate_mcp_trip_expansion_2026-11-07.diff"
+    },
+    {
+      "id": "backend/main.py:mcp_cors_external_ai_preflight_rejection",
+      "target_type": "backend_middleware",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "cors_preflight_rejection",
+        "origin_allowlist_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_gemini_cors.md",
+      "validator_details": "Added explicit allowed origins for https://gemini.google.com and https://aistudio.google.com, plus dynamic allow_origin_regex for Google, Perplexity, and Anthropic clients with full Mantis Block G benign isolation.",
+      "remediated_at": "2026-11-07T02:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_gemini_cors_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:rfc9728_domain_and_protocol_tear",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "rfc9728_resource_mismatch",
+        "host_header_injection"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_gemini_cors.md",
+      "validator_details": "Implemented get_public_base_url resolving X-Forwarded-Host and X-Forwarded-Proto to prevent internal Cloud Run origin leakage and enforce HTTPS on production domains per RFC 9728 Section 3.",
+      "remediated_at": "2026-11-07T02:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_gemini_cors_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:legacy_protocol_version_negotiation_failure",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "protocol_version_mismatch"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_gemini_cors.md",
+      "validator_details": "Added dynamic protocolVersion negotiation supporting 2026-07-28, 2025-11-25, 2025-03-26, and 2024-11-05 with full backwards compatibility for legacy clients.",
+      "remediated_at": "2026-11-07T02:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_gemini_cors_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:http_get_head_discovery_probe_blocked",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "http_method_not_allowed",
+        "liveness_probe_failure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_gemini_cors.md",
+      "validator_details": "Registered handle_mcp_probe on GET and HEAD methods returning HTTP 200 OK with server capabilities and transport metadata for Google Connected Apps pre-check.",
+      "remediated_at": "2026-11-07T02:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_gemini_cors_2026-11-07.diff"
     }
   ],
   "known_design_intents": {

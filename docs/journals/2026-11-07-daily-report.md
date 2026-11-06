@@ -1,6 +1,6 @@
 # 📅 Daily Report - 2026-11-07 (Google Connected Apps Remote MCP Server, RFC 8414/9728 OAuth 2.1 Engine, AI Coordinate Sanity Gate, Batch Itinerary Sync & Travel Tarpit Demystification)
 
-> **系統狀態**：🟢 Production Ready & Security Sentinel v2.5.0 Hardened, 0 TypeScript Errors (`tsc --noEmit`), 0 ESLint Warnings, 100% Tests Green (Frontend Vitest: 89/89 Files, 599/599 Tests Passed; Backend Pytest: 397 Collected, 392 Passed, 5 Skipped, 0 Errors; Root Hygiene Sentinel: Clean), Security Ledger 273 Targets (72 Remediated, 51 Verified, 150 Dismissed, 100% 數學守恆 + `known_design_intents` 歷史決策防線).
+> **系統狀態**：🟢 Production Ready & Security Sentinel v2.5.0 Hardened, 0 TypeScript Errors (`tsc --noEmit`), 0 ESLint Warnings, 100% Tests Green (Frontend Vitest: 89/89 Files, 599/599 Tests Passed; Backend Pytest: 403 Collected, 398 Passed, 5 Skipped, 0 Errors; Root Hygiene Sentinel: Clean), Security Ledger 277 Targets (76 Remediated, 51 Verified, 150 Dismissed, 100% 數學守恆 + `known_design_intents` 歷史決策防線).
 > **今日關鍵研發範疇 (Core Focus)**：
 > - 🌐 **Google Connected Apps & Remote MCP 雙軌協定落地 (AD-209, SPEC-MCP-001)**：完整實裝 Model Context Protocol 2026-07-28 規範與 Google Connected Apps Platform 標準。提供 RFC 8414 授權伺服器探索 (`/.well-known/oauth-authorization-server`) 與 RFC 9728 受保護資源探索 (`/.well-known/oauth-protected-resource`)，實現 Google Gemini 經由瀏覽器 302 跳轉授權、RFC 7636 PKCE S256 驗證、單次授權碼銷毀與 30 天 Session JWT 簽發。
 > - 🛡️ **權限分離與根憑證隔離防衛 (Root Authority Separation, AD-210)**：確立核心安全邊界——使用者的 Recovery Key (`tbj_rec_...`) 為絕對不外流的根憑證（Root Authority），發送給外部 AI（Gemini / Perplexity）的僅為受限的 30 天委派 Session JWT；若使用者輪替 Recovery Key，所有委派 JWT 即刻全數作廢。
@@ -92,11 +92,30 @@
    - `backend/routers/mcp.py:oauth_protected_resource_metadata_rfc9728` ➔ `REMEDIATED`
 2. **台帳守恆性校驗**：
    - 執行 `python scripts/validate_security_ledger.py`：
-   - `total_targets`: 273
-   - `remediated_vulnerabilities`: 72
+   - `total_targets`: 277
+   - `remediated_vulnerabilities`: 76
    - `verified_vulnerabilities`: 51
    - `dismissed_hypotheses`: 150
-   - 數學恆等式：$72 + 51 + 150 = 273$ 完全閉環。
+   - 數學恆等式：$76 + 51 + 150 = 277$ 完全閉環。
+
+---
+
+### 里程碑七：Gemini Remote MCP "目前不支援這個 MCP 伺服器" 跨域連通性、CORS Preflight 與 RFC 9728 反向代理網域撕裂根因排查與完美閉環 (AD-215, SPEC-MCP-002)
+
+1. **實測排查之四大致命破綻 (The 4 Smoking Guns)**：
+   - **破綻一：CORS Preflight 400 Bad Request 阻斷**：
+     Google Gemini 網頁前端 (`https://gemini.google.com`) 連線前由瀏覽器發送 `OPTIONS` 預檢請求。因 `backend/main.py` 原先僅允許 Tabiji 與 localhost 來源，Starlette CORSMiddleware 立即回傳 `400 Disallowed CORS origin`，導致瀏覽器直接阻斷後續 Fetch。
+   - **破綻二：RFC 9728 Section 3 身分撕裂與 HTTP 協定降級**：
+     後端直接讀取 `request.base_url`，在 Cloudflare/Vercel 反向代理背後回傳 `http://antigravity-backend-589255638719.us-central1.run.app/api/mcp`。Gemini 依 RFC 9728 Section 3 規範檢驗 `resource`，比對發現請求為 `https://www.tabijiapp.com` 但中繼資料聲稱為 `http://antigravity-backend...run.app`，觸發偽造攻擊與明文降級警報，瞬間噴出紅字：「目前不支援這個 MCP 伺服器。」
+   - **破綻三：MCP 協定版本動態協商失敗**：
+     `backend/routers/mcp.py` 之 `initialize` 靜態硬編碼回傳 `"protocolVersion": "2024-11-05"`，現代 AI 客戶端（Gemini / Perplexity）採用 `2026-07-28` 或 `2025-03-26`，判定伺服端已過期。
+   - **破綻四：連通性健康探針遭遇 405 Method Not Allowed**：
+     Google Connected Apps 之爬蟲探針發送 HTTP `GET` 與 `HEAD` 檢測 `/api/mcp`，原後端僅註冊 `@router.post`，導致探針失敗。
+2. **藍軍完整防衛實裝**：
+   - `backend/main.py`：加入 `https://gemini.google.com` 與 `https://aistudio.google.com` 至 `ALLOWED_ORIGINS`，並掛載 `allow_origin_regex` 安全放行 Google、Perplexity、Anthropic 來源。
+   - `backend/routers/mcp.py`：實裝 `get_public_base_url`，解析 `x-forwarded-host` 與 `x-forwarded-proto`，並以 `TRUSTED_BASE_DOMAINS` 嚴防 Host Header 偽造注入；加入 `SUPPORTED_MCP_VERSIONS` 動態版本協商；註冊 `@router.get("/api/mcp")` 與 `@router.head("/api/mcp")` 探針。
+   - 產出獨立對抗審計報告 [`docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_gemini_cors.md`](file:///d:/Project/tabiji/travel-pwa/docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_gemini_cors.md)。
+   - 資安帳本安全遞增至 277 項目（76 處修復、51 處已驗證、150 處駁回安全）。
 
 ---
 
@@ -108,6 +127,7 @@
 - **AD-212**: MCP 節點寫入採用 `places: []` 批量陣列結構與單筆相容模式，並強制以 `total_days` 作為天數防護欄。
 - **AD-213**: 前端輸入框密集按鈕群強制採用標準 `pr-44` 以上寬度，杜絕文字穿透。
 - **AD-214**: 堅持以「離線優先 PWA + WebGL MapLibre 航線 + 零邊際成本分潤」作為護城河，AI 定位為無頭輸入管線。
+- **AD-215**: Remote MCP 反向代理公網網址解析與 RFC 9728 認證防偽錨定（`TRUSTED_BASE_DOMAINS`）、CORS AI 來源白名單放行與 GET/HEAD 探針支援。
 
 ---
 
@@ -125,6 +145,14 @@
   - *Symptom*: 協作者檢查將惡意攻擊者判定為合法協作者。
   - *Root Cause*: 單元測試泛用 Mock 使所有資料表皆回傳相同非空陣列。
   - *Lesson*: 權限檢查時除確認陣列非空外，必須明確比對 `any(m.get("user_id") == user_id)`。
+- **FP-64 (Reverse Proxy Origin Downgrade & RFC 9728 Tear)**:
+  - *Symptom*: Gemini 介面輸入 MCP 網址時噴紅字「目前不支援這個 MCP 伺服器」。
+  - *Root Cause*: 後端直接使用 `request.base_url` 回傳未加密的內部 Cloud Run 主機 (`http://antigravity-backend-...run.app`)，違背 RFC 9728 Section 3「`resource` 必須與請求之標的網址精確吻合」與 HTTPS 安全基準。
+  - *Lesson*: 反向代理後端探索端點必須由 `x-forwarded-host` 與 `x-forwarded-proto` 決定性拼裝公網 Base URL，並以 `TRUSTED_BASE_DOMAINS` 防範 Host Header 注入。
+- **FP-65 (Browser-Side CORS Preflight Rejection on External AI)**:
+  - *Symptom*: 在 Gemini 網頁端輸入 MCP URL，瀏覽器 Console 出現 `CORS error`，連線立即中斷。
+  - *Root Cause*: FastAPI CORSMiddleware 未包含 `https://gemini.google.com` 等 AI 平台來源，OPTIONS 預檢遭 400 Bad Request 阻斷。
+  - *Lesson*: 必須配置 `allow_origin_regex` 放行合法 AI 網域（`google.com`, `perplexity.ai`, `anthropic.com`）。
 
 ---
 
@@ -152,6 +180,20 @@
     "id": "INV-MCP-003",
     "title": "Dual-Discovery Compliance RFC 8414 and RFC 9728",
     "content": "Remote MCP servers MUST expose both /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource to satisfy discovery standards across both legacy and 2026-07-28 Model Context Protocol specifications."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-MCP-006",
+    "title": "Remote MCP Reverse Proxy Base URL and RFC 9728 Invariant",
+    "content": "OAuth discovery endpoints (/.well-known/oauth-protected-resource and /.well-known/oauth-authorization-server) MUST dynamically resolve public base URL from x-forwarded-host and x-forwarded-proto with a strict TRUSTED_BASE_DOMAINS allowlist filter. Returning internal container origins (e.g. Cloud Run *.run.app) causes RFC 9728 Section 3 client-side identity mismatch and HTTP downgrade rejections."
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-MCP-007",
+    "title": "AI Client CORS Preflight and Health Probe Compliance",
+    "content": "FastAPI CORS middleware must configure allow_origin_regex to permit browser-based preflight requests from AI clients (https://gemini.google.com, https://aistudio.google.com, https://*.perplexity.ai). Furthermore, /api/mcp must register both GET and HEAD handlers returning HTTP 200 with transport capabilities to pass external liveness probes before JSON-RPC initialization."
   },
   {
     "domain": "ios_ui",

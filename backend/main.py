@@ -231,6 +231,8 @@ ALLOWED_ORIGINS = [
     "https://tabijiapp.com",                # Production Custom Domain
     "https://www.tabijiapp.com",            # Production Custom Domain (WWW)
     "https://travel-pwa-five.vercel.app",   # Production Frontend (Legacy/Fallback)
+    "https://gemini.google.com",            # Google Connected Apps & Gemini Web
+    "https://aistudio.google.com",          # Google AI Studio MCP Client
     "http://localhost:3000",                # Local Next.js dev
     "http://localhost:5173",                # Local Vite dev
     "http://127.0.0.1:3000",                # Local dev (IP)
@@ -276,6 +278,7 @@ async def add_security_headers(request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)*(google\.com|googleusercontent\.com|perplexity\.ai|anthropic\.com|tabijiapp\.com)$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
     allow_headers=["*"],

@@ -1,0 +1,35 @@
+[
+  {
+    "id": "backend/main.py:mcp_cors_external_ai_preflight_rejection",
+    "file_path": "backend/main.py",
+    "start_line": 230,
+    "end_line": 285,
+    "attack_vector": "cors_preflight_rejection",
+    "hypothesis": "FastAPI CORSMiddleware restricts origins to an explicit hardcoded list containing only tabiji domains and localhost. When Google Gemini browser client (https://gemini.google.com) or AI Studio client issues an OPTIONS preflight request to /api/mcp or /.well-known/*, Starlette CORSMiddleware returns HTTP 400 Bad Request with 'Disallowed CORS origin'. This immediately halts browser-side MCP discovery in Google Gemini."
+  },
+  {
+    "id": "backend/routers/mcp.py:rfc9728_domain_and_protocol_tear",
+    "file_path": "backend/routers/mcp.py",
+    "start_line": 48,
+    "end_line": 69,
+    "attack_vector": "rfc9728_resource_mismatch",
+    "hypothesis": "OAuth metadata discovery endpoints /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource compute base_url purely from str(request.base_url). Behind Cloudflare/Vercel reverse proxies, the incoming Starlette request URL reflects the internal Cloud Run origin (http://antigravity-backend-589255638719.us-central1.run.app). Per RFC 9728 Section 3 and RFC 8414, the client compares the returned resource against the intended target URL https://www.tabijiapp.com/api/mcp. The unencrypted http:// scheme and internal hostname mismatch triggers an immediate security rejection."
+  },
+  {
+    "id": "backend/routers/mcp.py:legacy_protocol_version_negotiation_failure",
+    "file_path": "backend/routers/mcp.py",
+    "start_line": 221,
+    "end_line": 230,
+    "attack_vector": "protocol_version_mismatch",
+    "hypothesis": "The MCP RPC dispatcher statically hardcodes 'protocolVersion': '2024-11-05' in the initialize response regardless of what the client requests in params.protocolVersion. Modern AI clients (Google Gemini, Perplexity) operating under MCP specification 2025-03-26 or 2026-07-28 treat 2024-11-05 as unsupported/deprecated and refuse connection."
+  },
+  {
+    "id": "backend/routers/mcp.py:http_get_head_discovery_probe_blocked",
+    "file_path": "backend/routers/mcp.py",
+    "start_line": 203,
+    "end_line": 206,
+    "attack_vector": "http_method_not_allowed",
+    "hypothesis": "The endpoint /api/mcp is registered solely for POST. External crawler and health probe mechanisms from Google Connected Apps sending GET or HEAD receive HTTP 405 Method Not Allowed, failing the connectivity liveness check before JSON-RPC initialization begins."
+  }
+]
+

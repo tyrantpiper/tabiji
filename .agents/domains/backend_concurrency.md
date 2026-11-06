@@ -3,6 +3,10 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **AI Client CORS Preflight and Health Probe Compliance**: FastAPI CORS middleware must configure allow_origin_regex to permit browser-based preflight requests from AI clients (https://gemini.google.com, https://aistudio.google.com, https://*.perplexity.ai). Furthermore, /api/mcp must register both GET and HEAD handlers returning HTTP 200 with transport capabilities to pass external liveness probes before JSON-RPC initialization.
+
+- **Remote MCP Reverse Proxy Base URL and RFC 9728 Invariant**: OAuth discovery endpoints (/.well-known/oauth-protected-resource and /.well-known/oauth-authorization-server) MUST dynamically resolve public base URL from x-forwarded-host and x-forwarded-proto with a strict TRUSTED_BASE_DOMAINS allowlist filter. Returning internal container origins (e.g. Cloud Run *.run.app) causes RFC 9728 Section 3 client-side identity mismatch and HTTP downgrade rejections.
+
 - **Dual-Discovery Compliance RFC 8414 and RFC 9728**: Remote MCP servers MUST expose both /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource to satisfy discovery standards across both legacy and 2026-07-28 Model Context Protocol specifications.
 
 - **AI Spatial Coordinate Sanity Gate**: Any latitude/longitude coordinates supplied by external AI agents MUST pass physical bounds validation (-90 <= lat <= 90, -180 <= lng <= 180, excluding 0,0) before database insertion. Invalid or missing coordinates MUST gracefully fallback to internal geocoding logic to prevent WebGL camera NaN fitBounds crashes.
