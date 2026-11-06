@@ -3,6 +3,8 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **Root Recovery Key Delegation Boundary**: The user recovery key (tbj_rec_...) MUST NEVER be exposed to AI agents, tool parameters, or external OAuth clients. AI connections MUST strictly receive time-limited, revocable 30-day Session JWTs signed by the backend session secret.
+
 - **Strict Hostname Boundary Regex for Whitelisted Redirect URLs**: When whitelisting external redirect or maps URLs via regular expressions, the hostname expression MUST end with an explicit boundary anchor '(?:/|\?|$)' to prevent subdomain spoofing bypasses such as 'https://maps.app.goo.gl.attacker.com'.
 
 - **pytest-mock Fixture Lifecycle Hygiene**: Mocks created via pytest-mock fixture (mocker.patch) MUST NOT be wrapped in 'with' context manager statements. Use direct assignment and modify 'mock.return_value' across test branches.

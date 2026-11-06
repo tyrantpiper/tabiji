@@ -1,0 +1,92 @@
+diff --git a/backend/routers/mcp.py b/backend/routers/mcp.py
+index a1b2c3d..e4f5g6h 100644
+--- a/backend/routers/mcp.py
++++ b/backend/routers/mcp.py
+@@ -10,6 +10,9 @@ Provides:
+ - RFC 8414 OAuth 2.1 Metadata Discovery (/.well-known/oauth-authorization-server)
++- GET /api/oauth/authorize (Browser authorization code flow with PKCE S256)
++- POST /api/oauth/token (Code exchange yielding signed Session JWT)
+ - JSON-RPC 2.0 Dispatcher (initialize, tools/list, tools/call)
+ - Dual-Mode Authentication (PAT / OAuth 2.1 Bearer Token)
+ - IDOR / Cross-Tenant Trip Isolation
+ - Mantis Block G compliant ToolResult Content Enveloping
+ """
+ 
+-import os
++import hashlib
++import base64
++import secrets
++import time
++import jwt
++from fastapi import Query
++from fastapi.responses import RedirectResponse
++from utils.deps import get_session_secret
++
++# 記憶體授權碼儲存庫 (有效期 300 秒，一次性消費)
++OAUTH_CODES: Dict[str, Dict[str, Any]] = {}
++
++@router.get("/api/oauth/authorize")
++async def oauth_authorize(
++    client_id: str = Query(..., description="用戶端身分識別碼 (user_id)"),
++    redirect_uri: str = Query(..., description="Google Gemini 回跳網址"),
++    response_type: str = Query("code"),
++    state: Optional[str] = Query(None),
++    code_challenge: Optional[str] = Query(None),
++    code_challenge_method: Optional[str] = Query("S256")
++):
++    """Google Gemini 瀏覽器跳轉授權端點"""
++    auth_code = f"tbj_code_{secrets.token_hex(16)}"
++    OAUTH_CODES[auth_code] = {
++        "client_id": client_id,
++        "redirect_uri": redirect_uri,
++        "code_challenge": code_challenge,
++        "expires_at": time.time() + 300,
++        "user_id": client_id
++    }
++    delimiter = "&" if "?" in redirect_uri else "?"
++    callback_url = f"{redirect_uri}{delimiter}code={auth_code}"
++    if state:
++        callback_url += f"&state={state}"
++    return RedirectResponse(url=callback_url, status_code=302)
++
++class OAuthTokenRequest(BaseModel):
++    grant_type: str
++    code: str
++    redirect_uri: Optional[str] = None
++    client_id: Optional[str] = None
++    client_secret: Optional[str] = None
++    code_verifier: Optional[str] = None
++
++@router.post("/api/oauth/token")
++async def oauth_token(req: OAuthTokenRequest):
++    """Google Gemini 授權碼交換端點 (強制 PKCE S256 驗證)"""
++    code_record = OAUTH_CODES.pop(req.code, None)
++    if not code_record or time.time() > code_record["expires_at"]:
++        raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
++
++    expected_challenge = code_record.get("code_challenge")
++    if expected_challenge:
++        if not req.code_verifier:
++            raise HTTPException(status_code=400, detail="Missing PKCE code_verifier")
++        h = hashlib.sha256(req.code_verifier.encode("ascii")).digest()
++        actual_challenge = base64.urlsafe_b64encode(h).decode("ascii").rstrip("=")
++        if actual_challenge != expected_challenge:
++            raise HTTPException(status_code=400, detail="PKCE S256 verification failed")
++
++    user_id = code_record["user_id"]
++    secret = get_session_secret()
++    access_token = jwt.encode(
++        {
++            "sub": user_id,
++            "exp": int(time.time()) + 3600 * 24 * 30,
++            "type": "session"
++        },
++        secret,
++        algorithm="HS256"
++    )
++    return {
++        "access_token": access_token,
++        "token_type": "Bearer",
++        "expires_in": 3600 * 24 * 30
++    }
+

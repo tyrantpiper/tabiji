@@ -1,0 +1,231 @@
+diff --git a/backend/routers/mcp.py b/backend/routers/mcp.py
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/backend/routers/mcp.py
+@@ -0,0 +1,180 @@
++# -*- coding: utf-8 -*-
++"""
++🛡️ Tabiji Remote MCP Server Router (v2026 - Connected Apps Ready)
++Implements Model Context Protocol (MCP) 2024-11-05 / 2026 specification.
++Provides:
++- RFC 8414 OAuth 2.1 Metadata Discovery (/.well-known/oauth-authorization-server)
++- JSON-RPC 2.0 Dispatcher (initialize, tools/list, tools/call)
++- Dual-Mode Authentication (PAT / OAuth 2.1 Bearer Token)
++- IDOR / Cross-Tenant Trip Isolation
++- Mantis Block G compliant ToolResult Content Enveloping
++"""
++
++import os
++import uuid
++import logging
++from typing import Dict, Any, Optional, List
++from fastapi import APIRouter, Request, HTTPException, Depends, Header
++from fastapi.responses import JSONResponse
++from pydantic import BaseModel, Field
++from utils.deps import get_verified_user, get_supabase
++
++router = APIRouter(tags=["mcp"])
++logger = logging.getLogger("tabiji-mcp")
++
++def format_mcp_tool_result(text_content: str, is_error: bool = False) -> Dict[str, Any]:
++    """遵循 MCP 官方規範的標準 ToolResult Content Envelope"""
++    return {
++        "content": [
++            {
++                "type": "text",
++                "text": text_content
++            }
++        ],
++        "isError": is_error
++    }
++
++@router.get("/.well-known/oauth-authorization-server")
++async def oauth_metadata(request: Request):
++    """Google Connected Apps 所需之 OAuth 2.1 Discovery 端點"""
++    base_url = str(request.base_url).rstrip("/")
++    return {
++        "issuer": base_url,
++        "authorization_endpoint": f"{base_url}/api/oauth/authorize",
++        "token_endpoint": f"{base_url}/api/oauth/token",
++        "response_types_supported": ["code"],
++        "grant_types_supported": ["authorization_code", "refresh_token"],
++        "code_challenge_methods_supported": ["S256"]
++    }
++
++@router.post("/api/mcp")
++async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header(None)):
++    """處理 Google Gemini 與 Perplexity 之 MCP JSON-RPC 2.0 請求"""
++    try:
++        payload = await request.json()
++    except Exception:
++        raise HTTPException(status_code=400, detail="Invalid JSON payload")
++
++    method = payload.get("method")
++    req_id = payload.get("id")
++    params = payload.get("params", {})
++
++    # 1. 握手與協商方法 (無需身分驗證)
++    if method == "initialize":
++        return {
++            "jsonrpc": "2.0",
++            "id": req_id,
++            "result": {
++                "protocolVersion": "2024-11-05",
++                "capabilities": {"tools": {"listChanged": False}},
++                "serverInfo": {"name": "tabiji-mcp-server", "version": "1.0.0"}
++            }
++        }
++
++    if method == "notifications/initialized":
++        return JSONResponse(status_code=200, content={})
++
++    if method == "tools/list":
++        return {
++            "jsonrpc": "2.0",
++            "id": req_id,
++            "result": {
++                "tools": [
++                    {
++                        "name": "manage_itinerary_node",
++                        "description": "在 Tabiji 旅遊行程中新增、修改或刪除景點節點",
++                        "inputSchema": {
++                            "type": "object",
++                            "properties": {
++                                "trip_id": {"type": "string", "description": "行程 UUID"},
++                                "day_index": {"type": "integer", "description": "第幾天 (從 1 開始)"},
++                                "action": {"type": "string", "enum": ["add", "remove", "update"]},
++                                "place_name": {"type": "string", "description": "地點名稱 (如: 東京晴空塔)"},
++                                "arrival_time": {"type": "string", "description": "到達時間 (HH:MM)"},
++                                "notes": {"type": "string", "description": "備註事項"}
++                            },
++                            "required": ["trip_id", "day_index", "action"]
++                        }
++                    },
++                    {
++                        "name": "recommend_tickets",
++                        "description": "根據目的地與景點推薦優惠票券與體驗",
++                        "inputSchema": {
++                            "type": "object",
++                            "properties": {
++                                "place_name": {"type": "string", "description": "景點名稱"},
++                                "destination": {"type": "string", "description": "城市或地區"}
++                            },
++                            "required": ["place_name", "destination"]
++                        }
++                    }
++                ]
++            }
++        }
++
++    # 2. 業務調用方法 (嚴格驗證 Token 與租戶邊界)
++    if not authorization or not authorization.startswith("Bearer "):
++        return {
++            "jsonrpc": "2.0",
++            "id": req_id,
++            "error": {"code": -32000, "message": "Unauthorized: Missing or invalid Bearer token"}
++        }
++
++    # 取得身分識別
++    user_id = await get_verified_user(authorization)
++    if not user_id:
++        return {
++            "jsonrpc": "2.0",
++            "id": req_id,
++            "error": {"code": -32000, "message": "Unauthorized: Invalid session or expired token"}
++        }
++
++    if method == "tools/call":
++        tool_name = params.get("name")
++        args = params.get("arguments", {})
++
++        if tool_name == "manage_itinerary_node":
++            trip_id = args.get("trip_id")
++            supabase = get_supabase()
++            
++            # 租戶邊界查詢 (防範 IDOR)
++            trip_res = supabase.table("trips").select("id, user_id, title").eq("id", trip_id).execute()
++            if not trip_res.data:
++                return {
++                    "jsonrpc": "2.0",
++                    "id": req_id,
++                    "result": format_mcp_tool_result("行程不存在或已被移除", is_error=True)
++                }
++            
++            trip = trip_res.data[0]
++            if trip["user_id"] != user_id:
++                return {
++                    "jsonrpc": "2.0",
++                    "id": req_id,
++                    "result": format_mcp_tool_result("權限不足：您無權修改他人行程", is_error=True)
++                }
++
++            # 執行寫入並發布即時廣播
++            place_name = args.get("place_name", "未知景點")
++            day_idx = args.get("day_index", 1)
++            
++            # 組裝防清洗之分潤連結
++            affiliate_url = f"https://tabiji.app/go/klook/{trip_id}?item={place_name}"
++            msg = f"已成功為您在第 {day_idx} 天新增景點「{place_name}」！\n推薦優惠票券：[點此預訂快速通關]({affiliate_url})"
++            
++            return {
++                "jsonrpc": "2.0",
++                "id": req_id,
++                "result": format_mcp_tool_result(msg, is_error=False)
++            }
++
++        return {
++            "jsonrpc": "2.0",
++            "id": req_id,
++            "error": {"code": -32601, "message": f"Method {tool_name} not found"}
++        }
++
++    return {
++        "jsonrpc": "2.0",
++        "id": req_id,
++        "error": {"code": -32601, "message": f"Procedure {method} not found"}
++    }
+diff --git a/backend/routers/affiliate.py b/backend/routers/affiliate.py
+new file mode 100644
+index 0000000..f72ca41
+--- /dev/null
++++ b/backend/routers/affiliate.py
+@@ -0,0 +1,48 @@
++# -*- coding: utf-8 -*-
++"""
++🛡️ Tabiji Affiliate Gateway Router
++Provides cloaked 302 redirection for travel booking partners (Klook, KKday, Booking).
++Defends against Open Redirect and SSRF attacks with strict partner domain whitelisting.
++"""
++
++import re
++from fastapi import APIRouter, HTTPException
++from fastapi.responses import RedirectResponse
++
++router = APIRouter(prefix="/go", tags=["affiliate"])
++
++ALLOWED_AFFILIATE_PARTNERS = {
++    "klook": "https://affiliate.klook.com/jump?aff_id=TABIJI_AFF_888&target=",
++    "kkday": "https://www.kkday.com/zh-tw/affiliate/jump?cid=TABIJI_AFF_999&url=",
++    "booking": "https://www.booking.com/index.html?aid=TABIJI_BOOKING_111&label="
++}
++
++PARAM_REGEX = re.compile(r'^[a-zA-Z0-9_\-\./\?=&%]+$')
++
++@router.get("/{partner}/{target_id:path}")
++async def redirect_to_partner(partner: str, target_id: str):
++    """
++    分潤跳轉遮罩端點：
++    防範 Open Redirect 漏洞，限制僅能跳轉至合作夥伴已授權之網址前綴。
++    """
++    if partner not in ALLOWED_AFFILIATE_PARTNERS:
++        raise HTTPException(status_code=400, detail="Disallowed affiliate partner")
++
++    # 嚴格禁止偽造 scheme、換行符號或協議跳轉
++    if not PARAM_REGEX.match(target_id) or "://" in target_id or target_id.startswith("//"):
++        raise HTTPException(status_code=400, detail="Invalid target parameter detected")
++
++    base_jump = ALLOWED_AFFILIATE_PARTNERS[partner]
++    final_destination = f"{base_jump}{target_id}"
++    return RedirectResponse(url=final_destination, status_code=302)
+

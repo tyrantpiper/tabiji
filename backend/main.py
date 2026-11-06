@@ -204,8 +204,12 @@ from routers.travel_data import router as travel_data_router
 from routers.agents import router as agents_router
 from routers.capsules import router as capsules_router
 from routers.auth import router as auth_router
+from routers.mcp import router as mcp_router
+from routers.affiliate import router as affiliate_router
 
 app.include_router(auth_router)
+app.include_router(mcp_router)
+app.include_router(affiliate_router)
 app.include_router(geocode_router)
 app.include_router(expenses_router)
 app.include_router(ai_router)

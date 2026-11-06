@@ -3,6 +3,12 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Dual-Discovery Compliance RFC 8414 and RFC 9728**: Remote MCP servers MUST expose both /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource to satisfy discovery standards across both legacy and 2026-07-28 Model Context Protocol specifications.
+
+- **AI Spatial Coordinate Sanity Gate**: Any latitude/longitude coordinates supplied by external AI agents MUST pass physical bounds validation (-90 <= lat <= 90, -180 <= lng <= 180, excluding 0,0) before database insertion. Invalid or missing coordinates MUST gracefully fallback to internal geocoding logic to prevent WebGL camera NaN fitBounds crashes.
+
+- **Strict ToolResult Content Enveloping for Remote MCP**: All MCP tool handler responses dispatched to Gemini or third-party LLMs MUST be enveloped in {'content': [{'type': 'text', 'text': text_content}], 'isError': bool}. Returning raw dictionaries or primitive JSON causes client-side -32602 protocol rejections.
+
 - **Fast-Lite Fallback Strategy for High-Latency Note Extraction**: In note extraction endpoints, routing_strategy MUST prioritize 'gemini-3.1-flash-lite' before 'gemini-3.5-flash-lite' and 'gemini-3.8-flash' to prevent Next.js dev server proxy from encountering 500 ECONNRESET (socket hang up) during upstream model retry backoffs.
 
 - **RFC 7518 HMAC-SHA256 Minimum Key Length Threshold**: All HMAC-SHA256 (HS256) secrets in tests and production code MUST be at least 32 bytes (256 bits) long to comply with RFC 7518 Section 3.2 and eliminate PyJWT InsecureKeyLengthWarning.

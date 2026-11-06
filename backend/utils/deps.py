@@ -1,5 +1,6 @@
 import os
 import re
+from typing import Optional
 from fastapi import Header, HTTPException, Request
 from supabase import create_client, Client
 
@@ -78,13 +79,23 @@ def get_session_secret() -> str:
     return hashlib.sha256(b"tabiji-dev-deterministic-salt-2026").hexdigest()
 
 
-def get_supabase(request: Request) -> Client:
+def get_supabase(request: Request = None) -> Client:
     """從 app.state 獲取全域 Supabase 客戶端 (使用 Service Role Key)"""
-    return request.app.state.supabase
+    if request is not None and hasattr(request, "app") and hasattr(request.app.state, "supabase"):
+        return request.app.state.supabase
+    # 支援未傳遞 request 或 request.app.state 未掛載時之直接客戶端回落
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    supabase_key = os.getenv("SUPABASE_KEY", "").strip()
+    if supabase_url and supabase_key:
+        try:
+            return create_client(supabase_url, supabase_key)
+        except Exception:
+            pass
+    return None
 
 
 async def get_verified_user(
-    request: Request,
+    request: Request = None,
     auth_header: str = Header(None, alias="Authorization")
 ) -> str:
     """
@@ -96,7 +107,12 @@ async def get_verified_user(
     - sub 必須為合法 UUID
     - exp 有效期限
     """
-    if not auth_header or not auth_header.startswith("Bearer "):
+    # 🛡️ 容錯支援：如果傳入的第一個參數是字串 (例如 direct call: await get_verified_user(authorization))
+    if isinstance(request, str):
+        auth_header = request
+        request = None
+
+    if not auth_header or not isinstance(auth_header, str) or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
 
     token = auth_header.split(" ")[1].strip()
@@ -121,10 +137,11 @@ async def get_verified_user(
 
     # 2. Supabase 官方 Token 相容校驗 (若未來串接 OAuth)
     try:
-        supabase: Client = request.app.state.supabase
-        user_res = supabase.auth.get_user(token)
-        if user_res and user_res.user and UUID_V4_REGEX.match(str(user_res.user.id)):
-            return str(user_res.user.id)
+        supabase: Optional[Client] = get_supabase(request)
+        if supabase:
+            user_res = supabase.auth.get_user(token)
+            if user_res and user_res.user and UUID_V4_REGEX.match(str(user_res.user.id)):
+                return str(user_res.user.id)
     except Exception:
         pass
 

@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-06T16:21:00Z",
+  "last_audit_date": "2026-11-07T01:20:00.000000+00:00",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 259,
-    "audited_targets": 259,
+    "total_targets": 273,
+    "audited_targets": 273,
     "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 58,
+    "remediated_vulnerabilities": 72,
     "dismissed_hypotheses": 150
   },
   "targets": [
@@ -3283,6 +3283,195 @@
       "validator_details": "Confirmed by Dual-Tier Native Subagents (Red-Team aff9f462 & Blue-Team 8ad8cfcc) and Physical GitWorktreePool Red-Green pytest (exit code 1 -> 0): str(dst).startswith(str(wt_path.resolve())) permitted CWE-22 sibling prefix collision (../sentinel-xxxx_evil/pwn.py) and unchecked src path resolution.",
       "remediated_at": "2026-11-04T01:08:45Z",
       "resolution": "docs/security/history/patches/patch_candidate_intent_router_worktree_2026-11-04.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:gemini_oauth_discovery_missing",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "oauth_handshake_failure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_connected_apps.md",
+      "validator_details": "Confirmed by in-memory PoC test_poc_missing_oauth_discovery: Implemented RFC 8414 OAuth 2.1 metadata discovery endpoint with S256 PKCE.",
+      "remediated_at": "2026-11-06T18:24:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_connected_apps_2026-11-06.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:cross_tenant_idor_mutation",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "idor_authorization_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_connected_apps.md",
+      "validator_details": "Confirmed by in-memory PoC test_poc_cross_tenant_idor_mutation: Gated trip mutations with trip.user_id == user_id tenant check.",
+      "remediated_at": "2026-11-06T18:24:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_connected_apps_2026-11-06.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:mcp_tool_result_envelope_violation",
+      "target_type": "backend_api_route",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "schema_validation_error"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_connected_apps.md",
+      "validator_details": "Confirmed by in-memory PoC test_benign_mcp_content_envelope_compliance: Enveloped tool results in result.content[type=text] per MCP 2024-11-05 spec.",
+      "remediated_at": "2026-11-06T18:24:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_connected_apps_2026-11-06.diff"
+    },
+    {
+      "id": "backend/routers/affiliate.py:open_redirect_and_ssrf",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "open_redirect",
+        "ssrf"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_connected_apps.md",
+      "validator_details": "Confirmed by in-memory PoC test_poc_open_redirect_abuse: Restricted destination partner domains to explicit whitelist and sanitized URL parameters.",
+      "remediated_at": "2026-11-06T18:24:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_connected_apps_2026-11-06.diff"
+    },
+    {
+      "id": "frontend/next.config.mjs:well_known_rewrite_missing",
+      "target_type": "frontend_edge_proxy",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "routing_interception",
+        "handshake_failure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_ui.md",
+      "validator_details": "Confirmed by in-memory PoC test_poc_missing_nextjs_wellknown_rewrite_rejection: Added /.well-known/:path* proxy rewrite rule in next.config.mjs.",
+      "remediated_at": "2026-11-06T19:19:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_ui_2026-11-06.diff"
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:raw_recovery_key_token_confusion",
+      "target_type": "frontend_auth_helper",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "type_confusion",
+        "auth_bypass_or_lockout"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_ui.md",
+      "validator_details": "Confirmed by in-memory PoC test_poc_raw_recovery_key_rejected_by_auth: Replaced raw tbj_rec_* recovery key with signed session JWT from getValidSessionToken.",
+      "remediated_at": "2026-11-06T19:19:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_ui_2026-11-06.diff"
+    },
+    {
+      "id": "frontend/components/ai/mcp-connector-dialog.tsx:token_clipboard_leak_xss",
+      "target_type": "frontend_ui_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "credential_exposure",
+        "xss_injection"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_ui.md",
+      "validator_details": "Verified safe clipboard fallback and masked password-type inputs for token exposure prevention.",
+      "remediated_at": "2026-11-06T19:19:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_ui_2026-11-06.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:oauth_authorize_missing_404",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "handshake_failure",
+        "endpoint_missing"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_oauth_flow.md",
+      "validator_details": "Confirmed by in-memory PoC test_poc_missing_oauth_routes_returns_404: Implemented /api/oauth/authorize with 302 redirect.",
+      "remediated_at": "2026-11-06T22:53:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_oauth_flow_2026-11-06.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:oauth_token_pkce_bypass",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "pkce_bypass",
+        "replay_attack"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_oauth_flow.md",
+      "validator_details": "Confirmed by in-memory PoC test_poc_pkce_tampering_and_replay_defense: Enforced RFC 7636 PKCE S256 verification and atomic code invalidation.",
+      "remediated_at": "2026-11-06T22:53:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_oauth_flow_2026-11-06.diff"
+    },
+    {
+      "id": "frontend/components/ai/mcp-connector-dialog.tsx:client_id_null_or_missing",
+      "target_type": "frontend_ui_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "credential_confusion",
+        "null_safety"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-06_mcp_oauth_flow.md",
+      "validator_details": "Provided dedicated Client ID field with fallback to current user_id ensuring valid parameter passage.",
+      "remediated_at": "2026-11-06T22:53:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_oauth_flow_2026-11-06.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:list_user_trips_cross_tenant_isolation",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "idor_cross_tenant"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_trip_expansion.md",
+      "validator_details": "Enforced dual-ownership validation across itineraries.created_by and trip_members.user_id, preventing cross-tenant leakage while discovering collaborator trips.",
+      "remediated_at": "2026-11-07T01:20:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_trip_expansion_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:get_trip_itinerary_bola_access_control",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "bola_unauthorized_read"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_trip_expansion.md",
+      "validator_details": "Implemented strict BOLA verification rejecting uninvited actors from querying private itinerary items, timeslots, and notes.",
+      "remediated_at": "2026-11-07T01:20:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_trip_expansion_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:manage_itinerary_node_batch_boundary_and_hallucination",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "input_validation_and_data_integrity"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_trip_expansion.md",
+      "validator_details": "Added sanitize_coordinates bounding gate (-90<=lat<=90, -180<=lng<=180, excluding 0,0), enforced day_index <= total_days bounds check, and assigned incremental sort_order.",
+      "remediated_at": "2026-11-07T01:20:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_trip_expansion_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:oauth_protected_resource_metadata_rfc9728",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "protocol_compliance_discovery"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_trip_expansion.md",
+      "validator_details": "Implemented RFC 9728 /.well-known/oauth-protected-resource endpoint complying with Model Context Protocol 2026-07-28 discovery standards.",
+      "remediated_at": "2026-11-07T01:20:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_trip_expansion_2026-11-07.diff"
     }
   ],
   "known_design_intents": {

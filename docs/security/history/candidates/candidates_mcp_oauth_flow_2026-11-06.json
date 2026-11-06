@@ -1,0 +1,30 @@
+[
+  {
+    "id": "backend/routers/mcp.py:oauth_authorize_missing_404",
+    "file_path": "backend/routers/mcp.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "public_to_authenticated",
+    "vectors_checked": ["handshake_failure", "endpoint_missing"],
+    "attack_vector": "protocol_rejection",
+    "hypothesis": "Missing /api/oauth/authorize route results in HTTP 404 when Google Gemini triggers browser-based authorization code flow."
+  },
+  {
+    "id": "backend/routers/mcp.py:oauth_token_pkce_bypass",
+    "file_path": "backend/routers/mcp.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "public_to_authenticated",
+    "vectors_checked": ["pkce_bypass", "replay_attack"],
+    "attack_vector": "broken_authentication",
+    "hypothesis": "If /api/oauth/token does not cryptographically enforce PKCE S256 verification (RFC 7636) or fails to invalidate used authorization codes, code interception attacks succeed."
+  },
+  {
+    "id": "frontend/components/ai/mcp-connector-dialog.tsx:client_id_null_or_missing",
+    "file_path": "frontend/components/ai/mcp-connector-dialog.tsx",
+    "target_type": "frontend_ui_component",
+    "trust_boundary": "browser_to_edge",
+    "vectors_checked": ["credential_confusion", "null_safety"],
+    "attack_vector": "credential_confusion",
+    "hypothesis": "Omitting explicit Client ID input or failing to fallback when user_uuid is empty leads to Gemini authorization payload malformation."
+  }
+]
+

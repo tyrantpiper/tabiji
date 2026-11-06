@@ -6,7 +6,7 @@ import {
     LogOut, CreditCard, Edit3, Save, Camera, Trash2, Smartphone, User, Loader2,
     Shield, Copy, Globe, Sparkles, Moon, Sun, Palette, AlertTriangle,
     ChevronDown, ChevronUp, Brain, ChevronRight, ChevronLeft,
-    BookOpen, Mail, Check, BellRing, Type, RefreshCw
+    BookOpen, Mail, Check, BellRing, Type, RefreshCw, Bot
 } from "lucide-react"
 import { rotateAccountRecoveryKey, fetchLatestRecoveryKey } from "@/lib/auth-session"
 import { getSupabaseClient } from "@/lib/supabase"
@@ -40,6 +40,7 @@ import { UsageGuideContent } from "@/components/UsageGuideContent"
 import { getSecureApiKey } from "@/lib/security"
 import { usePushNotifications } from "@/lib/hooks/usePushNotifications"
 import { AIKeyDialog } from "@/components/ai/ai-key-dialog"
+import { MCPConnectorDialog } from "@/components/ai/mcp-connector-dialog"
 
 
 
@@ -147,6 +148,7 @@ export function ProfileView() {
     }, [subView])
     const [isEditing, setIsEditing] = useState(false)
     const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
+    const [mcpDialogOpen, setMcpDialogOpen] = useState(false)
     const [memoryToDelete, setMemoryToDelete] = useState<UserPreference | null>(null)
     const [isDeletingMemory, setIsDeletingMemory] = useState(false)
     const [hasApiKey, setHasApiKey] = useState(false)
@@ -1154,6 +1156,34 @@ export function ProfileView() {
                                         <AIKeyDialog
                                             open={apiKeyDialogOpen}
                                             onOpenChange={setApiKeyDialogOpen}
+                                        />
+
+                                        {/* 外部 AI 串接 (MCP) */}
+                                        <div 
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => setMcpDialogOpen(true)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter" || e.key === " ") {
+                                                    e.preventDefault()
+                                                    setMcpDialogOpen(true)
+                                                }
+                                            }}
+                                            className="flex items-center justify-between p-4 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-[#1E2927] dark:text-[#E5EBEA]"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <Bot className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+                                                <div className="flex flex-col text-left">
+                                                    <span className="text-sm font-medium">{t('profile_mcp_title')}</span>
+                                                    <span className="text-xs text-[#0B3026]/60 dark:text-[#88A29A]">{t('profile_mcp_desc')}</span>
+                                                </div>
+                                            </div>
+                                            <ChevronRight className="w-4 h-4 text-[#0B3026]/40 dark:text-white/40" />
+                                        </div>
+
+                                        <MCPConnectorDialog
+                                            open={mcpDialogOpen}
+                                            onOpenChange={setMcpDialogOpen}
                                         />
 
                                         {/* 🧠 AI 記憶移除確認視窗 */}

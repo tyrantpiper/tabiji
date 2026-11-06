@@ -170,6 +170,16 @@ export function getRecoveryKey(): string | null {
 }
 
 /**
+ * 取得當前有效的 Session JWT，優先自快取讀取，若快取無效或不存在則向後端換票
+ * 防止以未簽署之原始引繼碼 (tbj_rec_*) 直通後端導致 401 拒絕
+ */
+export async function getValidSessionToken(): Promise<string | null> {
+    const cached = getCachedToken();
+    if (cached) return cached;
+    return await ensureValidSession().catch(() => null);
+}
+
+/**
  * 確保當前裝置持有有效的 Session JWT
  * - 若已有 Token：直接回傳
  * - 若離線狀態：靜默回傳 null，保障 PWA 離線自癒不中斷

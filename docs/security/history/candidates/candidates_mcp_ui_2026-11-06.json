@@ -1,0 +1,30 @@
+[
+  {
+    "id": "frontend/next.config.mjs:well_known_rewrite_missing",
+    "file_path": "frontend/next.config.mjs",
+    "target_type": "frontend_edge_proxy",
+    "trust_boundary": "browser_to_edge",
+    "vectors_checked": ["routing_interception", "handshake_failure"],
+    "attack_vector": "protocol_rejection",
+    "hypothesis": "Next.js fallback rewrites omit /.well-known/:path*, causing Google Gemini OAuth 2.1 discovery requests to return 404 from frontend router."
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:raw_recovery_key_token_confusion",
+    "file_path": "frontend/lib/auth-session.ts",
+    "target_type": "frontend_auth_helper",
+    "trust_boundary": "public_to_authenticated",
+    "vectors_checked": ["type_confusion", "auth_bypass_or_lockout"],
+    "attack_vector": "type_confusion",
+    "hypothesis": "Exporting raw tbj_rec_* recovery key as MCP Bearer token causes backend jwt.decode in deps.py to raise 401 Unauthorized."
+  },
+  {
+    "id": "frontend/components/ai/mcp-connector-dialog.tsx:token_clipboard_leak_xss",
+    "file_path": "frontend/components/ai/mcp-connector-dialog.tsx",
+    "target_type": "frontend_ui_component",
+    "trust_boundary": "browser_to_edge",
+    "vectors_checked": ["credential_exposure", "xss_injection"],
+    "attack_vector": "credential_leak",
+    "hypothesis": "Displaying plain MCP token without password-type masking or failing to handle clipboard rejection leads to token leakage or UI unresponsiveness."
+  }
+]
+

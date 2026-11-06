@@ -1,0 +1,27 @@
+[
+  {
+    "id": "backend/routers/mcp.py:list_user_trips_cross_tenant_isolation",
+    "file_path": "backend/routers/mcp.py",
+    "attack_vector": "idor_cross_tenant",
+    "hypothesis": "list_user_trips tool lacks strict dual-ownership validation (created_by and trip_members), risking either leaking unauthorized trips to third-party callers or failing to discover legitimate collaborator trips."
+  },
+  {
+    "id": "backend/routers/mcp.py:get_trip_itinerary_bola_access_control",
+    "file_path": "backend/routers/mcp.py",
+    "attack_vector": "bola_unauthorized_read",
+    "hypothesis": "get_trip_itinerary tool lacks broken-object-level-authorization (BOLA) guards, allowing an attacker with a valid session token to inspect other travelers' private itinerary nodes and notes by guessing or probing trip_id."
+  },
+  {
+    "id": "backend/routers/mcp.py:manage_itinerary_node_batch_boundary_and_hallucination",
+    "file_path": "backend/routers/mcp.py",
+    "attack_vector": "input_validation_and_data_integrity",
+    "hypothesis": "manage_itinerary_node lacks physical bounding checks on AI-supplied lat/lng coordinates (allowing NaN, Null Island, or out-of-range coords to corrupt the WebGL map), lacks day_index boundaries exceeding total_days, and lacks incremental sort_order on batch insertions."
+  },
+  {
+    "id": "backend/routers/mcp.py:oauth_protected_resource_metadata_rfc9728",
+    "file_path": "backend/routers/mcp.py",
+    "attack_vector": "protocol_compliance_discovery",
+    "hypothesis": "MCP server omits the RFC 9728 /.well-known/oauth-protected-resource endpoint required by the Model Context Protocol 2026-07-28 specification, causing strict 2026 clients to fail authorization server discovery."
+  }
+]
+

@@ -1,0 +1,39 @@
+[
+  {
+    "id": "backend/routers/mcp.py:gemini_oauth_discovery_missing",
+    "file_path": "backend/routers/mcp.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "public_to_authenticated",
+    "vectors_checked": ["oauth_handshake_failure"],
+    "attack_vector": "protocol_rejection",
+    "hypothesis": "Missing RFC 8414 OAuth 2.1 metadata endpoint (/.well-known/oauth-authorization-server) causes Google Gemini Connected Apps handshake to reject the server immediately."
+  },
+  {
+    "id": "backend/routers/mcp.py:cross_tenant_idor_mutation",
+    "file_path": "backend/routers/mcp.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "vectors_checked": ["idor_authorization_bypass"],
+    "attack_vector": "broken_access_control",
+    "hypothesis": "An authenticated user with a valid PAT or OAuth token can supply another user's trip_id in manage_itinerary_node, modifying unowned trips if tenant isolation is missing."
+  },
+  {
+    "id": "backend/routers/mcp.py:mcp_tool_result_envelope_violation",
+    "file_path": "backend/routers/mcp.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "browser_to_edge",
+    "vectors_checked": ["schema_validation_error"],
+    "attack_vector": "protocol_violation",
+    "hypothesis": "Returning raw JSON dict without MCP specification content envelope (result.content[].text) causes Gemini and Perplexity clients to raise JSON-RPC error -32602."
+  },
+  {
+    "id": "backend/routers/affiliate.py:open_redirect_and_ssrf",
+    "file_path": "backend/routers/affiliate.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "public_to_authenticated",
+    "vectors_checked": ["open_redirect", "ssrf"],
+    "attack_vector": "open_redirect",
+    "hypothesis": "The affiliate redirection gateway (/go/{partner}/{target_id}) without strict destination domain whitelisting allows attackers to abuse it for open redirect phishing."
+  }
+]
+

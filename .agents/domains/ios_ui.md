@@ -3,6 +3,8 @@
 > **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
 
 ## 🏛️ 架構決策 (Decisions)
+- **Multi-Action Input Right Padding Minimum Scale**: Form inputs housing 3 or more absolute right action buttons (e.g. Refresh, Eye Toggle, Copy) MUST enforce at least pr-44 (11rem / 176px) to guarantee zero character overlap with button icons.
+
 - **Mobile Viewport Mini-Bar Auto-Dock**: On mobile screens (< 768px), floating chat dialogs must support docking into a <= 60px mini-bar to preserve underlying map interaction without losing conversation state.
 
 - **5000ms Dismiss Cooldown for Reauth Modal**: When user clicks 'Dismiss (Stay Offline)' in SessionReauthModal, dismissReauthPrompt must set a 5000ms cooldown timestamp to prevent rapid background SWR requests from reopening the modal immediately.
