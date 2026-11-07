@@ -219,6 +219,7 @@ export interface AiParseParams {
     markdown_text: string
     user_id?: string
     image_base64?: string
+    itinerary_id?: string
 }
 
 export interface AiGenerateParams {
@@ -765,7 +766,8 @@ export const aiApi = {
             headers,
             body: JSON.stringify({
                 markdown_text: params.markdown_text,
-                image_base64: params.image_base64
+                image_base64: params.image_base64,
+                ...(params.itinerary_id ? { itinerary_id: params.itinerary_id } : {})
             })
         })
         if (!res.ok) {

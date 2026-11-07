@@ -33,6 +33,8 @@ logger = logging.getLogger("tabiji-mcp")
 
 # 記憶體授權碼儲存庫 (有效期 300 秒，一次性消費)
 OAUTH_CODES: Dict[str, Dict[str, Any]] = {}
+# 已消費授權碼防重放紀錄 (支援無狀態跨實例授權碼單次消費保護)
+CONSUMED_OAUTH_CODES: Dict[str, float] = {}
 
 SUPPORTED_MCP_VERSIONS = [
     "2026-07-28",
@@ -104,6 +106,7 @@ async def oauth_metadata(request: Request):
         "token_endpoint": f"{base_url}/api/oauth/token",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic", "none"],
         "code_challenge_methods_supported": ["S256"]
     }
 
@@ -157,32 +160,65 @@ def is_valid_uuid(val: Any) -> bool:
         return False
     return bool(UUID_REGEX.match(val.strip()))
 
+TRUSTED_REDIRECT_DOMAINS = (
+    "google.com",
+    "googleusercontent.com",
+    "perplexity.ai",
+    "claude.ai",
+    "claude.com",
+    "anthropic.com",
+    "chatgpt.com",
+    "openai.com",
+    "tabijiapp.com",
+    "tabiji.app",
+    "vercel.app",
+)
+
 def is_trusted_redirect_uri(redirect_uri: str) -> bool:
-    """驗證 OAuth redirect_uri 是否屬於受信信任之網域，嚴防 Open Redirect 與 Account Takeover"""
+    """驗證 OAuth redirect_uri 是否屬於受信信任之網域，外部網域強制 HTTPS，嚴防 Open Redirect 與 Account Takeover"""
     if not redirect_uri:
         return False
     try:
-        parsed = urllib.parse.urlparse(redirect_uri)
-        if parsed.scheme not in ("http", "https"):
-            return False
+        parsed = urllib.parse.urlparse(redirect_uri.strip())
         hostname = (parsed.hostname or "").lower()
         if not hostname:
             return False
         if hostname in ("localhost", "127.0.0.1", "testserver"):
-            return True
-        if hostname == "google.com" or hostname.endswith(".google.com"):
-            return True
-        if hostname == "googleusercontent.com" or hostname.endswith(".googleusercontent.com"):
-            return True
-        if hostname == "tabijiapp.com" or hostname.endswith(".tabijiapp.com"):
-            return True
-        if hostname == "tabiji.app" or hostname.endswith(".tabiji.app"):
-            return True
-        if hostname == "travel-pwa-five.vercel.app" or hostname.endswith(".vercel.app"):
-            return True
-        return False
+            return parsed.scheme in ("http", "https")
+        if parsed.scheme != "https":
+            return False
+        return any(
+            hostname == domain or hostname.endswith(f".{domain}")
+            for domain in TRUSTED_REDIRECT_DOMAINS
+        )
     except Exception:
         return False
+
+def extract_valid_user_id(raw_client_id: str) -> Optional[str]:
+    """
+    從 client_id 提取並驗證合法的 user_id (UUID)：
+    1. 若直接為合法 UUID，去除空白後返回。
+    2. 若使用者誤將連線憑證 (JWT) 填入 Client ID，自動驗章並提取其 sub (UUID)。
+    """
+    if not raw_client_id or not isinstance(raw_client_id, str):
+        return None
+    cleaned = raw_client_id.strip()
+    if is_valid_uuid(cleaned):
+        return cleaned
+    if cleaned.startswith("ey"):
+        try:
+            payload = jwt.decode(
+                cleaned,
+                get_session_secret(),
+                algorithms=["HS256"],
+                issuer="tabiji-core"
+            )
+            sub = payload.get("sub")
+            if is_valid_uuid(sub):
+                return sub.strip()
+        except Exception:
+            pass
+    return None
 
 def calculate_trip_days(trip: Dict[str, Any]) -> int:
     """計算行程總天數 (綜合比較日期跨度、daily_locations 筆數與 total_days)"""
@@ -267,37 +303,78 @@ async def oauth_authorize(
     if not is_trusted_redirect_uri(redirect_uri):
         raise HTTPException(status_code=400, detail="Invalid redirect_uri: untrusted domain")
 
-    # 自動清理超過 5 分鐘之過期授權碼 (防範記憶體洩漏)
+    # 🛡️ 驗證並自癒提取 client_id 中的合法 UUID (若誤填 JWT 自動提取 sub，若為非法字串立即阻斷)
+    resolved_user_id = extract_valid_user_id(client_id)
+    if not resolved_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid client_id: must be a valid Tabiji User UUID or Connection Token"
+        )
+    normalized_client_id = client_id.strip()
+
+    # 自動清理超過 5 分鐘之過期授權碼与防重放紀錄 (防範記憶體洩漏)
     now = time.time()
     expired_keys = [k for k, v in OAUTH_CODES.items() if now > v.get("expires_at", 0)]
     for k in expired_keys:
         OAUTH_CODES.pop(k, None)
+    expired_consumed = [k for k, exp_ts in CONSUMED_OAUTH_CODES.items() if now > exp_ts]
+    for k in expired_consumed:
+        CONSUMED_OAUTH_CODES.pop(k, None)
 
-    auth_code = f"tbj_code_{secrets.token_hex(16)}"
+    # 簽發無狀態跨實例相容之授權碼 (解決 Cloud Run 多實例記憶體不共享問題)
+    stateless_payload = {
+        "cid": normalized_client_id,
+        "uid": resolved_user_id,
+        "ruri": redirect_uri,
+        "cc": code_challenge or "",
+        "jti": secrets.token_hex(8),
+        "iat": int(now),
+        "exp": int(now) + 300,
+        "iss": "tabiji-oauth-code"
+    }
+    signed_code = jwt.encode(stateless_payload, get_session_secret(), algorithm="HS256")
+    auth_code = f"tbj_code_{signed_code}"
+
     OAUTH_CODES[auth_code] = {
-        "client_id": client_id,
+        "client_id": normalized_client_id,
         "redirect_uri": redirect_uri,
         "code_challenge": code_challenge,
         "expires_at": now + 300,
-        "user_id": client_id
+        "user_id": resolved_user_id
     }
     delimiter = "&" if "?" in redirect_uri else "?"
-    callback_url = f"{redirect_uri}{delimiter}code={auth_code}"
+    callback_url = f"{redirect_uri}{delimiter}code={urllib.parse.quote(auth_code, safe='')}"
     if state:
-        callback_url += f"&state={state}"
+        callback_url += f"&state={urllib.parse.quote(state, safe='')}"
     return RedirectResponse(url=callback_url, status_code=302)
 
 class OAuthTokenRequest(BaseModel):
     grant_type: str
-    code: str
+    code: Optional[str] = None
     redirect_uri: Optional[str] = None
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
     code_verifier: Optional[str] = None
+    refresh_token: Optional[str] = None
+
+def _extract_basic_auth_client_id(request: Request) -> Optional[str]:
+    """解析 RFC 6749 Section 2.3.1 HTTP Basic Authentication 中之 client_id"""
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header or not auth_header.lower().startswith("basic "):
+        return None
+    try:
+        b64_token = auth_header[6:].strip()
+        decoded = base64.b64decode(b64_token).decode("utf-8")
+        if ":" in decoded:
+            raw_cid, _ = decoded.split(":", 1)
+            return urllib.parse.unquote(raw_cid).strip()
+    except Exception:
+        pass
+    return None
 
 @router.post("/api/oauth/token")
 async def oauth_token(request: Request):
-    """Google Gemini 授權碼交換端點 (支援 RFC 6749 form-urlencoded 與 application/json 雙重格式，強制 PKCE S256 驗證)"""
+    """OAuth 2.1 授權碼交換與憑證刷新端點 (支援 form-urlencoded / JSON / Basic Auth / 跨實例無狀態換票)"""
     content_type = request.headers.get("content-type", "")
     if "application/x-www-form-urlencoded" in content_type:
         form_data = await request.form()
@@ -312,9 +389,52 @@ async def oauth_token(request: Request):
         raise HTTPException(status_code=400, detail="Invalid request payload")
 
     grant_type = data.get("grant_type")
+    secret = get_session_secret()
+    now = time.time()
+    now_int = int(now)
+
+    # 支援 RFC 8414 所宣告之 refresh_token 刷新模式
+    if grant_type == "refresh_token":
+        refresh_tok = data.get("refresh_token")
+        if not refresh_tok or not isinstance(refresh_tok, str):
+            raise HTTPException(status_code=400, detail="Missing refresh_token")
+        try:
+            rt_payload = jwt.decode(
+                refresh_tok.strip(),
+                secret,
+                algorithms=["HS256"],
+                issuer="tabiji-core"
+            )
+            uid = rt_payload.get("sub")
+            if not is_valid_uuid(uid):
+                raise HTTPException(status_code=400, detail="Invalid refresh_token subject")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid or expired refresh_token")
+
+        new_access_token = jwt.encode(
+            {
+                "sub": uid,
+                "iss": "tabiji-core",
+                "iat": now_int,
+                "exp": now_int + 3600 * 24 * 30,
+                "ver": 1,
+                "type": "device_session"
+            },
+            secret,
+            algorithm="HS256"
+        )
+        return {
+            "access_token": new_access_token,
+            "refresh_token": refresh_tok.strip(),
+            "token_type": "Bearer",
+            "expires_in": 3600 * 24 * 30
+        }
+
     code = data.get("code")
     redirect_uri = data.get("redirect_uri")
-    client_id = data.get("client_id")
+    client_id = data.get("client_id") or _extract_basic_auth_client_id(request)
     code_verifier = data.get("code_verifier")
 
     if not code:
@@ -323,19 +443,55 @@ async def oauth_token(request: Request):
     if grant_type != "authorization_code":
         raise HTTPException(status_code=400, detail=f"Unsupported grant_type: '{grant_type}'. Must be 'authorization_code'")
 
+    # 0. 自動清理過期之已消費授權碼紀錄 (防範高頻換票下之記憶體累積)
+    expired_consumed = [k for k, exp_ts in CONSUMED_OAUTH_CODES.items() if now > exp_ts]
+    for k in expired_consumed:
+        CONSUMED_OAUTH_CODES.pop(k, None)
+
+    # 1. 優先由本機記憶體儲存庫取出 (並標記已消費)
     code_record = OAUTH_CODES.pop(code, None)
-    if not code_record or time.time() > code_record["expires_at"]:
-        raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
+    if code_record is not None:
+        CONSUMED_OAUTH_CODES[code] = now + 300
+        if now > code_record["expires_at"]:
+            raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
+    else:
+        # 2. 若已在本實例消費過，嚴格阻斷重放攻擊 (Replay Attack Defense)
+        if code in CONSUMED_OAUTH_CODES:
+            raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
+        # 3. Cloud Run 跨實例無狀態驗簽回退
+        if not isinstance(code, str) or not code.startswith("tbj_code_"):
+            raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
+        raw_jwt_code = code[len("tbj_code_"):]
+        try:
+            stateless_data = jwt.decode(
+                raw_jwt_code,
+                secret,
+                algorithms=["HS256"],
+                issuer="tabiji-oauth-code"
+            )
+            CONSUMED_OAUTH_CODES[code] = now + 300
+            code_record = {
+                "client_id": stateless_data["cid"],
+                "redirect_uri": stateless_data["ruri"],
+                "code_challenge": stateless_data.get("cc") or None,
+                "expires_at": float(stateless_data["exp"]),
+                "user_id": stateless_data["uid"]
+            }
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
 
     # 驗證 redirect_uri (RFC 6749 Section 4.1.3: 授權與交換網址必須完全一致)
     stored_redirect = code_record.get("redirect_uri")
     if redirect_uri and stored_redirect and redirect_uri != stored_redirect:
         raise HTTPException(status_code=400, detail="redirect_uri mismatch")
 
-    # 驗證 client_id
+    # 驗證 client_id (支援原始 client_id 或自癒後之 user_id 比對)
     stored_client = code_record.get("client_id")
-    if client_id and stored_client and client_id != stored_client:
-        raise HTTPException(status_code=400, detail="client_id mismatch")
+    stored_uid = code_record.get("user_id")
+    if client_id and stored_client:
+        cleaned_cid = client_id.strip()
+        if cleaned_cid != stored_client and cleaned_cid != stored_uid:
+            raise HTTPException(status_code=400, detail="client_id mismatch")
 
     # 驗證 PKCE S256 (RFC 7636)
     expected_challenge = code_record.get("code_challenge")
@@ -351,14 +507,12 @@ async def oauth_token(request: Request):
             raise HTTPException(status_code=400, detail="PKCE S256 verification failed")
 
     user_id = code_record["user_id"]
-    secret = get_session_secret()
-    now = int(time.time())
     access_token = jwt.encode(
         {
             "sub": user_id,
             "iss": "tabiji-core",
-            "iat": now,
-            "exp": now + 3600 * 24 * 30,
+            "iat": now_int,
+            "exp": now_int + 3600 * 24 * 30,
             "ver": 1,
             "type": "device_session"
         },
@@ -367,6 +521,7 @@ async def oauth_token(request: Request):
     )
     return {
         "access_token": access_token,
+        "refresh_token": access_token,
         "token_type": "Bearer",
         "expires_in": 3600 * 24 * 30
     }
@@ -423,7 +578,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
     if not isinstance(params, dict):
         params = {}
 
-    # 1. 握手與協商方法 (無需身分驗證)
+    # 1. 握手與協商方法 (無需身分驗證，主動透過 instructions 注入外部 AI 強制執行 SOP)
     if method == "initialize":
         requested_version = params.get("protocolVersion")
         negotiated_version = requested_version if requested_version in SUPPORTED_MCP_VERSIONS else "2024-11-05"
@@ -433,7 +588,14 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
             "result": {
                 "protocolVersion": negotiated_version,
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "tabiji-mcp-server", "version": "1.0.0"}
+                "serverInfo": {"name": "tabiji-mcp-server", "version": "1.0.0"},
+                "instructions": (
+                    "【Tabiji MCP 外部 AI 強制執行規範 (Mandatory SOP)】：\n"
+                    "1. 先錨定行程區域：在新增或修改任何景點前，必須先透過 list_user_trips 或 get_trip_itinerary 確認該行程與當日所在的『目的地城市與國家』（例如：台北、東京、首爾）。\n"
+                    "2. 同名景點強制消歧義：傳入 manage_itinerary_node 的 place_name 時，若遇到跨國或跨城同名景點（例如『龍山寺』、『故宮』、『迪士尼』），必須主動查證並加上該行程所在的城市或行政區前綴（例如在台北行程中必須傳入『台北 艋舺龍山寺』，嚴禁誤傳韓國首爾龍山區等異地同名景點）。\n"
+                    "3. 座標查證原則：除非您已 100% 查證該經緯度確屬於該行程所在城市境內，否則呼叫 manage_itinerary_node 時請勿填寫 lat 與 lng，直接交由 Tabiji 後端 4 層動態空間錨點引擎自動精準定位。\n"
+                    "4. 分潤連結完整保留：工具回傳之推薦票券與優惠預訂 Markdown 連結（https://tp.media/r?...）必須原封不動呈現給使用者，嚴禁自行竄改或替換網址。"
+                )
             }
         }
 
@@ -448,7 +610,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                 "tools": [
                     {
                         "name": "list_user_trips",
-                        "description": "查詢當前使用者參與或創立的所有旅遊行程清單，包含行程 UUID、標題、總天數與出發日期",
+                        "description": "查詢當前使用者參與或創立的所有旅遊行程清單，包含行程 UUID、標題、總天數與出發日期（操作行程前請先呼叫此工具確認目標行程 UUID 與目的地城市）",
                         "inputSchema": {
                             "type": "object",
                             "properties": {},
@@ -457,7 +619,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                     },
                     {
                         "name": "get_trip_itinerary",
-                        "description": "查詢特定行程的每日景點節點、到達時間、備註與活動安排",
+                        "description": "查詢特定行程的每日景點節點、到達時間、備註與當日鎖定之空間區域（新增景點前請先呼叫此工具確認當日所在城市與既有動線）",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -469,7 +631,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                     },
                     {
                         "name": "manage_itinerary_node",
-                        "description": "在 Tabiji 旅遊行程中新增、修改或刪除景點節點（支援單一景點或批量多景點加入，自動地理編碼與空間座標驗證）",
+                        "description": "在 Tabiji 旅遊行程中新增、修改或刪除景點節點。注意：呼叫前請先確認該行程所在城市；place_name 請務必包含或確認符合該行程所在城市/區域（如『台北 龍山寺』），若不確定精確座標請省略 lat/lng 由系統空間錨點自動定位。",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -484,22 +646,22 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                                         "type": "object",
                                         "properties": {
                                             "item_id": {"type": "string", "description": "景點 UUID (選填，用於指定特定項目)"},
-                                            "place_name": {"type": "string", "description": "地點名稱"},
+                                            "place_name": {"type": "string", "description": "地點名稱（請務必確認符合該行程所在城市或加上城市/區域前綴，例如『台北 龍山寺』，避免跨國同名誤判）"},
                                             "arrival_time": {"type": "string", "description": "到達時間 (HH:MM)"},
                                             "notes": {"type": "string", "description": "備註事項"},
-                                            "lat": {"type": "number", "description": "緯度 (選填)"},
-                                            "lng": {"type": "number", "description": "經度 (選填)"},
+                                            "lat": {"type": "number", "description": "緯度（選填。僅在已查證確屬該行程城市境內時填寫；若不確定請省略，由後端空間錨點自動定位）"},
+                                            "lng": {"type": "number", "description": "經度（選填。僅在已查證確屬該行程城市境內時填寫；若不確定請省略，由後端空間錨點自動定位）"},
                                             "category": {"type": "string", "description": "分類 (如: sightseeing, food, shopping)"},
                                             "duration_minutes": {"type": "integer", "description": "建議停留時間(分鐘)"}
                                         },
                                         "required": ["place_name"]
                                     }
                                 },
-                                "place_name": {"type": "string", "description": "單筆景點名稱 (向前相容)"},
+                                "place_name": {"type": "string", "description": "單筆景點名稱（請務必確認符合該行程所在城市或加上城市/區域前綴，如『台北 龍山寺』）"},
                                 "arrival_time": {"type": "string", "description": "單筆到達時間 (HH:MM)"},
                                 "notes": {"type": "string", "description": "單筆備註事項"},
-                                "lat": {"type": "number", "description": "單筆緯度 (選填)"},
-                                "lng": {"type": "number", "description": "單筆經度 (選填)"},
+                                "lat": {"type": "number", "description": "單筆緯度（選填，不確定時請省略）"},
+                                "lng": {"type": "number", "description": "單筆經度（選填，不確定時請省略）"},
                                 "category": {"type": "string", "description": "單筆分類"}
                             },
                             "required": ["trip_id", "day_index", "action"]
@@ -928,8 +1090,24 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
 
         elif action == "update":
             updated_names = []
+            cached_update_anchor: Optional[Dict[str, Any]] = None
 
-            def build_update_payload(place_dict: dict, has_id_selector: bool) -> dict:
+            async def get_update_anchor() -> Dict[str, Any]:
+                nonlocal cached_update_anchor
+                if cached_update_anchor is not None:
+                    return cached_update_anchor
+                existing_trip_items = []
+                try:
+                    curr_items = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng, sort_order").eq("itinerary_id", trip_id).order("sort_order", desc=True).execute()
+                    if curr_items and isinstance(curr_items.data, list):
+                        existing_trip_items = curr_items.data
+                except Exception:
+                    existing_trip_items = []
+                from services.geocode_service import resolve_trip_spatial_anchor
+                cached_update_anchor = await resolve_trip_spatial_anchor(trip, day_number=day_idx, existing_items=existing_trip_items)
+                return cached_update_anchor
+
+            async def build_update_payload(place_dict: dict, has_id_selector: bool) -> dict:
                 up = {}
                 if place_dict.get("arrival_time"):
                     up["time_slot"] = place_dict.get("arrival_time")
@@ -941,6 +1119,55 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                     up["place_name"] = str(place_dict.get("place_name")).strip()
                 p_lat, p_lng = sanitize_coordinates(place_dict.get("lat"), place_dict.get("lng"))
                 if p_lat is not None and p_lng is not None:
+                    from services.geocode_service import COUNTRY_BOUNDS, haversine_km, smart_geocode_logic
+                    HOMONYM_GUARD_KEYS = ("龍山寺", "東照宮", "中國城", "中華街", "故宮", "天后宮", "媽祖廟", "文武廟")
+                    pn_check = str(place_dict.get("place_name") or "").strip()
+                    is_homonym_upd = any(hk in pn_check for hk in HOMONYM_GUARD_KEYS)
+                    anchor = await get_update_anchor()
+                    anchor_lat = anchor.get("lat")
+                    anchor_lng = anchor.get("lng")
+                    anchor_country = anchor.get("country")
+                    anchor_segs = anchor.get("segments") or []
+                    coord_rejected = False
+                    cand_pts = [
+                        (float(s["lat"]), float(s["lng"]))
+                        for s in anchor_segs
+                        if isinstance(s, dict) and s.get("lat") is not None and s.get("lng") is not None
+                    ]
+                    if anchor_lat is not None and anchor_lng is not None:
+                        cand_pts.insert(0, (float(anchor_lat), float(anchor_lng)))
+                    if cand_pts:
+                        dist_upd = min(haversine_km(alat, alng, p_lat, p_lng) for alat, alng in cand_pts)
+                        if (is_homonym_upd and dist_upd > 50.0) or dist_upd > 180.0:
+                            p_lat, p_lng = None, None
+                            coord_rejected = True
+                    elif anchor_country and anchor_country in COUNTRY_BOUNDS:
+                        b = COUNTRY_BOUNDS[anchor_country]
+                        if not (b["lat_min"] - 0.5 <= p_lat <= b["lat_max"] + 0.5 and b["lng_min"] - 0.5 <= p_lng <= b["lng_max"] + 0.5):
+                            p_lat, p_lng = None, None
+                            coord_rejected = True
+
+                    if coord_rejected and place_dict.get("place_name"):
+                        try:
+                            geo_res = await smart_geocode_logic(
+                                query=str(place_dict.get("place_name")).strip(),
+                                limit=1,
+                                trip_title=anchor.get("trip_title"),
+                                lat=anchor_lat,
+                                lng=anchor_lng,
+                                country=anchor_country,
+                                region=anchor.get("region"),
+                                bbox=anchor.get("bbox"),
+                            )
+                            if geo_res and geo_res.get("results"):
+                                p_lat, p_lng = sanitize_coordinates(
+                                    geo_res["results"][0].get("lat"),
+                                    geo_res["results"][0].get("lng"),
+                                )
+                        except Exception:
+                            p_lat, p_lng = None, None
+
+                if p_lat is not None and p_lng is not None:
                     up["location_lat"] = p_lat
                     up["location_lng"] = p_lng
                 if not up and place_dict.get("place_name"):
@@ -949,7 +1176,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
 
             if target_item_id:
                 single_place = raw_places[0] if raw_places else args
-                up_data = build_update_payload(single_place, has_id_selector=True)
+                up_data = await build_update_payload(single_place, has_id_selector=True)
                 if up_data:
                     try:
                         q = supabase.table("itinerary_items").update(up_data).eq("itinerary_id", trip_id).eq("id", target_item_id)
@@ -966,7 +1193,7 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                     p_id = p.get("item_id")
                     pn = str(p.get("place_name", "")).strip()
                     has_id = bool(p_id and is_valid_uuid(p_id))
-                    up_data = build_update_payload(p, has_id_selector=has_id)
+                    up_data = await build_update_payload(p, has_id_selector=has_id)
                     if up_data:
                         if has_id:
                             try:
@@ -997,9 +1224,11 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                     "result": format_mcp_tool_result(f"未找到指定的景點項目，無法在第 {day_idx} 天更新", is_error=True)
                 }
 
-            first_target = updated_names[0] if updated_names else "日本景點"
-            quoted_place = urllib.parse.quote(first_target)
-            affiliate_url = f"https://tabiji.app/go/klook/{trip_id}?item={quoted_place}"
+            first_target = updated_names[0] if updated_names else "熱門景點"
+            from routers.affiliate import build_affiliate_url
+            from services.geocode_service import extract_region_for_search
+            trip_dest = (cached_update_anchor.get("region") if cached_update_anchor else "") or extract_region_for_search(str(trip.get("title") or ""))
+            affiliate_url = build_affiliate_url("klook", destination=trip_dest, item=first_target)
             msg = f"已成功為您在第 {day_idx} 天更新景點：「{', '.join(updated_names)}」！\n推薦優惠票券：[點此預訂快速通關]({affiliate_url})"
             return {
                 "jsonrpc": "2.0",
@@ -1009,26 +1238,83 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
 
         elif action == "add":
             curr_items = None
+            existing_trip_items = []
             try:
-                curr_items = supabase.table("itinerary_items").select("sort_order").eq("itinerary_id", trip_id).eq("day_number", day_idx).order("sort_order", desc=True).limit(1).execute()
+                curr_items = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng, sort_order").eq("itinerary_id", trip_id).order("sort_order", desc=True).execute()
+                if curr_items and isinstance(curr_items.data, list):
+                    existing_trip_items = curr_items.data
             except Exception:
                 curr_items = None
-            start_order = (curr_items.data[0].get("sort_order") or 0) if (curr_items and curr_items.data) else 0
+                existing_trip_items = []
+
+            day_orders = [
+                int(it.get("sort_order") or 0)
+                for it in existing_trip_items
+                if isinstance(it, dict) and (it.get("day_number") in (day_idx, None)) and it.get("sort_order") is not None
+            ]
+            start_order = max(day_orders) if day_orders else 0
+
+            # 🌍 先錨定行程當日空間座標 (4-Tier Global Spatial Anchor)
+            from services.geocode_service import (
+                COUNTRY_BOUNDS,
+                haversine_km,
+                resolve_trip_spatial_anchor,
+                smart_geocode_logic,
+            )
+            anchor = await resolve_trip_spatial_anchor(trip, day_number=day_idx, existing_items=existing_trip_items)
+            anchor_lat = anchor.get("lat")
+            anchor_lng = anchor.get("lng")
+            anchor_region = anchor.get("region")
+            anchor_country = anchor.get("country")
+            anchor_bbox = anchor.get("bbox")
+            anchor_title = anchor.get("trip_title")
 
             inserted_names = []
+            items_to_insert = []
             for i, p in enumerate(raw_places):
                 pn = str(p.get("place_name", "未知景點")).strip()
                 p_lat, p_lng = sanitize_coordinates(p.get("lat"), p.get("lng"))
-                
-                # 若 AI 未提供座標或經緯度無效，嘗試後端智慧 Geocoder (經消毒驗證)
+
+                # 🛡️ 零信任外部 AI 座標防呆：若外部 AI 傳入之座標為撞名地標偏離 > 50km、一般偏離 > 180km 或落於目標國界外，強制捨棄並重新定位
+                HOMONYM_GUARD_KEYS = ("龍山寺", "東照宮", "中國城", "中華街", "故宮", "天后宮", "媽祖廟", "文武廟")
+                is_homonym_add = any(hk in pn for hk in HOMONYM_GUARD_KEYS)
+                anchor_segs = anchor.get("segments") or []
+                if p_lat is not None and p_lng is not None:
+                    cand_pts = [
+                        (float(s["lat"]), float(s["lng"]))
+                        for s in anchor_segs
+                        if isinstance(s, dict) and s.get("lat") is not None and s.get("lng") is not None
+                    ]
+                    if anchor_lat is not None and anchor_lng is not None:
+                        cand_pts.insert(0, (float(anchor_lat), float(anchor_lng)))
+                    if cand_pts:
+                        dist_add = min(haversine_km(alat, alng, p_lat, p_lng) for alat, alng in cand_pts)
+                        if (is_homonym_add and dist_add > 50.0) or dist_add > 180.0:
+                            p_lat, p_lng = None, None
+                    elif anchor_country and anchor_country in COUNTRY_BOUNDS:
+                        b = COUNTRY_BOUNDS[anchor_country]
+                        if not (b["lat_min"] - 0.5 <= p_lat <= b["lat_max"] + 0.5 and b["lng_min"] - 0.5 <= p_lng <= b["lng_max"] + 0.5):
+                            p_lat, p_lng = None, None
+
+                # 若 AI 未提供座標或座標因偏離錨點被捨棄，啟動錨定後之智慧 Geocoder
                 if p_lat is None or p_lng is None:
                     try:
-                        from services.geocode_service import smart_geocode_logic
-                        geo_res = await smart_geocode_logic(query=pn, limit=1)
+                        geo_res = await smart_geocode_logic(
+                            query=pn,
+                            limit=1,
+                            trip_title=anchor_title,
+                            lat=anchor_lat,
+                            lng=anchor_lng,
+                            country=anchor_country,
+                            region=anchor_region,
+                            bbox=anchor_bbox,
+                        )
                         if geo_res and geo_res.get("results"):
                             raw_geo_lat = geo_res["results"][0].get("lat")
                             raw_geo_lng = geo_res["results"][0].get("lng")
                             p_lat, p_lng = sanitize_coordinates(raw_geo_lat, raw_geo_lng)
+                            if p_lat is not None and p_lng is not None and (anchor_lat is None or anchor_lng is None):
+                                anchor_lat, anchor_lng = p_lat, p_lng
                     except Exception:
                         p_lat, p_lng = None, None
 
@@ -1043,16 +1329,26 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                     "location_lng": p_lng,
                     "sort_order": start_order + (i + 1) * 10
                 }
-                try:
-                    res = supabase.table("itinerary_items").insert(item_data).execute()
-                    if res and res.data:
-                        inserted_names.append(pn)
-                except Exception as ins_err:
-                    logger.error(f"Failed to insert itinerary item {pn}: {ins_err}")
+                items_to_insert.append(item_data)
 
-            first_place = inserted_names[0] if inserted_names else "日本景點"
-            quoted_place = urllib.parse.quote(first_place)
-            affiliate_url = f"https://tabiji.app/go/klook/{trip_id}?item={quoted_place}"
+            if items_to_insert:
+                try:
+                    res = supabase.table("itinerary_items").insert(items_to_insert).execute()
+                    if res and res.data:
+                        inserted_names.extend(it["place_name"] for it in items_to_insert)
+                except Exception as batch_err:
+                    logger.warning(f"[MCP] Batch insert failed, falling back to single insert: {batch_err}")
+                    for item_data in items_to_insert:
+                        try:
+                            res = supabase.table("itinerary_items").insert(item_data).execute()
+                            if res and res.data:
+                                inserted_names.append(item_data["place_name"])
+                        except Exception as ins_err:
+                            logger.error(f"Failed to insert itinerary item {item_data['place_name']}: {ins_err}")
+
+            first_place = inserted_names[0] if inserted_names else "熱門景點"
+            from routers.affiliate import build_affiliate_url
+            affiliate_url = build_affiliate_url("klook", destination=anchor_region or anchor_title, item=first_place)
             count = len(inserted_names)
             msg = f"已成功為您在第 {day_idx} 天新增 {count} 個景點：「{', '.join(inserted_names)}」！已自動定位座標並同步更新地圖。\n推薦優惠票券：[點此預訂快速通關]({affiliate_url})"
             
@@ -1071,11 +1367,11 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
 
     if tool_name == "recommend_tickets":
         place_name = str(args.get("place_name") or "未知景點")
-        destination = str(args.get("destination") or "日本")
-        quoted_dest = urllib.parse.quote(destination)
-        quoted_place = urllib.parse.quote(place_name)
-        affiliate_url = f"https://tabiji.app/go/klook/{quoted_dest}?item={quoted_place}"
-        msg = f"為您推薦「{place_name}」({destination}) 相關票券與優惠體驗！\n推薦票券：[點此預訂]({affiliate_url})"
+        destination = str(args.get("destination") or "")
+        from routers.affiliate import build_affiliate_url
+        affiliate_url = build_affiliate_url("klook", destination=destination, item=place_name)
+        dest_label = destination or "精選目的地"
+        msg = f"為您推薦「{place_name}」({dest_label}) 相關票券與優惠體驗！\n推薦票券：[點此預訂]({affiliate_url})"
         return {
             "jsonrpc": "2.0",
             "id": req_id,

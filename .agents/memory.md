@@ -34,4 +34,6 @@
 - **Deterministic Guard**: 零依賴靜態腳本實施的不可妥協數學級品質門禁。
 - **Dual-Track Credential**: 資料身分永固（UUID 內部主鍵）與存取憑證（`tbj_rec_*` 現代引繼碼）之解耦模型。
 - **Opaque Realtime Signal**: WebSocket 廣播僅傳遞無狀態失效訊號（timestamp），敏感資料一律強制透過鑑權 HTTPS 拉取。
+- **Transit Corridor K-Partitioning**: 跨區高鐵/離島長途移動以物理跳躍與局部密度支撐動態切分多時序空間子群，杜絕中位數坍塌誤殺。
+- **Stateless Authorization Code Fallback**: OAuth 2.1 授權伺服器以記憶體字典 + HMAC-SHA256 Token 雙軌備援，杜絕 Cloud Run 多容器自動擴展時狀態遺失。
 

@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Remote MCP OAuth 2.1 RFC 8414/9728 & Stateless HMAC Fallback**: OAuth 2.1 authorization server endpoints (/api/oauth/authorize & /token) must implement dual-track authorization codes: in-memory fast dict plus stateless HMAC-SHA256 token fallback to survive multi-instance Cloud Run server restarts and cross-container load balancing. CONSUMED_OAUTH_CODES replay table strictly enforces single-use token consumption.
+
 - **AI Client CORS Preflight and Health Probe Compliance**: FastAPI CORS middleware must configure allow_origin_regex to permit browser-based preflight requests from AI clients (https://gemini.google.com, https://aistudio.google.com, https://*.perplexity.ai). Furthermore, /api/mcp must register both GET and HEAD handlers returning HTTP 200 with transport capabilities to pass external liveness probes before JSON-RPC initialization.
 
 - **Remote MCP Reverse Proxy Base URL and RFC 9728 Invariant**: OAuth discovery endpoints (/.well-known/oauth-protected-resource and /.well-known/oauth-authorization-server) MUST dynamically resolve public base URL from x-forwarded-host and x-forwarded-proto with a strict TRUSTED_BASE_DOMAINS allowlist filter. Returning internal container origins (e.g. Cloud Run *.run.app) causes RFC 9728 Section 3 client-side identity mismatch and HTTP downgrade rejections.
@@ -69,6 +71,8 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **FastAPI Dependency Request Parameter Wrapping Crash**: Wrapping request parameter as Optional[Request] = None in FastAPI route dependencies causes Starlette reflection to fail with 'FastAPIError: Invalid args for response field!'. Must strictly declare request: Request = None without Optional, while declaring auth headers as Optional[str] = Header(None).
+
 - **Action Noise False Geocoding Query Overhead**: Submitting activity notes like '集合/搭乘/休息/退稅' to geocoding services causes rate limit exhaustion and erroneous coordinates. Filter out items matching ACTION_NOISE_KEYWORDS before geocoding.
 
 - **Next.js Dev Proxy Socket Hang Up under Gemini 3.8 Multi-Tier Backoff**: When calling Gemini 3.8 Flash for long markdown extraction, upstream 503 errors trigger exponential backoff exceeding 30s, causing Next.js dev proxy to drop connections with ECONNRESET. Use gemini-3.1-flash-lite (0.9s response) as the primary extraction model.

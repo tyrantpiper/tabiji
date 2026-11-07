@@ -1,0 +1,33 @@
+[
+  {
+    "target_file": "backend/main.py",
+    "code_archaeology": {
+      "legacy_function": "Allowed CORS preflight for Google, Perplexity, Anthropic, and Tabiji domains.",
+      "design_intent": "Protect API routes from arbitrary cross-origin browser requests while permitting known AI connectors.",
+      "regression_risk": "Zero regression; strictly additive regex group expansion for claude.ai, claude.com, chatgpt.com, and openai.com."
+    },
+    "target_content": "    allow_origin_regex=r\"^https://([a-zA-Z0-9-]+\\.)*(google\\.com|googleusercontent\\.com|perplexity\\.ai|anthropic\\.com|tabijiapp\\.com)$\",",
+    "replacement_content": "    allow_origin_regex=r\"^https://([a-zA-Z0-9-]+\\.)*(google\\.com|googleusercontent\\.com|perplexity\\.ai|claude\\.ai|claude\\.com|anthropic\\.com|chatgpt\\.com|openai\\.com|tabijiapp\\.com)$\","
+  },
+  {
+    "target_file": "backend/routers/mcp.py",
+    "code_archaeology": {
+      "legacy_function": "Validated redirect_uri against Google/Tabiji domains and issued in-memory hex authorization codes.",
+      "design_intent": "Provide OAuth 2.1 authorization code flow with PKCE S256 for Google Gemini Connected Apps.",
+      "regression_risk": "Preserved OAUTH_CODES dictionary semantics and error messages for existing unit tests while adding stateless HMAC-JWT fallback, CONSUMED_OAUTH_CODES replay guard, HTTPS enforcement on external domains, client_id UUID/JWT self-healing, Basic Auth parsing, and refresh_token grant support."
+    },
+    "target_content": "def is_trusted_redirect_uri(redirect_uri: str) -> bool:",
+    "replacement_content": "TRUSTED_REDIRECT_DOMAINS = (\"google.com\", \"googleusercontent.com\", \"perplexity.ai\", \"claude.ai\", \"claude.com\", \"anthropic.com\", \"chatgpt.com\", \"openai.com\", \"tabijiapp.com\", \"tabiji.app\", \"vercel.app\")"
+  },
+  {
+    "target_file": "frontend/components/ai/mcp-connector-dialog.tsx",
+    "code_archaeology": {
+      "legacy_function": "Instructed users to add Authorization: Bearer header in Perplexity MCP settings.",
+      "design_intent": "Guide users to pass their session JWT to Perplexity.",
+      "regression_risk": "Replaced inaccurate Header instruction with accurate Perplexity Advanced settings guidance covering both 'API Key' (1-field direct token) and 'OAuth' (Client ID + Connection Token) modes."
+    },
+    "target_content": "<div>{zh ? \"在 Headers 加入：Authorization: Bearer <連線憑證>。\" : \"Add HTTP header: Authorization: Bearer <Connection Token>.\"}</div>",
+    "replacement_content": "<div>{zh ? \"展開「進階 (Advanced)」：將驗證選為「API 金鑰 (API Key)」並貼入「連線憑證」；或選「OAuth」分別填入「客戶端 ID」與「連線憑證」。\" : \"Under Advanced: select 'API Key' and paste 'Connection Token', or select 'OAuth' and fill in 'Client ID' & 'Connection Token'.\"}</div>"
+  }
+]
+

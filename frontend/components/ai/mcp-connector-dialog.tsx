@@ -426,7 +426,7 @@ export function MCPConnectorDialog({ open, onOpenChange, trigger }: MCPConnector
                                 </div>
                                 <div className="flex gap-2 items-start">
                                     <span className="w-4 h-4 rounded-full bg-teal-600/10 text-teal-600 dark:text-teal-400 font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">3</span>
-                                    <div>{zh ? "在 Headers 加入：Authorization: Bearer <連線憑證>。" : "Add HTTP header: Authorization: Bearer <Connection Token>."}</div>
+                                    <div>{zh ? "展開「進階 (Advanced)」：將驗證選為「API 金鑰 (API Key)」並貼入「連線憑證」；或選「OAuth」分別填入「客戶端 ID」與「連線憑證」。" : "Under Advanced: select 'API Key' and paste 'Connection Token', or select 'OAuth' and fill in 'Client ID' & 'Connection Token'."}</div>
                                 </div>
                                 <div className="flex gap-2 items-start">
                                     <span className="w-4 h-4 rounded-full bg-teal-600/10 text-teal-600 dark:text-teal-400 font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">4</span>

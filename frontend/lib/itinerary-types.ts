@@ -63,10 +63,18 @@ export interface ItineraryItemState {
     }
 }
 
+export interface DailyLocationSegment {
+    name: string
+    lat: number
+    lng: number
+}
+
 export interface DailyLocation {
     lat: number
     lng: number
     name: string
+    type?: 'stay' | 'transit_corridor'
+    segments?: DailyLocationSegment[]
 }
 
 export interface DayWeather {

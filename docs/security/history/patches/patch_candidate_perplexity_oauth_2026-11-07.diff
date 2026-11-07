@@ -1,0 +1,349 @@
+diff --git a/backend/main.py b/backend/main.py
+index 62c4845..d8abd42 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -278,7 +278,7 @@ async def add_security_headers(request, call_next):
+ app.add_middleware(
+     CORSMiddleware,
+     allow_origins=ALLOWED_ORIGINS,
+-    allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)*(google\.com|googleusercontent\.com|perplexity\.ai|anthropic\.com|tabijiapp\.com)$",
++    allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)*(google\.com|googleusercontent\.com|perplexity\.ai|claude\.ai|claude\.com|anthropic\.com|chatgpt\.com|openai\.com|tabijiapp\.com)$",
+     allow_credentials=True,
+     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
+     allow_headers=["*"],
+diff --git a/backend/routers/mcp.py b/backend/routers/mcp.py
+index 5cbcc49..65997b2 100644
+--- a/backend/routers/mcp.py
++++ b/backend/routers/mcp.py
+@@ -33,6 +33,8 @@ logger = logging.getLogger("tabiji-mcp")
+ 
+ # 記憶體授權碼儲存庫 (有效期 300 秒，一次性消費)
+ OAUTH_CODES: Dict[str, Dict[str, Any]] = {}
++# 已消費授權碼防重放紀錄 (支援無狀態跨實例授權碼單次消費保護)
++CONSUMED_OAUTH_CODES: Dict[str, float] = {}
+ 
+ SUPPORTED_MCP_VERSIONS = [
+     "2026-07-28",
+@@ -104,6 +106,7 @@ async def oauth_metadata(request: Request):
+         "token_endpoint": f"{base_url}/api/oauth/token",
+         "response_types_supported": ["code"],
+         "grant_types_supported": ["authorization_code", "refresh_token"],
++        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic", "none"],
+         "code_challenge_methods_supported": ["S256"]
+     }
+ 
+@@ -157,33 +160,66 @@ def is_valid_uuid(val: Any) -> bool:
+         return False
+     return bool(UUID_REGEX.match(val.strip()))
+ 
++TRUSTED_REDIRECT_DOMAINS = (
++    "google.com",
++    "googleusercontent.com",
++    "perplexity.ai",
++    "claude.ai",
++    "claude.com",
++    "anthropic.com",
++    "chatgpt.com",
++    "openai.com",
++    "tabijiapp.com",
++    "tabiji.app",
++    "vercel.app",
++)
++
+ def is_trusted_redirect_uri(redirect_uri: str) -> bool:
+-    """驗證 OAuth redirect_uri 是否屬於受信信任之網域，嚴防 Open Redirect 與 Account Takeover"""
++    """驗證 OAuth redirect_uri 是否屬於受信信任之網域，外部網域強制 HTTPS，嚴防 Open Redirect 與 Account Takeover"""
+     if not redirect_uri:
+         return False
+     try:
+-        parsed = urllib.parse.urlparse(redirect_uri)
+-        if parsed.scheme not in ("http", "https"):
+-            return False
++        parsed = urllib.parse.urlparse(redirect_uri.strip())
+         hostname = (parsed.hostname or "").lower()
+         if not hostname:
+             return False
+         if hostname in ("localhost", "127.0.0.1", "testserver"):
+-            return True
+-        if hostname == "google.com" or hostname.endswith(".google.com"):
+-            return True
+-        if hostname == "googleusercontent.com" or hostname.endswith(".googleusercontent.com"):
+-            return True
+-        if hostname == "tabijiapp.com" or hostname.endswith(".tabijiapp.com"):
+-            return True
+-        if hostname == "tabiji.app" or hostname.endswith(".tabiji.app"):
+-            return True
+-        if hostname == "travel-pwa-five.vercel.app" or hostname.endswith(".vercel.app"):
+-            return True
+-        return False
++            return parsed.scheme in ("http", "https")
++        if parsed.scheme != "https":
++            return False
++        return any(
++            hostname == domain or hostname.endswith(f".{domain}")
++            for domain in TRUSTED_REDIRECT_DOMAINS
++        )
+     except Exception:
+         return False
+ 
++def extract_valid_user_id(raw_client_id: str) -> Optional[str]:
++    """
++    從 client_id 提取並驗證合法的 user_id (UUID)：
++    1. 若直接為合法 UUID，去除空白後返回。
++    2. 若使用者誤將連線憑證 (JWT) 填入 Client ID，自動驗章並提取其 sub (UUID)。
++    """
++    if not raw_client_id or not isinstance(raw_client_id, str):
++        return None
++    cleaned = raw_client_id.strip()
++    if is_valid_uuid(cleaned):
++        return cleaned
++    if cleaned.startswith("ey"):
++        try:
++            payload = jwt.decode(
++                cleaned,
++                get_session_secret(),
++                algorithms=["HS256"],
++                issuer="tabiji-core"
++            )
++            sub = payload.get("sub")
++            if is_valid_uuid(sub):
++                return sub.strip()
++        except Exception:
++            pass
++    return None
++
+ def calculate_trip_days(trip: Dict[str, Any]) -> int:
+     """計算行程總天數 (綜合比較日期跨度、daily_locations 筆數與 total_days)"""
+     date_span = 0
+@@ -267,19 +303,44 @@ async def oauth_authorize(
+     if not is_trusted_redirect_uri(redirect_uri):
+         raise HTTPException(status_code=400, detail="Invalid redirect_uri: untrusted domain")
+ 
+-    # 自動清理超過 5 分鐘之過期授權碼 (防範記憶體洩漏)
++    # 🛡️ 驗證並自癒提取 client_id 中的合法 UUID (若誤填 JWT 自動提取 sub，若為非法字串立即阻斷)
++    resolved_user_id = extract_valid_user_id(client_id)
++    if not resolved_user_id:
++        raise HTTPException(
++            status_code=400,
++            detail="Invalid client_id: must be a valid Tabiji User UUID or Connection Token"
++        )
++    normalized_client_id = client_id.strip()
++
++    # 自動清理超過 5 分鐘之過期授權碼与防重放紀錄 (防範記憶體洩漏)
+     now = time.time()
+     expired_keys = [k for k, v in OAUTH_CODES.items() if now > v.get("expires_at", 0)]
+     for k in expired_keys:
+         OAUTH_CODES.pop(k, None)
++    expired_consumed = [k for k, exp_ts in CONSUMED_OAUTH_CODES.items() if now > exp_ts]
++    for k in expired_consumed:
++        CONSUMED_OAUTH_CODES.pop(k, None)
++
++    # 簽發無狀態跨實例相容之授權碼 (解決 Cloud Run 多實例記憶體不共享問題)
++    stateless_payload = {
++        "cid": normalized_client_id,
++        "uid": resolved_user_id,
++        "ruri": redirect_uri,
++        "cc": code_challenge or "",
++        "jti": secrets.token_hex(8),
++        "iat": int(now),
++        "exp": int(now) + 300,
++        "iss": "tabiji-oauth-code"
++    }
++    signed_code = jwt.encode(stateless_payload, get_session_secret(), algorithm="HS256")
++    auth_code = f"tbj_code_{signed_code}"
+ 
+-    auth_code = f"tbj_code_{secrets.token_hex(16)}"
+     OAUTH_CODES[auth_code] = {
+-        "client_id": client_id,
++        "client_id": normalized_client_id,
+         "redirect_uri": redirect_uri,
+         "code_challenge": code_challenge,
+         "expires_at": now + 300,
+-        "user_id": client_id
++        "user_id": resolved_user_id
+     }
+     delimiter = "&" if "?" in redirect_uri else "?"
+     callback_url = f"{redirect_uri}{delimiter}code={auth_code}"
+@@ -289,15 +350,31 @@ async def oauth_authorize(
+ 
+ class OAuthTokenRequest(BaseModel):
+     grant_type: str
+-    code: str
++    code: Optional[str] = None
+     redirect_uri: Optional[str] = None
+     client_id: Optional[str] = None
+     client_secret: Optional[str] = None
+     code_verifier: Optional[str] = None
++    refresh_token: Optional[str] = None
++
++def _extract_basic_auth_client_id(request: Request) -> Optional[str]:
++    """解析 RFC 6749 Section 2.3.1 HTTP Basic Authentication 中之 client_id"""
++    auth_header = request.headers.get("authorization", "")
++    if not auth_header or not auth_header.lower().startswith("basic "):
++        return None
++    try:
++        b64_token = auth_header[6:].strip()
++        decoded = base64.b64decode(b64_token).decode("utf-8")
++        if ":" in decoded:
++            raw_cid, _ = decoded.split(":", 1)
++            return urllib.parse.unquote(raw_cid).strip()
++    except Exception:
++        pass
++    return None
+ 
+ @router.post("/api/oauth/token")
+ async def oauth_token(request: Request):
+-    """Google Gemini 授權碼交換端點 (支援 RFC 6749 form-urlencoded 與 application/json 雙重格式，強制 PKCE S256 驗證)"""
++    """OAuth 2.1 授權碼交換與憑證刷新端點 (支援 form-urlencoded / JSON / Basic Auth / 跨實例無狀態換票)"""
+     content_type = request.headers.get("content-type", "")
+     if "application/x-www-form-urlencoded" in content_type:
+         form_data = await request.form()
+@@ -312,9 +389,52 @@ async def oauth_token(request: Request):
+         raise HTTPException(status_code=400, detail="Invalid request payload")
+ 
+     grant_type = data.get("grant_type")
++    secret = get_session_secret()
++    now = time.time()
++    now_int = int(now)
++
++    # 支援 RFC 8414 所宣告之 refresh_token 刷新模式
++    if grant_type == "refresh_token":
++        refresh_tok = data.get("refresh_token")
++        if not refresh_tok or not isinstance(refresh_tok, str):
++            raise HTTPException(status_code=400, detail="Missing refresh_token")
++        try:
++            rt_payload = jwt.decode(
++                refresh_tok.strip(),
++                secret,
++                algorithms=["HS256"],
++                issuer="tabiji-core"
++            )
++            uid = rt_payload.get("sub")
++            if not is_valid_uuid(uid):
++                raise HTTPException(status_code=400, detail="Invalid refresh_token subject")
++        except HTTPException:
++            raise
++        except Exception:
++            raise HTTPException(status_code=400, detail="Invalid or expired refresh_token")
++
++        new_access_token = jwt.encode(
++            {
++                "sub": uid,
++                "iss": "tabiji-core",
++                "iat": now_int,
++                "exp": now_int + 3600 * 24 * 30,
++                "ver": 1,
++                "type": "device_session"
++            },
++            secret,
++            algorithm="HS256"
++        )
++        return {
++            "access_token": new_access_token,
++            "refresh_token": refresh_tok.strip(),
++            "token_type": "Bearer",
++            "expires_in": 3600 * 24 * 30
++        }
++
+     code = data.get("code")
+     redirect_uri = data.get("redirect_uri")
+-    client_id = data.get("client_id")
++    client_id = data.get("client_id") or _extract_basic_auth_client_id(request)
+     code_verifier = data.get("code_verifier")
+ 
+     if not code:
+@@ -323,19 +443,50 @@ async def oauth_token(request: Request):
+     if grant_type != "authorization_code":
+         raise HTTPException(status_code=400, detail=f"Unsupported grant_type: '{grant_type}'. Must be 'authorization_code'")
+ 
++    # 1. 優先由本機記憶體儲存庫取出 (並標記已消費)
+     code_record = OAUTH_CODES.pop(code, None)
+-    if not code_record or time.time() > code_record["expires_at"]:
+-        raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
++    if code_record is not None:
++        CONSUMED_OAUTH_CODES[code] = now + 300
++        if now > code_record["expires_at"]:
++            raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
++    else:
++        # 2. 若已在本實例消費過，嚴格阻斷重放攻擊 (Replay Attack Defense)
++        if code in CONSUMED_OAUTH_CODES:
++            raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
++        # 3. Cloud Run 跨實例無狀態驗簽回退
++        if not isinstance(code, str) or not code.startswith("tbj_code_"):
++            raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
++        raw_jwt_code = code[len("tbj_code_"):]
++        try:
++            stateless_data = jwt.decode(
++                raw_jwt_code,
++                secret,
++                algorithms=["HS256"],
++                issuer="tabiji-oauth-code"
++            )
++            CONSUMED_OAUTH_CODES[code] = now + 300
++            code_record = {
++                "client_id": stateless_data["cid"],
++                "redirect_uri": stateless_data["ruri"],
++                "code_challenge": stateless_data.get("cc") or None,
++                "expires_at": float(stateless_data["exp"]),
++                "user_id": stateless_data["uid"]
++            }
++        except Exception:
++            raise HTTPException(status_code=400, detail="Invalid or expired authorization code")
+ 
+     # 驗證 redirect_uri (RFC 6749 Section 4.1.3: 授權與交換網址必須完全一致)
+     stored_redirect = code_record.get("redirect_uri")
+     if redirect_uri and stored_redirect and redirect_uri != stored_redirect:
+         raise HTTPException(status_code=400, detail="redirect_uri mismatch")
+ 
+-    # 驗證 client_id
++    # 驗證 client_id (支援原始 client_id 或自癒後之 user_id 比對)
+     stored_client = code_record.get("client_id")
+-    if client_id and stored_client and client_id != stored_client:
+-        raise HTTPException(status_code=400, detail="client_id mismatch")
++    stored_uid = code_record.get("user_id")
++    if client_id and stored_client:
++        cleaned_cid = client_id.strip()
++        if cleaned_cid != stored_client and cleaned_cid != stored_uid:
++            raise HTTPException(status_code=400, detail="client_id mismatch")
+ 
+     # 驗證 PKCE S256 (RFC 7636)
+     expected_challenge = code_record.get("code_challenge")
+@@ -351,14 +502,12 @@ async def oauth_token(request: Request):
+             raise HTTPException(status_code=400, detail="PKCE S256 verification failed")
+ 
+     user_id = code_record["user_id"]
+-    secret = get_session_secret()
+-    now = int(time.time())
+     access_token = jwt.encode(
+         {
+             "sub": user_id,
+             "iss": "tabiji-core",
+-            "iat": now,
+-            "exp": now + 3600 * 24 * 30,
++            "iat": now_int,
++            "exp": now_int + 3600 * 24 * 30,
+             "ver": 1,
+             "type": "device_session"
+         },
+@@ -367,6 +516,7 @@ async def oauth_token(request: Request):
+     )
+     return {
+         "access_token": access_token,
++        "refresh_token": access_token,
+         "token_type": "Bearer",
+         "expires_in": 3600 * 24 * 30
+     }
+diff --git a/frontend/components/ai/mcp-connector-dialog.tsx b/frontend/components/ai/mcp-connector-dialog.tsx
+index 9b23ded..824d9a0 100644
+--- a/frontend/components/ai/mcp-connector-dialog.tsx
++++ b/frontend/components/ai/mcp-connector-dialog.tsx
+@@ -426,7 +426,7 @@ export function MCPConnectorDialog({ open, onOpenChange, trigger }: MCPConnector
+                                 </div>
+                                 <div className="flex gap-2 items-start">
+                                     <span className="w-4 h-4 rounded-full bg-teal-600/10 text-teal-600 dark:text-teal-400 font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">3</span>
+-                                    <div>{zh ? "在 Headers 加入：Authorization: Bearer <連線憑證>。" : "Add HTTP header: Authorization: Bearer <Connection Token>."}</div>
++                                    <div>{zh ? "展開「進階 (Advanced)」：將驗證選為「API 金鑰 (API Key)」並貼入「連線憑證」；或選「OAuth」分別填入「客戶端 ID」與「連線憑證」。" : "Under Advanced: select 'API Key' and paste 'Connection Token', or select 'OAuth' and fill in 'Client ID' & 'Connection Token'."}</div>
+                                 </div>
+                                 <div className="flex gap-2 items-start">
+                                     <span className="w-4 h-4 rounded-full bg-teal-600/10 text-teal-600 dark:text-teal-400 font-bold flex items-center justify-center shrink-0 text-[10px] mt-0.5">4</span>
+

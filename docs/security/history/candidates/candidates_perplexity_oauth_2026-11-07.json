@@ -1,0 +1,43 @@
+[
+  {
+    "id": "backend/routers/mcp.py:perplexity_and_ai_redirect_uri_allowlist_and_https_enforcement",
+    "file_path": "backend/routers/mcp.py",
+    "start_line": 160,
+    "end_line": 186,
+    "attack_vector": "oauth_redirect_uri_validation_and_protocol_downgrade",
+    "hypothesis": "is_trusted_redirect_uri omits perplexity.ai, claude.ai, claude.com, and chatgpt.com (causing HTTP 400 untrusted domain on valid OAuth callbacks), while permitting unencrypted http:// scheme on external domains."
+  },
+  {
+    "id": "backend/routers/mcp.py:oauth_code_cross_instance_state_loss_and_replay_defense",
+    "file_path": "backend/routers/mcp.py",
+    "start_line": 270,
+    "end_line": 335,
+    "attack_vector": "cross_instance_state_loss_and_replay_attack",
+    "hypothesis": "OAUTH_CODES relies exclusively on a single-process in-memory dict without a stateless HMAC/JWT fallback, causing HTTP 400 'Invalid or expired authorization code' when GET /api/oauth/authorize and POST /api/oauth/token hit different Cloud Run instances (max-instances=10)."
+  },
+  {
+    "id": "backend/routers/mcp.py:oauth_client_id_validation_and_jwt_self_healing",
+    "file_path": "backend/routers/mcp.py",
+    "start_line": 248,
+    "end_line": 288,
+    "attack_vector": "token_subject_poisoning_and_input_validation",
+    "hypothesis": "oauth_authorize blindly assigns raw client_id into user_id without UUID validation or JWT sub extraction, issuing broken access tokens with non-UUID subjects that later fail at tools/call with HTTP 401."
+  },
+  {
+    "id": "backend/routers/mcp.py:oauth_token_basic_auth_and_refresh_grant_contradiction",
+    "file_path": "backend/routers/mcp.py",
+    "start_line": 95,
+    "end_line": 373,
+    "attack_vector": "rfc6749_basic_auth_and_refresh_grant_mismatch",
+    "hypothesis": "oauth_metadata advertises refresh_token in grant_types_supported while oauth_token rejects grant_type='refresh_token' with HTTP 400 and fails to parse RFC 6749 Section 2.3.1 Authorization: Basic client credentials."
+  },
+  {
+    "id": "backend/main.py:cors_claude_and_chatgpt_origin_preflight",
+    "file_path": "backend/main.py",
+    "start_line": 277,
+    "end_line": 288,
+    "attack_vector": "cors_preflight_rejection",
+    "hypothesis": "CORSMiddleware allow_origin_regex includes anthropic.com instead of claude.ai/claude.com and omits chatgpt.com/openai.com, blocking browser OPTIONS preflight requests from those AI platforms."
+  }
+]
+

@@ -278,7 +278,7 @@ async def add_security_headers(request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)*(google\.com|googleusercontent\.com|perplexity\.ai|anthropic\.com|tabijiapp\.com)$",
+    allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)*(google\.com|googleusercontent\.com|perplexity\.ai|claude\.ai|claude\.com|anthropic\.com|chatgpt\.com|openai\.com|tabijiapp\.com)$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
     allow_headers=["*"],

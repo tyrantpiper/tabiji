@@ -289,7 +289,7 @@ export function CreateTripModal({
                 const targetId = selectedTripId || trips![0].id
                 const data = await tripsApi.importToTrip(targetId, {
                     items: result.items,
-                    daily_locations: result.daily_locations || {},
+                    daily_locations: {},
                     day_notes: result.day_notes || {},
                     day_costs: result.day_costs || {},
                     day_tickets: result.day_tickets || {},
@@ -863,13 +863,78 @@ export function CreateTripModal({
                                     </div>
                                 </div>
                             ) : (
-                                <AiImportTripWizard
-                                    userId={userId}
-                                    onComplete={(data) => {
-                                        setImportResult(data)
-                                        setImportCoverImage(resolveDestinationCover(data.title))
-                                    }}
-                                />
+                                <div className="space-y-3">
+                                    {/* 📥 事前匯入目標選擇 (新建 vs 合併至現有行程以啟用事前空間錨點) */}
+                                    <div className="space-y-2 p-3 rounded-2xl bg-stone-100/70 dark:bg-slate-800/70 border border-stone-200/80 dark:border-slate-700/80">
+                                        <div className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between">
+                                            <span>{t('save_target_label')}</span>
+                                            <span className="text-[11px] font-normal text-slate-400">{t('save_target_desc')}</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    haptic.selection()
+                                                    setSaveTarget('new')
+                                                }}
+                                                className={cn(
+                                                    "p-2 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer select-none active:scale-98",
+                                                    saveTarget === 'new'
+                                                        ? "bg-emerald-500/10 dark:bg-emerald-400/15 border-emerald-500 dark:border-emerald-400 text-emerald-700 dark:text-emerald-300 font-bold shadow-2xs"
+                                                        : "bg-stone-50 dark:bg-slate-900 border-stone-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                                                )}
+                                            >
+                                                <Plus className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                                                <span className="text-xs">{t('save_as_new_trip')}</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={!trips || trips.length === 0}
+                                                onClick={() => {
+                                                    haptic.selection()
+                                                    setSaveTarget('existing')
+                                                    if (!selectedTripId && trips && trips.length > 0) {
+                                                        setSelectedTripId(trips[0].id)
+                                                    }
+                                                }}
+                                                className={cn(
+                                                    "p-2 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer select-none active:scale-98 disabled:opacity-40",
+                                                    saveTarget === 'existing'
+                                                        ? "bg-emerald-500/10 dark:bg-emerald-400/15 border-emerald-500 dark:border-emerald-400 text-emerald-700 dark:text-emerald-300 font-bold shadow-2xs"
+                                                        : "bg-stone-50 dark:bg-slate-900 border-stone-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                                                )}
+                                            >
+                                                <FolderInput className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                                                <span className="text-xs">{t('merge_into_existing_trip')}</span>
+                                            </button>
+                                        </div>
+
+                                        {saveTarget === 'existing' && trips && trips.length > 0 && (
+                                            <div className="pt-1">
+                                                <select
+                                                    value={selectedTripId || trips[0]?.id}
+                                                    onChange={e => setSelectedTripId(e.target.value)}
+                                                    className="w-full h-9 px-3 rounded-xl bg-white dark:bg-slate-900 border border-stone-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200 cursor-pointer outline-hidden focus:border-emerald-500"
+                                                >
+                                                    {trips.map(tr => (
+                                                        <option key={tr.id} value={tr.id}>
+                                                            {tr.title} ({tr.start_date} ~ {tr.end_date})
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <AiImportTripWizard
+                                        userId={userId}
+                                        itineraryId={saveTarget === 'existing' ? (selectedTripId || trips?.[0]?.id) : undefined}
+                                        onComplete={(data) => {
+                                            setImportResult(data)
+                                            setImportCoverImage(resolveDestinationCover(data.title))
+                                        }}
+                                    />
+                                </div>
                             )}
                         </motion.div>
                     )}

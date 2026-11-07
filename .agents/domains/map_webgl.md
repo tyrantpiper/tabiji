@@ -3,6 +3,10 @@
 > **所屬領域**: MapLibre GL JS, WebGL Canvas, 3D Globe, 大圓航線, 手勢隔離, CSP Worker
 
 ## 🏛️ 架構決策 (Decisions)
+- **Zero-Dictionary Dynamic Segment Naming & Action Noise Disambiguation**: Corridor segment naming follows a 4-tier zero-dictionary hierarchy: known_city_anchors -> GLOBAL_CITY_ANCHORS -> LANDMARKS_DB -> POI token co-occurrence analysis, generating clean 'A -> B' labels for unindexed global routes (e.g. Lima -> Cusco). Transit bridge items without coordinates automatically anchor to origin segment center, while action noise items (check-in, rest) with out-of-country coordinates are purged.
+
+- **Transit Corridor K-Partitioning & Cluster Support Guard**: On transit corridor days (e.g. Shinkansen 500km, island flight 260km), verify_and_heal_itinerary_coords must partition items into K chronological segments using spatial jump detection (>80km). Jumps only split if supported by Invariant 1 (explicit transit splitter category/keyword, local cluster density MinPts >= 2, or known city hit), preventing single-point AI coordinate hallucinations from bypassing outlier defense. Subclusters compute independent medians and output additive type: 'transit_corridor' and segments: [].
+
 - **Self-Bootstrapping Spatial Proximity Bias for Markdown Import**: In parse_markdown (/api/ai/parse-md), when trip title is generic (e.g. '5天4夜自由行'), proximity bias MUST dynamically bootstrap (bias_lat, bias_lng) from the first successfully resolved item coordinate to anchor subsequent geocoding queries and eliminate global coordinate drift.
 
 - **Cross-Component FlyTo Event Bus**: Component-level location previews must dispatch tabidachi:map-flyto custom events with bounded lat/lng rather than opening external map windows.

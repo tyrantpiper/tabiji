@@ -22,6 +22,7 @@ import { motion, AnimatePresence } from "framer-motion"
 
 interface AiImportTripWizardProps {
     userId: string
+    itineraryId?: string
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onComplete: (parsedData: any) => void
 }
@@ -235,7 +236,7 @@ const TEMPLATE_PILLS_EN = [
     }
 ]
 
-export function AiImportTripWizard({ userId, onComplete }: AiImportTripWizardProps) {
+export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImportTripWizardProps) {
     const { t, lang } = useLanguage()
     const zh = lang === "zh"
     const haptic = useHaptic()
@@ -333,7 +334,8 @@ export function AiImportTripWizard({ userId, onComplete }: AiImportTripWizardPro
             const data = await aiApi.parseMarkdown({
                 markdown_text: importText.trim(),
                 user_id: activeUserId,
-                image_base64: imagePreview || undefined
+                image_base64: imagePreview || undefined,
+                itinerary_id: itineraryId || undefined
             })
 
             setProgressText(t('ai_geocoding_step'))

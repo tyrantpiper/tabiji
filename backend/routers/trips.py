@@ -867,7 +867,26 @@ async def save_itinerary(
         except Exception:
             end_date = start_date
         
-        # 2. 建立主行程 (Parent) - 將每日資訊存入 content
+        # 2. 建立主行程 (Parent) - 寫入前先執行逐日空間錨點校驗與非破壞性自癒，並自動補齊 daily_locations
+        from services.geocode_service import verify_and_heal_itinerary_coords
+        raw_save_items = [
+            {
+                "day_number": item.day_number,
+                "place_name": item.place_name,
+                "original_name": item.original_name,
+                "lat": item.lat,
+                "lng": item.lng,
+            }
+            for item in request.items
+        ]
+        healed_save_items, resolved_save_daily_locs = await verify_and_heal_itinerary_coords(
+            raw_save_items,
+            trip_meta={
+                "title": request.title,
+                "daily_locations": request.daily_locations or {},
+            },
+        )
+        merged_save_daily_locs = resolved_save_daily_locs or {}
         cover_image = request.cover_image.strip() if (request.cover_image and request.cover_image.strip()) else resolve_destination_cover_url(request.title)
 
         trip_data = {
@@ -883,7 +902,7 @@ async def save_itinerary(
             # 👇 存入 JSONB 欄位: 包含 daily_locations 及新的 daily tips
             # 👇 存入 JSONB 欄位 (🆕 v4.Long-term: 預留欄位以防未來擴充)
             "content": {
-                "daily_locations": request.daily_locations or {},
+                "daily_locations": merged_save_daily_locs,
                 "day_notes": request.day_notes or {},
                 "day_costs": request.day_costs or {},
                 "day_tickets": request.day_tickets or {},
@@ -917,7 +936,8 @@ async def save_itinerary(
 
         # 4. 建立細項 (Children)
         items_data = []
-        for item in request.items:
+        for idx, item in enumerate(request.items):
+            healed_coord = healed_save_items[idx] if idx < len(healed_save_items) else {}
             items_data.append({
                 "itinerary_id": trip_id,
                 "day_number": item.day_number,
@@ -926,8 +946,8 @@ async def save_itinerary(
                 "original_name": item.original_name,
                 "category": item.category,
                 "notes": item.desc,
-                "location_lat": item.lat,
-                "location_lng": item.lng,
+                "location_lat": healed_coord.get("lat", item.lat),
+                "location_lng": healed_coord.get("lng", item.lng),
                 "cost_amount": item.cost_amount,
                 "reservation_code": item.reservation_code,
                 "tags": item.tags,
@@ -963,6 +983,8 @@ async def save_itinerary(
             
         return {"status": "success", "trip_id": trip_id, "share_code": room_code, "public_id": pub_id}
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 Save Error: {e}")
         print(f"   Traceback: {traceback.format_exc()}")
@@ -1039,13 +1061,6 @@ async def import_to_trip(
         # 確保在匯入內容時，不會抹除 credit_cards, flight_info, hotel_info 等欄位
         updated_content = (existing_content or {}).copy()
         
-        # A. 合併每日位置 (覆蓋)
-        if request.daily_locations:
-             updated_content["daily_locations"] = merge_dicts(
-                 updated_content.get("daily_locations"), 
-                 request.daily_locations
-             )
-        
         # B. 深度合併每日數組數據 (追加)
         if request.day_notes:
             updated_content["day_notes"] = deep_merge_day_arrays(updated_content.get("day_notes"), request.day_notes)
@@ -1060,27 +1075,53 @@ async def import_to_trip(
         if request.ai_review:
             updated_content["ai_review"] = request.ai_review
         
-        # 3. 更新主行程 content
-        supabase.table("itineraries").update({"content": updated_content}).eq("id", request.trip_id).execute()
-        
-        # 4. 取得現有地點組合，執行「智能去重」(Smart Deduplication)
-        existing_items_res = supabase.table("itinerary_items").select("day_number, place_name").eq("itinerary_id", request.trip_id).execute()
+        # 3. 取得現有地點組合，執行「智能去重」(Smart Deduplication) 與空間錨點取樣
+        existing_items_res = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng").eq("itinerary_id", request.trip_id).execute()
         existing_set = set()
-        if existing_items_res.data:
-            for item in existing_items_res.data:
-                existing_set.add((item["day_number"], item["place_name"]))
+        existing_items_list = existing_items_res.data or []
+        for item in existing_items_list:
+            existing_set.add((item["day_number"], item["place_name"]))
         
-        # 5. 插入細項 (Children) 並更新結束日期
+        # 4. 插入細項前以母體行程既有 content 執行 4 層空間錨點非破壞性自癒（嚴禁未驗證之 request.daily_locations 污染既有錨點）
+        from services.geocode_service import verify_and_heal_itinerary_coords
+        raw_import_items = [
+            {
+                "day_number": item.day_number,
+                "place_name": item.place_name,
+                "original_name": item.original_name,
+                "lat": item.lat,
+                "lng": item.lng,
+            }
+            for item in request.items
+        ]
+        healed_import_items, resolved_import_daily_locs = await verify_and_heal_itinerary_coords(
+            raw_import_items,
+            trip_meta={
+                **existing_trip,
+                "content": existing_content,
+                "daily_locations": merge_dicts(request.daily_locations or {}, existing_content.get("daily_locations") or {}),
+            },
+            existing_items=existing_items_list,
+        )
+        updated_content["daily_locations"] = merge_dicts(
+            resolved_import_daily_locs or {},
+            existing_content.get("daily_locations") or {},
+        )
+
+        # 5. 更新主行程 content
+        supabase.table("itineraries").update({"content": updated_content}).eq("id", request.trip_id).execute()
+
         items_data = []
         max_imported_day = 0
         skipped_count = 0
         
-        for item in request.items:
+        for idx, item in enumerate(request.items):
             # 去重檢查：若 (天數, 地名) 已存在則跳過
             if (item.day_number, item.place_name) in existing_set:
                 skipped_count += 1
                 continue
                 
+            healed_coord = healed_import_items[idx] if idx < len(healed_import_items) else {}
             max_imported_day = max(max_imported_day, item.day_number)
             items_data.append({
                 "itinerary_id": request.trip_id,
@@ -1090,8 +1131,8 @@ async def import_to_trip(
                 "original_name": item.original_name,
                 "category": item.category,
                 "notes": item.desc,
-                "location_lat": item.lat,
-                "location_lng": item.lng,
+                "location_lat": healed_coord.get("lat", item.lat),
+                "location_lng": healed_coord.get("lng", item.lng),
                 "cost_amount": item.cost_amount,
                 "reservation_code": item.reservation_code,
                 "tags": item.tags,
@@ -1524,22 +1565,40 @@ async def create_item(
         if not member_check.data:
             raise HTTPException(status_code=403, detail="您沒有權限在此行程新增項目")
 
-        lat_val = request.lat
-        lng_val = request.lng
+        lat_val = request.lat if request.lat != 0.0 else None
+        lng_val = request.lng if request.lng != 0.0 else None
         
-        # 🟢 自動地理編碼點亮地圖 (增量防禦性優化)
-        if not lat_val or not lng_val or lat_val == 0.0 or lng_val == 0.0:
+        # 🟢 自動地理編碼與空間錨點防呆 (結合 4 層動態空間錨點，同時攔截空座標與跨國/撞名異常座標)
+        try:
+            from services.geocode_service import verify_and_heal_itinerary_coords
+            trip_meta = None
+            existing_items_data = []
             try:
-                from services.geocode_service import smart_geocode_logic
-                print(f"🔍 [AutoGeocode] Empty coords for '{request.place_name}'. Invoking geocoder...")
-                geo_res = await smart_geocode_logic(query=request.place_name, limit=1)
-                if geo_res and geo_res.get("results"):
-                    first_match = geo_res["results"][0]
-                    lat_val = first_match["lat"]
-                    lng_val = first_match["lng"]
-                    print(f"✅ [AutoGeocode] Success: {lat_val}, {lng_val} via {geo_res.get('source')}")
-            except Exception as geo_err:
-                print(f"⚠️ [AutoGeocode] Non-critical geocoding fallback failed: {geo_err}")
+                t_res = supabase.table("itineraries").select("id, title, content").eq("id", request.itinerary_id).execute()
+                if t_res and t_res.data:
+                    trip_meta = t_res.data[0]
+                it_res = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng").eq("itinerary_id", request.itinerary_id).execute()
+                if it_res and isinstance(it_res.data, list):
+                    existing_items_data = it_res.data
+            except Exception:
+                pass
+            healed_single, _ = await verify_and_heal_itinerary_coords(
+                [
+                    {
+                        "day_number": request.day_number,
+                        "place_name": request.place_name,
+                        "lat": lat_val,
+                        "lng": lng_val,
+                    }
+                ],
+                trip_meta=trip_meta,
+                existing_items=existing_items_data,
+            )
+            if healed_single:
+                lat_val = healed_single[0].get("lat")
+                lng_val = healed_single[0].get("lng")
+        except Exception as geo_err:
+            print(f"⚠️ [AutoGeocode] Non-critical geocoding fallback failed: {geo_err}")
 
         data = {
             "itinerary_id": request.itinerary_id,

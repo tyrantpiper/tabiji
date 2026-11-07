@@ -195,7 +195,7 @@ def test_mcp_legitimate_call_alice_real():
         assert isinstance(result["content"], list)
         assert result["content"][0]["type"] == "text"
         assert "東京晴空塔" in result["content"][0]["text"]
-        assert "https://tabiji.app/go/klook/" in result["content"][0]["text"]
+        assert "https://tp.media/r?marker=602410&p=4110&u=" in result["content"][0]["text"]
 
 
 def test_mcp_recommend_tickets_real():
@@ -258,14 +258,14 @@ def test_mcp_unknown_tool_and_method():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_affiliate_gateway_whitelisted_redirect():
-    """驗證合法白名單夥伴跳轉為 302 重導向"""
+    """驗證合法白名單夥伴跳轉為 302 重導向至真實 Travelpayouts tp.media 連結"""
     resp_klook = client.get("/go/klook/activity/123-tokyo-tower", follow_redirects=False)
     assert resp_klook.status_code == 302
-    assert "https://affiliate.klook.com/jump?aff_id=TABIJI_AFF_888&target=activity/123-tokyo-tower" == resp_klook.headers["location"]
+    assert resp_klook.headers["location"] == "https://tp.media/r?marker=602410&p=4110&u=https%3A%2F%2Fwww.klook.com%2Fzh-TW%2Factivity%2F123-tokyo-tower"
 
     resp_kkday = client.get("/go/kkday/product/456", follow_redirects=False)
     assert resp_kkday.status_code == 302
-    assert "https://www.kkday.com/zh-tw/affiliate/jump?cid=TABIJI_AFF_999&url=product/456" == resp_kkday.headers["location"]
+    assert resp_kkday.headers["location"] == "https://tp.media/r?marker=602410&p=9074&u=https%3A%2F%2Fwww.kkday.com%2Fzh-tw%2Fproduct%2F456"
 
 
 def test_affiliate_gateway_open_redirect_defense():
@@ -292,12 +292,12 @@ def test_affiliate_gateway_open_redirect_defense():
 
 
 def test_affiliate_gateway_unicode_and_query_forwarding():
-    """驗證 Unicode 地區名稱 (東京) 與 Query String (?item=東京晴空塔) 正常跳轉且安全保留"""
+    """驗證 Unicode 地區名稱 (東京) 與 Query String (?item=東京晴空塔) 正常跳轉至 Travelpayouts Klook 搜尋頁"""
     resp = client.get("/go/klook/東京?item=東京晴空塔", follow_redirects=False)
     assert resp.status_code == 302
     location = resp.headers["location"]
-    assert "https://affiliate.klook.com/jump?aff_id=TABIJI_AFF_888&target=" in location
-    assert "item=" in location
+    assert location.startswith("https://tp.media/r?marker=602410&p=4110&u=")
+    assert "klook.com" in location
 
 
 def test_mcp_malformed_payload():

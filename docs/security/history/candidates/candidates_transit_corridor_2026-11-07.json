@@ -1,0 +1,35 @@
+[
+  {
+    "id": "backend/services/geocode_service.py:single_median_transit_corridor_and_island_outlier_eviction",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 2425,
+    "end_line": 2560,
+    "attack_vector": "statistical_median_collapse_and_false_positive_eviction",
+    "hypothesis": "verify_and_heal_itinerary_coords computes a single daily median across all items on a day and filters out points >180km when len(known_city_anchors) == 1. On high-speed rail transfer days (e.g., Tokyo -> Kyoto 500km) or domestic island flights (e.g., Taipei -> Penghu 260km with a single-city title), the daily median collapses into the mountains/strait or legitimate destination stops are falsely evicted as >180km spatial outliers."
+  },
+  {
+    "id": "backend/services/geocode_service.py:unconditional_jump_split_single_point_hallucination_bypass",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 2414,
+    "end_line": 2494,
+    "attack_vector": "single_point_hallucination_subcluster_self_validation_bypass",
+    "hypothesis": "If spatial jump partitioning splits a day on any >80km jump without enforcing a Cluster Support Condition (explicit transit splitter, MinPts >= 2 local density, or verified known city/landmark hit), an isolated 1-point AI hallucination (e.g., 1 Osaka coordinate injected into a Tokyo stay day) forms a 1-item sub-cluster whose median is itself (distance 0.0km), completely bypassing the 50km homonym guard and 180km outlier guard."
+  },
+  {
+    "id": "backend/services/geocode_service.py:corridor_segment_amnesia_on_reverification_and_mcp_add",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 2026,
+    "end_line": 2405,
+    "attack_vector": "state_desynchronization_and_corridor_amnesia_on_reverification",
+    "hypothesis": "When daily_locations[day] already stores a transit corridor (type='transit_corridor' with segments=[origin, destination]) and top-level lat/lng set to the arrival city, subsequent calls to verify_and_heal_itinerary_coords (import-to-trip, create_item) and mcp.py manage_itinerary_node only read the top-level arrival coordinates, falsely rejecting or overwriting valid morning items in the departure city (>180km from arrival)."
+  },
+  {
+    "id": "backend/services/geocode_service.py:zero_dictionary_corridor_naming_and_transit_bridge_action_noise_leak",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 2464,
+    "end_line": 2527,
+    "attack_vector": "action_noise_unverified_coord_bypass_and_dictionary_miss_degradation",
+    "hypothesis": "Items containing ACTION_NOISE_KEYWORDS (e.g., '搭乘新幹線前往京都' or '出發前往機場') short-circuit at line 2523 before country/outlier verification, either returning None when coords are missing or leaking unverified out-of-country coordinates when present; furthermore, corridor segments in cities outside the 27-city GLOBAL_CITY_ANCHORS table fail dictionary lookup and degrade into duplicate 'A -> A' labels."
+  }
+]
+

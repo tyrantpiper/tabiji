@@ -1,0 +1,33 @@
+[
+  {
+    "target_file": "backend/services/geocode_service.py",
+    "code_archaeology": {
+      "legacy_function": "Computed a single daily median coordinate across all items on a given day and filtered out points >180km when len(known_city_anchors) == 1.",
+      "design_intent": "Designed for single-city stay days to prevent isolated cross-region AI hallucinations or homonym landmarks from skewing the daily spatial anchor.",
+      "regression_risk": "Preserved 100% of single-city stay day defenses via Invariant 1 (Cluster Support Condition requiring explicit transit splitter, MinPts >= 2 local density, or verified known city hit before allowing an >80km split), while adding K-Partitioning for Shinkansen/island flight days, Invariant 2 bridge node origin anchoring, Invariant 3 zero-dictionary dynamic naming, and Invariant 4 corridor segment expansion on read."
+    },
+    "target_content": "    # Step A: 建立每一天的動態空間錨點 day_anchors",
+    "replacement_content": "    # Step A: 建立每一天的動態空間錨點 day_anchors 與時序走廊子群 item_segment_map"
+  },
+  {
+    "target_file": "backend/routers/mcp.py",
+    "code_archaeology": {
+      "legacy_function": "Evaluated external AI coordinates in manage_itinerary_node (add/update) strictly against the top-level daily_locations[day] anchor.",
+      "design_intent": "Prevent external AI connectors (Claude, ChatGPT, Perplexity) from injecting hallucinated coordinates >50km (homonym) or >180km (outlier) from the trip's daily city.",
+      "regression_risk": "Zero regression; evaluates the minimum Haversine distance against [(anchor_lat, anchor_lng)] plus all valid segments in anchor.get('segments'), preventing departure-city morning stops on transit corridor days from being falsely evicted."
+    },
+    "target_content": "                    if anchor_lat is not None and anchor_lng is not None:\n                        dist_upd = haversine_km(anchor_lat, anchor_lng, p_lat, p_lng)",
+    "replacement_content": "                    if anchor_lat is not None and anchor_lng is not None:\n                        cand_pts = [(float(anchor_lat), float(anchor_lng))] + [\n                            (float(s[\"lat\"]), float(s[\"lng\"]))\n                            for s in anchor_segs\n                            if isinstance(s, dict) and s.get(\"lat\") is not None and s.get(\"lng\") is not None\n                        ]\n                        dist_upd = min(haversine_km(alat, alng, p_lat, p_lng) for alat, alng in cand_pts)"
+  },
+  {
+    "target_file": "frontend/lib/itinerary-types.ts",
+    "code_archaeology": {
+      "legacy_function": "Defined DailyLocation with lat, lng, and name.",
+      "design_intent": "Type contract for trip.content.daily_locations[day] used by Map pins, Trip headers, and Bento cards.",
+      "regression_risk": "Strictly additive optional fields (type?: 'stay' | 'transit_corridor' and segments?: DailyLocationSegment[]), 100% backward compatible with all existing frontend consumers."
+    },
+    "target_content": "export interface DailyLocation {\n    lat: number\n    lng: number\n    name: string\n}",
+    "replacement_content": "export interface DailyLocationSegment {\n    name: string\n    lat: number\n    lng: number\n}\n\nexport interface DailyLocation {\n    lat: number\n    lng: number\n    name: string\n    type?: 'stay' | 'transit_corridor'\n    segments?: DailyLocationSegment[]\n}"
+  }
+]
+

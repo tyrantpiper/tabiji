@@ -257,15 +257,16 @@ CHAR_EQUIVALENTS = {
 
 
 def normalize_for_fuzzy(text: str) -> str:
-    """標準化文字用於模糊比較"""
+    """標準化文字用於模糊比較（保留寺/站/神社/城等設施類別尾詞，防止『龍山寺』與『龍山站』跨類別碰撞）"""
     if not text:
         return ""
     text = text.lower().strip()
-    # 移除常見字尾
-    for suffix in ["店", "站", "駅", "市場", "神社", "寺", "城"]:
-        if text.endswith(suffix) and len(text) > len(suffix):
+    # 僅在詞長充足 (>3) 時移除非改變設施語意之通用商業尾詞
+    for suffix in ["分店", "本店", "總店", "店"]:
+        if text.endswith(suffix) and len(text) - len(suffix) >= 2:
             text = text[:-len(suffix)]
-    # 字元標準化
+            break
+    # 字元標準化 (含 站 -> 駅 等同類別對齊)
     for char, equiv in CHAR_EQUIVALENTS.items():
         text = text.replace(char, equiv)
     return text
@@ -1336,6 +1337,11 @@ LANDMARKS_DB = {
     "淡水老街": {"aliases": ["tamsui", "淡水", "漁人碼頭"], "search": "Tamsui Old Street", "display": "淡水老街", "country": "TW", "lat": 25.1697, "lng": 121.4383},
     "北投溫泉": {"aliases": ["beitou", "北投", "地熱谷"], "search": "Beitou Hot Spring", "display": "北投溫泉", "country": "TW", "lat": 25.1375, "lng": 121.5077},
     "桃園機場": {"aliases": ["taoyuan airport", "tpe", "桃機"], "search": "Taoyuan Airport", "display": "桃園國際機場", "country": "TW", "lat": 25.0777, "lng": 121.2327},
+    "鹿港龍山寺": {"aliases": ["lukang longshan temple", "lukang lungshan temple"], "search": "Lukang Longshan Temple", "display": "鹿港龍山寺", "country": "TW", "lat": 24.0499, "lng": 120.4357},
+    "龍山寺": {"aliases": ["艋舺龍山寺", "萬華龍山寺", "台北龍山寺", "lungshan temple", "longshan temple"], "search": "Lungshan Temple Taipei", "display": "艋舺龍山寺", "country": "TW", "lat": 25.0372, "lng": 121.4999},
+    "大稻埕迪化街": {"aliases": ["迪化街", "大稻埕", "dihua street", "dadaocheng"], "search": "Dihua Street Taipei", "display": "大稻埕迪化街", "country": "TW", "lat": 25.0551, "lng": 121.5084},
+    "剝皮寮歷史街區": {"aliases": ["剝皮寮", "bopiliao", "bopiliao historic block"], "search": "Bopiliao Historic Block", "display": "剝皮寮歷史街區", "country": "TW", "lat": 25.0368, "lng": 121.5022},
+    "象山步道": {"aliases": ["象山", "象山親山步道", "elephant mountain"], "search": "Xiangshan Trail Taipei", "display": "象山親山步道", "country": "TW", "lat": 25.0275, "lng": 121.5712},
     
     # ═══════════════════════════════════════════════════════════════
     # 泰國
@@ -1426,16 +1432,28 @@ def get_fuzzy_index():
 
 
 def translate_famous_landmark(query: str, country_code: str = None) -> tuple:
-    """🏰 確定性翻譯著名景點（無需 AI）"""
+    """🏰 確定性翻譯著名景點（無需 AI，具備目標國別隔離防呆）"""
     query_lower = query.lower().strip()
+    target_cc = (country_code or "").strip().upper()
+    query_explicit_cc = (detect_country_from_keywords(query) or "").upper()
     
     # 🆕 Lazy load indices
     FUZZY_INDEX, LANDMARKS_KEYS_SORTED = get_fuzzy_index()
     BRANDS_DB = get_brands_db()
+
+    def _is_country_compatible(lm: dict) -> bool:
+        lm_cc = (lm.get("country") or "").strip().upper()
+        if not lm_cc or not target_cc:
+            return True
+        if query_explicit_cc and query_explicit_cc == lm_cc:
+            return True
+        return lm_cc == target_cc
     
     # === 1. 精確匹配（最快） ===
     for landmark_key in LANDMARKS_KEYS_SORTED:
         landmark = LANDMARKS_DB[landmark_key]
+        if not _is_country_compatible(landmark):
+            continue
         
         if landmark_key.lower() in query_lower:
             print(f"🏰 Landmark Match: '{query}' → '{landmark['display']}'")
@@ -1481,8 +1499,9 @@ def translate_famous_landmark(query: str, country_code: str = None) -> tuple:
         if match_result:
             matched_key, score, _ = match_result
             landmark_key, landmark = FUZZY_INDEX[matched_key]
-            print(f"[FUZZY] '{query}' -> '{landmark['display']}' (score: {score})")
-            return ([landmark["search"], query], landmark["display"], landmark)
+            if _is_country_compatible(landmark):
+                print(f"[FUZZY] '{query}' -> '{landmark['display']}' (score: {score})")
+                return ([landmark["search"], query], landmark["display"], landmark)
 
     
     # === 4. 特殊處理：迪士尼 ===
@@ -1844,27 +1863,1098 @@ for _k, _v in COUNTRY_NAME_TO_CODE.items():
     if _k not in GLOBAL_COUNTRY_TO_ISO:
         GLOBAL_COUNTRY_TO_ISO[_k] = _v.lower()
 
+# 🌍 全球主要旅遊城市快速座標錨點表 (0ms 零網路延遲 Tier 4 兜底)
+GLOBAL_CITY_ANCHORS: Dict[str, Dict[str, Any]] = {
+    "台北": {"lat": 25.0330, "lng": 121.5654, "country": "TW"},
+    "taipei": {"lat": 25.0330, "lng": 121.5654, "country": "TW"},
+    "新北": {"lat": 25.0169, "lng": 121.4628, "country": "TW"},
+    "台中": {"lat": 24.1477, "lng": 120.6736, "country": "TW"},
+    "taichung": {"lat": 24.1477, "lng": 120.6736, "country": "TW"},
+    "台南": {"lat": 22.9999, "lng": 120.2269, "country": "TW"},
+    "tainan": {"lat": 22.9999, "lng": 120.2269, "country": "TW"},
+    "高雄": {"lat": 22.6273, "lng": 120.3014, "country": "TW"},
+    "kaohsiung": {"lat": 22.6273, "lng": 120.3014, "country": "TW"},
+    "花蓮": {"lat": 23.9872, "lng": 121.6016, "country": "TW"},
+    "hualien": {"lat": 23.9872, "lng": 121.6016, "country": "TW"},
+    "台東": {"lat": 22.7583, "lng": 121.1444, "country": "TW"},
+    "taitung": {"lat": 22.7583, "lng": 121.1444, "country": "TW"},
+    "宜蘭": {"lat": 24.7570, "lng": 121.7530, "country": "TW"},
+    "yilan": {"lat": 24.7570, "lng": 121.7530, "country": "TW"},
+    "澎湖": {"lat": 23.5711, "lng": 119.5793, "country": "TW"},
+    "penghu": {"lat": 23.5711, "lng": 119.5793, "country": "TW"},
+    "馬公": {"lat": 23.5654, "lng": 119.5663, "country": "TW"},
+    "magong": {"lat": 23.5654, "lng": 119.5663, "country": "TW"},
+    "金門": {"lat": 24.4321, "lng": 118.3171, "country": "TW"},
+    "kinmen": {"lat": 24.4321, "lng": 118.3171, "country": "TW"},
+    "墾丁": {"lat": 21.9483, "lng": 120.7798, "country": "TW"},
+    "kenting": {"lat": 21.9483, "lng": 120.7798, "country": "TW"},
+    "嘉義": {"lat": 23.4801, "lng": 120.4491, "country": "TW"},
+    "chiayi": {"lat": 23.4801, "lng": 120.4491, "country": "TW"},
+    "東京": {"lat": 35.6895, "lng": 139.6917, "country": "JP"},
+    "tokyo": {"lat": 35.6895, "lng": 139.6917, "country": "JP"},
+    "大阪": {"lat": 34.6937, "lng": 135.5023, "country": "JP"},
+    "osaka": {"lat": 34.6937, "lng": 135.5023, "country": "JP"},
+    "京都": {"lat": 35.0116, "lng": 135.7681, "country": "JP"},
+    "kyoto": {"lat": 35.0116, "lng": 135.7681, "country": "JP"},
+    "北海道": {"lat": 43.0618, "lng": 141.3545, "country": "JP"},
+    "hokkaido": {"lat": 43.0618, "lng": 141.3545, "country": "JP"},
+    "札幌": {"lat": 43.0618, "lng": 141.3545, "country": "JP"},
+    "sapporo": {"lat": 43.0618, "lng": 141.3545, "country": "JP"},
+    "沖繩": {"lat": 26.2124, "lng": 127.6809, "country": "JP"},
+    "okinawa": {"lat": 26.2124, "lng": 127.6809, "country": "JP"},
+    "那霸": {"lat": 26.2124, "lng": 127.6809, "country": "JP"},
+    "naha": {"lat": 26.2124, "lng": 127.6809, "country": "JP"},
+    "石垣島": {"lat": 24.3407, "lng": 124.1556, "country": "JP"},
+    "ishigaki": {"lat": 24.3407, "lng": 124.1556, "country": "JP"},
+    "福岡": {"lat": 33.5904, "lng": 130.4017, "country": "JP"},
+    "fukuoka": {"lat": 33.5904, "lng": 130.4017, "country": "JP"},
+    "名古屋": {"lat": 35.1815, "lng": 136.9066, "country": "JP"},
+    "nagoya": {"lat": 35.1815, "lng": 136.9066, "country": "JP"},
+    "箱根": {"lat": 35.2324, "lng": 139.1069, "country": "JP"},
+    "hakone": {"lat": 35.2324, "lng": 139.1069, "country": "JP"},
+    "河口湖": {"lat": 35.4982, "lng": 138.7686, "country": "JP"},
+    "kawaguchiko": {"lat": 35.4982, "lng": 138.7686, "country": "JP"},
+    "金澤": {"lat": 36.5613, "lng": 136.6562, "country": "JP"},
+    "kanazawa": {"lat": 36.5613, "lng": 136.6562, "country": "JP"},
+    "廣島": {"lat": 34.3853, "lng": 132.4553, "country": "JP"},
+    "hiroshima": {"lat": 34.3853, "lng": 132.4553, "country": "JP"},
+    "神戶": {"lat": 34.6901, "lng": 135.1955, "country": "JP"},
+    "kobe": {"lat": 34.6901, "lng": 135.1955, "country": "JP"},
+    "奈良": {"lat": 34.6851, "lng": 135.8048, "country": "JP"},
+    "nara": {"lat": 34.6851, "lng": 135.8048, "country": "JP"},
+    "仙台": {"lat": 38.2682, "lng": 140.8694, "country": "JP"},
+    "sendai": {"lat": 38.2682, "lng": 140.8694, "country": "JP"},
+    "首爾": {"lat": 37.5665, "lng": 126.9780, "country": "KR"},
+    "seoul": {"lat": 37.5665, "lng": 126.9780, "country": "KR"},
+    "釜山": {"lat": 35.1796, "lng": 129.0756, "country": "KR"},
+    "busan": {"lat": 35.1796, "lng": 129.0756, "country": "KR"},
+    "濟州": {"lat": 33.4996, "lng": 126.5312, "country": "KR"},
+    "jeju": {"lat": 33.4996, "lng": 126.5312, "country": "KR"},
+    "曼谷": {"lat": 13.7563, "lng": 100.5018, "country": "TH"},
+    "bangkok": {"lat": 13.7563, "lng": 100.5018, "country": "TH"},
+    "清邁": {"lat": 18.7883, "lng": 98.9853, "country": "TH"},
+    "新加坡": {"lat": 1.3521, "lng": 103.8198, "country": "SG"},
+    "singapore": {"lat": 1.3521, "lng": 103.8198, "country": "SG"},
+    "香港": {"lat": 22.3193, "lng": 114.1694, "country": "HK"},
+    "hong kong": {"lat": 22.3193, "lng": 114.1694, "country": "HK"},
+    "巴黎": {"lat": 48.8566, "lng": 2.3522, "country": "FR"},
+    "paris": {"lat": 48.8566, "lng": 2.3522, "country": "FR"},
+    "倫敦": {"lat": 51.5074, "lng": -0.1278, "country": "GB"},
+    "london": {"lat": 51.5074, "lng": -0.1278, "country": "GB"},
+    "羅馬": {"lat": 41.9028, "lng": 12.4964, "country": "IT"},
+    "rome": {"lat": 41.9028, "lng": 12.4964, "country": "IT"},
+    "米蘭": {"lat": 45.4642, "lng": 9.1900, "country": "IT"},
+    "milan": {"lat": 45.4642, "lng": 9.1900, "country": "IT"},
+    "紐約": {"lat": 40.7128, "lng": -74.0060, "country": "US"},
+    "new york": {"lat": 40.7128, "lng": -74.0060, "country": "US"},
+    "雪梨": {"lat": -33.8688, "lng": 151.2093, "country": "AU"},
+    "sydney": {"lat": -33.8688, "lng": 151.2093, "country": "AU"},
+    "墨爾本": {"lat": -37.8136, "lng": 144.9631, "country": "AU"},
+    "melbourne": {"lat": -37.8136, "lng": 144.9631, "country": "AU"},
+}
+
+
 def extract_region_for_search(region: str) -> str:
-    """從 'Tokyo 東京' 或 '北海道5日遊' 提取乾淨的地域關鍵字 'Tokyo' 或 '北海道'"""
+    """
+    從中英文行程標題提取純淨的目的地詞組：
+    - '3 Day Taipei Explorer ✨' -> 'Taipei'
+    - '2026 東京自由行' -> '東京'
+    - 'Alice 東京行程' -> '東京'
+    - '7 Days in Cusco' -> 'Cusco'
+    """
     if not region:
         return ""
-    import re
-    # 移除常見行程後綴 (如 5日遊, 自由行, 之旅, 深度遊等)
-    clean = re.sub(r'(\d+日遊|\d+天\d+夜|自由行|之旅|極致之旅|深度遊|行程|冬日遊|夏日遊)$', '', region).strip()
-    parts = clean.split(" ")
-    return parts[0] if parts else clean
+    raw = str(region).strip()
+    raw_lower = raw.lower()
+
+    city_state_keys = {"新加坡", "singapore", "香港", "hong kong"}
+    country_only_names = (
+        {k.lower() for k in COUNTRY_NAME_TO_CODE.keys()}
+        | {k.lower() for k in GLOBAL_COUNTRY_TO_ISO.keys()}
+    ) - city_state_keys
+
+    # Stage 1: 優先精準匹配已知城市與次級區域關鍵字 (排除純國名，避免 '台灣台中一日遊' 或 'Peru Cusco' 被國名攔截)
+    city_candidates = list(GLOBAL_CITY_ANCHORS.keys())
+    for kws in LOCATION_KEYWORDS.values():
+        city_candidates.extend(k for k in kws if k.lower() not in country_only_names)
+    for kw in sorted(set(city_candidates), key=len, reverse=True):
+        kw_low = kw.lower()
+        if kw_low.isascii():
+            if len(kw_low) < 3:
+                continue
+            m = re.search(r'\b' + re.escape(kw_low) + r'\b', raw_lower)
+            if m:
+                return raw[m.start():m.end()]
+        else:
+            if len(kw_low) >= 2 and kw_low in raw_lower:
+                idx = raw_lower.find(kw_low)
+                return raw[idx:idx + len(kw)]
+
+    # Stage 2: 啟發式剝離天數、年份、人名所有格、旅遊後綴與 Emoji (適用全球未知冷門城市)
+    clean = re.sub(r'[^\w\s\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af-]', ' ', raw)
+    clean = re.sub(r'(?:19|20)\d{2}\s*年?', ' ', clean)
+    clean = re.sub(
+        r'((?:\d+|[一二三四五六七八九十百兩]+)\s*日遊|(?:\d+|[一二三四五六七八九十百兩]+)\s*天\d*[一二三四五六七八九十百兩]*\s*夜|(?:\d+|[一二三四五六七八九十百兩]+)\s*天|(?:\d+|[一二三四五六七八九十百兩]+)\s*日|自由行|之旅|極致之旅|深度遊|行程|冬日遊|夏日遊|攻略|漫遊|快閃|旅遊|旅行)',
+        ' ',
+        clean,
+    )
+    clean = re.sub(
+        r'\b(\d+\s*days?|\d+\s*nights?|\d+d\d*n|day\s*\d+|in|to|at|for|of|the|my|our|trip|travel|itinerary|explorer|adventure|vacation|tour|guide)\b',
+        ' ',
+        clean,
+        flags=re.IGNORECASE,
+    )
+    tokens = [t.strip() for t in clean.split() if t.strip() and not t.strip().isdigit()]
+    non_country_tokens = [t for t in tokens if t.lower() not in country_only_names]
+
+    # 若標題僅含純國名 (如 '2026 日本自由行'、'Alice 日本行程')，提取已知國名
+    country_candidates = [
+        k for k in country_only_names
+        if (not k.isascii() and len(k) >= 2) or (k.isascii() and len(k) >= 4)
+    ]
+    matched_country = ""
+    for kw_low in sorted(set(country_candidates), key=len, reverse=True):
+        if kw_low.isascii():
+            m = re.search(r'\b' + re.escape(kw_low) + r'\b', raw_lower)
+            if m:
+                matched_country = raw[m.start():m.end()]
+                break
+        else:
+            if kw_low in raw_lower:
+                idx = raw_lower.find(kw_low)
+                matched_country = raw[idx:idx + len(kw_low)]
+                break
+
+    if matched_country and (not non_country_tokens or (not matched_country.isascii() and all(t.isascii() for t in non_country_tokens))):
+        return matched_country
+
+    if non_country_tokens:
+        return non_country_tokens[-1]
+    return tokens[-1] if tokens else matched_country
+
+
+async def resolve_trip_spatial_anchor(
+    trip: Optional[Dict[str, Any]],
+    day_number: int = 1,
+    existing_items: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """
+    🌍 全球通用 4 層由近而遠動態空間錨點解析器 (4-Tier Dynamic Spatial Anchor)
+    優先級：
+      Tier 1: 當日明確設定之 daily_locations[day]
+      Tier 2: 當日既有景點座標中位數 (Same-Day Items Centroid)
+      Tier 3: 鄰近天數軌跡座標 (Sequential Trajectory: Day d-1, d+1...)
+      Tier 4: 行程標題動態目的地解析 (GLOBAL_CITY_ANCHORS 0ms ➔ smart_geocode_logic)
+    """
+    anchor_lat: Optional[float] = None
+    anchor_lng: Optional[float] = None
+    region_name: str = ""
+    inferred_country: Optional[str] = None
+
+    trip_dict = trip if isinstance(trip, dict) else {}
+    content = trip_dict.get("content") if isinstance(trip_dict.get("content"), dict) else {}
+    daily_locs = content.get("daily_locations") if isinstance(content.get("daily_locations"), dict) else {}
+
+    # Tier 1: 當日明確設定之 daily_locations[day]
+    day_loc = daily_locs.get(str(day_number)) or daily_locs.get(day_number)
+    day_segments: List[Dict[str, Any]] = []
+    if isinstance(day_loc, dict):
+        region_name = str(day_loc.get("name") or "").strip()
+        try:
+            if day_loc.get("lat") is not None and day_loc.get("lng") is not None:
+                lat_f, lng_f = float(day_loc["lat"]), float(day_loc["lng"])
+                if lat_f != 0.0 and lng_f != 0.0:
+                    anchor_lat, anchor_lng = lat_f, lng_f
+        except (ValueError, TypeError):
+            pass
+        raw_segs = day_loc.get("segments")
+        if isinstance(raw_segs, list):
+            for seg in raw_segs:
+                if isinstance(seg, dict):
+                    try:
+                        if seg.get("lat") is not None and seg.get("lng") is not None:
+                            slat, slng = float(seg["lat"]), float(seg["lng"])
+                            if -90.0 <= slat <= 90.0 and -180.0 <= slng <= 180.0 and (slat != 0.0 or slng != 0.0):
+                                day_segments.append({
+                                    "name": str(seg.get("name") or "").strip(),
+                                    "lat": slat,
+                                    "lng": slng,
+                                })
+                    except (ValueError, TypeError):
+                        pass
+
+    # Tier 2 & 3: 當日既有景點座標中位數 -> 鄰近天數軌跡座標
+    items = existing_items if isinstance(existing_items, list) else []
+    if anchor_lat is None or anchor_lng is None:
+        same_day_coords = []
+        other_day_coords = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            raw_lat = it.get("location_lat") if it.get("location_lat") is not None else it.get("lat")
+            raw_lng = it.get("location_lng") if it.get("location_lng") is not None else it.get("lng")
+            try:
+                if raw_lat is not None and raw_lng is not None:
+                    lat_f, lng_f = float(raw_lat), float(raw_lng)
+                    if -90.0 <= lat_f <= 90.0 and -180.0 <= lng_f <= 180.0 and (lat_f != 0.0 or lng_f != 0.0):
+                        it_day = int(it.get("day_number") or 1)
+                        if it_day == day_number:
+                            same_day_coords.append((lat_f, lng_f))
+                        else:
+                            other_day_coords.append((abs(it_day - day_number), lat_f, lng_f))
+            except (ValueError, TypeError):
+                continue
+
+        if same_day_coords:
+            s_lats = sorted(c[0] for c in same_day_coords)
+            s_lngs = sorted(c[1] for c in same_day_coords)
+            anchor_lat = s_lats[len(s_lats) // 2]
+            anchor_lng = s_lngs[len(s_lngs) // 2]
+        elif other_day_coords:
+            other_day_coords.sort(key=lambda x: x[0])
+            anchor_lat = other_day_coords[0][1]
+            anchor_lng = other_day_coords[0][2]
+
+    # Tier 4: 行程標題/目的地提取與 0ms 城市錨點查表
+    raw_dest_hint = str(trip_dict.get("destination") or "").strip()
+    trip_title = str(trip_dict.get("title") or "").strip()
+    if not region_name:
+        region_name = (
+            extract_region_for_search(raw_dest_hint)
+            or raw_dest_hint
+            or extract_region_for_search(trip_title)
+            or trip_title
+        )
+
+    if region_name:
+        city_hit = GLOBAL_CITY_ANCHORS.get(region_name) or GLOBAL_CITY_ANCHORS.get(region_name.lower())
+        if city_hit:
+            if anchor_lat is None or anchor_lng is None:
+                anchor_lat = city_hit["lat"]
+                anchor_lng = city_hit["lng"]
+            inferred_country = city_hit.get("country")
+
+    if not inferred_country:
+        inferred_country = (
+            detect_country_from_keywords(region_name)
+            or detect_country_from_keywords(raw_dest_hint)
+            or detect_country_from_keywords(trip_title)
+        )
+
+    # 若為全球未知城市且無既有座標，承接原 ai.py Step 1/Step 2 透過 smart_geocode_logic (含快取、Photon、Nominatim 備援與國碼推斷) 動態解析中心點
+    if (anchor_lat is None or anchor_lng is None) and region_name:
+        try:
+            dest_geo = await smart_geocode_logic(query=region_name, limit=1, country=inferred_country)
+            if dest_geo and dest_geo.get("results"):
+                first_dest = dest_geo["results"][0]
+                anchor_lat = first_dest.get("lat")
+                anchor_lng = first_dest.get("lng")
+                inferred_country = first_dest.get("country") or inferred_country
+        except Exception:
+            try:
+                photon_anchor = await geocode_with_photon(region_name, limit=1, country_code=inferred_country)
+                if photon_anchor and len(photon_anchor) > 0:
+                    anchor_lat = photon_anchor[0].get("lat")
+                    anchor_lng = photon_anchor[0].get("lng")
+            except Exception:
+                pass
+
+    # 若座標已知但尚未確定國家，從 COUNTRY_BOUNDS 反推所在國別
+    if anchor_lat is not None and anchor_lng is not None and not inferred_country:
+        for cc, b in COUNTRY_BOUNDS.items():
+            if b["lat_min"] <= anchor_lat <= b["lat_max"] and b["lng_min"] <= anchor_lng <= b["lng_max"]:
+                inferred_country = cc
+                break
+
+    bbox = None
+    if anchor_lat is not None and anchor_lng is not None:
+        min_lng = max(-180.0, anchor_lng - 0.8)
+        min_lat = max(-90.0, anchor_lat - 0.8)
+        max_lng = min(180.0, anchor_lng + 0.8)
+        max_lat = min(90.0, anchor_lat + 0.8)
+        bbox = f"{min_lng:.5f},{min_lat:.5f},{max_lng:.5f},{max_lat:.5f}"
+
+    return {
+        "lat": anchor_lat,
+        "lng": anchor_lng,
+        "region": region_name,
+        "country": inferred_country,
+        "bbox": bbox,
+        "trip_title": trip_title,
+        "segments": day_segments,
+    }
+
+
+def extract_all_regions_from_text(text: str) -> List[str]:
+    """
+    從自由文本、Markdown 標題或 Wizard XML (<destination>...</destination>) 中提取所有提及的目的地城市與區域。
+    支援單一城市（如 '台北 3 日遊' -> ['台北']）與跨城市行程（如 '東京、京都、大阪 6 日遊' -> ['東京', '京都', '大阪']）。
+    """
+    if not text:
+        return []
+    raw = str(text).strip()
+    m_xml = re.search(r"<destination>(.*?)</destination>", raw, flags=re.IGNORECASE | re.DOTALL)
+    target_segment = m_xml.group(1).strip() if m_xml else raw[:500]
+    seg_lower = target_segment.lower()
+
+    city_state_keys = {"新加坡", "singapore", "香港", "hong kong"}
+    country_only_names = (
+        {k.lower() for k in COUNTRY_NAME_TO_CODE.keys()}
+        | {k.lower() for k in GLOBAL_COUNTRY_TO_ISO.keys()}
+    ) - city_state_keys
+
+    city_candidates = list(GLOBAL_CITY_ANCHORS.keys())
+    for kws in LOCATION_KEYWORDS.values():
+        city_candidates.extend(k for k in kws if k.lower() not in country_only_names)
+
+    found_with_pos = []
+    seen_coords = set()
+    for kw in sorted(set(city_candidates), key=len, reverse=True):
+        kw_low = kw.lower()
+        pos = -1
+        matched_str = ""
+        if kw_low.isascii():
+            if len(kw_low) < 3:
+                continue
+            m = re.search(r"\b" + re.escape(kw_low) + r"\b", seg_lower)
+            if m:
+                pos = m.start()
+                matched_str = target_segment[m.start():m.end()]
+        else:
+            if len(kw_low) >= 2 and kw_low in seg_lower:
+                pos = seg_lower.find(kw_low)
+                matched_str = target_segment[pos:pos + len(kw)]
+        if pos >= 0 and matched_str:
+            anchor_info = GLOBAL_CITY_ANCHORS.get(matched_str) or GLOBAL_CITY_ANCHORS.get(matched_str.lower())
+            dedup_key = (round(anchor_info["lat"], 2), round(anchor_info["lng"], 2)) if anchor_info else matched_str.lower()
+            if dedup_key not in seen_coords:
+                seen_coords.add(dedup_key)
+                found_with_pos.append((pos, matched_str))
+
+    found_with_pos.sort(key=lambda x: x[0])
+    regions = [r for _, r in found_with_pos]
+    if not regions:
+        single = extract_region_for_search(target_segment)
+        if single:
+            regions = [single]
+    return regions
+
+
+async def resolve_prompt_spatial_anchor(
+    text: str = "",
+    trip: Optional[Dict[str, Any]] = None,
+    existing_items: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """
+    🌍 事前空間錨點解析器 (Pre-Generation Spatial Anchor Resolver)：
+    支援現有行程物件、Wizard XML <destination>、自由輸入 Prompt 與 Markdown 文本。
+    """
+    if isinstance(trip, dict) and (trip.get("id") or trip.get("title") or trip.get("content")):
+        base = await resolve_trip_spatial_anchor(trip, day_number=1, existing_items=existing_items)
+        regions = [base["region"]] if base.get("region") else []
+        combined_title_text = f"{trip.get('title') or ''} {trip.get('destination') or ''} {text or ''}".strip()
+        for extracted_r in extract_all_regions_from_text(combined_title_text):
+            if extracted_r and extracted_r not in regions:
+                regions.append(extracted_r)
+        content = trip.get("content") if isinstance(trip.get("content"), dict) else {}
+        daily_locs = content.get("daily_locations") if isinstance(content.get("daily_locations"), dict) else {}
+        for dl in daily_locs.values():
+            if isinstance(dl, dict):
+                if dl.get("name") and dl["name"] not in regions:
+                    regions.append(str(dl["name"]))
+                for seg in (dl.get("segments") or []):
+                    if isinstance(seg, dict) and seg.get("name") and seg["name"] not in regions:
+                        regions.append(str(seg["name"]))
+        city_anchors = []
+        seen_ca_names = set()
+        for r in regions:
+            hit = GLOBAL_CITY_ANCHORS.get(r) or GLOBAL_CITY_ANCHORS.get(r.lower())
+            if hit and r not in seen_ca_names:
+                seen_ca_names.add(r)
+                city_anchors.append({"name": r, "lat": hit["lat"], "lng": hit["lng"], "country": hit.get("country")})
+        for dl in daily_locs.values():
+            if isinstance(dl, dict):
+                for seg in (dl.get("segments") or []):
+                    if isinstance(seg, dict) and seg.get("name") and seg.get("lat") is not None and seg.get("lng") is not None:
+                        sname = str(seg["name"]).strip()
+                        if sname and sname not in seen_ca_names:
+                            try:
+                                slat, slng = float(seg["lat"]), float(seg["lng"])
+                                seen_ca_names.add(sname)
+                                city_anchors.append({"name": sname, "lat": slat, "lng": slng, "country": base.get("country")})
+                            except (ValueError, TypeError):
+                                pass
+        if not city_anchors and base.get("lat") is not None and base.get("lng") is not None:
+            city_anchors.append({"name": base.get("region") or "", "lat": base["lat"], "lng": base["lng"], "country": base.get("country")})
+        return {**base, "regions": regions, "city_anchors": city_anchors}
+
+    regions = extract_all_regions_from_text(text)
+    primary_region = regions[0] if regions else ""
+    city_anchors = []
+    for r in regions:
+        hit = GLOBAL_CITY_ANCHORS.get(r) or GLOBAL_CITY_ANCHORS.get(r.lower())
+        if hit:
+            city_anchors.append({"name": r, "lat": hit["lat"], "lng": hit["lng"], "country": hit.get("country")})
+
+    if primary_region:
+        try:
+            base = await asyncio.wait_for(
+                resolve_trip_spatial_anchor({"title": primary_region}, day_number=1, existing_items=existing_items),
+                timeout=1.5,
+            )
+        except Exception:
+            base = {"lat": None, "lng": None, "region": primary_region, "country": detect_country_from_keywords(primary_region), "bbox": None, "trip_title": primary_region}
+    else:
+        inferred_cc = detect_country_from_keywords(text[:300]) if text else None
+        base = {"lat": None, "lng": None, "region": "", "country": inferred_cc, "bbox": None, "trip_title": ""}
+
+    if not base.get("country") and text:
+        base["country"] = detect_country_from_keywords(text[:300])
+    if not city_anchors and base.get("lat") is not None and base.get("lng") is not None:
+        city_anchors.append({"name": base.get("region") or primary_region, "lat": base["lat"], "lng": base["lng"], "country": base.get("country")})
+
+    return {**base, "regions": regions, "city_anchors": city_anchors}
+
+
+def build_spatial_constraint_prompt(anchor: Optional[Dict[str, Any]]) -> str:
+    """
+    將事前解析出的空間錨點轉換為注入 Gemini System Instruction 的 <spatial_anchor_constraint> 強制規範區塊。
+    """
+    anc = anchor or {}
+    regions = anc.get("regions") or ([anc["region"]] if anc.get("region") else [])
+    country = anc.get("country")
+    lat = anc.get("lat")
+    lng = anc.get("lng")
+    c_bounds = COUNTRY_BOUNDS.get(country) if country else None
+
+    if len(regions) <= 1 and lat is not None and lng is not None:
+        min_lat, max_lat = max(-90.0, lat - 0.8), min(90.0, lat + 0.8)
+        min_lng, max_lng = max(-180.0, lng - 0.8), min(180.0, lng + 0.8)
+        bounds_desc = (
+            f"目標城市中心錨點為 ({lat:.4f}, {lng:.4f})，所有景點之 (lat, lng) 必須嚴格落於緯度 [{min_lat:.4f}, {max_lat:.4f}]、經度 [{min_lng:.4f}, {max_lng:.4f}] 範圍內"
+        )
+    elif c_bounds:
+        city_Hints = ", ".join(
+            f"{ca['name']}({ca['lat']:.4f},{ca['lng']:.4f})"
+            for ca in (anc.get("city_anchors") or [])
+            if ca.get("lat") is not None and ca.get("lng") is not None
+        )
+        bounds_desc = (
+            f"國界經緯度範圍為緯度 [{c_bounds['lat_min']:.4f}, {c_bounds['lat_max']:.4f}]、經度 [{c_bounds['lng_min']:.4f}, {c_bounds['lng_max']:.4f}]"
+            + (f"；各城市中心參考錨點：{city_Hints}" if city_Hints else "")
+        )
+    else:
+        bounds_desc = (
+            "請先由輸入內容識別目標國家與城市並填入頂層 `destination` 欄位，並在內部鎖定該城市的實際地理邊界後再輸出各景點座標"
+        )
+
+    region_label = "、".join(regions) if regions else "依輸入內容自動識別並鎖定之目標城市"
+    return (
+        f"\n### 📍 事前空間錨定強制約束 (<spatial_anchor_constraint>):\n"
+        f"1. **目標區域與國別**: {region_label} (Country ISO: {country or 'AUTO'})。\n"
+        f"2. **空間座標邊界約束**: {bounds_desc}。\n"
+        f"3. **同名地標強制消歧義**: 凡遇全球或跨城撞名地標（如「龍山寺」、「東照宮」、「中國城」、「故宮」），`place_name` 必須自動冠上所在城市或行政區前綴（例如在台北行程輸出「台北 艋舺龍山寺」），且其 (`lat`, `lng`) 必須嚴格位於該日所在城市邊界內，絕對禁止套用其他國家或城市的同名座標！\n"
+        f"4. **跨城與跨海轉場走廊規範 (Transit Corridor Rule)**: 若單日內包含跨城市高鐵/新幹線、長途火車、國內線航班或跨海渡輪移動，該交通項目必須標記 `category: \"transit\"`，且轉場前後之景點必須分別採用「出發城市」與「抵達城市」之真實座標，嚴禁將不同城市的景點壓縮至同一座標中心！\n"
+    )
+
+
+GLOBAL_TRANSIT_SPLIT_KEYWORDS = (
+    "新幹線", "高鐵", "高速鐵路", "飛往", "搭機", "航班", "國內線", "國際線",
+    "渡輪", "搭船", "快艇", "特急", "成田特快", "はるか", "haruka", "nex",
+    "shinkansen", "bullet train", "high-speed rail", "eurostar", "tgv",
+    "thalys", "ice train", "frecciarossa", "ave train", "ktx",
+    "flight to", "fly to", "ferry to", "airport", "機場", "空港",
+)
+TRANSIT_SPLIT_CATEGORIES = {
+    "transit", "transport", "transportation", "flight", "train", "ferry", "high_speed_rail",
+}
+
+
+def _is_transit_splitter_item(item: Dict[str, Any]) -> bool:
+    """判斷行程項目是否為跨城/跨海轉場交通橋接節點 (ReDoS-Free 常數時間檢測)。"""
+    if not isinstance(item, dict):
+        return False
+    cat = str(item.get("category") or "").strip().lower()
+    if cat in TRANSIT_SPLIT_CATEGORIES:
+        return True
+    combined = (
+        f"{item.get('place_name') or ''} "
+        f"{item.get('original_name') or ''} "
+        f"{item.get('notes') or ''} "
+        f"{item.get('desc') or ''}"
+    ).lower()
+    return any(kw in combined for kw in GLOBAL_TRANSIT_SPLIT_KEYWORDS)
+
+
+def _resolve_segment_region_name(
+    seg_lat: float,
+    seg_lng: float,
+    rep_names: List[str],
+    known_city_anchors: List[Dict[str, Any]],
+    default_region: str,
+    default_country: Optional[str],
+) -> tuple[str, Optional[str]]:
+    """
+    🌍 全球無字典動態走廊子群命名器 (Invariant 3 - Zero-Dictionary Dynamic Segment Naming)
+    優先級：
+      1. known_city_anchors (行程標題/Prompt/既有走廊已知城市 <= 60km)
+      2. GLOBAL_CITY_ANCHORS (優先非 ASCII 中文名，次選英文名 <= 60km)
+      3. LANDMARKS_DB (30km 內知名地標所屬城市或地標名稱)
+      4. 子群代表性景點詞元共現分析與 extract_region_for_search 動態提取 (支援秘魯 Lima -> Cusco 等冷門城市)
+    """
+    for ca in known_city_anchors:
+        if ca.get("lat") is not None and ca.get("lng") is not None:
+            if haversine_km(ca["lat"], ca["lng"], seg_lat, seg_lng) <= 60.0 and ca.get("name"):
+                return str(ca["name"]), ca.get("country") or default_country
+
+    best_city_name = ""
+    best_city_country = default_country
+    best_dist = 60.0
+    for cname, cinfo in GLOBAL_CITY_ANCHORS.items():
+        if cname.isascii():
+            continue
+        dist = haversine_km(cinfo["lat"], cinfo["lng"], seg_lat, seg_lng)
+        if dist <= best_dist:
+            best_dist = dist
+            best_city_name = cname
+            best_city_country = cinfo.get("country") or default_country
+    if best_city_name:
+        return best_city_name, best_city_country
+
+    for cname, cinfo in GLOBAL_CITY_ANCHORS.items():
+        dist = haversine_km(cinfo["lat"], cinfo["lng"], seg_lat, seg_lng)
+        if dist <= best_dist:
+            best_dist = dist
+            best_city_name = cname.title()
+            best_city_country = cinfo.get("country") or default_country
+    if best_city_name:
+        return best_city_name, best_city_country
+
+    # 3. LANDMARKS_DB (30km 內知名地標所屬城市或地標名稱)
+    best_lm_name = ""
+    best_lm_country = default_country
+    best_lm_dist = 30.0
+    for lm_key, lm_info in LANDMARKS_DB.items():
+        if not isinstance(lm_info, dict) or lm_info.get("lat") is None or lm_info.get("lng") is None:
+            continue
+        lm_country = lm_info.get("country")
+        if default_country and lm_country and lm_country.upper() != default_country.upper():
+            continue
+        dist = haversine_km(lm_info["lat"], lm_info["lng"], seg_lat, seg_lng)
+        if dist <= best_lm_dist:
+            best_lm_dist = dist
+            best_lm_name = extract_region_for_search(lm_info.get("display") or lm_key) or lm_info.get("display") or lm_key
+            best_lm_country = lm_country or default_country
+    if best_lm_name:
+        return best_lm_name, best_lm_country
+
+    # 從子群代表性景點名稱中提取共同城市詞元 (例如 ['Lima Plaza Mayor', 'Lima Miraflores'] -> 'Lima')
+    clean_reps = [str(r).strip() for r in rep_names if str(r).strip()]
+    if clean_reps:
+        token_counts: Dict[str, int] = {}
+        stop_words = {
+            "plaza", "park", "hotel", "station", "airport", "temple", "shrine",
+            "museum", "market", "tower", "castle", "bridge", "beach", "old", "street",
+            "the", "of", "de", "la", "el", "in", "at", "to", "and",
+        }
+        for rname in clean_reps:
+            extracted = extract_region_for_search(rname)
+            if extracted and extracted in GLOBAL_CITY_ANCHORS:
+                return extracted, default_country
+            words = re.findall(r"[A-Za-z\u4e00-\u9fff]{2,}", rname)
+            seen_in_item = set()
+            for w in words:
+                wl = w.lower()
+                if wl not in stop_words and wl not in seen_in_item:
+                    seen_in_item.add(wl)
+                    token_counts[w] = token_counts.get(w, 0) + 1
+        if token_counts:
+            best_token = max(token_counts.items(), key=lambda kv: (kv[1], len(kv[0])))[0]
+            if token_counts[best_token] >= 2 or len(clean_reps) == 1:
+                return best_token, default_country
+        first_extracted = extract_region_for_search(clean_reps[0])
+        if first_extracted:
+            return first_extracted, default_country
+        return clean_reps[0][:12], default_country
+
+    return default_region, default_country
+
+
+async def verify_and_heal_itinerary_coords(
+    items: List[Dict[str, Any]],
+    trip_meta: Optional[Dict[str, Any]] = None,
+    pre_anchor: Optional[Dict[str, Any]] = None,
+    existing_items: Optional[List[Dict[str, Any]]] = None,
+) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """
+    🛡️ 事後逐日空間錨點校驗與非破壞性自癒引擎 (Post-Generation Spatial Guard & Non-Destructive Healer)
+    - 支援單一城市與跨城市/跨國多日行程（自動推算並回傳 daily_locations）
+    - 保留真實 Google Maps URL 直解座標 (_url_verified) 與合法範圍內的 AI 座標（0 額外請求）
+    - 自動攔截跨國越界、撞名地標漂移 (> 50km) 與跨區離群 (> 180km) 幻覺座標
+    - 非破壞性兜底：若 OSM 查無結果或超時，跨國/撞名幻覺座標自動退回當日城市中心錨點，絕不留錯誤座標或 None
+    """
+    meta = trip_meta if isinstance(trip_meta, dict) else {}
+    raw_dest = str(meta.get("destination") or meta.get("title") or "").strip()
+    post_anchor = await resolve_prompt_spatial_anchor(
+        raw_dest,
+        trip=meta if (meta.get("id") or meta.get("content")) else None,
+        existing_items=existing_items,
+    )
+
+    base_anchor = post_anchor if (post_anchor.get("lat") is not None or post_anchor.get("country")) else (pre_anchor or post_anchor)
+    if pre_anchor and pre_anchor.get("lat") is not None and post_anchor.get("lat") is None:
+        base_anchor = pre_anchor
+
+    target_country = base_anchor.get("country") or (pre_anchor or {}).get("country")
+
+    known_city_anchors: List[Dict[str, Any]] = []
+    seen_names = set()
+    for src in (pre_anchor or {}, post_anchor or {}):
+        for ca in (src.get("city_anchors") or []):
+            if ca.get("name") and ca["name"] not in seen_names and ca.get("lat") is not None:
+                seen_names.add(ca["name"])
+                known_city_anchors.append(ca)
+
+    allowed_countries = {
+        cc
+        for cc in ([target_country, (pre_anchor or {}).get("country"), (post_anchor or {}).get("country")] + [ca.get("country") for ca in known_city_anchors])
+        if cc
+    }
+    allowed_bounds = [COUNTRY_BOUNDS[cc] for cc in allowed_countries if cc in COUNTRY_BOUNDS]
+
+    def _extract_coord(obj: Dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
+        rlat = obj.get("lat") if obj.get("lat") is not None else obj.get("location_lat")
+        rlng = obj.get("lng") if obj.get("lng") is not None else obj.get("location_lng")
+        try:
+            if rlat is not None and rlng is not None and str(rlat).strip().lower() not in ("none", "null", "n/a", ""):
+                f_lat, f_lng = float(rlat), float(rlng)
+                if -90.0 <= f_lat <= 90.0 and -180.0 <= f_lng <= 180.0 and (f_lat != 0.0 or f_lng != 0.0) and not math.isnan(f_lat) and not math.isnan(f_lng):
+                    return f_lat, f_lng
+        except (ValueError, TypeError):
+            pass
+        return None, None
+
+    def _in_country(lat_v: float, lng_v: float) -> bool:
+        if not allowed_bounds:
+            return True
+        return any(
+            (b["lat_min"] <= lat_v <= b["lat_max"]) and (b["lng_min"] <= lng_v <= b["lng_max"])
+            for b in allowed_bounds
+        )
+
+    HOMONYM_GUARD_KEYS = ("龍山寺", "東照宮", "中國城", "中華街", "故宮", "天后宮", "媽祖廟", "文武廟")
+
+    def _in_country_or_border(lat_v: float, lng_v: float, is_homonym: bool = False) -> bool:
+        if _in_country(lat_v, lng_v):
+            return True
+        if (
+            not is_homonym
+            and base_anchor.get("lat") is not None
+            and base_anchor.get("lng") is not None
+            and haversine_km(base_anchor["lat"], base_anchor["lng"], lat_v, lng_v) <= 80.0
+        ):
+            return True
+        return False
+
+    content = meta.get("content") if isinstance(meta.get("content"), dict) else {}
+    raw_daily_locs = meta.get("daily_locations") or content.get("daily_locations") or {}
+    daily_locations: Dict[str, Dict[str, Any]] = {}
+    if isinstance(raw_daily_locs, dict):
+        for k, v in raw_daily_locs.items():
+            if isinstance(v, dict):
+                dl_lat, dl_lng = _extract_coord(v)
+                dl_name = str(v.get("name") or "")
+                is_dl_homonym = any(hk in dl_name for hk in HOMONYM_GUARD_KEYS)
+                if dl_lat is not None and dl_lng is not None and _in_country_or_border(dl_lat, dl_lng, is_homonym=is_dl_homonym):
+                    daily_locations[str(k)] = dict(v)
+
+    # Step A: 建立每一天的動態空間錨點 day_anchors 與時序走廊子群 item_segment_map
+    ACTION_NOISE_KEYWORDS = ("集合", "搭乘", "休息", "抵達", "出發", "退稅", "check-in", "check-out")
+    all_days = sorted({int(it.get("day_number") or it.get("day") or 1) for it in items if isinstance(it, dict)} or {1})
+    day_anchors: Dict[int, Dict[str, Any]] = {}
+    item_segment_map: Dict[int, Dict[str, Any]] = {}
+
+    def _make_bbox(lat_v: float, lng_v: float) -> str:
+        min_lng, min_lat = max(-180.0, lng_v - 0.8), max(-90.0, lat_v - 0.8)
+        max_lng, max_lat = min(180.0, lng_v + 0.8), min(90.0, lat_v + 0.8)
+        return f"{min_lng:.5f},{min_lat:.5f},{max_lng:.5f},{max_lat:.5f}"
+
+    for d_num in all_days:
+        d_key = str(d_num)
+        explicit_dl = daily_locations.get(d_key)
+        if isinstance(explicit_dl, dict):
+            dl_lat, dl_lng = _extract_coord(explicit_dl)
+            dl_name = str(explicit_dl.get("name") or "")
+            is_dl_homonym = any(hk in dl_name for hk in HOMONYM_GUARD_KEYS)
+            if dl_lat is not None and dl_lng is not None and _in_country_or_border(dl_lat, dl_lng, is_homonym=is_dl_homonym):
+                parsed_segs: List[Dict[str, Any]] = []
+                raw_segs = explicit_dl.get("segments")
+                if isinstance(raw_segs, list):
+                    for seg in raw_segs:
+                        if isinstance(seg, dict):
+                            slat, slng = _extract_coord(seg)
+                            sname = str(seg.get("name") or "").strip()
+                            is_s_homonym = any(hk in sname for hk in HOMONYM_GUARD_KEYS)
+                            if slat is not None and slng is not None and _in_country_or_border(slat, slng, is_homonym=is_s_homonym):
+                                parsed_segs.append({
+                                    "lat": slat,
+                                    "lng": slng,
+                                    "region": sname or str(explicit_dl.get("name") or base_anchor.get("region") or ""),
+                                    "country": target_country,
+                                    "bbox": _make_bbox(slat, slng),
+                                })
+                day_anchors[d_num] = {
+                    "lat": dl_lat,
+                    "lng": dl_lng,
+                    "region": str(explicit_dl.get("name") or base_anchor.get("region") or ""),
+                    "country": target_country,
+                    "bbox": _make_bbox(dl_lat, dl_lng),
+                    "segments": parsed_segs,
+                }
+                continue
+            else:
+                daily_locations.pop(d_key, None)
+
+        # 收集當日既有項目與新項目中位於目標國境內的座標
+        existing_day_coords = []
+        for ex in (existing_items or []):
+            if isinstance(ex, dict) and int(ex.get("day_number") or 1) == d_num:
+                elat, elng = _extract_coord(ex)
+                if elat is not None and elng is not None and _in_country(elat, elng):
+                    existing_day_coords.append((elat, elng))
+
+        day_items = [
+            it for it in items
+            if isinstance(it, dict) and int(it.get("day_number") or it.get("day") or 1) == d_num
+        ]
+        has_day_transit = any(_is_transit_splitter_item(it) for it in day_items)
+
+        # Step A.1: 預掃描當日所有國境內合法點，計算局部群聚密度支撐 (Invariant 1: MinPts >= 2)
+        in_country_records = []
+        for idx_i, it in enumerate(day_items):
+            ilat, ilng = _extract_coord(it)
+            pname = str(it.get("place_name") or it.get("original_name") or "").strip()
+            is_transit = _is_transit_splitter_item(it)
+            is_noise = (not is_transit) and any(noise in pname.lower() for noise in ACTION_NOISE_KEYWORDS)
+            is_homonym = any(hk in pname for hk in HOMONYM_GUARD_KEYS)
+            if ilat is not None and ilng is not None and not is_noise and _in_country(ilat, ilng):
+                in_country_records.append((idx_i, ilat, ilng, is_homonym, is_transit, pname))
+
+        trusted_item_coords: Dict[int, tuple[float, float, str]] = {}
+        for idx_i, ilat, ilng, is_homonym, is_transit, pname in in_country_records:
+            peers = [
+                (olat, olng, ohom)
+                for _, olat, olng, ohom, _, _ in in_country_records
+                if haversine_km(ilat, ilng, olat, olng) <= 60.0
+            ]
+            non_homonym_peers = sum(1 for _, _, ohom in peers if not ohom)
+            has_local_density = len(peers) >= 2 and non_homonym_peers >= 1
+            matches_known_city = any(
+                haversine_km(ca["lat"], ca["lng"], ilat, ilng) <= 60.0
+                for ca in known_city_anchors
+                if ca.get("lat") is not None and ca.get("lng") is not None
+            )
+
+            # Invariant 1 防幻覺分裂與離群過濾：
+            # 若單一城市錨點已明確存在，僅當具備局部多點密度 (MinPts>=2) 或顯式轉場走廊時，才豁免 >50km/180km 單點過濾
+            if len(known_city_anchors) == 1 and base_anchor.get("lat") is not None:
+                dist_base = haversine_km(base_anchor["lat"], base_anchor["lng"], ilat, ilng)
+                if is_homonym and dist_base > 50.0 and not has_local_density:
+                    continue
+                if dist_base > 180.0 and not (has_local_density or has_day_transit):
+                    continue
+            trusted_item_coords[idx_i] = (ilat, ilng, pname)
+
+        # Step A.2: 時序多段分割 ($K$-Partitioning)
+        raw_segments: List[Dict[str, Any]] = [{"item_objs": [], "coords": [], "rep_names": []}]
+        for idx_i, it in enumerate(day_items):
+            is_transit = _is_transit_splitter_item(it)
+            t_coord = trusted_item_coords.get(idx_i)
+            curr_seg = raw_segments[-1]
+
+            if t_coord is not None and curr_seg["coords"]:
+                ilat, ilng, pname = t_coord
+                s_lats = sorted(c[0] for c in curr_seg["coords"])
+                s_lngs = sorted(c[1] for c in curr_seg["coords"])
+                seg_med_lat = s_lats[len(s_lats) // 2]
+                seg_med_lng = s_lngs[len(s_lngs) // 2]
+                jump_km = haversine_km(seg_med_lat, seg_med_lng, ilat, ilng)
+
+                # Invariant 1: 距離跳躍 > 80km 且該新位置已通過 trusted_item_coords 支撐檢驗 -> 觸發子群切分
+                if jump_km > 80.0:
+                    curr_seg = {"item_objs": [], "coords": [], "rep_names": []}
+                    raw_segments.append(curr_seg)
+
+            curr_seg["item_objs"].append(it)
+            if t_coord is not None:
+                curr_seg["coords"].append((t_coord[0], t_coord[1]))
+                if not is_transit:
+                    curr_seg["rep_names"].append(t_coord[2])
+
+        # Step A.3: 計算各子群獨立中位數錨點與無字典動態命名 (Invariant 3)
+        built_segments: List[Dict[str, Any]] = []
+        for seg in raw_segments:
+            seg_pool = seg["coords"] if seg["coords"] else existing_day_coords
+            if not seg_pool:
+                continue
+            s_lats = sorted(c[0] for c in seg_pool)
+            s_lngs = sorted(c[1] for c in seg_pool)
+            med_lat = s_lats[len(s_lats) // 2]
+            med_lng = s_lngs[len(s_lngs) // 2]
+            seg_region, seg_country = _resolve_segment_region_name(
+                med_lat,
+                med_lng,
+                seg["rep_names"],
+                known_city_anchors,
+                base_anchor.get("region") or raw_dest or "",
+                target_country,
+            )
+            seg_anchor_dict = {
+                "lat": med_lat,
+                "lng": med_lng,
+                "region": seg_region,
+                "country": seg_country or target_country,
+                "bbox": _make_bbox(med_lat, med_lng),
+                "item_objs": seg["item_objs"],
+            }
+            built_segments.append(seg_anchor_dict)
+
+        if len(built_segments) >= 2:
+            for seg_anc in built_segments:
+                for it_obj in seg_anc["item_objs"]:
+                    item_segment_map[id(it_obj)] = seg_anc
+
+            # 預設主錨點取當日最終抵達城市 (向後相容舊前端地圖居中)
+            primary_seg = built_segments[-1]
+            d_lat, d_lng = primary_seg["lat"], primary_seg["lng"]
+            d_country = primary_seg["country"]
+            dedup_names: List[str] = []
+            for s in built_segments:
+                sname = s["region"] or raw_dest or "中心區域"
+                if not dedup_names or dedup_names[-1] != sname:
+                    dedup_names.append(sname)
+            corridor_label = " → ".join(dedup_names) if len(dedup_names) >= 2 else (dedup_names[0] if dedup_names else "中心區域")
+            d_region = corridor_label
+            bbox_str = _make_bbox(d_lat, d_lng)
+
+            if d_key not in daily_locations:
+                daily_locations[d_key] = {
+                    "name": corridor_label,
+                    "lat": round(d_lat, 4),
+                    "lng": round(d_lng, 4),
+                    "type": "transit_corridor",
+                    "segments": [
+                        {
+                            "name": s["region"] or raw_dest or "中心區域",
+                            "lat": round(s["lat"], 4),
+                            "lng": round(s["lng"], 4),
+                        }
+                        for s in built_segments
+                    ],
+                }
+            day_anchors[d_num] = {
+                "lat": d_lat,
+                "lng": d_lng,
+                "region": d_region,
+                "country": d_country,
+                "bbox": bbox_str,
+                "segments": built_segments,
+            }
+        else:
+            candidate_day_coords = [(c[0], c[1]) for c in trusted_item_coords.values()]
+            pool = existing_day_coords if existing_day_coords else candidate_day_coords
+            d_lat, d_lng = base_anchor.get("lat"), base_anchor.get("lng")
+            d_region = base_anchor.get("region") or ""
+            d_country = target_country
+
+            if pool:
+                s_lats = sorted(c[0] for c in pool)
+                s_lngs = sorted(c[1] for c in pool)
+                med_lat = s_lats[len(s_lats) // 2]
+                med_lng = s_lngs[len(s_lngs) // 2]
+                matched_city = None
+                for ca in known_city_anchors:
+                    if haversine_km(ca["lat"], ca["lng"], med_lat, med_lng) <= 80.0:
+                        matched_city = ca
+                        break
+                if matched_city:
+                    d_lat, d_lng = med_lat, med_lng
+                    d_region = matched_city["name"]
+                    if matched_city.get("country"):
+                        d_country = matched_city["country"]
+                elif len(pool) >= 2 or d_lat is None:
+                    d_lat, d_lng = med_lat, med_lng
+                    for cname, cinfo in GLOBAL_CITY_ANCHORS.items():
+                        if cname.isascii():
+                            continue
+                        if haversine_km(cinfo["lat"], cinfo["lng"], d_lat, d_lng) <= 60.0:
+                            d_region = cname
+                            if cinfo.get("country"):
+                                d_country = cinfo["country"]
+                            break
+
+            bbox_str = _make_bbox(d_lat, d_lng) if (d_lat is not None and d_lng is not None) else None
+            if d_lat is not None and d_lng is not None and d_key not in daily_locations:
+                daily_locations[d_key] = {
+                    "name": d_region or raw_dest or "中心區域",
+                    "lat": round(d_lat, 4),
+                    "lng": round(d_lng, 4),
+                    "type": "stay",
+                }
+
+            day_anchors[d_num] = {
+                "lat": d_lat,
+                "lng": d_lng,
+                "region": d_region,
+                "country": d_country,
+                "bbox": bbox_str,
+                "segments": built_segments,
+            }
+
+    # Step B & C: 逐項座標驗證與非破壞性自癒
+    sem = asyncio.Semaphore(10)
+
+    async def _verify_and_heal_single(item: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(item, dict):
+            return item
+        if item.pop("_url_verified", False):
+            return item
+
+        d_num = int(item.get("day_number") or item.get("day") or 1)
+        day_anc_root = day_anchors.get(d_num) or base_anchor
+        d_segs = day_anc_root.get("segments") or []
+        ilat, ilng = _extract_coord(item)
+
+        # Invariant 4: 優先取時序子群錨點；若為二次讀取之走廊日，依現有座標匹配最近之合法 segment 錨點
+        d_anc = item_segment_map.get(id(item))
+        if d_anc is None:
+            if len(d_segs) >= 2 and ilat is not None and ilng is not None:
+                d_anc = min(
+                    d_segs,
+                    key=lambda s: haversine_km(s["lat"], s["lng"], ilat, ilng)
+                    if (s.get("lat") is not None and s.get("lng") is not None)
+                    else float("inf"),
+                )
+            elif len(d_segs) == 1:
+                d_anc = d_segs[0]
+            else:
+                d_anc = day_anc_root
+
+        has_location_keys = ("location_lat" in item or "location_lng" in item) and ("lat" not in item)
+
+        def _set_coords(new_lat: Optional[float], new_lng: Optional[float]) -> None:
+            if has_location_keys:
+                item["location_lat"] = new_lat
+                item["location_lng"] = new_lng
+            else:
+                item["lat"] = new_lat
+                item["lng"] = new_lng
+                if "location_lat" in item:
+                    item["location_lat"] = new_lat
+                if "location_lng" in item:
+                    item["location_lng"] = new_lng
+
+        place_name = str(item.get("place_name") or item.get("original_name") or "").strip()
+        is_transit_item = _is_transit_splitter_item(item)
+
+        # Invariant 2: 交通橋接節點 vs 純動作雜訊精準分流
+        if not place_name or (not is_transit_item and any(noise in place_name.lower() for noise in ACTION_NOISE_KEYWORDS)):
+            if ilat is None or ilng is None or not _in_country(ilat, ilng):
+                _set_coords(None, None)
+            elif d_anc.get("lat") is not None and d_anc.get("lng") is not None and haversine_km(d_anc["lat"], d_anc["lng"], ilat, ilng) > 180.0:
+                _set_coords(None, None)
+            return item
+
+        is_homonym_place = any(hk in place_name for hk in HOMONYM_GUARD_KEYS)
+        reason = None
+        if ilat is None or ilng is None:
+            reason = "missing"
+        elif not _in_country(ilat, ilng):
+            # 允許邊境城市當日跨境順遊 (如日內瓦->霞慕尼 64km、新加坡->新山 18km)，但嚴格攔截 >80km 跨國幻覺與撞名地標
+            if (
+                not is_homonym_place
+                and d_anc.get("lat") is not None
+                and d_anc.get("lng") is not None
+                and haversine_km(d_anc["lat"], d_anc["lng"], ilat, ilng) <= 80.0
+            ):
+                reason = None
+            else:
+                reason = "out_of_country"
+        elif d_anc.get("lat") is not None and d_anc.get("lng") is not None:
+            dist_day = haversine_km(d_anc["lat"], d_anc["lng"], ilat, ilng)
+            min_dist_city = min(
+                [dist_day]
+                + [
+                    haversine_km(ca["lat"], ca["lng"], ilat, ilng)
+                    for ca in known_city_anchors
+                    if ca.get("lat") is not None and ca.get("lng") is not None
+                ]
+                + [
+                    haversine_km(s["lat"], s["lng"], ilat, ilng)
+                    for s in d_segs
+                    if s.get("lat") is not None and s.get("lng") is not None
+                ]
+            )
+            if is_homonym_place and dist_day > 50.0:
+                reason = "homonym_drift"
+            elif min_dist_city > 180.0:
+                reason = "spatial_outlier"
+
+        if reason is None:
+            _set_coords(ilat, ilng)
+            return item
+
+        healed_lat, healed_lng = None, None
+        async with sem:
+            try:
+                geo_res = await asyncio.wait_for(
+                    smart_geocode_logic(
+                        query=place_name,
+                        limit=1,
+                        trip_title=str(meta.get("title") or raw_dest or ""),
+                        region=d_anc.get("region"),
+                        lat=d_anc.get("lat"),
+                        lng=d_anc.get("lng"),
+                        country=d_anc.get("country"),
+                        bbox=d_anc.get("bbox"),
+                    ),
+                    timeout=2.5,
+                )
+                if geo_res and geo_res.get("results"):
+                    first_match = geo_res["results"][0]
+                    healed_lat = first_match.get("lat")
+                    healed_lng = first_match.get("lng")
+            except Exception as e:
+                print(f"⚠️ [Spatial Healer] Geocode fallback for '{place_name}' ({reason}): {e}")
+
+        if healed_lat is not None and healed_lng is not None:
+            _set_coords(healed_lat, healed_lng)
+        elif (
+            reason in ("out_of_country", "homonym_drift", "spatial_outlier")
+            or (reason == "missing" and is_transit_item)
+        ) and d_anc.get("lat") is not None and d_anc.get("lng") is not None:
+            # 非破壞性兜底：當確認原座標為跨國/撞名幻覺，或為無座標之跨城交通橋接節點 (Invariant 2)，退回所屬子群中心錨點
+            _set_coords(d_anc["lat"], d_anc["lng"])
+        else:
+            _set_coords(ilat, ilng)
+
+        return item
+
+    healed_items = await asyncio.gather(*[_verify_and_heal_single(it) for it in items])
+    return list(healed_items), daily_locations
+
 
 async def smart_geocode_logic(
     query: str, 
     limit: int, 
-    trip_title: str = None, 
-    api_key: str = None, 
-    lat: float = None, 
-    lng: float = None,
-    country: str = None,    # 🆕 前端傳入的國家過濾
-    region: str = None,     # 🆕 前端傳入的區域過濾
-    zoom: float = None,     # 🆕 P1: 地圖縮放層級 (用於動態 bias)
-    bbox: str = None        # 🆕 P2: 地圖視窗邊界 (minLon,minLat,maxLon,maxLat)
+    trip_title: Optional[str] = None, 
+    api_key: Optional[str] = None, 
+    lat: Optional[float] = None, 
+    lng: Optional[float] = None,
+    country: Optional[str] = None,    # 🆕 前端傳入的國家過濾
+    region: Optional[str] = None,     # 🆕 前端傳入的區域過濾
+    zoom: Optional[float] = None,     # 🆕 P1: 地圖縮放層級 (用於動態 bias)
+    bbox: Optional[str] = None        # 🆕 P2: 地圖視窗邊界 (minLon,minLat,maxLon,maxLat)
 ) -> dict:
     log_debug(f"🌍 [SmartGeo] 啟動多層檢索: '{query}' (Trip: {trip_title or '無'}, 偏置: {lat},{lng})")
     log_debug(f"🔍 [SmartGeo] Start search: '{query}' (Trip: {trip_title}, Country: {country}, Region: {region}, Zoom: {zoom}, Bias: {lat},{lng})")
@@ -1943,11 +3033,18 @@ async def smart_geocode_logic(
     landmark_result = translate_famous_landmark(query, country_code)
     search_terms, display_name, landmark_data = landmark_result
     
-    # 🚀 INSTANT RETURN: 如果景點有座標且國家相符，直接回傳，完全跳過 API 調用
+    # 🚀 INSTANT RETURN: 如果景點有座標且國家與空間錨點相符，直接回傳，完全跳過 API 調用
     landmark_country = (landmark_data.get("country") or "").upper() if landmark_data else ""
+    effective_target_cc = (api_country_lock or country_code or "").upper()
     country_matches = True
-    if api_country_lock and landmark_country:
-        country_matches = (landmark_country == api_country_lock.upper())
+    if effective_target_cc and landmark_country:
+        country_matches = (landmark_country == effective_target_cc)
+
+    # 🛡️ 空間錨點距離守衛：若已提供行程錨點 (lat, lng)，且地標距離當前行程錨點超過 80km，嚴禁秒回跨國/跨城同名地標
+    if landmark_data and landmark_data.get("lat") and landmark_data.get("lng") and lat is not None and lng is not None:
+        if haversine_km(lat, lng, landmark_data["lat"], landmark_data["lng"]) > 80.0:
+            country_matches = False
+            display_name = None
 
     if landmark_data and landmark_data.get("lat") and landmark_data.get("lng") and country_matches:
         instant_result = {
@@ -2049,8 +3146,8 @@ async def smart_geocode_logic(
             log_debug(f"   🧹 Pre-filter: {len(all_results)} → {len(pre_filtered)} (strict={is_strict})")
             all_results = pre_filtered
 
-    # 限定結果數量 (國名搜尋時放寬席位，避免被在地店家擠掉)
-    effective_limit = limit * 2 if user_explicit_country else limit
+    # 限定候選池數量 (當 limit=1 時，仍收集至少 5 筆候選讓 Photon + Nominatim 共同進入 rerank_top_k 距離重排)
+    effective_limit = max(limit * 3, 5) if (lat is not None and lng is not None) else (limit * 2 if user_explicit_country else limit)
     
     nominatim_calls = 0  # 🆕 P0: Nominatim 呼叫計數器（遵守 1req/s 政策，最多 2 次）
     
@@ -2062,18 +3159,23 @@ async def smart_geocode_logic(
         # 但 Nominatim 對「所有查詢」執行，因為 Nominatim 的 CJK 能力遠優於 Photon
         if q != query:
             # Photon (🆕 P1: 傳遞 zoom 用於動態 bias scale, 傳遞 bbox)
-            photon = await geocode_with_photon(q, limit, lat, lng, zoom, country_code=api_country_lock, bbox=bbox)
+            photon = await geocode_with_photon(q, max(limit, 3), lat, lng, zoom, country_code=api_country_lock, bbox=bbox)
             if photon:
                 for r in photon: r["source"] = "photon"
                 all_results.extend(photon)
                 found_source = "photon"
 
-        # Nominatim（所有查詢都執行，包括原始中文查詢）
+        # Nominatim（所有查詢都執行，包括原始中文查詢，並帶入空間錨點 viewbox）
         if nominatim_calls < 2:
             try:
                 async with httpx.AsyncClient(timeout=3.0) as client:
-                    params = {"q": q, "format": "json", "limit": limit, "addressdetails": 1}
-                    if api_country_lock: params["countrycodes"] = api_country_lock.lower()
+                    params = {"q": q, "format": "json", "limit": max(limit, 3), "addressdetails": 1}
+                    if api_country_lock:
+                        params["countrycodes"] = api_country_lock.lower()
+                    if bbox:
+                        clean_vb = sanitize_bbox(bbox)
+                        if clean_vb:
+                            params["viewbox"] = clean_vb
                     res = await client.get("https://nominatim.openstreetmap.org/search", params=params, headers={
                         "User-Agent": "RyanTravelApp/3.0 (contact@ryantravel.app)",
                         "Accept-Language": "zh-TW,zh,en"  # 🆕 P0: 確保中文結果優先回傳

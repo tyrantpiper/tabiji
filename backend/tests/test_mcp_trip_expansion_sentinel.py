@@ -208,7 +208,10 @@ def test_sentinel_poc_manage_itinerary_node_coordinate_sanity_defense():
             t.execute.return_value = mock_member_data
         elif table_name == "itinerary_items":
             t.execute.return_value = mock_items_data
-            t.insert.side_effect = lambda rec: MagicMock(execute=lambda: inserted_records.append(rec) or MagicMock(data=[rec]))
+            t.insert.side_effect = lambda rec: MagicMock(
+                execute=lambda: (inserted_records.extend(rec) if isinstance(rec, list) else inserted_records.append(rec))
+                or MagicMock(data=rec if isinstance(rec, list) else [rec])
+            )
         return t
 
     mock_supabase.table.side_effect = mock_table_exec
@@ -275,7 +278,10 @@ def test_benign_single_place_addition():
             t.execute.return_value = MagicMock(data=[])
         elif table_name == "itinerary_items":
             t.execute.return_value = MagicMock(data=[])
-            t.insert.side_effect = lambda rec: MagicMock(execute=lambda: inserted_records.append(rec) or MagicMock(data=[rec]))
+            t.insert.side_effect = lambda rec: MagicMock(
+                execute=lambda: (inserted_records.extend(rec) if isinstance(rec, list) else inserted_records.append(rec))
+                or MagicMock(data=rec if isinstance(rec, list) else [rec])
+            )
         return t
 
     mock_supabase.table.side_effect = mock_table_exec
@@ -332,5 +338,5 @@ def test_benign_recommend_tickets():
         data = resp.json()
         text = data["result"]["content"][0]["text"]
         assert "東京晴空塔" in text
-        assert "https://tabiji.app/go/klook/" in text
+        assert "https://tp.media/r?marker=602410&p=4110&u=" in text
 

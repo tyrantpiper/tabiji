@@ -96,7 +96,7 @@ def get_supabase(request: Request = None) -> Client:
 
 async def get_verified_user(
     request: Request = None,
-    auth_header: str = Header(None, alias="Authorization")
+    auth_header: Optional[str] = Header(None, alias="Authorization")
 ) -> str:
     """
     🛡️ 嚴格密碼學身分驗證依賴 (JWT-Only)

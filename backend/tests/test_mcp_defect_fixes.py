@@ -386,20 +386,20 @@ def test_option_a_owner_only_privacy_filtering():
 
 
 def test_def09_affiliate_query_and_uuid_fallback():
-    """DEF-09: 驗證 /go/klook 缺乏 target_id 但有 query，或傳入 trip UUID 時，跳轉目標為合法的 Klook 完整網址"""
-    # 1. 僅有 query (?item=晴空塔) -> 必須回退至官方首頁並附帶 query
+    """DEF-09: 驗證 /go/klook 缺乏 target_id 但有 query，或傳入 trip UUID 時，跳轉目標為合法的 Travelpayouts Klook 完整網址"""
+    # 1. 僅有 query (?item=晴空塔) -> 必須導向 Travelpayouts Klook (p=4110) 並附帶搜尋詞
     resp1 = client.get("/go/klook?item=晴空塔", follow_redirects=False)
     assert resp1.status_code == 302
     loc1 = resp1.headers["location"]
-    assert "https://affiliate.klook.com/jump?aff_id=TABIJI_AFF_888&target=https://www.klook.com/zh-TW/" in loc1
-    assert "item=" in loc1
+    assert loc1.startswith("https://tp.media/r?marker=602410&p=4110&u=")
+    assert "klook.com" in loc1
 
-    # 2. 傳入 Tabiji trip UUID -> 必須回退至官方首頁，避免 Klook 端點 404
+    # 2. 傳入 Tabiji trip UUID -> 必須忽略 UUID 並導向 Klook 搜尋頁，避免 Klook 端點 404
     resp2 = client.get(f"/go/klook/{TRIP_ID}?item=淺草寺", follow_redirects=False)
     assert resp2.status_code == 302
     loc2 = resp2.headers["location"]
-    assert "https://affiliate.klook.com/jump?aff_id=TABIJI_AFF_888&target=https://www.klook.com/zh-TW/" in loc2
-    assert "item=" in loc2
+    assert loc2.startswith("https://tp.media/r?marker=602410&p=4110&u=")
+    assert TRIP_ID not in loc2
 
 
 def test_def04_tabiji_app_trusted_domains():

@@ -1,15 +1,67 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-07T01:20:00.000000+00:00",
+  "last_audit_date": "2026-11-07T12:00:00.000000+00:00",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 277,
-    "audited_targets": 277,
-    "verified_vulnerabilities": 51,
-    "remediated_vulnerabilities": 76,
+    "total_targets": 294,
+    "audited_targets": 294,
+    "verified_vulnerabilities": 55,
+    "remediated_vulnerabilities": 89,
     "dismissed_hypotheses": 150
   },
   "targets": [
+    {
+      "id": "backend/services/geocode_service.py:single_median_transit_corridor_and_island_outlier_eviction",
+      "target_type": "backend_spatial_engine",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "statistical_median_collapse_and_false_positive_eviction"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_transit_corridor.md",
+      "validator_details": "Confirmed by Physical Sandbox Red/Green Gate test_sentinel_poc_corridor_1_shinkansen_and_island_flight_preservation (RED_GATE_EXIT_CODE=1 -> GREEN_GATE_EXIT_CODE=0): Unpatched single daily median collapsed into mountains/strait on 500km Shinkansen and 260km island flight days, falsely evicting Kyoto and Penghu stops.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_transit_corridor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/services/geocode_service.py:unconditional_jump_split_single_point_hallucination_bypass",
+      "target_type": "backend_spatial_engine",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "single_point_hallucination_subcluster_self_validation_bypass"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_transit_corridor.md",
+      "validator_details": "Confirmed by Physical Sandbox Red/Green Gate test_sentinel_poc_corridor_2_anti_hallucination_split_guard (RED_GATE_EXIT_CODE=1 -> GREEN_GATE_EXIT_CODE=0): Enforced Invariant 1 Cluster Support Condition (explicit transit splitter, MinPts >= 2 local density, or verified known city hit) so isolated 1-point AI hallucinations cannot form self-validating sub-clusters.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_transit_corridor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/services/geocode_service.py:corridor_segment_amnesia_on_reverification_and_mcp_add",
+      "target_type": "backend_spatial_engine",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "state_desynchronization_and_corridor_amnesia_on_reverification"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_transit_corridor.md",
+      "validator_details": "Confirmed by Physical Sandbox Red/Green Gate test_sentinel_poc_corridor_3_corridor_amnesia_on_reverification_and_mcp (RED_GATE_EXIT_CODE=1 -> GREEN_GATE_EXIT_CODE=0): Enforced Invariant 4 Corridor Segment Expansion on Read across verify_and_heal_itinerary_coords, resolve_trip_spatial_anchor, and mcp.py manage_itinerary_node.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_transit_corridor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/services/geocode_service.py:zero_dictionary_corridor_naming_and_transit_bridge_action_noise_leak",
+      "target_type": "backend_spatial_engine",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "action_noise_unverified_coord_bypass_and_dictionary_miss_degradation"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_transit_corridor.md",
+      "validator_details": "Confirmed by Physical Sandbox Red/Green Gate test_sentinel_poc_corridor_4_zero_dict_corridor_and_bridge_action_noise (RED_GATE_EXIT_CODE=1 -> GREEN_GATE_EXIT_CODE=0): Enforced Invariant 2 bridge node origin anchoring vs ACTION_NOISE_KEYWORDS sanitization and Invariant 3 zero-dictionary dynamic segment naming for global unindexed cities (e.g. Lima -> Cusco).",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_transit_corridor_2026-11-07.diff"
+    },
     {
       "id": "backend/routers/ai.py:untrusted_url_ssrf_and_dos",
       "target_type": "backend_api_route",
@@ -3527,6 +3579,188 @@
       "validator_details": "Registered handle_mcp_probe on GET and HEAD methods returning HTTP 200 OK with server capabilities and transport metadata for Google Connected Apps pre-check.",
       "remediated_at": "2026-11-07T02:25:00Z",
       "resolution": "docs/security/history/patches/patch_candidate_mcp_gemini_cors_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:perplexity_and_ai_redirect_uri_allowlist_and_https_enforcement",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "oauth_redirect_uri_allowlist",
+        "http_downgrade_prevention"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_perplexity_oauth.md",
+      "validator_details": "Expanded TRUSTED_REDIRECT_DOMAINS to include perplexity.ai, claude.ai, claude.com, anthropic.com, chatgpt.com, and openai.com, while enforcing HTTPS on all non-localhost domains.",
+      "remediated_at": "2026-11-07T05:34:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_perplexity_oauth_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:oauth_code_cross_instance_state_loss_and_replay_defense",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "cross_instance_state_loss",
+        "oauth_code_replay_attack"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_perplexity_oauth.md",
+      "validator_details": "Upgraded authorization code to signed stateless tbj_code_<jwt> with local OAUTH_CODES primary lookup and CONSUMED_OAUTH_CODES single-use replay guard for Cloud Run multi-instance scaling.",
+      "remediated_at": "2026-11-07T05:34:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_perplexity_oauth_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:oauth_client_id_validation_and_jwt_self_healing",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "input_validation_and_self_healing",
+        "token_subject_integrity"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_perplexity_oauth.md",
+      "validator_details": "Added extract_valid_user_id() at oauth_authorize to validate UUID format, self-heal when a signed Connection Token (JWT) is pasted into Client ID, and reject invalid strings with HTTP 400.",
+      "remediated_at": "2026-11-07T05:34:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_perplexity_oauth_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py:oauth_token_basic_auth_and_refresh_grant_contradiction",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "rfc6749_basic_auth_parsing",
+        "refresh_token_grant_support"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_perplexity_oauth.md",
+      "validator_details": "Implemented _extract_basic_auth_client_id() for RFC 6749 HTTP Basic Authentication and added grant_type='refresh_token' handler matching /.well-known/oauth-authorization-server metadata.",
+      "remediated_at": "2026-11-07T05:34:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_perplexity_oauth_2026-11-07.diff"
+    },
+    {
+      "id": "backend/main.py:cors_claude_and_chatgpt_origin_preflight",
+      "target_type": "backend_middleware",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "cors_preflight_rejection"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_perplexity_oauth.md",
+      "validator_details": "Expanded CORSMiddleware allow_origin_regex to include claude.ai, claude.com, chatgpt.com, and openai.com.",
+      "remediated_at": "2026-11-07T05:34:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_perplexity_oauth_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/affiliate.py#redirect_to_partner",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "placeholder_affiliate_attribution",
+        "open_redirect_and_ssrf"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_affiliate_geo_anchor.md",
+      "validator_details": "Replaced placeholder affiliate jump URLs (TABIJI_AFF_888) with official Travelpayouts tp.media attribution builder (marker=602410, p=4110/9074) while preserving strict Open Redirect and SSRF parameter validation.",
+      "remediated_at": "2026-11-07T06:55:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_affiliate_geo_anchor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/mcp.py#manage_itinerary_node_affiliate_and_geo_anchor",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "cross_country_coordinate_hallucination",
+        "broken_affiliate_domain_export",
+        "mcp_initialize_sop_injection"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_affiliate_geo_anchor.md",
+      "validator_details": "Injected Mandatory SOP instructions into MCP initialize and tools/list schema, wired 4-tier resolve_trip_spatial_anchor with 500km AI coordinate deviation guard into manage_itinerary_node, and replaced broken tabiji.app links with build_affiliate_url tp.media links.",
+      "remediated_at": "2026-11-07T06:55:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_affiliate_geo_anchor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/services/geocode_service.py#smart_geocode_logic",
+      "target_type": "backend_service",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "fuzzy_suffix_collision_hijack",
+        "english_title_number_prefix_pollution",
+        "limit_one_premature_break_rerank_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_affiliate_geo_anchor.md",
+      "validator_details": "Fixed normalize_for_fuzzy suffix collision (preserving 寺 vs 站), enforced country compatibility and 300km spatial anchor distance guard on LANDMARKS_DB instant return, upgraded extract_region_for_search for English/numeric/emoji titles, and expanded candidate pool to max(limit*3, 5) with Nominatim viewbox.",
+      "remediated_at": "2026-11-07T06:55:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_affiliate_geo_anchor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/trips.py#create_item",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "unanchored_auto_geocoding_drift"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_mcp_affiliate_geo_anchor.md",
+      "validator_details": "Wired resolve_trip_spatial_anchor into create_item auto-geocoding so new itinerary items inherit trip/day spatial context, region, country, and bbox.",
+      "remediated_at": "2026-11-07T06:55:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_mcp_affiliate_geo_anchor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/ai.py#generate_trip_core_pre_anchor",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "missing_pre_generation_spatial_constraint",
+        "homonym_landmark_cross_city_hallucination"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_ai_spatial_anchor.md",
+      "validator_details": "Confirmed by test_sentinel_poc_pre_generation_spatial_constraint_injected: Resolved destination spatial anchor via resolve_prompt_spatial_anchor and injected <spatial_anchor_constraint> into system_instruction before calling Gemini in both generate_trip_core and parse_markdown.",
+      "remediated_at": "2026-11-07T09:05:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_spatial_anchor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/ai.py#post_generation_coord_healing",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "blind_trust_in_non_empty_ai_coordinates",
+        "missing_daily_locations_population",
+        "google_maps_url_coordinate_preservation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_ai_spatial_anchor.md",
+      "validator_details": "Confirmed by test_sentinel_poc_ai_generate_hallucinated_cross_country_and_homonym_healed and test_sentinel_poc_parse_md_hallucinated_coords_healed_while_url_coords_preserved: Replaced blind non-empty lat/lng skip with verify_and_heal_itinerary_coords while preserving verified URL coordinates, in-bounds AI coordinates (0 extra geocode calls), and multi-city day anchors.",
+      "remediated_at": "2026-11-07T09:05:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_spatial_anchor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/ai.py#parse_markdown_itinerary_id_bola",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "bola_unauthorized_trip_anchor_probing",
+        "http_exception_swallowing_to_500"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_ai_spatial_anchor.md",
+      "validator_details": "Confirmed by test_sentinel_poc_parse_md_itinerary_id_bola_blocked: Enforced owner/trip_members authorization check when itinerary_id is supplied to /api/ai/parse-md and re-raised HTTPException before generic 500 handler.",
+      "remediated_at": "2026-11-07T09:05:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_spatial_anchor_2026-11-07.diff"
+    },
+    {
+      "id": "backend/routers/trips.py#save_and_import_spatial_healing",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "unvalidated_Persistence_coordinate_drift"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_ai_spatial_anchor.md",
+      "validator_details": "Confirmed by test_sentinel_poc_save_and_import_to_trip_spatial_healing: Wired verify_and_heal_itinerary_coords into save_itinerary and import_to_trip prior to Supabase itinerary_items insertion.",
+      "remediated_at": "2026-11-07T09:05:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_spatial_anchor_2026-11-07.diff"
     }
   ],
   "known_design_intents": {
