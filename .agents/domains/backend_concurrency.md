@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Single-Event-Loop ReDoS & Truncation Invariant**: Under single-process Uvicorn deployments on Google Cloud Run, synchronous regex execution on user-controlled text must enforce input truncation (e.g. raw[:800]) and bounded repetitions ({1,3}, {1,5}, [^<]{1,200}) without overlapping quantifiers. Unbounded polynomial backtracking freezes the asyncio event loop, severing active SSE client streams and inducing runaway container autoscaling.
+
 - **Remote MCP OAuth 2.1 RFC 8414/9728 & Stateless HMAC Fallback**: OAuth 2.1 authorization server endpoints (/api/oauth/authorize & /token) must implement dual-track authorization codes: in-memory fast dict plus stateless HMAC-SHA256 token fallback to survive multi-instance Cloud Run server restarts and cross-container load balancing. CONSUMED_OAUTH_CODES replay table strictly enforces single-use token consumption.
 
 - **AI Client CORS Preflight and Health Probe Compliance**: FastAPI CORS middleware must configure allow_origin_regex to permit browser-based preflight requests from AI clients (https://gemini.google.com, https://aistudio.google.com, https://*.perplexity.ai). Furthermore, /api/mcp must register both GET and HEAD handlers returning HTTP 200 with transport capabilities to pass external liveness probes before JSON-RPC initialization.

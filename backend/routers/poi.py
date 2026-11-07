@@ -24,7 +24,7 @@ from google.genai import types
 
 from models.base import POIAIEnrichRequest, POIEnrichRequest, POIRecommendRequest, SmartSearchRequest
 from utils.deps import get_gemini_key, get_supabase
-from utils.url_safety import is_safe_url
+from utils.url_safety import is_safe_url, create_safe_client
 from services.link_resolver import resolve_google_maps_link, resolve_google_maps_placelist
 from services.geocode_service import smart_geocode_logic, reverse_geocode_with_photon
 from utils.ai_config import LITE_MODEL, DAILY_ROUTING
@@ -77,7 +77,7 @@ async def poi_resolve_link(request: PoiResolveLinkRequest):
     if not is_placelist and any(d in clean_url for d in ["goo.gl", "maps.app.goo.gl"]):
         try:
             # 🛡️ 對齊下游清單 RPC 超時閾值 (12.0s)，防範行動網路下過早放棄造成誤導流至單點 POI
-            async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
+            async with create_safe_client(follow_redirects=True, timeout=12.0) as client:
                 head_resp = await client.get(clean_url, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
                 })

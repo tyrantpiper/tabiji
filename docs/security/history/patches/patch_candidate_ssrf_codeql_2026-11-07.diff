@@ -1,0 +1,317 @@
+diff --git a/backend/utils/url_safety.py b/backend/utils/url_safety.py
+--- a/backend/utils/url_safety.py
++++ b/backend/utils/url_safety.py
+@@ -1,55 +1,110 @@
+ import re
+ import socket
+ import ipaddress
++import urllib.parse
++import httpx
+ from urllib.parse import urlparse
++from typing import Optional, List
++
++# 🛡️ 嚴格私有與保留網段定義（涵蓋 IPv4/IPv6/雲端 Metadata 與 CGNAT）
++BLOCKED_NETWORKS = [
++    ipaddress.ip_network("127.0.0.0/8"),      # Loopback
++    ipaddress.ip_network("10.0.0.0/8"),       # Private Class A
++    ipaddress.ip_network("172.16.0.0/12"),    # Private Class B
++    ipaddress.ip_network("192.168.0.0/16"),   # Private Class C
++    ipaddress.ip_network("169.254.0.0/16"),   # Link-Local / Cloud Metadata (AWS/GCP/Azure)
++    ipaddress.ip_network("100.64.0.0/10"),    # Carrier-grade NAT
++    ipaddress.ip_network("0.0.0.0/8"),        # Broadcast/Current network
++    ipaddress.ip_network("::1/128"),          # IPv6 Loopback
++    ipaddress.ip_network("fc00::/7"),         # IPv6 Unique Local
++    ipaddress.ip_network("fe80::/10"),        # IPv6 Link-Local
++]
++
++BLOCKED_HOSTNAMES = {
++    "localhost", "127.0.0.1", "0.0.0.0", "::1",
++    "metadata.google.internal", "instance-data",
++    "host.docker.internal"
++}
++
++class SSRFSecurityError(ValueError):
++    """拋出於偵測到 SSRF 攻擊意圖時"""
++    pass
++
++def is_ip_safe(ip_str: str) -> bool:
++    try:
++        ip = ipaddress.ip_address(ip_str)
++        return not any(ip in net for net in BLOCKED_NETWORKS)
++    except ValueError:
++        return False
+
+ def is_safe_url(url: str) -> bool:
+     """
+     [SAFETY] Centralized SSRF Prevention Utility.
+     Checks if a URL is safe to fetch by the server.
+     """
++    if not url or not isinstance(url, str):
++        return False
++    try:
++        parsed = urllib.parse.urlparse(url.strip())
++        if parsed.scheme.lower() not in ("http", "https"):
++            return False
++        hostname = (parsed.hostname or "").lower()
++        if not hostname or hostname in BLOCKED_HOSTNAMES:
++            return False
++            
+     # [NEW] Phase 5.4: Domain Whitelist (Bypass blocking DNS checks for known safe hosts)
+     SAFE_WIKI_DOMAINS = ["wikipedia.org", "wikidata.org", "wikivoyage.org", "wikimedia.org"]
+-    parsed = urlparse(url.lower())
+-    hostname = parsed.hostname or ""
+     if any(hostname == domain or hostname.endswith("." + domain) for domain in SAFE_WIKI_DOMAINS):
+         return True
+         
+     return get_safe_ip(url) is not None
++    except Exception:
++        return False
+
+ def get_safe_ip(url: str) -> str:
+     """
+     [SAFETY] Anti-DNS-Rebinding IP Resolver.
+     Resolves the hostname and checks if the IP is safe (public).
+     Returns the IP string if safe, otherwise returns None.
+     """
+     try:
+-        parsed = urlparse(url)
+-        if parsed.scheme not in ["http", "https"]:
++        parsed = urllib.parse.urlparse(url)
++        if parsed.scheme.lower() not in ["http", "https"]:
+             return None
+         
+         hostname = parsed.hostname
+         if not hostname:
+             return None
+             
+         # 1. Block known local aliases directly
+         hostname_lower = hostname.lower()
+-        if hostname_lower in ["localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"]:
++        if hostname_lower in BLOCKED_HOSTNAMES:
+             return None
+         
+         # 2. Resolve hostname to check real IP
+-        # [SAFETY] DNS Rebinding Protection: We resolve it ONCE here.
+         try:
+-            ip_addr = socket.gethostbyname(hostname)
+-            ip = ipaddress.ip_address(ip_addr)
+-            
+-            # Block loopback, private, link-local, and multicast
+-            if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast:
+-                 return None
+-            
+-            return str(ip)
+-        except socket.gaierror:
++            addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
++            if not addr_info:
++                return None
++            for _, _, _, _, sockaddr in addr_info:
++                ip = sockaddr[0]
++                if not is_ip_safe(ip):
++                    return None
++            return str(addr_info[0][4][0])
++        except (socket.gaierror, socket.herror, OSError):
+             return None
+              
+     except Exception:
+         return None
++
++async def _enforce_request_ssrf_safety(request: httpx.Request):
++    """
++    🛡️ HTTP 傳輸層物理守門員：
++    在連線發送前觸發（支援 initial request 與每一跳重定向 target）。
++    若目標解析為私有/雲端 Metadata 網段，物理阻斷 TCP 連線建立。
++    """
++    target_url = str(request.url)
++    if not is_safe_url(target_url):
++        raise SSRFSecurityError(f"[SSRF Blocked] Outbound connection to {target_url} was physically aborted.")
++
++def create_safe_client(**kwargs) -> httpx.AsyncClient:
++    """工廠函式：產出具備 SSRF 自癒與重定向實體攔截的 httpx 客戶端"""
++    hooks = kwargs.pop("event_hooks", {})
++    request_hooks = hooks.get("request", [])
++    if _enforce_request_ssrf_safety not in request_hooks:
++        request_hooks.append(_enforce_request_ssrf_safety)
++    hooks["request"] = request_hooks
++    
++    kwargs.setdefault("timeout", httpx.Timeout(10.0, connect=3.0))
++    kwargs["event_hooks"] = hooks
++    return httpx.AsyncClient(**kwargs)
+diff --git a/backend/services/web_search_engine.py b/backend/services/web_search_engine.py
+--- a/backend/services/web_search_engine.py
++++ b/backend/services/web_search_engine.py
+@@ -19,6 +19,7 @@
+ import ipaddress
+ import httpx
+ from typing import List, Dict, Optional, Any
++from utils.url_safety import is_safe_url, create_safe_client
+ from bs4 import BeautifulSoup
+ 
+ # 全域共用非同步 HTTP 連線池
+@@ -34,7 +35,7 @@
+ def get_search_client() -> httpx.AsyncClient:
+     """取得或初始化全域非同步 HTTP 連線"""
+     global _http_client
+     if _http_client is None or _http_client.is_closed:
+-        _http_client = httpx.AsyncClient(
++        _http_client = create_safe_client(
+             timeout=httpx.Timeout(4.5, connect=2.0),
+             headers={
+                 "User-Agent": BROWSER_USER_AGENT,
+@@ -76,22 +77,6 @@
+ def is_safe_external_url(url: str) -> bool:
+     """SSRF 防禦：檢查是否為合法的外部 HTTP/HTTPS 公共網址"""
+-    if not url or not (url.startswith("http://") or url.startswith("https://")):
+-        return False
+-    try:
+-        hostname = urllib.parse.urlparse(url).hostname
+-        if not hostname:
+-            return False
+-        if hostname.lower() in PRIVATE_HOSTS:
+-            return False
+-        # 檢查是否為私有 IP
+-        try:
+-            ip = ipaddress.ip_address(hostname)
+-            if ip.is_private or ip.is_loopback or ip.is_link_local:
+-                return False
+-        except ValueError:
+-            pass  # 一般域名通過
+-        return True
+-    except Exception:
+-        return False
++    return is_safe_url(url)
+diff --git a/backend/routers/poi.py b/backend/routers/poi.py
+--- a/backend/routers/poi.py
++++ b/backend/routers/poi.py
+@@ -34,6 +34,7 @@
+ from services.poi_service import get_poi_service
+ from services.link_resolver import resolve_google_maps_placelist, resolve_social_or_custom_url
+-from utils.url_safety import is_safe_url
++from utils.url_safety import is_safe_url, create_safe_client
+ 
+ router = APIRouter(prefix="/api/poi", tags=["poi"])
+@@ -80,7 +81,7 @@
+         try:
+             # 🛡️ 對齊下游清單 RPC 超時閾值 (12.0s)，防範行動網路下過早放棄造成誤導流至單點 POI
+-            async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
++            async with create_safe_client(follow_redirects=True, timeout=12.0) as client:
+                 head_resp = await client.get(clean_url, headers={
+                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                 })
+diff --git a/backend/services/link_resolver.py b/backend/services/link_resolver.py
+--- a/backend/services/link_resolver.py
++++ b/backend/services/link_resolver.py
+@@ -21,7 +21,7 @@
+ import urllib.parse
+ import httpx
+ from bs4 import BeautifulSoup
+-from utils.url_safety import is_safe_url
++from utils.url_safety import is_safe_url, create_safe_client
+ 
+@@ -229,7 +229,7 @@
+         headers = {
+             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+             "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+         }
+-        async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
++        async with create_safe_client(follow_redirects=True, timeout=5.0) as client:
+             # 🛡️ SSRF Check
+             if not is_safe_url(url):
+@@ -418,7 +418,7 @@
+             if not is_safe_url(url):
+                 print(f"[SSRF Block] Legacy redirect aborted for unsafe URL: {url}")
+                 return result
+ 
+-            async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
++            async with create_safe_client(follow_redirects=True, timeout=10.0) as client:
+                 resp = await client.get(url)
+@@ -722,7 +722,7 @@
+     if any(d in url for d in ["goo.gl", "maps.app.goo.gl"]):
+         try:
+-            async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
++            async with create_safe_client(follow_redirects=True, timeout=12.0) as client:
+                 if not is_safe_url(url):
+                     result["error"] = "UNSAFE_URL"
+                     return result
+diff --git a/backend/routers/ai.py b/backend/routers/ai.py
+--- a/backend/routers/ai.py
++++ b/backend/routers/ai.py
+@@ -37,7 +37,7 @@
+ from services.model_manager import model_manager
+-from utils.url_safety import is_safe_url
++from utils.url_safety import is_safe_url, create_safe_client
+ 
+ router = APIRouter(prefix="/api/ai", tags=["ai"])
+@@ -68,7 +68,7 @@
+     try:
+-        async with httpx.AsyncClient(timeout=timeout) as client:
++        async with create_safe_client(timeout=timeout) as client:
+             # First check size with HEAD if possible
+diff --git a/backend/services/geocode_service.py b/backend/services/geocode_service.py
+--- a/backend/services/geocode_service.py
++++ b/backend/services/geocode_service.py
+@@ -1994,7 +1994,8 @@
+     # Stage 2: 啟發式剝離天數、年份、人名所有格、旅遊後綴與 Emoji (適用全球未知冷門城市)
++    raw_truncated = raw[:800]
+     clean = re.sub(r'[^\w\s\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af-]', ' ', raw)
+     clean = re.sub(r'(?:19|20)\d{2}\s*年?', ' ', clean)
+     clean = re.sub(
+-        r'((?:\d+|[一二三四五六七八九十百兩]+)\s*日遊|(?:\d+|[一二三四五六七八九十百兩]+)\s*天\d*[一二三四五六七八九十百兩]*\s*夜|(?:\d+|[一二三四五六七八九十百兩]+)\s*天|(?:\d+|[一二三四五六七八九十百兩]+)\s*日|自由行|之旅|極致之旅|深度遊|行程|冬日遊|夏日遊|攻略|漫遊|快閃|旅遊|旅行)',
++        r'((?:\d{1,3}|[一二三四五六七八九十百兩]{1,5})\s*(?:日遊|天(?:[0-9一二三四五六七八九十百兩]{1,4}夜)?|日)|自由行|之旅|極致之旅|深度遊|行程|冬日遊|夏日遊|攻略|漫遊|快閃|旅遊|旅行)',
+         ' ',
+         clean,
+     )
+@@ -2195,4 +2196,4 @@
+     raw = str(text).strip()
+-    m_xml = re.search(r"<destination>(.*?)</destination>", raw, flags=re.IGNORECASE | re.DOTALL)
++    m_xml = re.search(r"<destination>([^<]{1,200})</destination>", raw[:1000], flags=re.IGNORECASE)
+     target_segment = m_xml.group(1).strip() if m_xml else raw[:500]
+diff --git a/frontend/app/sw.ts b/frontend/app/sw.ts
+--- a/frontend/app/sw.ts
++++ b/frontend/app/sw.ts
+@@ -102,8 +102,15 @@
+-        const isExternalCdn = 
+-          url.hostname.includes("cloudinary.com") ||
+-          url.hostname.includes("workers.dev") ||
+-          url.hostname.includes("unsplash.com") ||
+-          url.hostname.includes("googleusercontent.com") ||
+-          url.hostname.includes("flagcdn.com") ||
+-          url.hostname.includes("mapillary.com");
++        const cdnDomains = [
++          "cloudinary.com",
++          "workers.dev",
++          "unsplash.com",
++          "googleusercontent.com",
++          "flagcdn.com",
++          "mapillary.com",
++        ];
++        const isExternalCdn = cdnDomains.some(
++          (domain) => url.hostname === domain || url.hostname.endsWith(`.${domain}`)
++        );
+diff --git a/frontend/lib/utils.ts b/frontend/lib/utils.ts
+--- a/frontend/lib/utils.ts
++++ b/frontend/lib/utils.ts
+@@ -63,3 +63,10 @@
+-    // 檢查是否為 Cloudinary 的圖片 URL
+-    if (originalUrl.includes('res.cloudinary.com')) {
++    // 檢查是否為 Cloudinary 的圖片 URL (嚴格主機名邊界匹配)
++    let isCloudinary = false;
++    try {
++        const h = new URL(originalUrl).hostname;
++        isCloudinary = h === 'res.cloudinary.com' || h.endsWith('.res.cloudinary.com');
++    } catch {
++        isCloudinary = false;
++    }
++    if (isCloudinary) {
+diff --git a/backend/routers/mcp.py b/backend/routers/mcp.py
+--- a/backend/routers/mcp.py
++++ b/backend/routers/mcp.py
+@@ -80,4 +80,6 @@
+     raw_base = str(request.base_url).rstrip("/")
+-    if "tabijiapp.com" in raw_base and raw_base.startswith("http://"):
++    parsed_base = urllib.parse.urlparse(raw_base)
++    base_host = (parsed_base.hostname or "").lower()
++    if (base_host == "tabijiapp.com" or base_host.endswith(".tabijiapp.com")) and raw_base.startswith("http://"):
+         raw_base = "https://" + raw_base[7:]
+     return raw_base
+

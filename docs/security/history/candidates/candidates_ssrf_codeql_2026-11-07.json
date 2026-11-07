@@ -1,0 +1,35 @@
+[
+  {
+    "id": "backend/utils/url_safety.py:ssrf_follow_redirects_302_bypass",
+    "file_path": "backend/utils/url_safety.py",
+    "start_line": 6,
+    "end_line": 55,
+    "attack_vector": "ssrf_follow_redirects_302_bypass",
+    "hypothesis": "When an outbound HTTP request is executed using httpx.AsyncClient(follow_redirects=True), an initial check via is_safe_url is completely bypassed if the public server responds with HTTP 302 Found pointing to private IP addresses (such as 169.254.169.254 or 127.0.0.1). Because httpx follows redirects without re-validating the destination socket address, internal cloud metadata and intranet endpoints are exposed to SSRF."
+  },
+  {
+    "id": "backend/services/web_search_engine.py:ssrf_hostname_valueerror_bypass",
+    "file_path": "backend/services/web_search_engine.py",
+    "start_line": 76,
+    "end_line": 96,
+    "attack_vector": "ssrf_hostname_valueerror_bypass",
+    "hypothesis": "In is_safe_external_url, ipaddress.ip_address(hostname) raises ValueError for all non-IP domain names, which is caught and silently passed (except ValueError: pass). Any domain name resolving to loopback or private IPs (e.g., localtest.me, *.nip.io) passes the check and is fetched by get_search_client().get(url), directly allowing SSRF against internal services."
+  },
+  {
+    "id": "backend/services/geocode_service.py:polynomial_regex_travel_suffix_redos",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 1993,
+    "end_line": 2006,
+    "attack_vector": "redos_polynomial_backtracking",
+    "hypothesis": "re.sub on travel suffix patterns contains overlapping quantified groups ((?:\\d+|[一二...]+)\\s*天\\d*[一二...]*\\s*夜 and (?:\\d+|[一二...]+)\\s*天) without input length caps. A long crafted string lacking a matching boundary causes catastrophic polynomial backtracking, tying up the Python worker CPU at 100%."
+  },
+  {
+    "id": "frontend/app/sw.ts:incomplete_url_substring_sanitization",
+    "file_path": "frontend/app/sw.ts",
+    "start_line": 102,
+    "end_line": 110,
+    "attack_vector": "weak_domain_substring_matching",
+    "hypothesis": "Service Worker cache matcher uses url.hostname.includes('cloudinary.com'), which loosely matches arbitrary attacker domains (e.g., evil-cloudinary.com). While impact is limited to browser cache storage, it represents an imprecise security boundary flagged by CodeQL."
+  }
+]
+

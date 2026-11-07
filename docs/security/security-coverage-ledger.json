@@ -1,15 +1,67 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-07T12:00:00.000000+00:00",
+  "last_audit_date": "2026-11-07T14:48:00.000000+00:00",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 294,
-    "audited_targets": 294,
-    "verified_vulnerabilities": 55,
-    "remediated_vulnerabilities": 89,
+    "total_targets": 298,
+    "audited_targets": 298,
+    "verified_vulnerabilities": 56,
+    "remediated_vulnerabilities": 92,
     "dismissed_hypotheses": 150
   },
   "targets": [
+    {
+      "id": "frontend/app/sw.ts:incomplete_url_substring_sanitization",
+      "target_type": "frontend_service_worker",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "weak_domain_substring_matching"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_ssrf_codeql.md",
+      "validator_details": "Confirmed by Subagent PoC: url.hostname.includes matches evil-cloudinary.com. Remediated with exact apex or .domain suffix match.",
+      "remediated_at": null,
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_ssrf_codeql_2026-11-07.diff"
+    },
+    {
+      "id": "backend/services/geocode_service.py:polynomial_regex_travel_suffix_redos",
+      "target_type": "backend_spatial_engine",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "redos_polynomial_backtracking"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_ssrf_codeql.md",
+      "validator_details": "Confirmed: travel suffix regex execution scales quadratically with n, reaching 1.89s at 8000 chars. Remediation with bounded repetitions eliminates backtracking (<1ms).",
+      "remediated_at": "2026-11-07T15:45:00Z",
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_ssrf_codeql_2026-11-07.diff"
+    },
+    {
+      "id": "backend/services/web_search_engine.py:ssrf_hostname_valueerror_bypass",
+      "target_type": "backend_search_crawler",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "ssrf_hostname_valueerror_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_ssrf_codeql.md",
+      "validator_details": "Confirmed: is_safe_external_url passes localtest.me and 169.254.169.254.nip.io because ValueError on domain names was silently ignored.",
+      "remediated_at": "2026-11-07T15:45:00Z",
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_ssrf_codeql_2026-11-07.diff"
+    },
+    {
+      "id": "backend/utils/url_safety.py:ssrf_follow_redirects_302_bypass",
+      "target_type": "backend_network_security",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "ssrf_follow_redirects_302_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_ssrf_codeql.md",
+      "validator_details": "Confirmed by In-Memory Mock Transport: unpatched httpx.AsyncClient(follow_redirects=True) followed 302 to 169.254.169.254, leaking credentials. Patched with request hook successfully blocks outbound connection.",
+      "remediated_at": "2026-11-07T15:45:00Z",
+      "resolution": "Formulated in docs/security/history/patches/patch_candidate_ssrf_codeql_2026-11-07.diff"
+    },
     {
       "id": "backend/services/geocode_service.py:single_median_transit_corridor_and_island_outlier_eviction",
       "target_type": "backend_spatial_engine",

@@ -15,6 +15,7 @@ import ipaddress
 import httpx
 from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup
+from utils.url_safety import is_safe_url, create_safe_client
 
 # 全域共用非同步 HTTP 連線池
 _http_client: Optional[httpx.AsyncClient] = None
@@ -33,7 +34,7 @@ def get_search_client() -> httpx.AsyncClient:
     """取得或初始化全域非同步 HTTP 連線"""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(
+        _http_client = create_safe_client(
             timeout=httpx.Timeout(4.5, connect=2.0),
             headers={
                 "User-Agent": BROWSER_USER_AGENT,
@@ -74,25 +75,8 @@ def unwrap_ddg_redirect(href: str) -> str:
 
 
 def is_safe_external_url(url: str) -> bool:
-    """SSRF 防禦：檢查是否為合法的外部 HTTP/HTTPS 公共網址"""
-    if not url or not (url.startswith("http://") or url.startswith("https://")):
-        return False
-    try:
-        hostname = urllib.parse.urlparse(url).hostname
-        if not hostname:
-            return False
-        if hostname.lower() in PRIVATE_HOSTS:
-            return False
-        # 檢查是否為私有 IP
-        try:
-            ip = ipaddress.ip_address(hostname)
-            if ip.is_private or ip.is_loopback or ip.is_link_local:
-                return False
-        except ValueError:
-            pass  # 一般域名通過
-        return True
-    except Exception:
-        return False
+    """SSRF 防禦：檢查是否為合法的外部 HTTP/HTTPS 公共網址 (委託 is_safe_url)"""
+    return is_safe_url(url)
 
 
 # Cloudflare 邊緣檢索執行器配置 (Tier 2)

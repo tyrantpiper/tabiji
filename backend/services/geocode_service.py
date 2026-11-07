@@ -1991,10 +1991,11 @@ def extract_region_for_search(region: str) -> str:
                 return raw[idx:idx + len(kw)]
 
     # Stage 2: 啟發式剝離天數、年份、人名所有格、旅遊後綴與 Emoji (適用全球未知冷門城市)
-    clean = re.sub(r'[^\w\s\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af-]', ' ', raw)
+    raw_truncated = raw[:800]
+    clean = re.sub(r'[^\w\s\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af-]', ' ', raw_truncated)
     clean = re.sub(r'(?:19|20)\d{2}\s*年?', ' ', clean)
     clean = re.sub(
-        r'((?:\d+|[一二三四五六七八九十百兩]+)\s*日遊|(?:\d+|[一二三四五六七八九十百兩]+)\s*天\d*[一二三四五六七八九十百兩]*\s*夜|(?:\d+|[一二三四五六七八九十百兩]+)\s*天|(?:\d+|[一二三四五六七八九十百兩]+)\s*日|自由行|之旅|極致之旅|深度遊|行程|冬日遊|夏日遊|攻略|漫遊|快閃|旅遊|旅行)',
+        r'((?:\d{1,3}|[一二三四五六七八九十百兩]{1,5})\s*(?:日遊|天(?:[0-9一二三四五六七八九十百兩]{1,4}夜)?|日)|自由行|之旅|極致之旅|深度遊|行程|冬日遊|夏日遊|攻略|漫遊|快閃|旅遊|旅行)',
         ' ',
         clean,
     )
@@ -2193,8 +2194,9 @@ def extract_all_regions_from_text(text: str) -> List[str]:
     if not text:
         return []
     raw = str(text).strip()
-    m_xml = re.search(r"<destination>(.*?)</destination>", raw, flags=re.IGNORECASE | re.DOTALL)
-    target_segment = m_xml.group(1).strip() if m_xml else raw[:500]
+    raw_truncated = raw[:1000]
+    m_xml = re.search(r"<destination>([^<]{1,200})</destination>", raw_truncated, flags=re.IGNORECASE | re.DOTALL)
+    target_segment = m_xml.group(1).strip() if m_xml else raw_truncated[:500]
     seg_lower = target_segment.lower()
 
     city_state_keys = {"新加坡", "singapore", "香港", "hong kong"}

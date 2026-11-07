@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from typing import Dict, Any
 from datetime import datetime
 
-from utils.url_safety import is_safe_url
+from utils.url_safety import is_safe_url, create_safe_client
 
 # 🆕 v35.26: Anti-Acidosis Protocol - Smart Redirect Tracer
 from utils.smart_redirect_tracer import get_smart_tracer
@@ -56,7 +56,7 @@ async def resolve_via_gas(short_url: str) -> Dict[str, Any] | None:
             # GAS Web Apps return 302 redirects → must follow them
             # 🛡️ 2026 Emergency: Disable SSL verify only in development for internal GAS rescue gateway
             should_verify_ssl = os.getenv("ENVIRONMENT") != "development"
-            async with httpx.AsyncClient(follow_redirects=True, timeout=15.0, verify=should_verify_ssl) as client:
+            async with create_safe_client(follow_redirects=True, timeout=15.0, verify=should_verify_ssl) as client:
                 res = await client.get(gas_url, params={"url": short_url})
             res.raise_for_status()
             data = res.json()
@@ -193,7 +193,7 @@ async def fetch_place_from_google_rpc(cid_hex: str) -> dict | None:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8"
         }
-        async with httpx.AsyncClient(follow_redirects=True, timeout=3.5) as client:
+        async with create_safe_client(follow_redirects=True, timeout=3.5) as client:
             resp = await client.get(cid_url, headers=headers)
             if resp.status_code != 200:
                 return None
@@ -226,7 +226,7 @@ async def fetch_og_metadata(url: str) -> Dict[str, Any]:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
         }
-        async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
+        async with create_safe_client(follow_redirects=True, timeout=5.0) as client:
             # 🛡️ SSRF Check
             if not is_safe_url(url):
                  print(f"[SSRF Block] Metadata fetch aborted for unsafe URL: {url}")
@@ -415,7 +415,7 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
                 print(f"[SSRF Block] Legacy redirect aborted for unsafe URL: {url}")
                 return result
 
-            async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+            async with create_safe_client(follow_redirects=True, timeout=10.0) as client:
                 resp = await client.get(url)
                 final_url = str(resp.url)
                 result["resolved_url"] = final_url
@@ -719,7 +719,7 @@ async def resolve_google_maps_placelist(url: str) -> Dict[str, Any]:
     clean_url = url
     if any(d in url for d in ["goo.gl", "maps.app.goo.gl"]):
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
+            async with create_safe_client(follow_redirects=True, timeout=12.0) as client:
                 if not is_safe_url(url):
                     result["error"] = "UNSAFE_URL"
                     return result
@@ -744,7 +744,7 @@ async def resolve_google_maps_placelist(url: str) -> Dict[str, Any]:
     data = None
     for attempt in range(max_retries):
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=12.0) as client:
+            async with create_safe_client(follow_redirects=True, timeout=12.0) as client:
                 resp = await client.get(rpc_url, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
                     "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"

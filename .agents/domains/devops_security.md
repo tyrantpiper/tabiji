@@ -3,6 +3,12 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **Security Ledger Mathematical Conservation**: Modifications to docs/security/security-coverage-ledger.json must strictly preserve the invariant total_targets == audited_targets == (verified_vulnerabilities + remediated_vulnerabilities + dismissed_hypotheses). Newly audited targets must be classified cleanly without double-counting verified and remediated states.
+
+- **Flawed IP Exception vs Centralized DNS Delegation**: Ad-hoc URL validation routines must never catch ipaddress.ip_address(hostname) ValueError with pass, as non-numeric domain names resolving to loopback or metadata IPs (e.g. localtest.me, *.nip.io) silently bypass filtering. All external crawling and search utilities must delegate URL safety checks exclusively to centralized url_safety.is_safe_url.
+
+- **Transport-Level Request Hook Pre-Wire SSRF Guard**: Outbound HTTP clients (httpx.AsyncClient) must enforce SSRF defense at the transport layer using event_hooks={'request': [_enforce_request_ssrf_safety]} rather than response hooks. The request hook inspects the fully resolved canonical URL before socket connection across both initial requests and intermediate 302 redirects, validating all socket.getaddrinfo IP addresses against loopback (127/8), private (10/8, 172.16/12, 192.168/16), cloud metadata (169.254/16), CGNAT (100.64/10), and IPv6 special ranges.
+
 - **Affiliate Gateway Open Redirect Defense & Parameter Preservation**: Redirect gateway endpoints (/go/klook, /go/kkday) must enforce strict whitelist regex on destination domain (tp.media) and sanitize against leading double-slash (//) or backslash (\) bypasses while cleanly forwarding affiliate campaign and deep link tracking query parameters.
 
 - **Reverse Proxy Fetch Redirect Manual Invariant**: Cloudflare Workers acting as reverse proxies MUST set redirect: 'manual' when fetching upstream origins. Allowing the proxy to follow redirects server-side intercepts OAuth authorization code 302 responses, forfeits user browser cookies, and induces Google anti-bot redirect loops.
@@ -82,6 +88,10 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Ingress WAF Inability to Defend Egress SSRF Architectural Trap**: Relying on Cloudflare Edge Shield (tabijiapp-edge-shield) or reverse proxy WAFs to mitigate SSRF is architecturally impossible because ingress proxies only inspect inbound requests from browsers to servers, whereas SSRF originates as outbound (egress) HTTP requests from backend containers to internal/external networks. Egress protection must be enforced inside the application runtime.
+
+- **FQDN Trailing Dot & Integer IP Bypass**: String-based hostname matching against BLOCKED_HOSTNAMES is bypassed by trailing-dot FQDNs (http://localhost./) and decimal integer IPs (http://2130706433/). url_safety must strip trailing dots via hostname.lower().rstrip('.') and parse clean_host.isdigit() via ipaddress.ip_address(int(clean_host)) before evaluation.
+
 - **Subdomain Spoofing in Unanchored Domain Regex Whitelist**: Writing regex like '^https?://(maps\.app\.goo\.gl|...)' allows attackers to construct 'maps.app.goo.gl.attacker.com' and bypass SSRF domain whitelisting. Always append '(?:/|\?|$)'.
 
 - **Pytest-mock Context Manager Double-Exit Warning Trap**: Wrapping mocker.patch() in a 'with' block triggers PytestMockWarning due to redundant context exit calls. Manage test branching via return_value mutation instead of context managers.
