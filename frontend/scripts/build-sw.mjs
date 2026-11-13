@@ -29,6 +29,7 @@ const { generateStaticParams, GET } = createSerwistRoute({
   // 🛡️ 關鍵修復：明確指定 globDirectory，防止從專案根目錄調用時 cwd 不匹配
   globDirectory: frontendDir,
   globPatterns: ["public/**/*"],
+  globIgnores: ["public/sw.js", "public/sw.js.map"],
   additionalPrecacheEntries: [
     { url: "/", revision: gitRev },
   ],

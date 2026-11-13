@@ -208,14 +208,24 @@ export async function deleteTripSnapshot(tripId: string | null | undefined): Pro
         }
     }
 
-    // 4. ⚡ 清除 L3 Service Worker CacheStorage (五清閉環：抹除 trips-api-cache)
+    // 4. ⚡ 清除 L3 Service Worker CacheStorage (五清閉環：同步抹除 trips-api-cache 與歷史 apis，具備路徑邊界隔離)
     if (typeof window !== "undefined" && "caches" in window) {
         try {
-            const cache = await caches.open("trips-api-cache")
-            const keys = await cache.keys()
-            for (const request of keys) {
-                if (request.url.includes(`/api/trips/${tripId}`)) {
-                    await cache.delete(request)
+            for (const cacheName of ["trips-api-cache", "apis"]) {
+                const cache = await caches.open(cacheName)
+                const keys = await cache.keys()
+                for (const request of keys) {
+                    let pathname = ""
+                    try {
+                        pathname = new URL(request.url, window.location.origin).pathname
+                    } catch {
+                        pathname = ""
+                    }
+                    const tripPrefix = `/api/trips/${tripId}`
+                    const isMatchingTripPath = pathname === tripPrefix || pathname.startsWith(`${tripPrefix}/`)
+                    if (isMatchingTripPath || (cacheName === "apis" && pathname === "/api/trips")) {
+                        await cache.delete(request)
+                    }
                 }
             }
         } catch (err) {
