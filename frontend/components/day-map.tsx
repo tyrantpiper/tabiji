@@ -213,7 +213,7 @@ interface DayMapProps {
 }
 
 export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: DayMapProps) {
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
     const mapRef = useRef<MapRef>(null)
     const [mode, setMode] = useState<'walk' | 'drive' | 'transit'>('walk')
     const [popupInfo, setPopupInfo] = useState<MarkerData | null>(null)
@@ -411,7 +411,8 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                     lat: nearestCity?.lat ?? center?.lat,
                     lng: nearestCity?.lng ?? center?.lng,
                     zoom: currentZoom,
-                    bbox
+                    bbox,
+                    locale: lang
                 })
                 // 🆕 只在 query 仍然匹配時更新
                 if (currentQuery === query) {

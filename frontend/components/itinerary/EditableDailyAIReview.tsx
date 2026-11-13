@@ -39,10 +39,16 @@ export default function EditableDailyAIReview({
     const [loadingAction, setLoadingAction] = useState<"generate" | "clear" | null>(null)
     const [isExpanded, setIsExpanded] = useState(true)  // 預設展開以利抽屜內直接閱讀
 
-    // 🚀 樂觀即時狀態 (Optimistic Instant State: 零延遲立即反映)
-    const [optimisticReview, setOptimisticReview] = useState<string | null>(null)
+    // 🚀 樂觀即時狀態 (Optimistic Instant State: 綁定 tripId-day 防跨天串擾)
+    const scopeKey = `${tripId}-${day}`
+    const [optimisticState, setOptimisticState] = useState<{ key: string; value: string | null }>({
+        key: scopeKey,
+        value: null,
+    })
 
-    const effectiveReview = optimisticReview !== null ? optimisticReview : review
+    const effectiveReview = optimisticState.key === scopeKey && optimisticState.value !== null
+        ? optimisticState.value
+        : review
 
     const highlights = useMemo(() => extractAIReviewHighlights(effectiveReview), [effectiveReview])
     const cleanText = highlights.cleanReviewText || effectiveReview
@@ -55,9 +61,9 @@ export default function EditableDailyAIReview({
         setLoadingAction("generate")
 
         try {
-            const res = await tripsApi.generateAIReview(tripId, day, userId)
+            const res = await tripsApi.generateAIReview(tripId, day, userId, lang)
             if (res && res.review) {
-                setOptimisticReview(res.review)
+                setOptimisticState({ key: scopeKey, value: res.review })
             }
             toast.success(zh ? `Day ${day} AI 審核完成!` : `Day ${day} AI review complete!`)
             await onUpdate(res?.review)
@@ -79,7 +85,7 @@ export default function EditableDailyAIReview({
 
         try {
             await tripsApi.clearAIReview(tripId, day, userId)
-            setOptimisticReview("")
+            setOptimisticState({ key: scopeKey, value: "" })
             toast.success(zh ? "已清除審核報告" : "Review cleared")
             await onUpdate("")
         } catch (error) {
@@ -152,7 +158,7 @@ export default function EditableDailyAIReview({
                     {isLoading && loadingAction === "generate" ? (
                         <>
                             <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                            AI 正在審核中...
+                            {zh ? "AI 正在審核中..." : "AI is reviewing..."}
                         </>
                     ) : (
                         <>

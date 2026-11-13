@@ -93,7 +93,8 @@ export default function POIDetailDrawer({
     onFlyover
 }: POIDetailDrawerProps) {
     const haptic = useHaptic()
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
+    const zh = lang === "zh"
     const [aiData, setAiData] = useState<POIEnrichData | null>(null)
     const [aiLoading, setAiLoading] = useState(false)
     const [aiError, setAiError] = useState<string | null>(null)
@@ -114,14 +115,14 @@ export default function POIDetailDrawer({
     const showWikipediaHint = effectiveStatus === "PARTIAL_SUCCESS" && !hasCulturalDesc
     const isFailed = effectiveStatus === "FAILED"
 
-    // 🛡️ 狀態重置：當 POI 變更或關閉時清除舊資料並回歸半屏預設
+    // 🛡️ 狀態重置：當 POI、語系變更或關閉時清除舊資料並回歸半屏預設
     useEffect(() => {
         setAiData(null)
         setAiError(null)
         setAiLoading(false)
         setSelectedTime(suggestedTime)
         setDetent("half")
-    }, [poi?.name, poi?.lat, poi?.lng, suggestedTime, isOpen])
+    }, [poi?.name, poi?.lat, poi?.lng, suggestedTime, isOpen, lang])
 
     // 🖐️ iOS 智慧手勢吸附判定
     const handleDragEnd = useCallback(
@@ -212,12 +213,12 @@ export default function POIDetailDrawer({
             locationHint = poi.address.split(',')[0]
         } else if (aiData?.resolved_language) {
             // 🆕 根據解析語言提供動態地理提示 (Phase 6.3)
-            const lang = aiData.resolved_language.toLowerCase()
-            if (lang.includes('fa')) locationHint = '伊朗 Iran'
-            else if (lang.includes('ja')) locationHint = '日本 Japan'
-            else if (lang.includes('ko')) locationHint = '韓國 Korea'
-            else if (lang.includes('fr')) locationHint = '法國 France'
-            else if (lang.includes('de')) locationHint = '德國 Germany'
+            const resolvedLang = aiData.resolved_language.toLowerCase()
+            if (resolvedLang.includes('fa')) locationHint = '伊朗 Iran'
+            else if (resolvedLang.includes('ja')) locationHint = '日本 Japan'
+            else if (resolvedLang.includes('ko')) locationHint = '韓國 Korea'
+            else if (resolvedLang.includes('fr')) locationHint = '法國 France'
+            else if (resolvedLang.includes('de')) locationHint = '德國 Germany'
         }
         const query = encodeURIComponent(`${poi.name} ${locationHint}`.trim())
         const url = `https://www.google.com/search?tbm=isch&q=${query}`
@@ -271,7 +272,8 @@ export default function POIDetailDrawer({
                 lng: poi.lng,
                 api_key: getSecureApiKey(),
                 poi_id: poi.poi_id,
-                wikidata_id: poi.wikidata_id
+                wikidata_id: poi.wikidata_id,
+                locale: lang
             }, userId)
 
             setAiData(data)
@@ -341,7 +343,7 @@ export default function POIDetailDrawer({
                                     <span className="shrink-0">{poi.type === 'cluster' ? '📑' : getTypeIcon(poi.type)}</span>
                                     <span className="truncate max-w-35 sm:max-w-50">
                                         {poi.type === 'cluster'
-                                            ? (poi.clusterItems ? `群聚清單 (${poi.clusterItems.length})` : poi.name)
+                                            ? (poi.clusterItems ? (zh ? `群聚清單 (${poi.clusterItems.length})` : `Cluster List (${poi.clusterItems.length})`) : poi.name)
                                             : poi.name}
                                     </span>
                                 </span>
@@ -360,7 +362,9 @@ export default function POIDetailDrawer({
                                         }}
                                         className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
                                     >
-                                        {detent === "full" ? "半屏" : (detent === "half" ? "全屏" : "展開")}
+                                        {detent === "full"
+                                            ? (zh ? "半屏" : "Half")
+                                            : (detent === "half" ? (zh ? "全屏" : "Full") : (zh ? "展開" : "Expand"))}
                                     </button>
 
                                     {/* 圓形關閉按鈕 */}
@@ -396,10 +400,10 @@ export default function POIDetailDrawer({
                                             {poi.type}
                                         </span>
                                     </div>
-                                    <p className="text-xs text-slate-500 truncate mt-0.5">{poi.address || poi.type || "點擊或上滑展開詳情"}</p>
+                                    <p className="text-xs text-slate-500 truncate mt-0.5">{poi.address || poi.type || (zh ? "點擊或上滑展開詳情" : "Tap or swipe up for details")}</p>
                                 </div>
                                 <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 shrink-0">
-                                    向上展開 ↑
+                                    {zh ? "向上展開 ↑" : "Expand ↑"}
                                 </span>
                             </div>
                         ) : poi.type === 'cluster' ? (
@@ -694,7 +698,7 @@ export default function POIDetailDrawer({
                                                 variant="outline"
                                                 className="border-red-200 dark:border-red-800 text-red-600 hover:bg-red-50"
                                             >
-                                                重試分析 (Retry)
+                                                {zh ? "重試分析 (Retry)" : "Retry Analysis"}
                                             </Button>
                                         </div>
                                     ) : null}

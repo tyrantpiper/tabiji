@@ -112,7 +112,8 @@ export function ActivityEditModal({
                 lat: targetLat,
                 lng: targetLng,
                 country: searchCountry || undefined,  // 🆕 結構化國家過濾
-                region: searchRegion || undefined     // 🆕 結構化區域過濾
+                region: searchRegion || undefined,    // 🆕 結構化區域過濾
+                locale: lang
             })
             setPlaceSearchResults((data.results || []).map((item: GeocodeResult) => ({
                 name: item.name,

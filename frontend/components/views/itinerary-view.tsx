@@ -1239,7 +1239,8 @@ export function ItineraryView() {
                 const data = await geocodeApi.search({
                     query: editItem.place,
                     limit: 1,
-                    tripTitle: currentTrip?.title
+                    tripTitle: currentTrip?.title,
+                    locale: lang
                 })
                 if (data.results && data.results.length > 0) {
                     finalLat = data.results[0].lat

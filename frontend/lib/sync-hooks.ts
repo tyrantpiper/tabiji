@@ -46,6 +46,10 @@ export function useOfflineMutation() {
 // 🆕 Simple lock for processQueue
 let isProcessing = false;
 
+export function __resetSyncProcessingForTesting() {
+    isProcessing = false;
+}
+
 /**
  * ⚙️ Background Worker (Simulated)
  */

@@ -53,7 +53,8 @@ interface POISearchProps {
 }
 
 export function POISearch({ centerLat, centerLng, onSelectPOI, className }: POISearchProps) {
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
+    const zh = lang === "zh"
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
     const [pois, setPois] = useState<POI[]>([])
     const [isLoading, setIsLoading] = useState(false)
@@ -102,9 +103,10 @@ export function POISearch({ centerLat, centerLng, onSelectPOI, className }: POIS
             const userId = localStorage.getItem("user_uuid") || ""
             const data = await poiApi.recommend({
                 pois: pois.slice(0, 10),
-                user_query: "請推薦最適合觀光客的一間，說明原因。",
+                user_query: zh ? "請推薦最適合觀光客的一間，說明原因。" : "Please recommend the best spot for tourists and explain why.",
                 api_key: apiKey,
-                user_preferences: JSON.parse(localStorage.getItem("poi_preferences") || "{}")
+                user_preferences: JSON.parse(localStorage.getItem("poi_preferences") || "{}"),
+                locale: lang
             }, userId)
             setAiRecommendation(data.recommendation)
         } catch (e) {

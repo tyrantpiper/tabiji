@@ -143,7 +143,7 @@ export function ExpenseDialog({
     selectedCurrency,
     onSaveSuccess,
 }: ExpenseDialogProps) {
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
     const haptic = useHaptic()
 
     // Internal Form State
@@ -350,7 +350,7 @@ export function ExpenseDialog({
         setIsParsing(true)
         haptic.tap()
         try {
-            const response = await aiApi.parseReceipt(receiptUrl)
+            const response = await aiApi.parseReceipt(receiptUrl, undefined, lang)
             debugLog("[AI Parse Result]", response)
             if (response && (response.total_amount || response.amount_jpy)) {
                 setParseResult(response)

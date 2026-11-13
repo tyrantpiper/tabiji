@@ -333,7 +333,8 @@ export function InfoView() {
                 lat: biasLat,
                 lng: biasLng,
                 country: hotelSearchCountry || undefined,  // 🆕 結構化國家過濾
-                region: hotelSearchRegion || undefined     // 🆕 結構化區域過濾
+                region: hotelSearchRegion || undefined,    // 🆕 結構化區域過濾
+                locale: lang
             })
             const rawResults = data.results || []
             const deduped = rawResults.filter((r: PlaceSearchResult, idx: number, self: PlaceSearchResult[]) => {

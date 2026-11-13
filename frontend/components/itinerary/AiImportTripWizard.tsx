@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
@@ -251,6 +251,25 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
     const fileInputRef = useRef<HTMLInputElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
 
+    const handleFileSelected = useCallback((file: File) => {
+        if (!file.type.startsWith("image/")) {
+            toast.error(zh ? "請上傳圖片檔案 (PNG, JPG, WEBP)" : "Please upload an image file (PNG, JPG, WEBP)")
+            return
+        }
+        if (file.size > 10 * 1024 * 1024) {
+            toast.error(zh ? "圖片檔案請小於 10MB" : "Image size must be under 10MB")
+            return
+        }
+
+        const reader = new FileReader()
+        reader.onload = (e) => {
+            const b64 = e.target?.result as string
+            setImagePreview(b64)
+            haptic.selection()
+        }
+        reader.readAsDataURL(file)
+    }, [haptic, zh])
+
     // 📋 支援剪貼簿 Paste (文字 / 圖片)
     useEffect(() => {
         const handlePaste = (e: ClipboardEvent) => {
@@ -273,27 +292,7 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
 
         window.addEventListener("paste", handlePaste)
         return () => window.removeEventListener("paste", handlePaste)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [zh])
-
-    const handleFileSelected = (file: File) => {
-        if (!file.type.startsWith("image/")) {
-            toast.error(zh ? "請上傳圖片檔案 (PNG, JPG, WEBP)" : "Please upload an image file (PNG, JPG, WEBP)")
-            return
-        }
-        if (file.size > 10 * 1024 * 1024) {
-            toast.error(zh ? "圖片檔案請小於 10MB" : "Image size must be under 10MB")
-            return
-        }
-
-        const reader = new FileReader()
-        reader.onload = (e) => {
-            const b64 = e.target?.result as string
-            setImagePreview(b64)
-            haptic.selection()
-        }
-        reader.readAsDataURL(file)
-    }
+    }, [handleFileSelected, haptic, zh])
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault()
@@ -335,7 +334,8 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
                 markdown_text: importText.trim(),
                 user_id: activeUserId,
                 image_base64: imagePreview || undefined,
-                itinerary_id: itineraryId || undefined
+                itinerary_id: itineraryId || undefined,
+                locale: lang
             })
 
             setProgressText(t('ai_geocoding_step'))
@@ -352,7 +352,7 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
             onComplete(parsedData)
         } catch (error) {
             haptic.error()
-            const msg = error instanceof Error ? error.message : "解析失敗"
+            const msg = error instanceof Error ? error.message : (zh ? "解析失敗" : "Parsing failed")
             toast.error(zh ? `解析失敗: ${msg}` : `Parsing failed: ${msg}`)
         } finally {
             setIsLoading(false)
@@ -390,10 +390,10 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
                 <Label className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
                         <ImageIcon className="w-3.5 h-3.5 text-emerald-500" />
-                        行程截圖 / 旅行社DM / LINE 對話 (選填)
+                        {zh ? "行程截圖 / 旅行社DM / LINE 對話 (選填)" : "Screenshot / Brochure / Chat (Optional)"}
                     </span>
                     <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-normal">
-                        支援 Ctrl+V 貼上截圖
+                        {zh ? "支援 Ctrl+V 貼上截圖" : "Supports Ctrl+V paste"}
                     </span>
                 </Label>
 
@@ -408,10 +408,10 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
                         <div className="flex-1 min-w-0">
                             <div className="text-xs font-bold text-emerald-800 dark:text-emerald-200 flex items-center gap-1">
                                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                                截圖已就緒
+                                {zh ? "截圖已就緒" : "Screenshot ready"}
                             </div>
                             <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                                將使用多模態視覺模型深度識別景點
+                                {zh ? "將使用多模態視覺模型深度識別景點" : "Multimodal vision will extract all stops and times"}
                             </div>
                         </div>
                         <button
@@ -450,10 +450,10 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
                         </div>
                         <div className="text-left">
                             <div className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                                點擊或拖曳行程截圖至此
+                                {zh ? "點擊或拖曳行程截圖至此" : "Click or drag itinerary screenshot here"}
                             </div>
                             <div className="text-[10px] text-slate-400">
-                                支援小紅書、旅行社DM、LINE 行程圖片
+                                {zh ? "支援小紅書、旅行社DM、LINE 行程圖片" : "Supports social posts, travel flyers, or chat screenshots"}
                             </div>
                         </div>
                     </div>

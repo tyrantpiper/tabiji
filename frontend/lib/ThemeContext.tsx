@@ -5,6 +5,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 export const ACCENT_COLORS = {
     default: {
         name: "預設",
+        nameEn: "Default",
         gradient: "from-slate-700 to-slate-900",
         primary: "#1e293b",
         icon: "⚪"

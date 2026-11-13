@@ -104,7 +104,7 @@ export default function FullscreenMapModal({
     onAddPOI,
     tripTitle  // 🆕 行程標題
 }: FullscreenMapModalProps) {
-    const { t } = useLanguage()
+    const { t, lang } = useLanguage()
     const mapRef = useRef<MapRef>(null)
     const inputRef = useRef<HTMLInputElement>(null)
     const abortControllerRef = useRef<AbortController | null>(null)  // 🆕 P5: 取消前一個請求
@@ -212,6 +212,7 @@ export default function FullscreenMapModal({
                     lng: nearestCity?.lng ?? initialViewState.longitude,
                     zoom: currentZoom,  // 🆕 P1: 傳遞縮放層級
                     bbox,
+                    locale: lang,
                     signal  // 🆕 P5: 傳遞 AbortSignal
                 })
                 if (currentQuery === query && !signal.aborted) {

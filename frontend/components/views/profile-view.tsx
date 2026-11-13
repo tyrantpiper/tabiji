@@ -159,11 +159,13 @@ export function ProfileView() {
     const [usageGuideOpen, setUsageGuideOpen] = useState(false)
     const [pushGuideOpen, setPushGuideOpen] = useState(false)
 
-    // 🆕 捐贈功能 state（獨立區塊，不影響現有邏輯）
-    const [donationProgress, setDonationProgress] = useState({ current: 0, goal: 2000 })
+    // 🆕 捐贈功能 state（僅儲存百分比，不接觸原始台幣金額）
+    const [donationPercentage, setDonationPercentage] = useState<number | null>(null)
     const [isDonationLoading, setIsDonationLoading] = useState(true)
     const [showDonation, setShowDonation] = useState(true)
     const [donationExpanded, setDonationExpanded] = useState(false)
+    const donationReqSeqRef = useRef(0)
+    const isMountedRef = useRef(true)
 
     // 🆕 POI 推薦偏好設定
     const [poiPreferences, setPoiPreferences] = useState({
@@ -272,50 +274,106 @@ export function ProfileView() {
         }
     }, [zh, fetchProfileData])
 
+    // 🆕 捐贈進度讀取（Fail-Closed：失敗、離線、無設定或當月已關閉皆整張隱藏，絕不顯示假 0% 或殘留舊值）
+    const refreshDonationProgress = useCallback(async () => {
+        const reqSeq = ++donationReqSeqRef.current
+        const dismissedMonth = localStorage.getItem('donation_dismissed')
+        const currentMonth = new Date().toISOString().slice(0, 7)
+
+        if (dismissedMonth === currentMonth) {
+            setShowDonation(false)
+            setDonationPercentage(null)
+            setIsDonationLoading(false)
+            return
+        }
+
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            setShowDonation(false)
+            setDonationPercentage(null)
+            setIsDonationLoading(false)
+            return
+        }
+
+        setShowDonation(true)
+        setIsDonationLoading(true)
+
+        try {
+            const data = await appApi.getDonationProgress()
+            if (!isMountedRef.current || reqSeq !== donationReqSeqRef.current) return
+
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                setDonationPercentage(null)
+                setShowDonation(false)
+                return
+            }
+
+            if (
+                !data ||
+                data.available !== true ||
+                typeof data.percentage !== 'number' ||
+                !Number.isFinite(data.percentage)
+            ) {
+                setDonationPercentage(null)
+                setShowDonation(false)
+                return
+            }
+
+            // 自動月份重置：如果是新的月份，百分比歸 0%
+            const storedMonth = data.month
+            const nowMonth = new Date().toISOString().slice(0, 7)
+            if (storedMonth && storedMonth !== nowMonth) {
+                setDonationPercentage(0)
+            } else {
+                setDonationPercentage(Math.min(Math.max(data.percentage, 0), 120))
+            }
+            setShowDonation(true)
+        } catch (err) {
+            if (isMountedRef.current && reqSeq === donationReqSeqRef.current) {
+                debugLog('[Donation] Failed to fetch progress:', err)
+                setDonationPercentage(null)
+                setShowDonation(false)
+            }
+        } finally {
+            if (isMountedRef.current && reqSeq === donationReqSeqRef.current) {
+                setIsDonationLoading(false)
+            }
+        }
+    }, [])
+
     // 🆕 2026: Integrated global refresh event listener
     useEffect(() => {
         const handleRefresh = () => {
             console.log("🔄 ProfileView: Global refresh triggered via Tab Hub")
             fetchProfileData(true)
+            void refreshDonationProgress()
         }
         window.addEventListener('refresh-active-view', handleRefresh)
         return () => window.removeEventListener('refresh-active-view', handleRefresh)
-    }, [fetchProfileData])
+    }, [fetchProfileData, refreshDonationProgress])
 
-    // 🆕 捐贈進度讀取（獨立 useEffect，不影響現有邏輯）
     useEffect(() => {
-        let isMounted = true
-        // 檢查是否被用戶關閉（當月不再顯示）
-        const dismissedMonth = localStorage.getItem('donation_dismissed')
-        const currentMonth = new Date().toISOString().slice(0, 7)
-        if (dismissedMonth === currentMonth && isMounted) {
+        isMountedRef.current = true
+        const handleOffline = () => {
+            donationReqSeqRef.current += 1
+            if (!isMountedRef.current) return
+            setDonationPercentage(null)
             setShowDonation(false)
+            setIsDonationLoading(false)
+        }
+        const handleOnline = () => {
+            void refreshDonationProgress()
         }
 
-        // 改從後端 API 讀取進度，避免前端直連 Supabase 造成網路錯誤 (Phase 20 Fix)
-        const fetchDonationProgress = async () => {
-            try {
-                const data = await appApi.getDonationProgress()
+        window.addEventListener('offline', handleOffline)
+        window.addEventListener('online', handleOnline)
+        void refreshDonationProgress()
 
-                if (data && isMounted) {
-                    // 自動月份重置：如果是新的月份，current 顯示為 0
-                    const storedMonth = data.month
-                    const nowMonth = new Date().toISOString().slice(0, 7)
-                    if (storedMonth && storedMonth !== nowMonth) {
-                        setDonationProgress({ current: 0, goal: data.goal || 2000 })
-                    } else {
-                        setDonationProgress(data)
-                    }
-                }
-            } catch (err) {
-                if (isMounted) debugLog('[Donation] Failed to fetch progress:', err)
-            } finally {
-                if (isMounted) setIsDonationLoading(false)
-            }
+        return () => {
+            isMountedRef.current = false
+            window.removeEventListener('offline', handleOffline)
+            window.removeEventListener('online', handleOnline)
         }
-        fetchDonationProgress()
-        return () => { isMounted = false }
-    }, [])
+    }, [refreshDonationProgress])
 
     const handleSaveProfile = async () => {
         const userId = localStorage.getItem("user_uuid")
@@ -610,8 +668,8 @@ export function ProfileView() {
                                                     </div>
                                                 </div>
                                                 <div className="flex justify-between items-end mb-4">
-                                                    <Skeleton className="h-3 w-12 bg-[#0B3026]/10 dark:bg-white/10" />
-                                                    <Skeleton className="h-6 w-32 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                    <Skeleton className="h-3 w-16 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                    <Skeleton className="h-6 w-14 bg-[#0B3026]/10 dark:bg-white/10" />
                                                 </div>
                                                 <div className="space-y-2 mb-4">
                                                     <Skeleton className="h-2 w-1/2 bg-[#0B3026]/10 dark:bg-white/10" />
@@ -622,8 +680,11 @@ export function ProfileView() {
                                         )
                                     }
 
-                                    const safeGoal = donationProgress.goal > 0 ? donationProgress.goal : 2000
-                                    const percentage = Math.min(Math.max((donationProgress.current / safeGoal) * 100, 0), 120)
+                                    if (donationPercentage === null) {
+                                        return null
+                                    }
+
+                                    const percentage = Math.min(Math.max(donationPercentage, 0), 120)
 
                                     const getTherapeuticStatus = () => {
                                         if (percentage < 30) return {
@@ -752,17 +813,24 @@ export function ProfileView() {
                                                 </div>
                                             </div>
 
-                                            <div className="flex justify-between items-end text-xs text-[#0B3026]/70 dark:text-[#88A29A] mb-3">
-                                                <span className="mb-1">{t('profile_accumulator')}</span>
-                                                <div className="text-right">
-                                                    <span className="text-lg font-bold text-[#1E2927] dark:text-[#E5EBEA] mr-1">
-                                                        NT${donationProgress.current.toLocaleString()}
-                                                    </span>
-                                                    <span className="text-xs text-[#0B3026]/50 dark:text-white/50">
-                                                        / ${donationProgress.goal.toLocaleString()}
-                                                    </span>
-                                                </div>
-                                            </div>
+                                            {(() => {
+                                                const displayPercentage = percentage > 0 && percentage < 1
+                                                    ? percentage.toFixed(1)
+                                                    : Math.floor(percentage);
+                                                return (
+                                                    <div className="flex justify-between items-end text-xs text-[#0B3026]/70 dark:text-[#88A29A] mb-3">
+                                                        <span className="mb-1">{t('profile_accumulator')}</span>
+                                                        <div
+                                                            className="text-right flex items-baseline justify-end"
+                                                            aria-label={`${t('profile_accumulator')}: ${displayPercentage}%`}
+                                                        >
+                                                            <span className="text-lg font-bold text-[#E56E25] dark:text-[#E56E25]">
+                                                                {displayPercentage}%
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
 
                                             <div className="text-[10px] text-[#0B3026]/70 dark:text-[#88A29A] mb-3 space-y-1">
                                                 {percentage >= 0 && (
@@ -939,7 +1007,7 @@ export function ProfileView() {
                                                                 ? "ring-2 ring-offset-2 ring-[#0B3026] dark:ring-white scale-110"
                                                                 : "opacity-70 hover:opacity-100"
                                                         )}
-                                                        title={ACCENT_COLORS[color].name}
+                                                        title={zh ? ACCENT_COLORS[color].name : ((ACCENT_COLORS[color] as { nameEn?: string }).nameEn || ACCENT_COLORS[color].name)}
                                                     >
                                                         {accentColor === color && "✓"}
                                                     </button>

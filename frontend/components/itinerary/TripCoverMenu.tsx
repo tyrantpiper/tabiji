@@ -9,7 +9,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
 import { ZoomableImage } from "@/components/ui/zoomable-image"
 import { useLanguage } from "@/lib/LanguageContext"
@@ -252,7 +252,10 @@ export function TripCoverMenu({
                 <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
                     <DialogContent className="max-w-4xl p-0 bg-transparent border-none shadow-none text-white flex items-center justify-center">
                         <VisuallyHidden>
-                            <DialogTitle>{tripTitle} 封面大圖</DialogTitle>
+                            <DialogTitle>{tripTitle} {zh ? "封面大圖" : "Cover Photo"}</DialogTitle>
+                            <DialogDescription>
+                                {zh ? `${tripTitle} 封面圖片放大預覽` : `Enlarged cover photo preview for ${tripTitle}`}
+                            </DialogDescription>
                         </VisuallyHidden>
                         <div className="relative max-h-[85vh] max-w-[90vw] overflow-hidden rounded-2xl bg-black/80">
                             <ZoomableImage

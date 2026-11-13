@@ -1,5 +1,5 @@
 "use client"
-import { Map, Info, Wrench, UserCircle } from "lucide-react"
+import { Map, Ticket, Coins, Users } from "lucide-react"
 import { useLanguage } from "@/lib/LanguageContext"
 import { cn } from "@/lib/utils"
 import { motion } from "framer-motion"
@@ -20,9 +20,9 @@ export function BottomNav({ activeTab, onTabChange, onActiveTabClick, isVisible 
 
     const tabs = [
         { id: "itinerary", label: t('nav_itinerary'), icon: Map },
-        { id: "info", label: t('nav_info'), icon: Info },
-        { id: "tools", label: t('nav_tools'), icon: Wrench },
-        { id: "profile", label: t('nav_profile'), icon: UserCircle },
+        { id: "info", label: t('nav_info'), icon: Ticket },
+        { id: "tools", label: t('nav_tools'), icon: Coins },
+        { id: "profile", label: t('nav_profile'), icon: Users },
     ]
 
     return (

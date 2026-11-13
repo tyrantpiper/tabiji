@@ -51,7 +51,8 @@ export function LocationEditDialog({
                 region: dailyLocSearchRegion || undefined,
                 lat: biasLoc?.lat,
                 lng: biasLoc?.lng,
-                tripTitle: currentTrip?.title
+                tripTitle: currentTrip?.title,
+                locale: lang
             })
             const rawResults = data.results || []
             const deduped = rawResults.filter((r: GeocodeResult, idx: number, self: GeocodeResult[]) => {

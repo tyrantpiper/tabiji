@@ -232,15 +232,26 @@ export function CreateTripModal({
                 response = await aiApi.generateTripStream({
                     prompt: promptToSend,
                     user_id: activeUserId,
+                    locale: lang,
                     onProgress: (p) => {
                         setAiProgress(`${p.message} (${p.percent}%)`)
                     }
                 })
             } catch (streamErr) {
+                const errObj = streamErr as { status?: number; code?: string } | null
+                if (
+                    errObj?.status === 401 ||
+                    errObj?.status === 400 ||
+                    errObj?.code === "auth_fail" ||
+                    errObj?.code === "bad_request"
+                ) {
+                    throw streamErr
+                }
                 console.warn("⚠️ [TripDialogs] Stream failed, falling back to sync:", streamErr)
                 response = await aiApi.generateTrip({
                     prompt: promptToSend,
-                    user_id: activeUserId
+                    user_id: activeUserId,
+                    locale: lang
                 })
             }
             setAiProgress(t('ai_geocoding_step'))
