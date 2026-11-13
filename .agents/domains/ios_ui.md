@@ -3,6 +3,8 @@
 > **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
 
 ## 🏛️ 架構決策 (Decisions)
+- **打字機動畫標題雙層 DOM 無障礙設計與 React Compiler 渲染隔離**: 打字機文字元件必須包含 sr-only 完整可讀文字與 aria-hidden 動態層以維護 a11y；外層 key 隔離內層 state 避免 React 19 / React Compiler 於渲染階段觸發狀態循環更新；支援 prefers-reduced-motion 降級為靜態文字。
+
 - **Multi-Action Input Right Padding Minimum Scale**: Form inputs housing 3 or more absolute right action buttons (e.g. Refresh, Eye Toggle, Copy) MUST enforce at least pr-44 (11rem / 176px) to guarantee zero character overlap with button icons.
 
 - **Mobile Viewport Mini-Bar Auto-Dock**: On mobile screens (< 768px), floating chat dialogs must support docking into a <= 60px mini-bar to preserve underlying map interaction without losing conversation state.
@@ -40,6 +42,10 @@
 - **Framer Motion 一次性動畫遞增 key 重播**: 鈴鐺動畫以 key={ringCount} 重播，取代布林狀態重設，消除快速連點卡死。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **SVG 羅盤指針 transform-origin 使用像素單位導致響應式縮放位移刺穿卡片**: 在 SVG 向量動效中，transform-origin: 100px 在不同螢幕 DPI 縮放時會被視為絕對像素偏移。旋轉中心必須使用 transformBox: 'view-box' 配合百分比或 viewBox 原生座標，外層容器必須添加 overflow-hidden。
+
+- **ScrollSpy 高亮標記與平滑捲動互斥競態（Flapping Race）**: 點擊導航錨點觸發平滑捲動時，途中被 IntersectionObserver 觸發回彈判定，導致 0.8s 內產生多次振盪閃爍。應在點擊時以 isManualScrollingRef 互斥鎖暫停 Observer 回調寫入 state 約 900ms，捲動抵達後再解除鎖定。
+
 - **FP-047 (Hook TDZ 順序)**: useEffect 依賴陣列在 render 當下求值，effect 必須放在它引用的所有 useState 宣告之後，否則 ReferenceError 白屏。
 - **FP-049 (布林動畫卡住)**: 550ms 內快速開關開時，布林值仍為 true 導致重設無效。改用遞增序號 key={ringCount}。
 - **FP-055 (React 19 連鎖渲染)**: CustomCategoryModal 內若使用 useEffect 監聽 isOpen 重設觸發 react-hooks/set-state-in-effect。改由父層 key={id || 'closed'} 自動重置。

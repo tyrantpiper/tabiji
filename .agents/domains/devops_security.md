@@ -3,6 +3,10 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **多代理人暫存工作區（.agents/teamwork/）版控雙重隔離防線（AD-151）**: 多代理人協同運作產生的臨時暫存檔與溝通日誌（.agents/teamwork/）必須在 .gitignore 嚴格宣告忽略，並於 /push Quality Gate 的 Teamwork Scratch Gate 進行物理探針檢查（git ls-files .agents/teamwork），嚴禁任何協作暫存碎片進入 Git 版控歷史。
+
+- **開發者模式哨兵字串比對必須在 ASCII 特殊字元過濾之前執行**: 在 API 金鑰診斷與請求標頭處理管線中，開發者模式哨兵字串比對（如 '(開發者模式)'）必須在非 ASCII 或控制字元過濾之前進行。若順序倒置，中文中括號被過濾器剔除後會退化為殘留字串 '()'，進而外洩至出站 HTTP 標頭造成資料污染。
+
 - **Security Ledger Mathematical Conservation**: Modifications to docs/security/security-coverage-ledger.json must strictly preserve the invariant total_targets == audited_targets == (verified_vulnerabilities + remediated_vulnerabilities + dismissed_hypotheses). Newly audited targets must be classified cleanly without double-counting verified and remediated states.
 
 - **Flawed IP Exception vs Centralized DNS Delegation**: Ad-hoc URL validation routines must never catch ipaddress.ip_address(hostname) ValueError with pass, as non-numeric domain names resolving to loopback or metadata IPs (e.g. localtest.me, *.nip.io) silently bypass filtering. All external crawling and search utilities must delegate URL safety checks exclusively to centralized url_safety.is_safe_url.
@@ -88,6 +92,8 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **以 git diff HEAD === '' 當凍結不變量會阻斷合法安全修補並卡死 CI 閘門**: 凍結核心（Frozen Core）應撰寫為行為契約測試（驗證離線/資安不變量），而非在單元測試中硬性斷言 git diff HEAD -- file === ''。後者會導致任何合法的上游依賴修補或預編譯直接判定為測試失敗，並造成提交循環死鎖。
+
 - **Ingress WAF Inability to Defend Egress SSRF Architectural Trap**: Relying on Cloudflare Edge Shield (tabijiapp-edge-shield) or reverse proxy WAFs to mitigate SSRF is architecturally impossible because ingress proxies only inspect inbound requests from browsers to servers, whereas SSRF originates as outbound (egress) HTTP requests from backend containers to internal/external networks. Egress protection must be enforced inside the application runtime.
 
 - **FQDN Trailing Dot & Integer IP Bypass**: String-based hostname matching against BLOCKED_HOSTNAMES is bypassed by trailing-dot FQDNs (http://localhost./) and decimal integer IPs (http://2130706433/). url_safety must strip trailing dots via hostname.lower().rstrip('.') and parse clean_host.isdigit() via ipaddress.ip_address(int(clean_host)) before evaluation.

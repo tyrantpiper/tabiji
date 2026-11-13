@@ -3,6 +3,26 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **Antigravity Preview Agent 互動建立必須顯式指定 remote 環境**: 在調用 antigravity-preview-09-2026 的 interactions.create 時，請求參數必須顯式包含 environment="remote"；傳入不存在或已過期的 interaction_id 探針時後端必須回傳 400，並精準映射至 404/401/429 狀態碼。
+
+- **各主流模型思考配置（Thinking Budget）相容性矩陣契約**: 思考模式配置存在嚴格的模型版本差異：Gemini 2.5 系列關閉/低思考使用數值型 thinking_budget=0；Gemini 3.8 系列採用枚舉型 ThinkingLevel.LOW / MEDIUM / HIGH；Gemma 4 系列採用 minimal / high 宣告。跨模型傳遞配置前必須經過適配矩陣轉換，嚴禁混用。
+
+- **AI 異步客戶端快取需依 Event Loop 實例分桶並於 Shutdown 統一釋放**: 在測試環境或動態任務中，多個測試案例可能運行於不同的 asyncio 事件循環。全域 AI 客戶端快取必須以 id(asyncio.get_running_loop()) 作為快取分桶鍵，並在 FastAPI lifespan 關閉時遍歷關閉所有連線池，杜絕 Event loop is closed 殭屍連線警告。
+
+- **免費金鑰 GoogleSearch 原生工具 429 嚴禁計入全域模型熔斷池**: Gemini 免費層呼叫原生 GoogleSearch() 產生的 429 屬於工具附加額度耗盡，非模型運算核心離線。此類錯誤絕不可傳遞至 record_model_error，避免將核心 Gemini 旗艦模型錯誤封鎖 300 秒。
+
+- **Google GenAI Interactions SDK 異常捕獲須相容 compat_errors.APIStatusError**: google-genai==2.16.0 的 client.interactions.* 呼叫拋出的是 google.genai._gaos.lib.compat_errors.APIStatusError（屬性為 status_code），而非 genai_errors.APIError（屬性為 code）。後端異常攔截必須使用雙重元組 (genai_errors.APIError, _compat_errors.APIError)，並透過相容取值器提取 HTTP 狀態碼，避免 400/401/404/429 被誤判為 500。
+
+- **公益進度查詢 Fail-Closed 原則與個人隱私去法幣化**: 贊助與公益進度 API 僅回傳百分比與狀態 {available, percentage, month}，絕對禁止包含任何法幣金額欄位以避免使用者誤解。後端拋錯或未啟用時前端自動隱藏且不發起重複請求，骨架屏依實際內容縮小避免 CLS。
+
+- **行程資源存取授權、單列查詢安全、同步 SDK 線程隔離與對外錯誤遮蔽基線**: 所有行程子資源端點必須驗證房間成員權限（check_trip_access）；資料庫查詢禁止使用裸 .single()，應採用 _first_row 並安全回傳 404/403；async FastAPI 路由呼叫同步 Supabase SDK 必須使用 run_in_threadpool；全域例外處理器嚴禁對外回傳 traceback。
+
+- **多語系全棧切換契約：UI locale 必傳且 Prompt 注入與分類快路徑全面聯動**: 使用者語言由前端介面 locale 明確決定，禁止由後端輸入隨意猜測。所有 AI 端點必須傳入 locale；SYSTEM_PROMPT、搜尋字串注入與行程評估 Prompt 依 locale 動態渲染；分類快路徑正則必須避免英文關鍵字（如 check）誤觸發繁體中文搜尋模板。
+
+- **串流生成必須經由 Lookahead 滑動窗過濾裸 JSON 協定與內部思考標籤**: 模型輸出尾端偶發之 { items: [...] } 函數呼叫與 thought/thinking 思考標籤若直接以 event: text 推送會外洩系統提示詞。必須由 StreamLookaheadSanitizer 30 字元滑動窗進行前瞻緩衝，使用 json.JSONDecoder().raw_decode 識別閉合 JSON 並轉為 event: tool 推送。
+
+- **SSE 心跳僅保連線存活，底層模型呼叫需獨立 wait_for 且逾時不計全域熔斷**: SSE 傳輸層 10s keep-alive 僅維持 HTTP 連線，google-genai SDK 預設 timeout=None 會在 upstream 異常時永久阻塞。模型呼叫必須以 asyncio.wait_for 設置端點逾時（無心跳 90s、SSE 120s）。逾時僅切換至下一備援模型，絕不可呼叫 record_model_error 誤鎖健康旗艦模型。
+
 - **Single-Event-Loop ReDoS & Truncation Invariant**: Under single-process Uvicorn deployments on Google Cloud Run, synchronous regex execution on user-controlled text must enforce input truncation (e.g. raw[:800]) and bounded repetitions ({1,3}, {1,5}, [^<]{1,200}) without overlapping quantifiers. Unbounded polynomial backtracking freezes the asyncio event loop, severing active SSE client streams and inducing runaway container autoscaling.
 
 - **Remote MCP OAuth 2.1 RFC 8414/9728 & Stateless HMAC Fallback**: OAuth 2.1 authorization server endpoints (/api/oauth/authorize & /token) must implement dual-track authorization codes: in-memory fast dict plus stateless HMAC-SHA256 token fallback to survive multi-instance Cloud Run server restarts and cross-container load balancing. CONSUMED_OAUTH_CODES replay table strictly enforces single-use token consumption.
@@ -73,6 +93,14 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Gemini 3.8 與 Gemma 系列 thought_signature 400 錯誤避免誤判為配置不支援**: 當 Gemini 3.8 或後續模型回傳 thought_signature 相關 400 INVALID_ARGUMENT 時，系統不可武斷將其歸類為 config_unsupported 觸發全域降級。應針對錯誤詳情進行精確模式比對，並在降級時優先剝離思考簽名配置進行原模型重試。
+
+- **RPD 配額未滿卻頻繁遭遇 429 速率限制之四層成因與退避治理**: 429 觸發多源於短突發速率（RPM/TPM）或免費金鑰之付費 Grounding 工具耗盡，非每日總請求數（RPD）耗盡。移除 SEARCH 意圖之 First-Pass 雙重呼叫可降低 60% 瞬間突發；免費金鑰停用 Google 原生 Grounding；SlowAPI 改用金鑰雜湊分桶避免本機 127.0.0.1 誤限流；暫態 429 不計入 300s 熔斷池。
+
+- **Gemma 4 深度思考延遲被誤診為模型未開放或端點崩潰**: Gemma 4 系列模型因原生思考延遲達 30~50s，若置於 <2s 之快速分類端點會被逾時中斷。不可在未經真實探測下誤診為模型未開放。Gemma 4 不適合高時效分類路徑；呼叫時工具宣告應採用 Depth=1 扁平化結構以避免 400 schema 衝突，純文字模式關閉自動函數呼叫。
+
+- **意圖分類 1.8s 硬逾時無腦降級 SEARCH + mode=ANY 導致 28px 空白幽靈氣泡與對話中斷**: 分類逾時若強制降級為 SEARCH 意圖且以 ToolConfig(mode=ANY) 強制模型呼叫工具，會使讚美/問候語句輸出空文字，引發前端 28px 空白氣泡，下一輪遺失 model 訊息而觸發 Gemini 400 INVALID_ARGUMENT。分類逾時必須中性 fallback 為 CHAT/AUTO，並引入本地 Regex 0ms 短路判斷。
+
 - **FastAPI Dependency Request Parameter Wrapping Crash**: Wrapping request parameter as Optional[Request] = None in FastAPI route dependencies causes Starlette reflection to fail with 'FastAPIError: Invalid args for response field!'. Must strictly declare request: Request = None without Optional, while declaring auth headers as Optional[str] = Header(None).
 
 - **Action Noise False Geocoding Query Overhead**: Submitting activity notes like '集合/搭乘/休息/退稅' to geocoding services causes rate limit exhaustion and erroneous coordinates. Filter out items matching ACTION_NOISE_KEYWORDS before geocoding.

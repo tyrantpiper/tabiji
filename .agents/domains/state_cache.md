@@ -59,6 +59,8 @@
 - **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **子路由 layout 宣告 head 導致 React 19 與 Next.js 16 渲染層水合錯誤**: 在 Next.js App Router 架構下，只有根路由 app/layout.tsx 允許渲染 html, body, head。子路由（如 app/official/layout.tsx）若重複宣告 head，會觸發 In HTML, head cannot be a child of body 水合失敗。資源預載應透過 Image priority 或 route metadata 宣告。
+
 - **Orphan Client UUID Inducing Reauth Modal Trap on Root Landing Page**: Symptom: First-time visitor opening root '/' was immediately confronted with an alarming '需要原地驗證最新引繼碼' modal with a 10s cooldown lock. Cause: Client-side generated UUID was persisted in localStorage without server registration, causing ensureValidSession to receive 401 and trigger triggerReauthPrompt. Lesson: Unauthenticated visitors must be strictly gated with isUserLoggedIn() and orphan UUIDs silently purged.
 
 - **Deep-View Scoped Realtime Blindspot Trap**: Scoping realtime credential sync listeners inside specific subviews causes devices on other pages to miss critical rotation signals.

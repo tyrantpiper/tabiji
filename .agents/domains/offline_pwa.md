@@ -3,6 +3,12 @@
 > **所屬領域**: Service Worker (Serwist), IndexedDB (idb-keyval), Cache Storage, PWA Standalone
 
 ## 🏛️ 架構決策 (Decisions)
+- **官方展示頁（/official/*）隔離 PWA 安裝提示與即時聊天助手**: 官方入口頁面採同源子路徑部署時，必須依 usePathname() 嚴格隔離 PWA 安裝橫幅與即時聊天懸浮鈕，兼顧渲染層與 Effect 層雙重防守。Next.js 16 下使用 usePathname() 的客戶端元件外層必須以 Suspense fallback={null} 包裹以確保靜態編譯合規。
+
+- **SW 網域白名單精確比對與推播導引安全淨化**: 網域白名單比對嚴禁使用 .hostname.includes()，必須採用 host === domain || host.endsWith('.' + domain) 以防禦次級域名偽造（CWE-20）。Web Push 導引連結必須封鎖反斜線、ASCII 控制字元與跨源跳轉，非安全路徑強制 fallback 至 /。
+
+- **SW 排除規則須涵蓋無尾斜線 API 路徑；所有 /api/* 一律 NetworkOnly**: CacheStorage 只依據 URL 匹配而不檢查 Header。若 SW 僅排除帶尾斜線的 /api/trips/，而前端發起 /api/trips，會導致共用裝置在切換帳號或離線時吐出前一位使用者的快取資料。所有 /api/* 必須一律設為 NetworkOnly，離線寫入與本機持久化完全委任 IndexedDB 與 SyncQueue。
+
 - **Cloudflare Worker Proxy Dynamic Binding with Native Cloudinary CDN Fallback**: Image optimizer urls must dynamically resolve NEXT_PUBLIC_CLOUDINARY_PROXY_HOST falling back to active worker 'cloudinary-proxy.ryanpig228.workers.dev'. If disabled or unresolvable, it must fallback to official Cloudinary native dynamic URL transforms (.../image/upload/w_xxx,c_limit,f_auto,q_auto/...) to prevent Serwist Service Worker 'no-response' unhandled crashes.
 
 - **Outbox 401 Physical Freeze and Dequeue Protection**: When useBackgroundSync encounters a 401 Unauthorized during mutation replay, it must immediately call SyncEngineControl.pause() and break out of the replay loop without incrementing retryCount and without dequeuing the mutation.
@@ -24,5 +30,7 @@
 - **冷啟動零閃爍夜幕協調防線**: manifest.json 與 themeColor 鎖定為 #162832，硬骨架透過 standalone 媒體查詢自適應，水合掛載時無縫交棒。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Serwist BackgroundSync 路由漏傳 method 導致死路由與雙重排隊**: 在 Serwist 中註冊 BackgroundSync 插件若未顯式傳入 HTTP method，預設僅攔截 GET 請求，導致線上命中率 0% 且與前端本機 SyncQueue 邊界重疊。離線重試佇列必須保持單一權威源，嚴禁未經測試掛載空泛 SW BackgroundSync。
+
 - **FP-007 (開發模式 SW 污染)**: npm run dev 預設阻斷 Service Worker 註冊以保護 HMR。測試離線走 npm run build && npm start。
 - **FP-008 (退出意圖優先於實體訂閱)**: 實體訂閱退訂引入 push_opt_out 標記，偵測到退訂標記即便瀏覽器底層回傳訂閱，前端強制視為已退訂。
