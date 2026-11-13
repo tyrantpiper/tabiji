@@ -33,6 +33,7 @@ export interface SSEHandlers {
         }>
     }) => void
     onError?: (error: { message: string; code: number }) => void
+    onReset?: (data?: { reason?: string; model?: string }) => void
     onHeartbeat?: () => void
 }
 
@@ -138,6 +139,15 @@ export function handleSSEEvent(event: SSEEvent, handlers: SSEHandlers): boolean 
                 isTerminal = true  // 🛡️ error 是終結事件
                 break
 
+            case "reset":
+                try {
+                    const resetData = event.data ? JSON.parse(event.data) : undefined
+                    handlers.onReset?.(resetData)
+                } catch {
+                    handlers.onReset?.()
+                }
+                break
+
             case "heartbeat":
                 handlers.onHeartbeat?.()
                 break
@@ -164,7 +174,8 @@ export async function streamChat(
     focused_day?: number,
     userId?: string,
     clientTime?: string,
-    clientTimezone?: string
+    clientTimezone?: string,
+    locale?: string
 ): Promise<void> {
     const defaultTime = clientTime || new Date().toISOString()
     const defaultTz = clientTimezone || (typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei")
@@ -196,7 +207,8 @@ export async function streamChat(
         focused_day: focused_day,
         // 🆕 即時時間與時區感知
         client_time: defaultTime,
-        client_timezone: defaultTz
+        client_timezone: defaultTz,
+        locale: locale || "zh"
     });
 
     let response = await fetch(`${apiUrl}/api/chat/stream`, {
@@ -206,24 +218,45 @@ export async function streamChat(
         signal
     });
 
-    // 🛡️ 401 自癒重試防禦 (Self-Healing Re-handshake)
+    // 🛡️ 401 自癒重試防禦：僅針對 Tabiji Session JWT 過期重刷；若是 Gemini API Key 401 失敗，保留本地 Session 不誤刪
     if (response.status === 401 && typeof window !== "undefined" && !signal?.aborted) {
-        console.warn("⚠️ [SSE] Received 401 Unauthorized during stream handshake, refreshing session token...");
-        localStorage.removeItem("tabiji_session_token");
-        const freshToken = await ensureValidSession().catch(() => null);
-        if (freshToken && !signal?.aborted) {
-            headers["Authorization"] = `Bearer ${freshToken}`;
-            response = await fetch(`${apiUrl}/api/chat/stream`, {
-                method: "POST",
-                headers,
-                body: requestPayload,
-                signal
-            });
+        let errDetail = ""
+        try {
+            const errJson = await response.clone().json()
+            errDetail = String(errJson?.detail || errJson?.message || "")
+        } catch {
+            errDetail = await response.clone().text().catch(() => "")
+        }
+        const isGeminiKeyAuthError = /gemini|api[_ ]?key|金鑰|個人檔案|profile|google ai studio|已失效|無效或已過期/i.test(errDetail)
+        const hasSessionToken = Boolean(localStorage.getItem("tabiji_session_token"))
+
+        if (!isGeminiKeyAuthError && hasSessionToken) {
+            console.warn("⚠️ [SSE] Received 401 Unauthorized during stream handshake, refreshing session token...")
+            localStorage.removeItem("tabiji_session_token")
+            const freshToken = await ensureValidSession().catch(() => null)
+            if (freshToken && !signal?.aborted) {
+                headers["Authorization"] = `Bearer ${freshToken}`
+                response = await fetch(`${apiUrl}/api/chat/stream`, {
+                    method: "POST",
+                    headers,
+                    body: requestPayload,
+                    signal
+                })
+            }
+        } else if (isGeminiKeyAuthError) {
+            throw new Error(errDetail || "API_KEY_INVALID")
         }
     }
 
     if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        let errDetail = ""
+        try {
+            const errJson = await response.clone().json()
+            errDetail = String(errJson?.detail || errJson?.message || "")
+        } catch {
+            errDetail = ""
+        }
+        throw new Error(errDetail || `HTTP ${response.status}: ${response.statusText}`)
     }
 
     if (!response.body) {

@@ -651,7 +651,7 @@ export const remainingTranslations = {
         api_key_step1_3: "and log in with your Google account.",
         api_key_step2: "Click on the Get API key tab in the left menu.",
         api_key_step3_1: "Click Create API key to generate a new Authorization Key (Auth key), then copy the code starting with",
-        api_key_step3_2: "and paste it above.",
+        api_key_step3_2: "(legacy AIza... keys are also supported) and paste it above.",
         api_key_free_tier: "Completely free (Free Tier). All newly created keys in AI Studio are automatically secure Auth Keys.",
         clear: "Clear",
         save_settings: "Save Settings",
@@ -971,7 +971,7 @@ export const remainingTranslations = {
         nav_itinerary: "行程",
         nav_info: "資訊",
         nav_tools: "工具",
-        nav_profile: "個人檔案",
+        nav_profile: "個人",
 
         map_daily_route: "每日路線圖",
         map_cross_region: "跨區域",
@@ -1385,7 +1385,7 @@ export const remainingTranslations = {
         api_key_step1_3: "並使用 Google 帳號登入。",
         api_key_step2: "點擊左側選單的 Get API key 頁籤。",
         api_key_step3_1: "點擊 Create API key 按鈕建立全新的授權金鑰 (Auth key)，將",
-        api_key_step3_2: "開頭的代碼複製貼上至上方即可。",
+        api_key_step3_2: "開頭的代碼（亦相容舊版 AIza...）複製貼上至上方即可。",
         api_key_free_tier: "此為完全免費 (Free Tier) 的服務，目前在 AI Studio 建立的新金鑰均自動為新版授權金鑰 (Auth Key)。",
         clear: "清除",
 

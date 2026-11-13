@@ -75,6 +75,8 @@ export function decryptData(encryptedData: string | null): string | null {
     }
 }
 
+export const DEV_MODE_SENTINELS = new Set(["(開發者模式)", "(Dev Mode)", "()"]);
+
 /**
  * Universal Secure Key Provider
  * Handles Decryption -> Legacy Fallback -> Dev Key logic in one place.
@@ -82,9 +84,14 @@ export function decryptData(encryptedData: string | null): string | null {
 export function getSecureApiKey(): string {
     // 🛑 移除非 ASCII 字元，防止 'Failed to read headers property' 的 Fetch 崩潰
     const sanitize = (key: string) => key.replace(/[^\x20-\x7E]/g, '').trim();
+    const isSentinel = (raw: string): boolean => {
+        const trimmed = raw.trim();
+        return DEV_MODE_SENTINELS.has(trimmed) || DEV_MODE_SENTINELS.has(sanitize(trimmed));
+    };
 
     if (typeof window === 'undefined') {
-        return sanitize(process.env.NEXT_PUBLIC_DEV_GEMINI_KEY || "");
+        const envKey = sanitize(process.env.NEXT_PUBLIC_DEV_GEMINI_KEY || "");
+        return DEV_MODE_SENTINELS.has(envKey) ? "" : envKey;
     }
 
     try {
@@ -92,18 +99,35 @@ export function getSecureApiKey(): string {
         const secureKey = localStorage.getItem("user_gemini_key");
         if (secureKey) {
             const decrypted = decryptData(secureKey);
-            if (decrypted) return sanitize(decrypted);
+            if (decrypted) {
+                if (isSentinel(decrypted)) {
+                    // Self-heal previously poisoned Dev Mode sentinel (e.g. "(開發者模式)" -> "()" after ASCII sanitize)
+                    localStorage.removeItem("user_gemini_key");
+                } else {
+                    const clean = sanitize(decrypted);
+                    if (clean) return clean;
+                }
+            }
         }
 
         // 2. Try Legacy Keys (Plain text fallback)
         const legacyKey = localStorage.getItem("gemini_api_key");
-        if (legacyKey) return sanitize(legacyKey);
+        if (legacyKey) {
+            if (isSentinel(legacyKey)) {
+                localStorage.removeItem("gemini_api_key");
+            } else {
+                const cleanLegacy = sanitize(legacyKey);
+                if (cleanLegacy) return cleanLegacy;
+            }
+        }
 
         // 3. Final Fallback (Environment Variable)
-        return sanitize(process.env.NEXT_PUBLIC_DEV_GEMINI_KEY || "");
+        const envKey = sanitize(process.env.NEXT_PUBLIC_DEV_GEMINI_KEY || "");
+        return DEV_MODE_SENTINELS.has(envKey) ? "" : envKey;
     } catch (e) {
         console.error("Critical error in key provider:", e);
-        return sanitize(process.env.NEXT_PUBLIC_DEV_GEMINI_KEY || "");
+        const envKey = sanitize(process.env.NEXT_PUBLIC_DEV_GEMINI_KEY || "");
+        return DEV_MODE_SENTINELS.has(envKey) ? "" : envKey;
     }
 }
 
@@ -145,4 +169,25 @@ export function isValidRecoveryKey(key: string | null | undefined): boolean {
     const clean = key.trim();
     return isValidUUID(clean) || TBJ_REC_REGEX.test(clean);
 }
+
+/**
+ * 🛡️ 官方旗艦站安全導航與防 Open Redirect 驗證函式
+ * 確保 /official 上的「啟動應用 (Launch App)」按鈕絕不接受任何外部網址或雙斜線跨域繞過
+ * 僅允許白名單內部路徑（/、/?action=new-trip、/explore、/transit）及合法查詢字串，其餘降級為 "/"
+ */
+export function sanitizeLaunchRedirectUrl(targetUrl?: string | null): string {
+    if (!targetUrl || typeof targetUrl !== "string") {
+        return "/"
+    }
+    const clean = targetUrl.trim()
+    // 嚴格阻斷包含協議、雙斜線 (//evil.com) 或冒號的任意跨域導航
+    if (!clean.startsWith("/") || clean.startsWith("//") || clean.includes(":") || clean.includes("\\")) {
+        return "/"
+    }
+    // 白名單合法應用內部相對路徑
+    const ALLOWED_INTERNAL_PREFIXES = ["/", "/?action=new-trip", "/explore", "/transit"]
+    const isWhitelisted = ALLOWED_INTERNAL_PREFIXES.some(prefix => clean === prefix || clean.startsWith(prefix + "?"))
+    return isWhitelisted ? clean : "/"
+}
+
 

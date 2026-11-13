@@ -58,7 +58,7 @@ describe('AIKeyDialog & Dialog Overflow Defense Test Suite', () => {
     it('TDD-4: Input field triggers handleSaveApiKey on Enter key press', () => {
         const onOpenChange = vi.fn()
         render(<AIKeyDialog open={true} onOpenChange={onOpenChange} />)
-        const input = screen.getByPlaceholderText(/AIzaSy/i)
+        const input = screen.getByPlaceholderText(/AQ\./i)
         
         fireEvent.change(input, { target: { value: 'AIzaSyTestKey123456789' } })
         fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })

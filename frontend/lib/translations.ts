@@ -200,7 +200,7 @@ export const translations = {
         actuary_title: "Travel Actuary",
         actuary_thinking: "Calculating...",
         actuary_placeholder: "Ask me anything...",
-        actuary_welcome: "Loading expenses...",
+        actuary_welcome: "Please analyze our trip group expenses.",
         ai_itinerary_found: "Itinerary Found",
         ai_sending_to_import: "Sending to import...",
         ai_one_click_import: "Import Itinerary",

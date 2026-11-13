@@ -13,7 +13,7 @@ import {
 import { Settings, Key, ExternalLink, CheckCircle2, AlertCircle, Eraser } from "lucide-react"
 import { toast } from "sonner"
 import { useLanguage } from "@/lib/LanguageContext"
-import { encryptData, getSecureApiKey } from "@/lib/security"
+import { DEV_MODE_SENTINELS, encryptData, getSecureApiKey } from "@/lib/security"
 
 interface ApiKeySettingsProps {
     onKeySaved: (key: string) => void;
@@ -33,28 +33,48 @@ export function ApiKeySettings({ onKeySaved, className }: ApiKeySettingsProps) {
 
         const secureKey = getSecureApiKey()
         if (secureKey) {
-            setKey(secureKey)
-            onKeySaved(secureKey)
-            if (secureKey === process.env.NEXT_PUBLIC_DEV_GEMINI_KEY) {
-                setIsDev(true)
+            const devKey = process.env.NEXT_PUBLIC_DEV_GEMINI_KEY
+            if (DEV_MODE_SENTINELS.has(secureKey)) {
+                localStorage.removeItem("user_gemini_key")
+                const fallbackKey = getSecureApiKey()
+                if (fallbackKey) {
+                    setKey(fallbackKey)
+                    onKeySaved(fallbackKey)
+                    if (devKey && fallbackKey === devKey) {
+                        setIsDev(true)
+                    }
+                }
+            } else {
+                setKey(secureKey)
+                onKeySaved(secureKey)
+                if (devKey && secureKey === devKey) {
+                    setIsDev(true)
+                }
             }
         }
     }, [onKeySaved])
 
 
     const handleSave = () => {
-        if (!key.trim()) return
-        localStorage.setItem("user_gemini_key", encryptData(key))
-        onKeySaved(key)
+        const trimmed = key.trim()
+        if (!trimmed || DEV_MODE_SENTINELS.has(trimmed)) return
+        if (isDev && trimmed === process.env.NEXT_PUBLIC_DEV_GEMINI_KEY) {
+            setOpen(false)
+            return
+        }
+        localStorage.setItem("user_gemini_key", encryptData(trimmed))
+        onKeySaved(trimmed)
         // 🆕 Real-time update event
-        window.dispatchEvent(new CustomEvent('gemini-key-updated', { detail: key }))
+        window.dispatchEvent(new CustomEvent('gemini-key-updated', { detail: trimmed }))
         setOpen(false)
         toast.success(t('api_key_success'))
     }
 
     const handleClear = () => {
         setKey("")
+        setIsDev(false)
         localStorage.removeItem("user_gemini_key")
+        localStorage.removeItem("gemini_api_key")
         // 🆕 Real-time create event
         window.dispatchEvent(new CustomEvent('gemini-key-updated', { detail: '' }))
         toast.info(t('api_key_cleared'))
@@ -98,7 +118,7 @@ export function ApiKeySettings({ onKeySaved, className }: ApiKeySettingsProps) {
                                 value={key}
                                 disabled={isDev}
                                 onChange={(e) => setKey(e.target.value)}
-                                placeholder={isDev ? t('api_key_dev_mode') : "AIzaSy**************************"}
+                                placeholder={isDev ? t('api_key_dev_mode') : "AQ.************************** (AIza...)"}
                                 className="font-mono text-sm pr-10"
                             />
                             {key && <CheckCircle2 className="w-4 h-4 text-green-500 absolute right-3 top-3" />}
@@ -134,7 +154,7 @@ export function ApiKeySettings({ onKeySaved, className }: ApiKeySettingsProps) {
                                 <div className="flex gap-3">
                                     <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold shrink-0">3</div>
                                     <div>
-                                        {t('api_key_step3_1')} <code>AIza...</code> {t('api_key_step3_2')}
+                                        {t('api_key_step3_1')} <code>AQ.</code> {t('api_key_step3_2')}
                                     </div>
                                 </div>
 

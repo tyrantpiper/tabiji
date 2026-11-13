@@ -49,7 +49,8 @@ type Message = {
 }
 
 export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: ActuaryDialogCardProps) {
-    const { t } = useLanguage()
+    const { t, lang, isReady = true } = useLanguage()
+    const zh = lang === "zh"
     const [messages, setMessages] = useState<Message[]>([])
     const [input, setInput] = useState("")
     const [isThinking, setIsThinking] = useState(false)
@@ -67,15 +68,16 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
     const hasInitialized = useRef(false)
 
     useEffect(() => {
+        if (!isReady) return
         if (open && messages.length === 0 && !hasInitialized.current) {
             hasInitialized.current = true
-            handleSendMessage(t('actuary_welcome') || "請開始分析這趟旅行的公帳")
+            handleSendMessage(t('actuary_welcome'))
         }
         if (!open) {
             hasInitialized.current = false // reset on close
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, messages.length, t])
+    }, [open, isReady, messages.length, t])
 
     const handleSendMessage = async (msgContent: string) => {
         if (!msgContent.trim()) return
@@ -95,12 +97,12 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
                     || (notePayerMatch ? notePayerMatch[1] : null) 
                     || (e.payer_id && !e.payer_id.includes('-') ? e.payer_id : null) 
                     || e.creator_name 
-                    || "訪客"
+                    || (zh ? "訪客" : "Guest")
                 const amount = e.total_amount ?? e.amount  // V23.1 相容
                 const result: Record<string, unknown> = {
                     id: e.id,
                     title: e.title,
-                    date: e.expense_date || e.incurred_at || e.created_at || "未知日期",
+                    date: e.expense_date || e.incurred_at || e.created_at || (zh ? "未知日期" : "Unknown date"),
                     amount_twd: Math.round(amount * (e.exchange_rate || 1)),
                     original_amount: amount,
                     currency: e.currency || "JPY",
@@ -130,7 +132,8 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
                 enrichedExpenses,
                 memberContext,
                 msgContent,
-                messages // 前送的歷史記錄
+                messages, // 前送的歷史記錄
+                lang
             )
 
             if (response.status === "success" && response.response) {
@@ -140,11 +143,21 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
                     groundingMetadata: response.grounding_metadata
                 }])
             } else {
-                setMessages(prev => [...prev, { role: "model" as const, content: "⚠️ " + (response.response || "API 回傳異常，請重試。") }])
+                setMessages(prev => [...prev, { role: "model" as const, content: "⚠️ " + (response.response || (zh ? "API 回傳異常，請重試。" : "API returned an error, please retry.")) }])
             }
         } catch (error) {
             console.error("Actuary Failed:", error)
-            setMessages(prev => [...prev, { role: "model" as const, content: "⚠️ 伺服器連線異常，請檢查網路。小提醒：若是開發環境，請確認後端已啟動。" }])
+            const msg = error instanceof Error && error.message ? error.message.trim() : ""
+            const isGenericNetwork = !msg || msg === "Failed to fetch" || msg.startsWith("NetworkError")
+            const displayError = !isGenericNetwork
+                ? `⚠️ ${msg}`
+                : (zh
+                    ? "⚠️ 伺服器連線異常，請檢查網路。小提醒：若是開發環境，請確認後端已啟動。"
+                    : "⚠️ Server connection error. Please check your network and verify the backend server is running.")
+            setMessages(prev => [...prev, {
+                role: "model" as const,
+                content: displayError
+            }])
         } finally {
             setIsThinking(false)
         }
@@ -175,7 +188,7 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
                             <span>{t('actuary_title') || "Travel Actuary"}</span>
                         </DialogTitle>
                         <DialogDescription className="text-xs mt-1">
-                            {members.length} members · {expenses.length} public records
+                            {zh ? `${members.length} 位成員 · ${expenses.length} 筆公帳` : `${members.length} members · ${expenses.length} public records`}
                         </DialogDescription>
                     </div>
                 </DialogHeader>
@@ -208,7 +221,7 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
                                 {/* 🚀 v26.4: Grounding Sources (可點選連結) */}
                                 {msg.role === "model" && msg.groundingMetadata?.sources && msg.groundingMetadata.sources.length > 0 && (
                                     <div className="mt-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">參考來源</p>
+                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">{t('ai_sources') || (zh ? "參考來源" : "Sources")}</p>
                                         <div className="flex flex-wrap gap-2">
                                             {msg.groundingMetadata.sources.map((source, sIdx) => (
                                                 <a 
@@ -218,7 +231,7 @@ export function ActuaryDialogCard({ open, onOpenChange, expenses, members }: Act
                                                     rel="noopener noreferrer"
                                                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-blue-600 dark:text-blue-400 hover:underline text-[11px]"
                                                 >
-                                                    {source.title || "來源 " + (sIdx + 1)}
+                                                    {source.title || (zh ? "來源 " : "Source ") + (sIdx + 1)}
                                                 </a>
                                             ))}
                                         </div>

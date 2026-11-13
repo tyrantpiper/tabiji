@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { imageUrl, image, mime_type: reqMimeType } = body;
+        const { imageUrl, image, mime_type: reqMimeType, locale: reqLocale } = body;
 
         let base64Image = image;
         let mimeType = reqMimeType || "image/jpeg";
@@ -55,19 +55,34 @@ export async function POST(request: Request) {
         // Note: Using INTERNAL_BACKEND_URL or NEXT_PUBLIC_API_URL for the backend
         const backendUrl = process.env.INTERNAL_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008";
 
-        // Pass along the authorization token from the request headers
+        // Pass along the authorization token, API key, and locale headers
         const authHeader = request.headers.get("authorization");
+        const geminiKeyHeader = request.headers.get("x-gemini-api-key");
+        const acceptLanguage = request.headers.get("accept-language");
+        const effectiveLocale =
+            typeof reqLocale === "string" && reqLocale.trim()
+                ? reqLocale.trim()
+                : acceptLanguage && acceptLanguage.toLowerCase().startsWith("en")
+                    ? "en"
+                    : "zh";
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
         };
         if (authHeader) headers["Authorization"] = authHeader;
+        if (geminiKeyHeader && geminiKeyHeader.trim()) {
+            headers["X-Gemini-API-Key"] = geminiKeyHeader.trim();
+        }
+        if (acceptLanguage) {
+            headers["Accept-Language"] = acceptLanguage;
+        }
 
         const backendResponse = await fetch(`${backendUrl}/api/ai/parse-receipt`, {
             method: "POST",
             headers,
             body: JSON.stringify({
                 image: base64Image,
-                mime_type: mimeType
+                mime_type: mimeType,
+                locale: effectiveLocale
             })
         });
 

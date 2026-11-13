@@ -169,6 +169,23 @@ describe("RemoveItemPreviewCard Matching & Extraction Closed-Loop", () => {
         expect(matched?.place).toBe("新宿格拉斯麗飯店")
     })
 
+    it("should extract POI items when args.items contains flat string array", () => {
+        const rawParts = [
+            {
+                functionCall: {
+                    name: "add_itinerary_item",
+                    args: {
+                        items: ["淺草寺", "東京晴空塔"]
+                    }
+                }
+            }
+        ]
+        const items = extractItineraryFunctionCalls(rawParts)
+        expect(items).toHaveLength(2)
+        expect(items[0].place_name).toBe("淺草寺")
+        expect(items[1].place_name).toBe("東京晴空塔")
+    })
+
     it("should return null gracefully if item truly does not exist", () => {
         const items = extractAllActivities(mockTripFromBackend)
         const matched = matchTargetItem(items, { place_name: "大阪環球影城" })

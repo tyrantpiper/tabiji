@@ -16,7 +16,7 @@ import {
 import { useLanguage } from "@/lib/LanguageContext"
 import { toast } from "sonner"
 import { poiApi } from "@/lib/api"
-import { encryptData, getSecureApiKey } from "@/lib/security"
+import { DEV_MODE_SENTINELS, encryptData, getSecureApiKey } from "@/lib/security"
 
 interface AIKeyDialogProps {
     open: boolean
@@ -29,6 +29,7 @@ export function AIKeyDialog({ open, onOpenChange, trigger }: AIKeyDialogProps) {
     const zh = lang === 'zh'
 
     const [apiKey, setApiKey] = useState("")
+    const [isDevMode, setIsDevMode] = useState(false)
     const [isTestingKey, setIsTestingKey] = useState(false)
 
     useEffect(() => {
@@ -36,17 +37,35 @@ export function AIKeyDialog({ open, onOpenChange, trigger }: AIKeyDialogProps) {
             const secureKey = getSecureApiKey()
             if (secureKey) {
                 const devKey = process.env.NEXT_PUBLIC_DEV_GEMINI_KEY
-                setApiKey(devKey === secureKey ? (zh ? "(開發者模式)" : "(Dev Mode)") : secureKey)
+                if (devKey && devKey === secureKey) {
+                    setIsDevMode(true)
+                    setApiKey("")
+                } else if (DEV_MODE_SENTINELS.has(secureKey)) {
+                    localStorage.removeItem("user_gemini_key")
+                    setIsDevMode(Boolean(devKey))
+                    setApiKey("")
+                } else {
+                    setIsDevMode(false)
+                    setApiKey(secureKey)
+                }
             } else {
+                setIsDevMode(false)
                 setApiKey("")
             }
         }
-    }, [open, zh])
+    }, [open])
 
     const handleSaveApiKey = () => {
         const keyToSave = apiKey.trim()
-        if (!keyToSave) return
+        if (!keyToSave || DEV_MODE_SENTINELS.has(keyToSave)) {
+            if (DEV_MODE_SENTINELS.has(keyToSave) || isDevMode) {
+                onOpenChange(false)
+                toast.info(zh ? "目前使用開發者模式預設金鑰，無需重複儲存" : "Using developer mode default key")
+            }
+            return
+        }
         localStorage.setItem("user_gemini_key", encryptData(keyToSave))
+        setIsDevMode(false)
         window.dispatchEvent(new Event("apiKeyUpdated"))
         onOpenChange(false)
         toast.success(t('profile_key_set') || (zh ? "API Key 已儲存" : "API Key saved"))
@@ -55,13 +74,16 @@ export function AIKeyDialog({ open, onOpenChange, trigger }: AIKeyDialogProps) {
     const handleClearApiKey = () => {
         setApiKey("")
         localStorage.removeItem("user_gemini_key")
+        localStorage.removeItem("gemini_api_key")
+        setIsDevMode(Boolean(process.env.NEXT_PUBLIC_DEV_GEMINI_KEY))
         window.dispatchEvent(new Event("apiKeyUpdated"))
         toast.info(t('profile_key_cleared') || (zh ? "API Key 已清除" : "API Key cleared"))
     }
 
     const handleTestApiKey = async () => {
-        const keyToTest = apiKey.trim()
-        if (!keyToTest) {
+        const trimmed = apiKey.trim()
+        const keyToTest = (!trimmed && isDevMode) ? (process.env.NEXT_PUBLIC_DEV_GEMINI_KEY || "") : trimmed
+        if (!keyToTest || DEV_MODE_SENTINELS.has(keyToTest)) {
             toast.error(zh ? "請先輸入 API Key" : "Please enter an API Key")
             return
         }
@@ -110,9 +132,12 @@ export function AIKeyDialog({ open, onOpenChange, trigger }: AIKeyDialogProps) {
                                     handleSaveApiKey()
                                 }
                             }}
-                            placeholder="AIzaSy**************************"
+                            placeholder={isDevMode ? (zh ? "(開發者模式)" : "(Dev Mode)") : "AQ.************************** (AIza...)"}
                             className="font-mono text-sm w-full"
                         />
+                        {isDevMode && !apiKey && (
+                            <p className="text-[10px] text-blue-500 font-medium">{t('api_key_dev_mode')}</p>
+                        )}
                     </div>
 
                     <Accordion type="single" collapsible className="w-full bg-slate-50 dark:bg-slate-900/50 rounded-lg px-4 border border-slate-200 dark:border-slate-800">
@@ -133,7 +158,7 @@ export function AIKeyDialog({ open, onOpenChange, trigger }: AIKeyDialogProps) {
                                 </div>
                                 <div className="flex gap-3 items-start">
                                     <div className="w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-200 font-bold shrink-0 mt-0.5">3</div>
-                                    <div className="min-w-0 flex-1 wrap-break-word">{zh ? '點擊' : 'Click'} <b>Create API key</b>{zh ? ' 建立新版授權金鑰 (Auth key)，複製' : ' to create an Auth key, copy the code starting with'} <code>AIza...</code> {zh ? '開頭的代碼。' : '.'}</div>
+                                    <div className="min-w-0 flex-1 wrap-break-word">{zh ? '點擊' : 'Click'} <b>Create API key</b>{zh ? ' 建立新版授權金鑰 (Auth key)，複製' : ' to create an Auth key, copy the code starting with'} <code>AQ.</code> {zh ? '開頭的代碼（亦相容舊版' : '(legacy '}<code>AIza...</code>{zh ? '）。' : ' also supported).'}</div>
                                 </div>
                                 <div className="bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 p-2 rounded border border-amber-100 dark:border-amber-900/50 flex items-start gap-2 mt-2">
                                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -150,7 +175,7 @@ export function AIKeyDialog({ open, onOpenChange, trigger }: AIKeyDialogProps) {
                             type="button" 
                             variant="secondary" 
                             onClick={handleTestApiKey} 
-                            disabled={isTestingKey || !apiKey.trim()}
+                            disabled={isTestingKey || (!apiKey.trim() && !isDevMode)}
                             className="w-full sm:w-auto border border-slate-200 hover:bg-slate-100 dark:border-slate-700 h-10 px-4"
                         >
                             {isTestingKey ? (

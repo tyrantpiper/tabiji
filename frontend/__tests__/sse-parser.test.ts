@@ -112,4 +112,13 @@ describe('handleSSEEvent', () => {
         handleSSEEvent({ event: 'heartbeat', data: '' }, handlers)
         expect(handlers.onHeartbeat).toHaveBeenCalled()
     })
+
+    it('should call onReset for reset events (with or without JSON payload)', () => {
+        const onReset = vi.fn()
+        handleSSEEvent({ event: 'reset', data: '{"reason":"fallback","model":"gemini-3.5-flash-lite"}' }, { onReset })
+        expect(onReset).toHaveBeenCalledWith({ reason: 'fallback', model: 'gemini-3.5-flash-lite' })
+
+        handleSSEEvent({ event: 'reset', data: '' }, { onReset })
+        expect(onReset).toHaveBeenCalledTimes(2)
+    })
 })

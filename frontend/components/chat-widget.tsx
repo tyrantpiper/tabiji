@@ -29,10 +29,11 @@ import { useLanguage, type TranslationKey } from "@/lib/LanguageContext"
 import { type ParsedItinerary, type ParsedItineraryItem } from "@/lib/itinerary-types"
 import { getCachedToken, ensureValidSession } from "@/lib/auth-session"
 
-// 🆕 Part 結構 (與 Gemini API 對應)
+// 🆕 Part 結構 (與 Gemini API 對應，支援駝峰與蛇形雙格式)
 interface Part {
     text?: string
     function_call?: { name: string; args: Record<string, unknown> }
+    functionCall?: { name: string; args: Record<string, unknown> }
     thought?: string  // 思想簽名 (加密)
     _raw?: string
 }
@@ -198,12 +199,19 @@ export default function ChatWidget() {
                     ? Math.round(cached.forecast.reduce((a, b) => a + b.temp, 0) / cached.forecast.length)
                     : '--'
 
-                lean.weather_context = `[2026 Neural Weather] 
+                lean.weather_context = zh
+                    ? `[2026 Neural Weather]
 - 當前位置: ${tripLocation.name}
 - 預測均溫: ${avgTemp}°C
 - 信心度: ${cached.confidenceScore ?? '--'}%
 - WBGT 風險: ${(cached.confidenceScore ?? 100) < 50 ? '高 (預報不穩)' : '正常'}
 ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。' : ''}`
+                    : `[2026 Neural Weather]
+- Location: ${tripLocation.name}
+- Forecast Avg Temp: ${avgTemp}°C
+- Confidence: ${cached.confidenceScore ?? '--'}%
+- WBGT Risk: ${(cached.confidenceScore ?? 100) < 50 ? 'High (unstable forecast)' : 'Normal'}
+${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
             }
         }
 
@@ -217,7 +225,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
         }
 
         return lean
-    }, [activeTrip, tripDetail, tripLocation, weatherStore, focusedDay])
+    }, [activeTrip, tripDetail, tripLocation, weatherStore, focusedDay, zh])
 
     const [isOpen, setIsOpen] = useState(false)
     // 🆕 向後相容：將舊格式訊息遷移到新格式
@@ -257,11 +265,23 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
     const [isDocked, setIsDocked] = useState(false)
     // 🆕 v3.5: AbortController for stopping generation
     const abortControllerRef = useRef<AbortController | null>(null)
+    const activePollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set())
+    const isMountedRef = useRef(true)
 
-    // 🛡️ Cleanup AbortController on unmount to prevent memory leaks
+    const clearAllPollIntervals = () => {
+        activePollIntervalsRef.current.forEach((id) => clearInterval(id))
+        activePollIntervalsRef.current.clear()
+    }
+
+    // 🛡️ Cleanup AbortController & polling intervals on unmount to prevent memory leaks
     useEffect(() => {
+        isMountedRef.current = true
+        const intervals = activePollIntervalsRef.current
         return () => {
+            isMountedRef.current = false
             abortControllerRef.current?.abort()
+            intervals.forEach((id) => clearInterval(id))
+            intervals.clear()
         }
     }, [])
 
@@ -284,8 +304,9 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
 
     useEffect(() => {
         if (activeTripId && prevTripIdRef.current !== activeTripId) {
-            // 🚨 關鍵補全：切斷前一個行程還在生成的 AI 回應
+            // 🚨 關鍵補全：切斷前一個行程還在生成的 AI 回應與背景輪詢
             abortControllerRef.current?.abort()
+            clearAllPollIntervals()
             setIsLoading(false)
 
             // 重置對話清單為初始的打招呼訊息
@@ -542,10 +563,14 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                     history: toSummarize.map((m: Message) => ({
                         role: m.role,
                         displayContent: m.displayContent
-                    }))
+                    })),
+                    locale: lang
                 })
             })
-                .then(res => res.json())
+                .then(res => {
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                    return res.json()
+                })
                 .then(data => {
                     if (data.summary) {
                         setMemorySummary(data.summary)
@@ -563,10 +588,11 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                 // 有摘要：注入摘要 + 最近 N 條
                 toast.success(t('ai_using_memory'))
                 const recentMessages = messages.slice(-KEEP_RECENT)
+                const summaryPrefix = zh ? "[對話記憶摘要]" : "[Memory Summary]"
                 const summaryMessage = {
                     role: "model" as const,
-                    rawParts: [{ text: `[對話記憶摘要] ${memorySummary}` }],
-                    displayContent: `[對話記憶摘要] ${memorySummary}`
+                    rawParts: [{ text: `${summaryPrefix} ${memorySummary}` }],
+                    displayContent: `${summaryPrefix} ${memorySummary}`
                 }
                 historySource = [summaryMessage, ...recentMessages]
             } else {
@@ -584,7 +610,9 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                 const placeholderRole = m.role === "user" ? "model" : "user"
                 sanitizedSource.push(hydrateMessage({
                     role: placeholderRole as "user" | "model",
-                    displayContent: placeholderRole === "model" ? "[AI 處理中]" : "[繼續]"
+                    displayContent: placeholderRole === "model"
+                        ? (zh ? "[AI 處理中]" : "[AI Processing]")
+                        : (zh ? "[繼續]" : "[Continue]")
                 }))
             }
             sanitizedSource.push(m)
@@ -611,11 +639,22 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                     body: JSON.stringify({
                         prompt: cleanPrompt,
                         destination: activeTrip?.title || undefined,
-                        booking_context: tripDetail ? `Trip: ${tripDetail.title}, Items: ${tripDetail.items?.length || 0}` : undefined
+                        booking_context: tripDetail ? `Trip: ${tripDetail.title}, Items: ${tripDetail.items?.length || 0}` : undefined,
+                        locale: lang
                     })
                 })
-                if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                if (!res.ok) {
+                    let startDetail = ""
+                    try {
+                        const errJson = await res.clone().json()
+                        startDetail = String(errJson?.detail || errJson?.message || "")
+                    } catch {
+                        startDetail = ""
+                    }
+                    throw new Error(startDetail || `HTTP ${res.status}`)
+                }
                 const data = await res.json()
+                if (!isMountedRef.current) return
                 const interactionId = data.interaction_id
 
                 // 插入初始卡片狀態
@@ -631,16 +670,61 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                     researchData: initialResearchData
                 })])
 
-                // 背景輪詢狀態
+                // 背景輪詢狀態 (含 404/401/連續錯誤熔斷防禦與 Unmount 清理)
+                let consecutivePollErrors = 0
                 const pollInterval = setInterval(async () => {
+                    if (!isMountedRef.current) {
+                        clearInterval(pollInterval)
+                        activePollIntervalsRef.current.delete(pollInterval)
+                        return
+                    }
+                    const failResearchCard = (errMsg: string) => {
+                        clearInterval(pollInterval)
+                        activePollIntervalsRef.current.delete(pollInterval)
+                        setMessages(prev => {
+                            const updated = [...prev]
+                            const targetIdx = updated.findIndex(m => m.researchData?.id === interactionId)
+                            const idxToUpdate = targetIdx !== -1 ? targetIdx : updated.length - 1
+                            if (idxToUpdate >= 0) {
+                                updated[idxToUpdate] = {
+                                    ...updated[idxToUpdate],
+                                    displayContent: updated[idxToUpdate].displayContent || "",
+                                    researchData: {
+                                        id: interactionId,
+                                        status: "failed",
+                                        prompt: cleanPrompt,
+                                        engine: data.engine,
+                                        error: errMsg
+                                    }
+                                }
+                            }
+                            return updated
+                        })
+                        toast.error(errMsg)
+                        setIsLoading(false)
+                    }
+
                     try {
                         const pollRes = await fetch(`${API_HOST}/api/agents/interactions/${interactionId}`, {
                             headers: { "X-Gemini-API-Key": apiKey }
                         })
-                        if (!pollRes.ok) return
+                        if (!pollRes.ok) {
+                            consecutivePollErrors += 1
+                            if (pollRes.status === 404 || pollRes.status === 401 || pollRes.status === 403 || consecutivePollErrors >= 3) {
+                                let detail = `HTTP ${pollRes.status}`
+                                try {
+                                    const errBody = await pollRes.json()
+                                    if (errBody?.detail) detail = errBody.detail
+                                } catch { /* keep HTTP code */ }
+                                failResearchCard(detail)
+                            }
+                            return
+                        }
+                        consecutivePollErrors = 0
                         const pollData = await pollRes.json()
                         if (pollData.status === "completed" || pollData.status === "failed" || pollData.status === "cancelled") {
                             clearInterval(pollInterval)
+                            activePollIntervalsRef.current.delete(pollInterval)
                             setMessages(prev => {
                                 const updated = [...prev]
                                 const targetIdx = updated.findIndex(m => m.researchData?.id === interactionId)
@@ -661,18 +745,27 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                 }
                                 return updated
                             })
+                            if (pollData.status === "failed" && pollData.error) {
+                                toast.error(pollData.error)
+                            }
                             setIsLoading(false)
                         }
                     } catch (err) {
                         console.error("Polling interaction failed:", err)
+                        consecutivePollErrors += 1
+                        if (consecutivePollErrors >= 3) {
+                            failResearchCard(zh ? "深度研究狀態輪詢失敗，請稍後重試" : "Failed to poll research task status")
+                        }
                     }
                 }, 2000)
+                activePollIntervalsRef.current.add(pollInterval)
 
                 setIsDeepResearch(false)
                 return
             } catch (err) {
                 console.error("Failed to start deep research:", err)
-                toast.error(zh ? "啟動深度研究失敗" : "Failed to start research")
+                const errMessage = err instanceof Error ? err.message : ""
+                toast.error(errMessage || (zh ? "啟動深度研究失敗" : "Failed to start research"))
                 setIsLoading(false)
                 setIsDeepResearch(false)
             }
@@ -682,6 +775,9 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
         let streamingText = ""
         let streamingRawParts: Part[] = []
         let streamingSuccess = false
+        let streamErroredWithPartial = false
+        let streamEmptyError = false
+        let streamingFatalAuthError: string | null = null
 
         // 如果有圖片，跳過 streaming (目前不支援)
         if (!currentImage && apiKey) {
@@ -707,6 +803,43 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                             } else {
                                 setSearchStatus({ phase: "thinking" })
                             }
+                        },
+                        onTool: (toolCall) => {
+                            debugLog("🛠️ SSE 收到 Tool Call:", toolCall)
+                            setSearchStatus({ phase: "thinking" })
+                            const part: Part = {
+                                function_call: toolCall,
+                                functionCall: toolCall,
+                                _raw: JSON.stringify(toolCall)
+                            }
+                            streamingRawParts.push(part)
+                            setMessages(prev => {
+                                const updated = [...prev]
+                                const lastMsg = updated[updated.length - 1]
+                                if (lastMsg?.role === "model" && lastMsg.modelUsed === "__streaming__") {
+                                    const parts = lastMsg.rawParts ? [...lastMsg.rawParts] : []
+                                    const isDup = parts.some(p => {
+                                        const existing = p.function_call || p.functionCall
+                                        return existing?.name === toolCall.name &&
+                                            JSON.stringify(existing?.args) === JSON.stringify(toolCall.args)
+                                    })
+                                    if (!isDup) {
+                                        parts.push(part)
+                                    }
+                                    updated[updated.length - 1] = {
+                                        ...lastMsg,
+                                        rawParts: parts
+                                    }
+                                } else {
+                                    updated.push(hydrateMessage({
+                                        role: "model",
+                                        displayContent: streamingText,
+                                        rawParts: [part],
+                                        modelUsed: "__streaming__"
+                                    }))
+                                }
+                                return updated
+                            })
                         },
                         onText: (text) => {
                             setSearchStatus({ phase: "thinking" })
@@ -734,7 +867,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                         onDone: (data) => {
                             debugLog("✅ SSE 完成:", data.model_used, "來源數:", data.sources?.length ?? 0)
                             setSearchStatus({ phase: "thinking" })
-                            streamingRawParts = data.raw_parts
+                            streamingRawParts = (data.raw_parts && data.raw_parts.length > 0) ? (data.raw_parts as Part[]) : streamingRawParts
                             streamingSuccess = true
 
                             // 更新最終訊息 (🆕 v5.3: 修復純 Tool Call 回應時佔位訊息缺失)
@@ -748,30 +881,83 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                             }))
 
                             // 🆕 儲存至本機裝置搜尋快取 (IndexedDB / RAM)
-                            if (groundingSources && groundingSources.length > 0 && streamingText.trim()) {
-                                setSearchCache(userMsg, groundingSources, streamingText).catch(() => {})
+                            const cleanText = streamingText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim()
+                            const hasCards = Boolean(
+                                extractRemoveFunctionCall(streamingRawParts) ||
+                                extractItineraryFunctionCalls(streamingRawParts).length > 0 ||
+                                extractExpenseFunctionCall(streamingRawParts)
+                            )
+                            if (!cleanText && !hasCards) {
+                                // 🛡️ 嚴禁以假問候語掩飾 AI 空回應，明確呈現錯誤並保留重試狀態
+                                streamingSuccess = false
+                                streamEmptyError = true
+                                setLastFailedMessage(userMsg)
+                                const emptyErrMsg = zh ? "⚠️ AI 回應為空，請重試。" : "⚠️ AI returned an empty response. Please try again."
+                                toast.error(emptyErrMsg)
+                                setMessages(prev => {
+                                    const updated = [...prev]
+                                    const lastMsg = updated[updated.length - 1]
+                                    if (lastMsg?.role === "model" && lastMsg.modelUsed === "__streaming__") {
+                                        updated[updated.length - 1] = {
+                                            ...lastMsg,
+                                            displayContent: emptyErrMsg,
+                                            rawParts: [{ text: emptyErrMsg }],
+                                            modelUsed: data.model_used || "empty_error"
+                                        }
+                                    } else {
+                                        updated.push(hydrateMessage({
+                                            role: "model",
+                                            displayContent: emptyErrMsg,
+                                            rawParts: [{ text: emptyErrMsg }],
+                                            modelUsed: data.model_used || "empty_error"
+                                        }))
+                                    }
+                                    return updated
+                                })
+                                return
+                            }
+                            if (groundingSources && groundingSources.length > 0 && cleanText) {
+                                setSearchCache(userMsg, groundingSources, cleanText).catch(() => {})
                             }
                             setMessages(prev => {
                                 const updated = [...prev]
                                 const lastMsg = updated[updated.length - 1]
+                                const effectiveText = cleanText
                                 if (lastMsg?.role === "model" && lastMsg.modelUsed === "__streaming__") {
                                     // 已有串流佔位訊息 → 🟢 取代整個 Object 防止 Mutation 錯誤
                                     updated[updated.length - 1] = {
                                         ...lastMsg,
-                                        displayContent: streamingText,
+                                        displayContent: effectiveText,
                                         rawParts: streamingRawParts,
                                         modelUsed: data.model_used,
                                         groundingSources
                                     }
                                 } else {
-                                    // 🟢 純 Tool Call 回應（無 text chunk）→ 新增 model 訊息
+                                    // 🟢 純 Tool Call 回應或保底回應 → 新增 model 訊息
                                     updated.push(hydrateMessage({
                                         role: "model",
-                                        displayContent: streamingText || "",
+                                        displayContent: effectiveText,
                                         rawParts: streamingRawParts,
                                         modelUsed: data.model_used,
                                         groundingSources
                                     }))
+                                }
+                                return updated
+                            })
+                        },
+                        onReset: () => {
+                            streamingText = ""
+                            streamingRawParts = []
+                            setSearchStatus({ phase: "thinking" })
+                            setMessages(prev => {
+                                const updated = [...prev]
+                                const lastMsg = updated[updated.length - 1]
+                                if (lastMsg?.role === "model" && lastMsg.modelUsed === "__streaming__") {
+                                    updated[updated.length - 1] = {
+                                        ...lastMsg,
+                                        displayContent: "",
+                                        rawParts: []
+                                    }
                                 }
                                 return updated
                             })
@@ -782,17 +968,35 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                             if (streamingSuccess) return
                             
                             console.error("🔴 SSE 錯誤:", JSON.stringify(error, null, 2))
-                            // 若已經接收到文字，則強迫終止 Fallback 並保留半殘對話
+                            const errDetail = (error as { detail?: string; message?: string })?.detail || error?.message
+
+                            if (error?.code === 401 || error?.message === "API_KEY_INVALID") {
+                                streamingFatalAuthError = errDetail || (zh ? "Gemini API Key 無效或已過期，請檢查設定" : "Invalid or expired Gemini API Key")
+                                toast.error(streamingFatalAuthError)
+                                setMessages(prev => [...prev, hydrateMessage({
+                                    role: "model",
+                                    displayContent: `⚠️ ${streamingFatalAuthError}`
+                                })])
+                                return
+                            }
+
+                            // 若已經接收到文字，明確標示錯誤中斷但不偽裝為成功，也不重複觸發 fallback 覆蓋部分回覆
                             if (streamingText.trim().length > 0) {
-                                streamingSuccess = true
-                                streamingText += "\n\n[⚠️ 系統提示：連線異常，訊息中斷]"
+                                streamErroredWithPartial = true
+                                const interruptedNotice = zh ? "\n\n[⚠️ 系統提示：連線異常，訊息中斷]" : "\n\n[⚠️ System notice: Connection lost, response interrupted]"
+                                const finalPartialText = streamingText + interruptedNotice
+                                streamingText = finalPartialText
+                                toast.error(errDetail || (zh ? "AI 回應中斷，請稍後重試" : "AI stream interrupted, please retry"))
                                 setMessages(prev => {
                                     const updated = [...prev]
                                     const lastMsg = updated[updated.length - 1]
                                     if (lastMsg?.role === "model") {
-                                        lastMsg.displayContent = streamingText
-                                        lastMsg.rawParts = [{ text: streamingText }]
-                                        lastMsg.modelUsed = "error_recovered"
+                                        updated[updated.length - 1] = {
+                                            ...lastMsg,
+                                            displayContent: finalPartialText,
+                                            rawParts: [{ text: finalPartialText }],
+                                            modelUsed: "error_recovered"
+                                        }
                                     }
                                     return updated
                                 })
@@ -802,15 +1006,18 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                     abortControllerRef.current?.signal,  // 🆕 傳入 AbortSignal
                     leanItinerary,  // 🆕 行程上下文
                     focusedDay,   // 🆕 v3.8: 傳入當前焦點天數
-                    contextUserId || localStorage.getItem("user_uuid") || ""
+                    contextUserId || localStorage.getItem("user_uuid") || "",
+                    undefined,
+                    undefined,
+                    lang  // 🌐 雙語語系管線傳遞
                 )
             } catch (streamError) {
                 console.error("⚠️ Streaming 失敗，使用 fallback:", streamError)
             }
         }
 
-        // 🔄 Fallback: 如果 streaming 失敗或有圖片，使用原有 API
-        if (!streamingSuccess && !abortControllerRef.current?.signal.aborted) {
+        // 🔄 Fallback: 如果 streaming 失敗或有圖片，使用原有 API (401 金鑰無效或已渲染錯誤中斷部分結果時不重複發請求)
+        if (!streamingSuccess && !streamErroredWithPartial && !streamEmptyError && !streamingFatalAuthError && !abortControllerRef.current?.signal.aborted) {
             try {
                 let token = getCachedToken()
                 if (!token && typeof window !== "undefined") {
@@ -833,7 +1040,8 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                     current_itinerary: leanItinerary,
                     focused_day: focusedDay,
                     client_time: new Date().toISOString(),
-                    client_timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei"
+                    client_timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei",
+                    locale: lang
                 })
 
                 let res = await fetch(`${API_HOST}/api/chat`, {
@@ -842,24 +1050,34 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                     body: chatPayload
                 })
 
-                // 🛡️ 401 自癒重試防禦
+                // 🛡️ 401 自癒重試防禦：僅針對後端 Session Token 失效刷新，切勿因 Gemini API Key 401 誤刪用戶 Session
                 if (res.status === 401 && typeof window !== "undefined") {
-                    console.warn("⚠️ [Chat] Received 401 Unauthorized in fallback chat, refreshing session token...")
-                    localStorage.removeItem("tabiji_session_token")
-                    const freshToken = await ensureValidSession().catch(() => null)
-                    if (freshToken) {
-                        headers["Authorization"] = `Bearer ${freshToken}`
-                        res = await fetch(`${API_HOST}/api/chat`, {
-                            method: "POST",
-                            headers,
-                            body: chatPayload
-                        })
+                    const errText = await res.clone().text().catch(() => "")
+                    const isGeminiKeyAuthError = /gemini|api[_ ]?key|金鑰|個人檔案|profile|google ai studio|已失效|無效或已過期/i.test(errText)
+                    if (!isGeminiKeyAuthError && localStorage.getItem("tabiji_session_token")) {
+                        console.warn("⚠️ [Chat] Received 401 Unauthorized in fallback chat, refreshing session token...")
+                        localStorage.removeItem("tabiji_session_token")
+                        const freshToken = await ensureValidSession().catch(() => null)
+                        if (freshToken) {
+                            headers["Authorization"] = `Bearer ${freshToken}`
+                            res = await fetch(`${API_HOST}/api/chat`, {
+                                method: "POST",
+                                headers,
+                                body: chatPayload
+                            })
+                        }
                     }
                 }
 
                 const data = await res.json()
 
                 if (!res.ok) throw new Error(data.detail || "Failed to send message")
+                const hasFallbackCards = Boolean(
+                    data.raw_parts?.some((p: Part) => p.function_call || p.functionCall)
+                )
+                if (!String(data.response || "").trim() && !hasFallbackCards) {
+                    throw new Error(zh ? "AI 回應為空，請重試。" : "AI returned an empty response. Please try again.")
+                }
 
                 const aiMessage: Message = {
                     role: "model",
@@ -953,7 +1171,19 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
 
                         {/* Messages Area */}
                         <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 space-y-4 bg-tabiji-paper dark:bg-tabiji-dark scroll-smooth">
-                            {messages.map((msg, idx) => (
+                            {messages.map((msg, idx) => {
+                                // 🛡️ Zero Empty Bubble Shield: 物理隱藏無文字且無任何卡片的幽靈空白訊息
+                                const cleanContent = msg.displayContent?.replace(/[\u200B-\u200D\uFEFF]/g, "").trim() || ""
+                                const hasCards = Boolean(
+                                    extractRemoveFunctionCall(msg.rawParts) ||
+                                    extractItineraryFunctionCalls(msg.rawParts).length > 0 ||
+                                    extractExpenseFunctionCall(msg.rawParts) ||
+                                    msg.researchData
+                                )
+                                if (msg.role === "model" && !cleanContent && !hasCards) {
+                                    return null
+                                }
+                                return (
                                 <div key={idx} className={cn("flex gap-3 min-w-0", msg.role === "user" ? "max-w-[85%] ml-auto flex-row-reverse" : "max-w-[95%]")}>
                                     <div className={cn(
                                         "w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-1 overflow-hidden",
@@ -1026,17 +1256,18 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                         }}
                                                     />
                                                 )}
-                                                <div className="markdown-body prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-a:text-tabiji-forest dark:prose-a:text-emerald-400 prose-a:font-semibold hover:prose-a:underline wrap-anywhere">
-                                                    {(() => {
-                                                        const itinerary = tryParseItinerary(msg.displayContent)
+                                                {cleanContent ? (
+                                                    <div className="markdown-body prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-a:text-tabiji-forest dark:prose-a:text-emerald-400 prose-a:font-semibold hover:prose-a:underline wrap-anywhere">
+                                                        {(() => {
+                                                            const itinerary = tryParseItinerary(cleanContent)
                                                         if (itinerary) {
                                                             // 🛡️ JSON 防漏閥：將 JSON 轉為友善的 Markdown
                                                             const summary = `### ✨ ${itinerary.title || t('ai_itinerary_found' as TranslationKey)}\n` +
                                                                 itinerary.items.slice(0, 5).map((it: ParsedItineraryItem) => `- Day ${it.day_number}: ${it.place_name} (${it.time_slot || ''})`).join('\n') +
-                                                                (itinerary.items.length > 5 ? `\n... (還有 ${itinerary.items.length - 5} 個地點)` : '')
+                                                                (itinerary.items.length > 5 ? (zh ? `\n... (還有 ${itinerary.items.length - 5} 個地點)` : `\n... (${itinerary.items.length - 5} more spots)`) : '')
                                                             return <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
                                                         }
-                                                        if (msg.displayContent === "__GREETING__") {
+                                                        if (cleanContent === "__GREETING__") {
                                                             return (
                                                                 <div className="space-y-3">
                                                                     <div className="p-3.5 rounded-xl bg-tabiji-mist/35 dark:bg-white/5 border border-tabiji-forest/10 dark:border-white/10 shadow-xs">
@@ -1110,12 +1341,13 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                                                 </div>
                                                             )
                                                         }
-                                                        return <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.displayContent}</ReactMarkdown>
+                                                        return <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanContent}</ReactMarkdown>
                                                     })()}
                                                 </div>
+                                                ) : null}
 
                                                 {/* 🆕 v22.1: 一鍵匯入橋樑 */}
-                                                {(tryParseItinerary(msg.displayContent) || msg.displayContent.includes('| Day |') || msg.displayContent.includes('## Day 1')) && (
+                                                {(cleanContent && (tryParseItinerary(cleanContent) || cleanContent.includes('| Day |') || cleanContent.includes('## Day 1'))) && (
                                                     <div className="mt-3">
                                                         <Button
                                                             size="sm"
@@ -1150,7 +1382,7 @@ ${isStale ? '⚠️ 提醒：此數據已超過 3 小時，可能存在誤差。
                                         )}
                                     </div>
                                 </div>
-                            ))}
+                            )})}
                             {isLoading && (
                                 <div className="flex gap-3 max-w-[85%]">
                                     <div className="relative w-8 h-8 rounded-full bg-white/90 dark:bg-[#182320] border border-tabiji-forest/15 dark:border-white/15 flex items-center justify-center shrink-0 mt-1 overflow-hidden shadow-xs">

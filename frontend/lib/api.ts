@@ -58,7 +58,13 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     }
     const res = await activeFetch(input, init);
     // 🛡️ 401 自動換票與自癒重試防禦 (Self-Healing Recovery & 1-time Re-execution)
-    if (res.status === 401 && typeof window !== "undefined" && !urlStr.includes("/api/poi/")) {
+    if (res.status === 401 && typeof window !== "undefined" && !urlStr.includes("/api/poi/") && !urlStr.includes("/api/ai/test-key")) {
+        // 區分「Gemini API Key 無效 (401)」vs「Tabiji Session JWT 過期 (401)」，絕不因用戶端 AI 金鑰過期而誤刪 Session Token
+        const peekData = typeof res.clone === "function" ? await res.clone().json().catch(() => null) : null;
+        const detailText = String((peekData as { detail?: string } | null)?.detail || "").toLowerCase();
+        if (detailText.includes("gemini") || detailText.includes("api key") || detailText.includes("金鑰")) {
+            return res;
+        }
         console.warn("⚠️ [API] Received 401 Unauthorized from backend...");
 
         // 🛑 遞迴熔斷防護：認證端點本身或已重試過的請求禁止再次觸發換票重試
@@ -212,6 +218,7 @@ export interface GeocodeSearchParams {
     region?: string     // 🆕 區域過濾 (如 "Tokyo 東京")
     zoom?: number       // 🆕 P1: 地圖縮放層級 (用於動態 bias)
     bbox?: string       // 🆕 P2: 地圖視圖邊界 (minLon,minLat,maxLon,maxLat)
+    locale?: string     // 🌐 雙語語系透傳 ("zh" | "en")
 }
 
 // 🆕 Export Sync Engine Params
@@ -220,11 +227,13 @@ export interface AiParseParams {
     user_id?: string
     image_base64?: string
     itinerary_id?: string
+    locale?: string
 }
 
 export interface AiGenerateParams {
     prompt: string
     user_id?: string
+    locale?: string
 }
 
 export interface StreamProgressEvent {
@@ -246,6 +255,7 @@ export interface SmartSearchParams {
     trip_title?: string
     api_key: string
     max_results?: number
+    locale?: string
 }
 
 export interface SaveItineraryParams {
@@ -388,7 +398,10 @@ export async function consumeTripStream(
                     } else if (eventType === "complete") {
                         finalResult = payload
                     } else if (eventType === "error") {
-                        throw new Error(payload.detail || "AI 行程生成失敗")
+                        throw Object.assign(
+                            new Error(payload.detail || "AI 行程生成失敗"),
+                            { status: payload.status_code, code: payload.error_code }
+                        )
                     }
                 } catch (parseErr) {
                     if (eventType === "error" || eventType === "complete") {
@@ -416,7 +429,10 @@ export async function consumeTripStream(
                 if (eventType === "complete") {
                     finalResult = payload
                 } else if (eventType === "error") {
-                    throw new Error(payload.detail || "AI 行程生成失敗")
+                    throw Object.assign(
+                        new Error(payload.detail || "AI 行程生成失敗"),
+                        { status: payload.status_code, code: payload.error_code }
+                    )
                 }
             } catch (err) {
                 if (eventType === "error" || eventType === "complete") throw err
@@ -643,11 +659,12 @@ export const tripsApi = {
     },
 
     /** 🕵️ Generate AI day review */
-    generateAIReview: async (tripId: string, day: number, userId?: string): Promise<{ status: string; day: number; review: string }> => {
+    generateAIReview: async (tripId: string, day: number, userId?: string, locale?: string): Promise<{ status: string; day: number; review: string }> => {
         const apiKey = getSecureApiKey()
+        const isEn = locale?.toLowerCase().startsWith("en")
 
         if (!apiKey) {
-            throw new Error("請到下方導覽列的「個人檔案」頁面設定 Gemini API Key")
+            throw new Error(isEn ? "Please configure your Gemini API Key in the Profile tab." : "請到下方導覽列的「個人檔案」頁面設定 Gemini API Key")
         }
 
         const headers: Record<string, string> = {
@@ -656,13 +673,15 @@ export const tripsApi = {
         }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API_HOST}/api/ai/trips/${tripId}/days/${day}/ai-review`, {
+        const localeQuery = locale ? `?locale=${encodeURIComponent(locale)}` : ""
+        const res = await fetch(`${API_HOST}/api/ai/trips/${tripId}/days/${day}/ai-review${localeQuery}`, {
             method: "POST",
             headers
         })
         if (!res.ok) {
-            const error = await res.json().catch(() => ({ detail: "AI 審核失敗" }))
-            throw new Error(error.detail || "AI 審核失敗")
+            const fallbackMsg = isEn ? "AI audit failed" : "AI 審核失敗"
+            const error = await res.json().catch(() => ({ detail: fallbackMsg }))
+            throw new Error(error.detail || fallbackMsg)
         }
         return res.json()
     },
@@ -767,7 +786,8 @@ export const aiApi = {
             body: JSON.stringify({
                 markdown_text: params.markdown_text,
                 image_base64: params.image_base64,
-                ...(params.itinerary_id ? { itinerary_id: params.itinerary_id } : {})
+                ...(params.itinerary_id ? { itinerary_id: params.itinerary_id } : {}),
+                ...(params.locale ? { locale: params.locale } : {})
             })
         })
         if (!res.ok) {
@@ -784,7 +804,7 @@ export const aiApi = {
     },
 
     /** 📸 Parse receipt image into structured expense data (Phase 5) */
-    parseReceipt: async (imageUrl: string, image?: string) => {
+    parseReceipt: async (imageUrl: string, image?: string, locale?: string) => {
         const apiKey = getSecureApiKey()
 
         // We forward the auth header so the Proxy can authenticate with the Backend FastAPI
@@ -796,7 +816,7 @@ export const aiApi = {
         const res = await fetch(API.RECEIPT_PARSE, {
             method: "POST",
             headers,
-            body: JSON.stringify({ imageUrl, image })
+            body: JSON.stringify({ imageUrl, image, locale: locale || "zh" })
         })
 
         if (!res.ok) {
@@ -811,9 +831,11 @@ export const aiApi = {
         expenses: unknown[],
         members: unknown[],
         message: string,
-        history: { role: string, content: string }[]
+        history: { role: string, content: string }[],
+        locale?: string
     ) => {
         const apiKey = getSecureApiKey()
+        const isEn = locale?.toLowerCase().startsWith("en")
 
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
@@ -823,12 +845,15 @@ export const aiApi = {
         const res = await fetch(API.ACTUARY, {
             method: "POST",
             headers,
-            body: JSON.stringify({ expenses, members, message, history })
+            body: JSON.stringify({ expenses, members, message, history, locale: locale || "zh" })
         })
 
         if (!res.ok) {
-            const data = await res.json().catch(() => ({ reply: "AI 精算師連線失敗，請稍後再試" }))
-            throw new Error(data.reply || "AI 精算師連線失敗，請稍後再試")
+            const fallbackMsg = isEn
+                ? "AI Actuary connection failed, please try again later"
+                : "AI 精算師連線失敗，請稍後再試"
+            const data = await res.json().catch(() => ({ detail: fallbackMsg }))
+            throw new Error(data.detail || data.reply || data.message || fallbackMsg)
         }
         return await res.json() as { 
             status: string, 
@@ -851,7 +876,7 @@ export const aiApi = {
         const res = await fetch(API.GENERATE_TRIP, {
             method: "POST",
             headers,
-            body: JSON.stringify({ prompt: params.prompt })
+            body: JSON.stringify({ prompt: params.prompt, locale: params.locale || "zh" })
         })
         if (!res.ok) {
             const errMsg = await extractError(res, "AI 生成失敗")
@@ -879,12 +904,12 @@ export const aiApi = {
         const res = await fetch(API.GENERATE_TRIP_STREAM, {
             method: "POST",
             headers,
-            body: JSON.stringify({ prompt: params.prompt }),
+            body: JSON.stringify({ prompt: params.prompt, locale: params.locale || "zh" }),
             signal: params.signal
         })
         if (!res.ok) {
             const errMsg = await extractError(res, "AI 串流連線失敗")
-            throw new Error(errMsg)
+            throw Object.assign(new Error(errMsg), { status: res.status })
         }
         const data = await consumeTripStream(res, params.onProgress)
         const parsed = AiGenerateResponseSchema.safeParse(data)
@@ -897,14 +922,19 @@ export const aiApi = {
 
     /** 🧠 Smart AI Search using gemma-3-27b (Phase 9) */
     smartSearch: async (params: SmartSearchParams) => {
+        const isEn = params.locale?.toLowerCase().startsWith("en")
+        const apiKey = params.api_key || getSecureApiKey()
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        if (apiKey) headers["X-Gemini-API-Key"] = apiKey
         const res = await fetch(API.SMART_SEARCH, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers,
             body: JSON.stringify(params)
         })
         if (!res.ok) {
-            const errorData = await res.json().catch(() => ({ detail: "智能搜尋連線失敗" }))
-            throw new Error(errorData.detail || "智能搜尋連線失敗")
+            const fallbackMsg = isEn ? "Smart search connection failed" : "智能搜尋連線失敗"
+            const errorData = await res.json().catch(() => ({ detail: fallbackMsg }))
+            throw new Error(errorData.detail || fallbackMsg)
         }
         return res.json()
     }
@@ -980,10 +1010,41 @@ export const travelDataApi = {
 /**
  * 🛠️ Offline-Aware Fetch Wrapper
  */
-async function offlineFetch(url: string, options: RequestInit) {
-    if (typeof window !== 'undefined' && !navigator.onLine && options.method && options.method !== 'GET') {
-        console.warn(`[API] 🔌 Offline: Queuing ${options.method} ${url}`);
+function normalizePlainHeaders(rawHeaders?: HeadersInit): Record<string, string> {
+    const out: Record<string, string> = {};
+    if (!rawHeaders) return out;
+    if (typeof Headers !== 'undefined' && rawHeaders instanceof Headers) {
+        rawHeaders.forEach((value, key) => {
+            out[key] = value;
+        });
+    } else if (Array.isArray(rawHeaders)) {
+        for (const [key, value] of rawHeaders) {
+            out[key] = value;
+        }
+    } else if (typeof rawHeaders === 'object') {
+        Object.assign(out, rawHeaders as Record<string, string>);
+    }
+    return out;
+}
 
+async function offlineFetch(url: string, options: RequestInit) {
+    const isMutation = Boolean(options.method && options.method.toUpperCase() !== 'GET');
+    const plainHeaders = normalizePlainHeaders(options.headers);
+
+    if (isMutation) {
+        const hasIdempotencyKey = Object.keys(plainHeaders).some(
+            (k) => k.toLowerCase() === 'idempotency-key'
+        );
+        if (!hasIdempotencyKey && typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            plainHeaders['Idempotency-Key'] = crypto.randomUUID();
+        }
+    }
+
+    const requestOptions: RequestInit = isMutation
+        ? { ...options, headers: plainHeaders }
+        : options;
+
+    const queueMutation = async () => {
         let body: Record<string, unknown> = {};
         const isFormData = options.body instanceof FormData;
 
@@ -1004,15 +1065,32 @@ async function offlineFetch(url: string, options: RequestInit) {
             url,
             method: (options.method as 'POST' | 'PUT' | 'PATCH' | 'DELETE'),
             body,
-            headers: options.headers as Record<string, string>
+            headers: plainHeaders
         });
 
         return new Response(
             JSON.stringify({ status: 'queued', offline: true, type: isFormData ? 'formData' : 'json' }),
             { status: 200, statusText: 'OK', headers: { 'Content-Type': 'application/json' } }
         );
+    };
+
+    if (typeof window !== 'undefined' && !navigator.onLine && isMutation) {
+        console.warn(`[API] 🔌 Offline: Queuing ${options.method} ${url}`);
+        return queueMutation();
     }
-    return fetch(url, options);
+
+    try {
+        return await fetch(url, requestOptions);
+    } catch (networkError) {
+        const isAborted =
+            options.signal?.aborted ||
+            (networkError instanceof Error && networkError.name === 'AbortError');
+        if (!isAborted && isMutation && typeof window !== 'undefined') {
+            console.warn(`[API] ⚡ Lie-Fi network drop: Queuing ${options.method} ${url}`, networkError);
+            return queueMutation();
+        }
+        throw networkError;
+    }
 }
 
 /**
@@ -1453,10 +1531,21 @@ export const usersApi = {
 /**
  * App Settings API Functions
  */
+export interface DonationProgressResponse {
+    available: boolean
+    percentage?: number
+    month?: string
+}
+
 export const appApi = {
-    /** Get donation progress from backend */
-    getDonationProgress: async () => {
-        const res = await fetch(`${API.APP}/donation-progress`)
+    /** Get donation progress percentage from backend (privacy-minimized, fail-closed) */
+    getDonationProgress: async (): Promise<DonationProgressResponse> => {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+            return { available: false }
+        }
+        const res = await fetch(`${API.APP}/donation-progress`, {
+            cache: "no-store",
+        })
         if (!res.ok) throw new Error("Failed to fetch donation progress")
         return res.json()
     },
@@ -1476,15 +1565,19 @@ export const poiApi = {
     },
 
     /** 🔥 AI Recommend with Auth Protection */
-    recommend: async (params: { pois: unknown[], user_query: string, api_key: string, user_preferences?: Record<string, unknown> }, userId?: string) => {
+    recommend: async (params: { pois: unknown[], user_query: string, api_key: string, user_preferences?: Record<string, unknown>, locale?: string }, userId?: string) => {
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
+        if (params.api_key) headers["X-Gemini-API-Key"] = params.api_key
         const res = await fetch(`${API_HOST}/api/poi/recommend`, {
             method: "POST",
             headers,
             body: JSON.stringify(params)
         })
-        if (!res.ok) throw new Error("AI Recommendation failed")
+        if (!res.ok) {
+            const errMsg = await extractError(res, "AI Recommendation failed")
+            throw new Error(errMsg)
+        }
         return res.json()
     },
 
@@ -1496,11 +1589,14 @@ export const poiApi = {
         lng: number, 
         api_key?: string | null,
         poi_id?: string,
-        wikidata_id?: string
+        wikidata_id?: string,
+        locale?: string
     }, userId?: string) => {
         if (!params.name) throw new Error("POI name is required for enrichment");
+        const isEn = params.locale?.toLowerCase().startsWith("en")
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
+        if (params.api_key) headers["X-Gemini-API-Key"] = params.api_key
 
         const res = await fetch(`${API_HOST}/api/poi/ai-enrich`, {
             method: "POST",
@@ -1508,8 +1604,9 @@ export const poiApi = {
             body: JSON.stringify(params)
         })
         if (!res.ok) {
-            const errorData = await res.json().catch(() => ({ detail: "POI 資訊預載失敗" }))
-            throw new Error(errorData.detail || "POI 資訊預載失敗")
+            const fallbackMsg = isEn ? "Failed to preload POI info" : "POI 資訊預載失敗"
+            const errorData = await res.json().catch(() => ({ detail: fallbackMsg }))
+            throw new Error(errorData.detail || fallbackMsg)
         }
         return res.json()
     },

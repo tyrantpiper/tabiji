@@ -64,7 +64,7 @@ export default function POIPreviewCard({
 }: POIPreviewCardProps) {
     const { activeTripId, activeTrip, mutate, userId } = useTripContext()
     const { mutate: globalMutate } = useSWRConfig()
-    const { lang } = useLanguage()
+    const { lang, isReady = true } = useLanguage()
     const zh = lang === 'zh'
     const [isAdding, setIsAdding] = useState(false)
     const [isAdded, setIsAdded] = useState(false)
@@ -80,6 +80,9 @@ export default function POIPreviewCard({
 
     // 🆕 v3.7: 自動獲取三源整合資料
     useEffect(() => {
+        if (!isReady) return
+        let cancelled = false
+
         const fetchEnrichedData = async () => {
             if (!poiData.place_name) return
 
@@ -88,6 +91,7 @@ export default function POIPreviewCard({
                 return
             }
 
+            setEnriched(null)
             setIsLoadingEnrich(true)
             try {
                 // 🛡️ v5: Standardized Enrichment with Auth
@@ -96,20 +100,28 @@ export default function POIPreviewCard({
                     type: poiData.category || "sightseeing",
                     lat: poiData.lat || 0,
                     lng: poiData.lng || 0,
-                    api_key: getSecureApiKey()
+                    api_key: getSecureApiKey(),
+                    locale: lang
                 }, userId || undefined)
-                if (data && (data.cultural_desc || data.name || data.summary)) {
+                if (!cancelled && data && (data.cultural_desc || data.name || data.summary)) {
                     setEnriched(data as EnrichedPOI)
                 }
             } catch (error) {
-                debugLog("三源資料獲取失敗 (不影響主流程):", error)
+                if (!cancelled) {
+                    debugLog("三源資料獲取失敗 (不影響主流程):", error)
+                }
             } finally {
-                setIsLoadingEnrich(false)
+                if (!cancelled) {
+                    setIsLoadingEnrich(false)
+                }
             }
         }
 
         fetchEnrichedData()
-    }, [poiData.place_name, poiData.category, poiData.lat, poiData.lng, userId, hasValidCoords])
+        return () => {
+            cancelled = true
+        }
+    }, [isReady, poiData.place_name, poiData.category, poiData.lat, poiData.lng, userId, hasValidCoords, lang])
 
     // 分類顏色映射
     const categoryColors: Record<string, string> = {
@@ -519,6 +531,8 @@ export function extractItineraryFunctionCalls(rawParts: unknown[]): POIData[] {
                     if (item && typeof item === 'object') {
                         const parsed = parseRawPoiArgs(item as Record<string, unknown>)
                         if (parsed.place_name) results.push(parsed)
+                    } else if (typeof item === 'string' && item.trim()) {
+                        results.push({ place_name: item.trim(), category: 'attraction' })
                     }
                 }
             }

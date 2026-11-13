@@ -164,14 +164,18 @@ export const GeocodeResponseSchema = z.object({
 // === AI Schemas ===
 export const AiParseResponseSchema = z.object({
     title: z.string().optional(),
+    destination: z.string().optional(),
+    currency: z.string().optional(),
     start_date: z.string().optional(),
     end_date: z.string().optional(),
+    cover_image: z.string().optional().nullable(),
     items: z.array(z.any()).default([]), // Full validation in ItineraryItemSchema
     daily_locations: z.record(z.string(), z.any()).optional(),
     day_notes: z.record(z.string(), z.array(z.any())).optional(),
     day_costs: z.record(z.string(), z.array(z.any())).optional(),
     day_tickets: z.record(z.string(), z.array(z.any())).optional(),
     day_checklists: z.record(z.string(), z.array(z.any())).optional(),
+    day_metadata: z.array(z.any()).optional(),
     ai_review: z.string().optional(),
 });
 
