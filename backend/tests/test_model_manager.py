@@ -54,16 +54,30 @@ class FakeResponse:
 # ═══════════════════════════════════════════════════════════════
 
 def test_sanitize_removes_thinking_for_gemini_25():
-    """Gemini 2.5 不支援 thinking_config，必須被移除"""
+    """Gemini 2.5 Flash 支援 thinking_budget：抑制意圖須注入 thinking_budget=0（停用預設 -1），並移除不相容之 thinking_level"""
     config = types.GenerateContentConfig(
         temperature=1.0,
         max_output_tokens=1024,
     )
-    # 手動設定 thinking_config (模擬 Gemini 3 配置)
+    # 1. CHAT 等非抑制意圖若顯式設定 thinking_budget，應予保留且不帶 thinking_level
     config.thinking_config = types.ThinkingConfig(thinking_budget=1024)
-    
-    safe = sanitize_config_for_model(config, "gemini-2.5-flash", "CHAT")
-    assert safe.thinking_config is None
+
+    safe_chat = sanitize_config_for_model(config, "gemini-2.5-flash", "CHAT")
+    assert safe_chat.thinking_config is not None
+    assert safe_chat.thinking_config.thinking_budget == 1024
+    assert getattr(safe_chat.thinking_config, "thinking_level", None) is None
+
+    # 2. 低思考抑制意圖 (如 GEOCODE/EXTRACTION) 必須顯式設 thinking_budget=0 禁用預設動態思考 (-1)
+    suppressed_cfg = types.GenerateContentConfig(
+        temperature=0,
+        max_output_tokens=256,
+        thinking_config=types.ThinkingConfig(thinking_level="minimal", include_thoughts=False),
+    )
+    safe_geo = sanitize_config_for_model(suppressed_cfg, "gemini-2.5-flash", "GEOCODE")
+    assert safe_geo.thinking_config is not None
+    assert safe_geo.thinking_config.thinking_budget == 0
+    assert safe_geo.thinking_config.include_thoughts is False
+    assert getattr(safe_geo.thinking_config, "thinking_level", None) is None
 
 
 def test_sanitize_removes_tools_for_gemma():
@@ -127,7 +141,7 @@ async def test_call_with_fallback_routing_array(mock_get_client):
     
     # 結果來自第二個模型
     assert result["text"] == "降級成功！"
-    assert result["model_used"] == HEAVY_ROUTING[1]
+    assert result["model_used"] == DAILY_ROUTING[1]
     assert mock_client.aio.chats.create.call_count == 2
 
 
@@ -167,7 +181,7 @@ def test_build_effective_routing_extraction():
     """
     routing = build_effective_routing("EXTRACTION")
     assert routing == EXTRACTION_ROUTING
-    assert routing[0] == "gemini-3.1-flash-lite"
+    assert routing[0] in ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -178,7 +192,7 @@ def test_build_effective_routing_extraction():
 @patch('services.model_manager.get_cached_client')
 async def test_call_extraction_triple_fallback(mock_get_client):
     """
-    測試三重降級: HEAVY_ROUTING[0] → [1] → [2]
+    測試三重降級: DAILY_ROUTING[0] → [1] → [2]
     """
     mock_client = MagicMock()
     mock_get_client.return_value = mock_client
@@ -200,9 +214,9 @@ async def test_call_extraction_triple_fallback(mock_get_client):
     
     # 驗證模型切換順序
     calls = mock_client.aio.models.generate_content.call_args_list
-    assert calls[0].kwargs['model'] == HEAVY_ROUTING[0]
-    assert calls[1].kwargs['model'] == HEAVY_ROUTING[1]
-    assert calls[2].kwargs['model'] == HEAVY_ROUTING[2]
+    assert calls[0].kwargs['model'] == DAILY_ROUTING[0]
+    assert calls[1].kwargs['model'] == DAILY_ROUTING[1]
+    assert calls[2].kwargs['model'] == DAILY_ROUTING[2]
 
 
 @pytest.mark.asyncio
@@ -275,14 +289,20 @@ def test_thought_signature_end_to_end():
 
 def test_google_maps_grounding_sanitization():
     """
-    測試: 支援 Grounding 的模型自動注入 Google Search 與 Google Maps 工具；
+    測試: 支援 Grounding 的模型在顯式請求 (explicit_grounding=True) 時注入 Google Search 與 Google Maps 工具；
+    預設 (explicit_grounding=False) 保持乾淨 business tools (防禦免費金鑰 429 地圖陷阱)；
     不支援 Grounding 的模型自動淨化移除。
     """
     from services.model_manager import sanitize_config_for_model
 
-    # 1. 測試 Grounding 支援模型 (Gemini 3.7 Flash)
     config_in = types.GenerateContentConfig()
-    safe_config = sanitize_config_for_model(config_in, "gemini-3.7-flash", "CHAT")
+
+    # 1. 預設情境 (explicit_grounding=False)：絕不盲目注入付費 Grounding 工具
+    default_config = sanitize_config_for_model(config_in, "gemini-3.7-flash", "CHAT")
+    assert default_config.tools is None
+
+    # 2. 顯式請求情境 (explicit_grounding=True)：Gemini 3.7 Flash 成功注入
+    safe_config = sanitize_config_for_model(config_in, "gemini-3.7-flash", "CHAT", explicit_grounding=True)
     assert safe_config.tools is not None
     assert len(safe_config.tools) == 1
     tool = safe_config.tools[0]
@@ -290,7 +310,7 @@ def test_google_maps_grounding_sanitization():
     assert tool.google_maps is not None
     assert tool.google_maps.enable_widget is True
 
-    # 2. 測試非 Grounding 支援模型 (Gemma 3)
+    # 3. 測試非 Grounding 支援模型 (Gemma 3) 即使帶有 Grounding 工具亦會被淨化
     gemma_config = sanitize_config_for_model(safe_config, "gemma-3-27b-it", "CHAT")
     if gemma_config.tools:
         for t in gemma_config.tools:
@@ -303,33 +323,36 @@ def test_google_maps_grounding_sanitization():
 # ═══════════════════════════════════════════════════════════════
 
 def test_geocode_routing_prefers_gemma_4():
-    """GEOCODE 意圖應優先採用 Gemma 4 31B Dense 高抗幻覺工作馬，絕不墜入 HEAVY_ROUTING"""
+    """GEOCODE 意圖應優先採用升級之 WORKHORSE_ROUTING，絕不墜入 HEAVY_ROUTING"""
     routing = build_effective_routing("GEOCODE")
-    assert routing[0] == "gemma-4-31b-it"
-    assert routing[1] == "gemma-4-26b-a4b-it"
-    assert routing[2] == "gemma-3-27b-it"
-    assert routing[3] == "gemini-3.1-flash-lite"
+    assert routing[0] == "gemini-3.5-flash-lite"
+    assert routing[1] == "gemini-3.6-flash"
+    assert routing[2] == "gemini-3.1-flash-lite"
+    assert "gemma-3-27b-it" not in routing
     assert "gemini-3.8-flash" not in routing
     assert "gemini-3.7-flash" not in routing
-    assert "gemini-3.6-flash" not in routing
 
 
 def test_summarize_routing_uses_workhorse_routing():
-    """SUMMARIZE 意圖應直接導向 WORKHORSE_ROUTING，首選 31B Dense 徹底杜絕旗艦模型配額洩漏"""
+    """SUMMARIZE 意圖應直接導向 WORKHORSE_ROUTING，杜絕旗艦模型配額洩漏與墓碑模型"""
     routing = build_effective_routing("SUMMARIZE")
-    assert routing[0] == "gemma-4-31b-it"
+    assert routing[0] == "gemini-3.5-flash-lite"
+    assert "gemma-3-27b-it" not in routing
     assert "gemini-3.8-flash" not in routing
     assert "gemini-3.7-flash" not in routing
 
 
-def test_heavy_routing_primary_is_gemini_38_with_moe_rescue():
-    """PLANNING 重型意圖首位應為 gemini-3.8-flash，且尾端具備完整的 Gemma MoE 救援鏈"""
+def test_heavy_routing_primary_is_flash_lite_with_moe_rescue():
+    """PLANNING 重型意圖首位應為 Flash-Lite 領銜，後接去重旗艦模型 (3.6/3.8) 與完整 Gemma MoE 救援鏈 (排除 404 墓碑)"""
     routing = build_effective_routing("PLANNING")
-    assert routing[0] == "gemini-3.8-flash"
-    assert routing[1] == "gemini-3.7-flash"
+    assert routing[0] in ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
+    assert "gemini-3.6-flash" in routing
+    assert "gemini-3.8-flash" in routing
+    assert "gemini-3.7-flash" not in routing
+    assert "gemini-3.5-flash" not in routing
     assert "gemma-4-26b-a4b-it" in routing
     assert "gemma-4-31b-it" in routing
-    assert "gemma-3-27b-it" in routing
+    assert "gemma-3-27b-it" not in routing
 
 
 def test_gemma_sanitizer_isolates_grounding():
@@ -375,13 +398,12 @@ async def test_auth_fail_does_not_trip_circuit_breaker(mock_get_client):
 
 
 def test_poi_enrich_routing_prefers_daily_routing():
-    """POI_ENRICH 探索地點意圖應優先採用 DAILY_ROUTING (500 RPD)，尾端自動掛載 Gemma 終極救援"""
+    """POI_ENRICH 探索地點意圖應優先採用 DAILY_ROUTING (500 RPD)，尾端自動掛載 Gemma 終極救援 (排除 404 墓碑)"""
     routing = build_effective_routing("POI_ENRICH")
-    assert routing[0] == "gemini-3.1-flash-lite"
-    assert routing[1] == "gemini-3.5-flash-lite"
+    assert routing[0] in ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
     assert "gemma-4-26b-a4b-it" in routing
     assert "gemma-4-31b-it" in routing
-    assert "gemma-3-27b-it" in routing
+    assert "gemma-3-27b-it" not in routing
 
 
 def test_poi_enrich_generation_config():

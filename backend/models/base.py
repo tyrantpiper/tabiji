@@ -22,6 +22,7 @@ class MarkdownImportRequest(BaseModel):
     markdown_text: Optional[str] = ""
     itinerary_id: Optional[str] = None
     image_base64: Optional[str] = None
+    locale: Optional[str] = "zh"
 
 
 class GenerateTripRequest(BaseModel):
@@ -35,6 +36,7 @@ class GenerateTripRequest(BaseModel):
 class SimplePromptRequest(BaseModel):
     """簡化版 AI 生成請求"""
     prompt: str
+    locale: Optional[str] = "zh"
 
 
 # === 記帳與財務模型 (V23.1 Standard) ===
@@ -76,6 +78,7 @@ class ActuaryRequest(BaseModel):
     members: List[dict] = Field(default_factory=list)
     message: str
     history: List[dict] = Field(default_factory=list)
+    locale: Optional[str] = "zh"
 
 
 class ReceiptRequest(BaseModel):
@@ -89,6 +92,7 @@ class ReceiptRequest(BaseModel):
     currency: Optional[str] = "JPY"
     exchange_rate: Optional[float] = None
     payment_method: Optional[str] = None
+    locale: Optional[str] = "zh"
 
 
 class ExpenseRequest(BaseModel):
@@ -206,6 +210,7 @@ class GeocodeSearchRequest(BaseModel):
     region: Optional[str] = None
     zoom: Optional[float] = None
     bbox: Optional[str] = None
+    locale: Optional[str] = "zh"
 
 
 class GeocodeReverseRequest(BaseModel):
@@ -436,11 +441,13 @@ class ChatRequest(BaseModel):
     focused_day: Optional[int] = None
     client_time: Optional[str] = None
     client_timezone: Optional[str] = None
+    locale: Optional[str] = "zh"
 
 
 class SummarizeRequest(BaseModel):
     """記憶摘要請求"""
     history: List[dict] = Field(default_factory=list)
+    locale: Optional[str] = "zh"
 
 
 class POIAIEnrichRequest(BaseModel):
@@ -452,6 +459,7 @@ class POIAIEnrichRequest(BaseModel):
     poi_id: Optional[str] = None
     wikidata_id: Optional[str] = None
     api_key: Optional[str] = None
+    locale: Optional[str] = "zh"
 
 
 class POIEnrichRequest(BaseModel):
@@ -460,6 +468,7 @@ class POIEnrichRequest(BaseModel):
     wikidata_id: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
+    locale: Optional[str] = "zh"
 
 
 class POIRecommendRequest(BaseModel):
@@ -468,6 +477,7 @@ class POIRecommendRequest(BaseModel):
     user_query: str
     api_key: str
     user_preferences: Optional[dict] = None
+    locale: Optional[str] = "zh"
 
 
 class SmartSearchRequest(BaseModel):
@@ -479,6 +489,7 @@ class SmartSearchRequest(BaseModel):
     trip_title: Optional[str] = None
     api_key: str
     max_results: int = 3
+    locale: Optional[str] = "zh"
 
 
 class SmartSearchRecommendation(BaseModel):
