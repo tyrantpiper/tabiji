@@ -27,6 +27,18 @@ if ($offenders) {
     exit 1
 }
 
+# 0.2 Multi-Agent 暫存工作區衛生檢查 (Teamwork Scratch Gate / AD-151)
+$trackedTeamwork = git ls-files .agents/teamwork
+if ($LASTEXITCODE -ne 0 -or $trackedTeamwork) {
+    Write-Error "🚨 [Teamwork Scratch Gate] 偵測到 .agents/teamwork/ 存在已追蹤暫存檔！請移出索引後再執行 push。"
+    exit 1
+}
+git check-ignore -q .agents/teamwork/.probe
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "🚨 [Teamwork Scratch Gate] .gitignore 必須忽略 /.agents/teamwork/ 才能推送！"
+    exit 1
+}
+
 # 0.5 神經縫隙微退化與手術後遺症守門 (Neural Seams Invariant Gate)
 python scripts/neural_seam_harness.py; if ($LASTEXITCODE -ne 0) { Write-Error "Neural Seam Invariants Failed"; exit 1 }
 

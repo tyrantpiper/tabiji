@@ -48,6 +48,7 @@ blob-report/
 # AI Agent Workspace
 .agent/
 /.agents/*.log
+/.agents/teamwork/
 /implementation_plan.md
 .worktrees/
 /.agents/skills/*

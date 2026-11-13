@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
+import { execSync } from 'node:child_process'
 
 describe('🛡️ Security Sentinel: Root Hygiene and Artifact Governance Audit', () => {
     const repoRoot = path.resolve(__dirname, '..', '..')
@@ -41,5 +42,15 @@ describe('🛡️ Security Sentinel: Root Hygiene and Artifact Governance Audit'
         expect(content).toContain('# 0. 專案根目錄衛生檢查 (Root Hygiene Gate)')
         expect(content).toContain('$whitelist = @("package.json"')
         expect(content).toContain('[Root Hygiene Gate]')
+        expect(content).toContain('[Teamwork Scratch Gate]')
+    })
+
+    it('TC-5: AD-151 .gitignore & git index isolate .agents/teamwork/ ephemeral artifacts', () => {
+        const gitignore = fs.readFileSync(path.resolve(repoRoot, '.gitignore'), 'utf-8')
+        expect(gitignore).toContain('/.agents/teamwork/')
+        const tracked = execSync('git ls-files .agents/teamwork', { cwd: repoRoot, encoding: 'utf-8' }).trim()
+        expect(tracked).toBe('')
+        const checkIgnore = execSync('git check-ignore .agents/teamwork/probe.md', { cwd: repoRoot, encoding: 'utf-8' }).trim()
+        expect(checkIgnore).toContain('.agents/teamwork/probe.md')
     })
 })

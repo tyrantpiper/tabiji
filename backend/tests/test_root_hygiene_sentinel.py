@@ -109,3 +109,31 @@ def test_deterministic_security_ledger_invariants():
     from scripts.validate_security_ledger import validate_ledger_file
     success, message = validate_ledger_file()
     assert success, f"Security coverage ledger deterministic invariant violated: {message}"
+
+
+def test_teamwork_scratch_hygiene_defense_in_depth():
+    """TC-7: AD-151 defense-in-depth prevents .agents/teamwork/ staging pollution."""
+    import subprocess
+
+    gitignore_text = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "/.agents/teamwork/" in gitignore_text
+
+    push_skill_text = (REPO_ROOT / ".agents" / "skills" / "push" / "SKILL.md").read_text(encoding="utf-8")
+    assert "[Teamwork Scratch Gate]" in push_skill_text
+    assert "git ls-files .agents/teamwork" in push_skill_text
+    assert "git check-ignore -q .agents/teamwork/.probe" in push_skill_text
+
+    tracked = subprocess.run(
+        ["git", "ls-files", ".agents/teamwork"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert tracked.returncode == 0
+    assert tracked.stdout.strip() == ""
+
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", ".agents/teamwork/probe.md"],
+        cwd=REPO_ROOT,
+    )
+    assert ignored.returncode == 0
