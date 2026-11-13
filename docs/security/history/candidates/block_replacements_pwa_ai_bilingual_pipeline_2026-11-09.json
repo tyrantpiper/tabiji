@@ -1,0 +1,43 @@
+[
+  {
+    "target_file": "backend/models/base.py",
+    "target_content": "class SimplePromptRequest(BaseModel):\n    \"\"\"簡化版 AI 生成請求\"\"\"\n    prompt: str",
+    "replacement_content": "class SimplePromptRequest(BaseModel):\n    \"\"\"簡化版 AI 生成請求\"\"\"\n    prompt: str\n    locale: Optional[str] = \"zh\""
+  },
+  {
+    "target_file": "backend/models/base.py",
+    "target_content": "    client_time: Optional[str] = None\n    client_timezone: Optional[str] = None",
+    "replacement_content": "    client_time: Optional[str] = None\n    client_timezone: Optional[str] = None\n    locale: Optional[str] = \"zh\""
+  },
+  {
+    "target_file": "backend/services/model_manager.py",
+    "target_content": "DIAGNOSIS_KEYWORDS = [\n    \"行程建議\", \"好不好\", \"順不順\", \"會不會太趕\", \"來得及嗎\",\n    \"這樣排\", \"幫我看\", \"診斷\", \"健檢\", \"評估\", \"分析這個行程\",\n    \"路線順嗎\", \"時間夠嗎\", \"會太累嗎\", \"能遍完嗎\",\n    \"有什麼建議\", \"要調整嗎\", \"怎麼樣\"\n]",
+    "replacement_content": "DIAGNOSIS_KEYWORDS = [\n    \"行程建議\", \"好不好\", \"順不順\", \"會不會太趕\", \"來得及嗎\",\n    \"這樣排\", \"幫我看\", \"診斷\", \"健檢\", \"評估\", \"分析這個行程\",\n    \"路線順嗎\", \"時間夠嗎\", \"會太累嗎\", \"能遍完嗎\",\n    \"有什麼建議\", \"要調整嗎\", \"怎麼樣\",\n    # English diagnosis keywords (Bilingual support)\n    \"makes sense\", \"check itinerary\", \"review\", \"diagnosis\", \"checkup\",\n    \"too rushed\", \"pacing\", \"suggestions\", \"feasible\", \"rate my trip\",\n    \"is this route\", \"enough time\", \"too tiring\", \"any recommendations\"\n]"
+  },
+  {
+    "target_file": "backend/main.py",
+    "target_content": "def detect_admin_hijack_attempt(text: str) -> Optional[str]:",
+    "replacement_content": "def detect_admin_hijack_attempt(text: str, locale: str = \"zh\") -> Optional[str]:"
+  },
+  {
+    "target_file": "frontend/lib/sse-parser.ts",
+    "target_content": "    clientTime?: string,\n    clientTimezone?: string\n): Promise<void> {",
+    "replacement_content": "    clientTime?: string,\n    clientTimezone?: string,\n    locale?: string\n): Promise<void> {"
+  },
+  {
+    "target_file": "frontend/lib/api.ts",
+    "target_content": "export interface AiGenerateParams {\n    prompt: string\n    user_id?: string\n}",
+    "replacement_content": "export interface AiGenerateParams {\n    prompt: string\n    user_id?: string\n    locale?: string\n}"
+  },
+  {
+    "target_file": "frontend/components/itinerary/TripDialogs.tsx",
+    "target_content": "            try {\n                response = await aiApi.generateTripStream({\n                    prompt: promptToSend,\n                    user_id: activeUserId,\n                    onProgress: (p) => {\n                        setAiProgress(`${p.message} (${p.percent}%)`)\n                    }\n                })\n            } catch (streamErr) {\n                console.warn(\"⚠️ [TripDialogs] Stream failed, falling back to sync:\", streamErr)\n                response = await aiApi.generateTrip({\n                    prompt: promptToSend,\n                    user_id: activeUserId\n                })\n            }",
+    "replacement_content": "            try {\n                response = await aiApi.generateTripStream({\n                    prompt: promptToSend,\n                    user_id: activeUserId,\n                    locale: lang,\n                    onProgress: (p) => {\n                        setAiProgress(`${p.message} (${p.percent}%)`)\n                    }\n                })\n            } catch (streamErr) {\n                console.warn(\"⚠️ [TripDialogs] Stream failed, falling back to sync:\", streamErr)\n                response = await aiApi.generateTrip({\n                    prompt: promptToSend,\n                    user_id: activeUserId,\n                    locale: lang\n                })\n            }"
+  },
+  {
+    "target_file": "frontend/components/official/HeroTypewriterHeading.tsx",
+    "target_content": "      {/* 2. 視覺打字逐字浮現層 */}\n      <span aria-hidden=\"true\" className=\"block whitespace-pre-wrap leading-[1.22] pb-1\">\n        {displayLine1}\n        {currentLine === 1 && showCursor && (\n          <motion.span\n            aria-hidden=\"true\"\n            initial={{ opacity: 1 }}\n            animate={{ opacity: [1, 0, 1] }}\n            transition={{ duration: 0.8, repeat: Infinity, ease: \"easeInOut\" }}\n            className=\"inline-block ml-1 w-[3px] h-[0.85em] bg-emerald-600 dark:bg-emerald-400 rounded-full align-middle select-none\"\n          />\n        )}\n      </span>\n\n      <span\n        aria-hidden=\"true\"\n        className=\"block bg-gradient-to-r from-[#0B3026] via-emerald-800 to-amber-600 dark:from-emerald-300 dark:via-teal-200 dark:to-amber-300 bg-clip-text text-transparent whitespace-pre-wrap leading-[1.24] pb-2.5 sm:pb-3.5 -mb-2.5 sm:-mb-3.5\"\n      >",
+    "replacement_content": "      {/* 2. 視覺打字逐字浮現層 */}\n      <span aria-hidden=\"true\" className=\"block whitespace-pre-wrap leading-[1.22] pb-1 pr-2\">\n        {displayLine1}\n        {currentLine === 1 && showCursor && (\n          <motion.span\n            aria-hidden=\"true\"\n            initial={{ opacity: 1 }}\n            animate={{ opacity: [1, 0, 1] }}\n            transition={{ duration: 0.8, repeat: Infinity, ease: \"easeInOut\" }}\n            className=\"inline-block ml-1 w-[3px] h-[0.85em] bg-emerald-600 dark:bg-emerald-400 rounded-full align-middle select-none\"\n          />\n        )}\n      </span>\n\n      <span\n        aria-hidden=\"true\"\n        className=\"block bg-gradient-to-r from-[#0B3026] via-emerald-800 to-amber-600 dark:from-emerald-300 dark:via-teal-200 dark:to-amber-300 bg-clip-text text-transparent whitespace-pre-wrap leading-[1.24] pb-2.5 sm:pb-3.5 -mb-2.5 sm:-mb-3.5 pr-2\"\n      >"
+  }
+]
+

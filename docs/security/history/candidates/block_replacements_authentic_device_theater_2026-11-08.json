@@ -1,0 +1,20 @@
+{
+  "target_file": "frontend/components/official/LiveDeviceTheater.tsx",
+  "topic": "authentic_device_theater",
+  "date": "2026-11-08",
+  "replacements": [
+    {
+      "step": 1,
+      "description": "Import additional icons for authentic views",
+      "target_content": "  Smartphone,\n  Navigation,\n  Ticket,\n  Coins,\n  Plane,\n  WifiOff,\n  ArrowRight,\n  ShieldCheck,\n  Play,\n  Pause,\n  Users,",
+      "replacement_content": "  Smartphone,\n  Navigation,\n  Ticket,\n  Coins,\n  Plane,\n  ShieldCheck,\n  Play,\n  Pause,\n  Users,\n  MapPin,\n  Sun,\n  CheckCircle2,\n  Plus,"
+    },
+    {
+      "step": 2,
+      "description": "Full-bleed dual theme container with 3-tier viewport mask, micro-scroll sync, and aria-hidden isolation",
+      "target_content": "          {/* Inner Screen Display (19.5:9 phone aspect) */}\n          <div className=\"relative w-full aspect-[9/19] rounded-[34px] sm:rounded-[38px] overflow-hidden bg-stone-950 text-white flex flex-col justify-between p-3.5 sm:p-4 border border-black\">",
+      "replacement_content": "          {/* Inner Screen Display (19.5:9 phone aspect) */}\n          <div className=\"relative w-full aspect-[9/19] rounded-[34px] sm:rounded-[38px] overflow-hidden bg-[#F6F5EE] dark:bg-[#121A18] text-[#1E2927] dark:text-[#E5EBEA] flex flex-col justify-between border border-stone-300/80 dark:border-black shadow-inner\">"
+    }
+  ]
+}
+

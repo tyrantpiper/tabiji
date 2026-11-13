@@ -1,0 +1,801 @@
+diff --git a/.agents/skills/push/SKILL.md b/.agents/skills/push/SKILL.md
+index ca26a6c..58508f7 100644
+--- a/.agents/skills/push/SKILL.md
++++ b/.agents/skills/push/SKILL.md
+@@ -27,6 +27,18 @@ if ($offenders) {
+     exit 1
+ }
+ 
++# 0.2 Multi-Agent 暫存工作區衛生檢查 (Teamwork Scratch Gate / AD-151)
++$trackedTeamwork = git ls-files .agents/teamwork
++if ($LASTEXITCODE -ne 0 -or $trackedTeamwork) {
++    Write-Error "🚨 [Teamwork Scratch Gate] 偵測到 .agents/teamwork/ 存在已追蹤暫存檔！請移出索引後再執行 push。"
++    exit 1
++}
++git check-ignore -q .agents/teamwork/.probe
++if ($LASTEXITCODE -ne 0) {
++    Write-Error "🚨 [Teamwork Scratch Gate] .gitignore 必須忽略 /.agents/teamwork/ 才能推送！"
++    exit 1
++}
++
+ # 0.5 神經縫隙微退化與手術後遺症守門 (Neural Seams Invariant Gate)
+ python scripts/neural_seam_harness.py; if ($LASTEXITCODE -ne 0) { Write-Error "Neural Seam Invariants Failed"; exit 1 }
+ 
+diff --git a/.gitignore b/.gitignore
+index fe1543a..d7210cf 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -48,6 +48,7 @@ blob-report/
+ # AI Agent Workspace
+ .agent/
+ /.agents/*.log
++/.agents/teamwork/
+ /implementation_plan.md
+ .worktrees/
+ /.agents/skills/*
+diff --git a/backend/tests/test_root_hygiene_sentinel.py b/backend/tests/test_root_hygiene_sentinel.py
+index cffd476..1674c7c 100644
+--- a/backend/tests/test_root_hygiene_sentinel.py
++++ b/backend/tests/test_root_hygiene_sentinel.py
+@@ -109,3 +109,31 @@ def test_deterministic_security_ledger_invariants():
+     from scripts.validate_security_ledger import validate_ledger_file
+     success, message = validate_ledger_file()
+     assert success, f"Security coverage ledger deterministic invariant violated: {message}"
++
++
++def test_teamwork_scratch_hygiene_defense_in_depth():
++    """TC-7: AD-151 defense-in-depth prevents .agents/teamwork/ staging pollution."""
++    import subprocess
++
++    gitignore_text = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
++    assert "/.agents/teamwork/" in gitignore_text
++
++    push_skill_text = (REPO_ROOT / ".agents" / "skills" / "push" / "SKILL.md").read_text(encoding="utf-8")
++    assert "[Teamwork Scratch Gate]" in push_skill_text
++    assert "git ls-files .agents/teamwork" in push_skill_text
++    assert "git check-ignore -q .agents/teamwork/.probe" in push_skill_text
++
++    tracked = subprocess.run(
++        ["git", "ls-files", ".agents/teamwork"],
++        cwd=REPO_ROOT,
++        capture_output=True,
++        text=True,
++    )
++    assert tracked.returncode == 0
++    assert tracked.stdout.strip() == ""
++
++    ignored = subprocess.run(
++        ["git", "check-ignore", "-q", ".agents/teamwork/probe.md"],
++        cwd=REPO_ROOT,
++    )
++    assert ignored.returncode == 0
+diff --git a/frontend/__tests__/root-hygiene-sentinel.test.ts b/frontend/__tests__/root-hygiene-sentinel.test.ts
+index 9864f72..dd43285 100644
+--- a/frontend/__tests__/root-hygiene-sentinel.test.ts
++++ b/frontend/__tests__/root-hygiene-sentinel.test.ts
+@@ -1,6 +1,7 @@
+ import { describe, it, expect } from 'vitest'
+ import fs from 'fs'
+ import path from 'path'
++import { execSync } from 'node:child_process'
+ 
+ describe('🛡️ Security Sentinel: Root Hygiene and Artifact Governance Audit', () => {
+     const repoRoot = path.resolve(__dirname, '..', '..')
+@@ -41,5 +42,15 @@ describe('🛡️ Security Sentinel: Root Hygiene and Artifact Governance Audit'
+         expect(content).toContain('# 0. 專案根目錄衛生檢查 (Root Hygiene Gate)')
+         expect(content).toContain('$whitelist = @("package.json"')
+         expect(content).toContain('[Root Hygiene Gate]')
++        expect(content).toContain('[Teamwork Scratch Gate]')
++    })
++
++    it('TC-5: AD-151 .gitignore & git index isolate .agents/teamwork/ ephemeral artifacts', () => {
++        const gitignore = fs.readFileSync(path.resolve(repoRoot, '.gitignore'), 'utf-8')
++        expect(gitignore).toContain('/.agents/teamwork/')
++        const tracked = execSync('git ls-files .agents/teamwork', { cwd: repoRoot, encoding: 'utf-8' }).trim()
++        expect(tracked).toBe('')
++        const checkIgnore = execSync('git check-ignore .agents/teamwork/probe.md', { cwd: repoRoot, encoding: 'utf-8' }).trim()
++        expect(checkIgnore).toContain('.agents/teamwork/probe.md')
+     })
+ })
+diff --git a/frontend/__tests__/sw-security-hygiene-sentinel.test.ts b/frontend/__tests__/sw-security-hygiene-sentinel.test.ts
+new file mode 100644
+index 0000000..b27db9a
+--- /dev/null
++++ b/frontend/__tests__/sw-security-hygiene-sentinel.test.ts
+@@ -0,0 +1,273 @@
++import { describe, it, expect, vi } from "vitest";
++import fs from "node:fs";
++import path from "node:path";
++import {
++  normalizeHostname,
++  isAllowedDomainOrSubdomain,
++  EXTERNAL_CDN_DOMAINS,
++  isExternalCdnImageRequest,
++  isSensitiveOrDynamicApiRequest,
++  isNavigationFallbackRequest,
++  sanitizePushLink,
++  isSameOriginClientUrl,
++  purgeLegacyApiCaches,
++} from "@/lib/sw-routing";
++import { deleteTripSnapshot } from "@/lib/idb-storage";
++
++describe("🛡️ Security Sentinel: Service Worker Routing, Cache Isolation & Teamwork Hygiene", () => {
++  const frontendDir = path.resolve(__dirname, "..");
++  const repoRoot = path.resolve(frontendDir, "..");
++
++  describe("Gate 1: CodeQL Incomplete URL Substring Sanitization Defense", () => {
++    it("allows legitimate apex & subdomain CDN hosts (including FQDN trailing dots)", () => {
++      expect(normalizeHostname("RES.CLOUDINARY.COM.")).toBe("res.cloudinary.com");
++      expect(isAllowedDomainOrSubdomain("res.cloudinary.com", EXTERNAL_CDN_DOMAINS)).toBe(true);
++      expect(isAllowedDomainOrSubdomain("res.cloudinary.com.", EXTERNAL_CDN_DOMAINS)).toBe(true);
++      expect(
++        isAllowedDomainOrSubdomain("cloudinary-proxy.ryanpig228.workers.dev", EXTERNAL_CDN_DOMAINS)
++      ).toBe(true);
++      expect(isAllowedDomainOrSubdomain("images.unsplash.com", EXTERNAL_CDN_DOMAINS)).toBe(true);
++      expect(isAllowedDomainOrSubdomain("lh3.googleusercontent.com", EXTERNAL_CDN_DOMAINS)).toBe(true);
++      expect(isAllowedDomainOrSubdomain("flagcdn.com", EXTERNAL_CDN_DOMAINS)).toBe(true);
++      expect(isAllowedDomainOrSubdomain("tiles.mapillary.com", EXTERNAL_CDN_DOMAINS)).toBe(true);
++    });
++
++    it("rejects lookalike/prefix/suffix spoofing CDN & Supabase hosts", () => {
++      const spoofedHosts = [
++        "evil-cloudinary.com",
++        "cloudinary.com.attacker.com",
++        "notworkers.dev",
++        "workers.dev.evil.org",
++        "evil-unsplash.com",
++        "evil-supabase.co",
++        "supabase.co.attacker.com",
++        "",
++      ];
++      for (const host of spoofedHosts) {
++        expect(isAllowedDomainOrSubdomain(host, EXTERNAL_CDN_DOMAINS)).toBe(false);
++        expect(
++          isExternalCdnImageRequest({
++            url: new URL(`https://${host || "invalid.local"}/photo.jpg`),
++            sameOrigin: false,
++          })
++        ).toBe(false);
++        expect(
++          isSensitiveOrDynamicApiRequest({
++            url: new URL(`https://${host || "invalid.local"}/auth/v1/token`),
++            sameOrigin: false,
++          })
++        ).toBe(host === "" ? false : false);
++      }
++    });
++
++    it("enforces sameOrigin check for /_next/image and allows real supabase.co auth endpoints", () => {
++      expect(
++        isExternalCdnImageRequest({
++          url: new URL("https://tabijiapp.com/_next/image?url=%2Ficon.png&w=256&q=75"),
++          sameOrigin: true,
++        })
++      ).toBe(true);
++      expect(
++        isExternalCdnImageRequest({
++          url: new URL("https://evil.com/_next/image?url=foo"),
++          sameOrigin: false,
++        })
++      ).toBe(false);
++      expect(
++        isSensitiveOrDynamicApiRequest({
++          url: new URL("https://projref.supabase.co/auth/v1/token?grant_type=refresh_token"),
++          sameOrigin: false,
++        })
++      ).toBe(true);
++    });
++  });
++
++  describe("Gate 2: Zero Cross-User API CacheStorage Leakage (NetworkOnly Override)", () => {
++    it("forces NetworkOnly on /api/trips (no trailing slash) and all same-origin /api/* paths", () => {
++      const sameOriginEndpoints = [
++        "/api",
++        "/api/trips",
++        "/api/trips/",
++        "/api/trips/trip-123",
++        "/api/users/me/preferences",
++        "/api/expenses/trip-123",
++        "/api/poi/all",
++        "/api/app/donation-progress",
++        "/api/auth/session",
++        "/api/sign-cloudinary",
++        "/api/parse-receipt",
++      ];
++      for (const ep of sameOriginEndpoints) {
++        expect(
++          isSensitiveOrDynamicApiRequest({
++            url: new URL(`https://tabijiapp.com${ep}`),
++            sameOrigin: true,
++          })
++        ).toBe(true);
++      }
++    });
++
++    it("does NOT falsely block benign non-API static CDN images or /explore navigation", () => {
++      expect(
++        isSensitiveOrDynamicApiRequest({
++          url: new URL("https://res.cloudinary.com/demo/image/upload/v1/sample.jpg"),
++          sameOrigin: false,
++        })
++      ).toBe(false);
++      expect(
++        isSensitiveOrDynamicApiRequest({
++          url: new URL("https://tabijiapp.com/explore?category=temple"),
++          sameOrigin: true,
++        })
++      ).toBe(false);
++    });
++
++    it("places NetworkOnly API guard BEFORE ...defaultCache in sw.ts and removes dead bgSyncPlugin", () => {
++      const swSrc = fs.readFileSync(path.join(frontendDir, "app", "sw.ts"), "utf-8");
++      const guardIdx = swSrc.indexOf("isSensitiveOrDynamicApiRequest");
++      const defaultCacheIdx = swSrc.indexOf("...defaultCache");
++      expect(guardIdx).toBeGreaterThan(-1);
++      expect(defaultCacheIdx).toBeGreaterThan(guardIdx);
++      expect(swSrc).not.toContain("BackgroundSyncPlugin");
++      expect(swSrc).not.toContain("bgSyncPlugin");
++    });
++  });
++
++  describe("Gate 3: Push Notification Link & Client Origin Sanitization", () => {
++    it("rejects backslash, control char, protocol-relative, and external redirect payloads", () => {
++      const payloads = [
++        "/\\evil.com",
++        "\\evil.com",
++        "//evil.com",
++        "///evil.com",
++        "/%5cevil.com",
++        "/%2fevil.com",
++        "javascript:alert(1)",
++        "https://evil.com/trip",
++        "/\t/evil.com",
++        "/\n/evil.com",
++        "/\0/evil.com",
++        "",
++        "   ",
++        null,
++        undefined,
++        123,
++      ];
++      for (const payload of payloads) {
++        expect(sanitizePushLink(payload)).toBe("/");
++      }
++    });
++
++    it("preserves benign internal deep links", () => {
++      expect(sanitizePushLink("/")).toBe("/");
++      expect(sanitizePushLink("/?trip=trip-abc&tab=tools&expense_id=exp-xyz")).toBe(
++        "/?trip=trip-abc&tab=tools&expense_id=exp-xyz"
++      );
++      expect(sanitizePushLink("/explore?category=temple")).toBe("/explore?category=temple");
++    });
++
++    it("enforces exact origin equality instead of substring .includes()", () => {
++      expect(isSameOriginClientUrl("https://tabijiapp.com/?trip=123", "https://tabijiapp.com")).toBe(true);
++      expect(
++        isSameOriginClientUrl("https://evil.com/?next=https://tabijiapp.com", "https://tabijiapp.com")
++      ).toBe(false);
++      expect(isSameOriginClientUrl("https://tabijiapp.com.evil.com/", "https://tabijiapp.com")).toBe(false);
++    });
++  });
++
++  describe("Gate 4: Navigation Fallback Guard & Legacy 'apis' / 'trips-api-cache' Purge", () => {
++    it("allows normal document navigation and blocks /api or _rsc", () => {
++      expect(
++        isNavigationFallbackRequest({
++          request: { mode: "navigate" },
++          url: new URL("https://tabijiapp.com/?trip=123"),
++        })
++      ).toBe(true);
++      expect(
++        isNavigationFallbackRequest({
++          request: { mode: "navigate" },
++          url: new URL("https://tabijiapp.com/api/trips"),
++        })
++      ).toBe(false);
++      expect(
++        isNavigationFallbackRequest({
++          request: { mode: "navigate" },
++          url: new URL("https://tabijiapp.com/?_rsc=abc"),
++        })
++      ).toBe(false);
++    });
++
++    it("purges both trips-api-cache and apis on activation & deleteTripSnapshot", async () => {
++      const deleteBucketSpy = vi.fn(async (name: string) => name === "apis" || name === "trips-api-cache");
++      const mockBuckets = {
++        delete: deleteBucketSpy,
++      } as unknown as CacheStorage;
++
++      const purged = await purgeLegacyApiCaches(mockBuckets);
++      expect(purged).toContain("trips-api-cache");
++      expect(purged).toContain("apis");
++
++      // Also verify deleteTripSnapshot cleans matching trip & trips list entries across both buckets
++      const deletedUrls: string[] = [];
++      const openSpy = vi.fn(async (cacheName: string) => {
++        const entries =
++          cacheName === "apis"
++            ? [
++                new Request("https://tabijiapp.com/api/trips"),
++                new Request("https://tabijiapp.com/api/trips/trip-ghost"),
++                new Request("https://tabijiapp.com/api/trips/trip-ghost-other"),
++                new Request("https://tabijiapp.com/api/trips/trip-keep"),
++              ]
++            : [
++                new Request("https://tabijiapp.com/api/trips/trip-ghost"),
++                new Request("https://tabijiapp.com/api/trips/trip-ghost-other"),
++              ];
++        return {
++          keys: async () => entries,
++          delete: async (req: Request) => {
++            deletedUrls.push(`${cacheName}:${new URL(req.url).pathname}`);
++            return true;
++          },
++        };
++      });
++      const origCaches = (globalThis as { caches?: CacheStorage }).caches;
++      Object.defineProperty(globalThis, "caches", {
++        configurable: true,
++        value: { open: openSpy },
++      });
++      try {
++        await deleteTripSnapshot("trip-ghost");
++      } finally {
++        Object.defineProperty(globalThis, "caches", {
++          configurable: true,
++          value: origCaches,
++        });
++      }
++      expect(deletedUrls).toContain("trips-api-cache:/api/trips/trip-ghost");
++      expect(deletedUrls).toContain("apis:/api/trips/trip-ghost");
++      expect(deletedUrls).toContain("apis:/api/trips");
++      expect(deletedUrls).not.toContain("apis:/api/trips/trip-keep");
++      expect(deletedUrls).not.toContain("apis:/api/trips/trip-ghost-other");
++      expect(deletedUrls).not.toContain("trips-api-cache:/api/trips/trip-ghost-other");
++    });
++  });
++
++  describe("Gate 5: Compiled public/sw.js Integrity & Non-Self-Precache", () => {
++    it("excludes /sw.js and /sw.js.map from self.__SW_MANIFEST and matches current sw.ts behavior", () => {
++      const swBuilt = fs.readFileSync(path.join(frontendDir, "public", "sw.js"), "utf-8");
++      const arrEnd = swBuilt.indexOf("];");
++      const arrStart = swBuilt.indexOf("[");
++      expect(arrStart).toBeGreaterThan(-1);
++      expect(arrEnd).toBeGreaterThan(arrStart);
++      const manifest = eval(swBuilt.slice(arrStart, arrEnd + 1)) as Array<{
++        url: string;
++        revision?: string | null;
++      }>;
++      expect(manifest.some((entry) => entry.url === "/sw.js" || entry.url === "/sw.js.map")).toBe(false);
++      expect(manifest.some((entry) => entry.url === "/")).toBe(true);
++      expect(swBuilt).toContain("trips-api-cache");
++      expect(swBuilt).toContain("tabiji.invalid");
++      expect(fs.existsSync(path.join(repoRoot, ".gitignore"))).toBe(true);
++    });
++  });
++});
+diff --git a/frontend/app/sw.ts b/frontend/app/sw.ts
+index 3fd9a82..066dfc8 100644
+--- a/frontend/app/sw.ts
++++ b/frontend/app/sw.ts
+@@ -1,15 +1,18 @@
+ /// <reference lib="webworker" />
+ import { defaultCache } from "@serwist/next/worker";
+ import type { SerwistGlobalConfig } from "serwist";
+-import { Serwist, CacheFirst, NetworkFirst, NetworkOnly, StaleWhileRevalidate, ExpirationPlugin, BackgroundSyncPlugin } from "serwist";
++import { Serwist, CacheFirst, NetworkFirst, NetworkOnly, StaleWhileRevalidate, ExpirationPlugin } from "serwist";
++import {
++  isExternalCdnImageRequest,
++  isSensitiveOrDynamicApiRequest,
++  isNavigationFallbackRequest,
++  sanitizePushLink,
++  isSameOriginClientUrl,
++  purgeLegacyApiCaches,
++} from "../lib/sw-routing";
+ 
+ declare const self: ServiceWorkerGlobalScope & SerwistGlobalConfig;
+ 
+-// 📨 離線寫入自動重送插件 (W3C Background Synchronization API，維持既有隊列名以防老用戶離線資料遺失)
+-const bgSyncPlugin = new BackgroundSyncPlugin("tabidachi-offline-mutations", {
+-  maxRetentionTime: 24 * 60, // 最長保留重試 24 小時
+-});
+-
+ /**
+  * 🛡️ WebKit 重定向淨化器 (Clean Response)
+  * 消除 Vercel CDN 或重定向帶有的 redirected: true 毒丸標記
+@@ -94,20 +97,14 @@ const serwist: Serwist = new Serwist({
+       }),
+     },
+     {
+-      // 🖼️ 外部景點圖片與 Next.js 最佳化圖片快取 (100% 覆蓋所有圖片傳輸路徑)
+-      matcher: ({ url }) => {
+-        // 1. 命中 Next.js 本地圖片最佳化端點
+-        const isNextImage = url.pathname.startsWith("/_next/image");
+-        // 2. 命中外部圖片 CDN (Cloudflare Proxy / Cloudinary / Unsplash / Google 等)
+-        const isExternalCdn = 
+-          url.hostname.includes("cloudinary.com") ||
+-          url.hostname.includes("workers.dev") ||
+-          url.hostname.includes("unsplash.com") ||
+-          url.hostname.includes("googleusercontent.com") ||
+-          url.hostname.includes("flagcdn.com") ||
+-          url.hostname.includes("mapillary.com");
+-        return isNextImage || isExternalCdn;
+-      },
++      // 🔒 強制所有同源 /api/* 與 Supabase Auth 走 NetworkOnly，嚴禁落入 defaultCache "apis" (防跨帳號快取洩漏與舊資料中毒)
++      // ⚡ 離線讀取委任 L0/L1/L2 (idb-storage)；離線突變委任 IndexedDB SyncQueue (含動態 JWT 刷新與 401 Outbox 凍結)
++      matcher: ({ url, sameOrigin }) => isSensitiveOrDynamicApiRequest({ url, sameOrigin }),
++      handler: new NetworkOnly(),
++    },
++    {
++      // 🖼️ 外部景點圖片與 Next.js 最佳化圖片快取 (嚴格根網域/子網域邊界比對)
++      matcher: ({ url, sameOrigin }) => isExternalCdnImageRequest({ url, sameOrigin }),
+       handler: new StaleWhileRevalidate({
+         cacheName: "trip-external-images",
+         plugins: [
+@@ -118,31 +115,6 @@ const serwist: Serwist = new Serwist({
+         ],
+       }),
+     },
+-    {
+-      // 🔒 排除動態行程 API、Supabase 認證、本地 Session 認證與高敏感 API (NetworkOnly)
+-      // ⚡ 核心解耦：行程資料快顯 100% 委任 SWR + IndexedDB (L0/L1/L2)，徹底根除 SW 舊快取毒丸污染
+-      matcher: ({ url }) => {
+-        const isSupabaseAuth = url.hostname.includes("supabase.co") && url.pathname.includes("/auth/v1/");
+-        const isSensitiveApi = 
+-          url.pathname.startsWith("/api/auth/") ||
+-          url.pathname.startsWith("/api/sign-cloudinary") || 
+-          url.pathname.startsWith("/api/parse-receipt");
+-        const isDynamicTripApi = url.pathname.startsWith("/api/trips/");
+-        return isSupabaseAuth || isSensitiveApi || isDynamicTripApi;
+-      },
+-      handler: new NetworkOnly(),
+-    },
+-    {
+-      // 📨 離線寫入發件箱 (POST / PUT / PATCH / DELETE 行程與費用 API 離線自動排隊)
+-      matcher: ({ url, request }) => {
+-        const isMutation = request ? ["POST", "PUT", "PATCH", "DELETE"].includes(request.method) : false;
+-        const isTripApi = url.pathname.includes("/api/trips/");
+-        return isMutation && isTripApi;
+-      },
+-      handler: new NetworkOnly({
+-        plugins: [bgSyncPlugin],
+-      }),
+-    },
+     {
+       // ⚡ Next.js 核心 JS Chunks 離線快取 (CacheFirst 保證秒開，30天)
+       matcher: /\/_next\/static.+\.js$/i,
+@@ -172,10 +144,7 @@ const serwist: Serwist = new Serwist({
+     {
+       // 🚀 導航離線備援 (Navigation Fallback: 斷網重開瀏覽器時直接提供已快取的 App Shell)
+       // 嚴格排除 /api/ 與 Next.js 的 _rsc 參數，徹底杜絕水合撕裂
+-      matcher: ({ request, url }) => 
+-        request.mode === "navigate" && 
+-        !url.pathname.startsWith("/api/") &&
+-        !url.searchParams.has("_rsc"),
++      matcher: ({ request, url }) => isNavigationFallbackRequest({ request, url }),
+       handler: new NetworkFirst({
+         cacheName: "app-shell-navigation",
+         networkTimeoutSeconds: 2, // 2 秒內網路不通立即自本地快取提取 App Shell
+@@ -238,25 +207,34 @@ const serwist: Serwist = new Serwist({
+ 
+ serwist.addEventListeners();
+ 
+-// 🧹 物理清除舊版殘留之 trips-api-cache，根除幽靈舊快取
++// 🧹 物理清除舊版殘留之 trips-api-cache 與 defaultCache "apis"，根除幽靈與跨帳號舊快取
+ self.addEventListener("activate", (event) => {
+   event.waitUntil(
+-    caches.delete("trips-api-cache").then((deleted) => {
+-      if (deleted) console.log("🧹 [SW] Purged legacy trips-api-cache successfully");
++    purgeLegacyApiCaches(caches).then((purged) => {
++      if (purged.length > 0) {
++        console.log(`🧹 [SW] Purged legacy API caches successfully: ${purged.join(", ")}`);
++      }
+     })
+   );
+ });
+ 
+ // === Web Push Notification Handler (Ported from legacy sw.js) ===
+ self.addEventListener("push", (event) => {
+-  const data = event.data ? event.data.json() : {};
++  let data: { title?: string; body?: string; tag?: string; link?: unknown } = {};
++  if (event.data) {
++    try {
++      data = event.data.json();
++    } catch {
++      data = {};
++    }
++  }
+   const title = data.title || "Tabiji 旅路";
+   const options = {
+     body: data.body || "",
+     icon: "/icon.png",
+     badge: "/icon.png",
+     tag: data.tag || "default",
+-    data: { link: data.link || "/" },
++    data: { link: sanitizePushLink(data.link) },
+     vibrate: [100, 50, 100],
+   };
+   event.waitUntil(self.registration.showNotification(title, options));
+@@ -265,13 +243,12 @@ self.addEventListener("push", (event) => {
+ // === E5: Notification Click Handler (Smart Tab Focus via postMessage) ===
+ self.addEventListener("notificationclick", (event) => {
+   event.notification.close();
+-  const rawLink = event.notification.data?.link || "/";
+-  // 🛡️ 嚴格約束為同源相對路徑，防止外鏈跳轉
+-  const safeLink = typeof rawLink === "string" && rawLink.startsWith("/") && !rawLink.startsWith("//") ? rawLink : "/";
++  // 🛡️ 嚴格同源相對路徑消毒（阻斷反斜線 /\evil.com 與控制字元繞過）
++  const safeLink = sanitizePushLink(event.notification.data?.link);
+   event.waitUntil(
+     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+       for (const client of clientList) {
+-        if (client.url.includes(self.location.origin) && "focus" in client) {
++        if (isSameOriginClientUrl(client.url, self.location.origin) && "focus" in client) {
+           client.focus();
+           // 🔔 E5: 零重新整理 SPA 平滑導航，派發深層連結訊息
+           client.postMessage({ type: "TABIJI_PUSH_NAVIGATE", url: safeLink });
+diff --git a/frontend/lib/idb-storage.ts b/frontend/lib/idb-storage.ts
+index 29fb7d8..ce26570 100644
+--- a/frontend/lib/idb-storage.ts
++++ b/frontend/lib/idb-storage.ts
+@@ -208,14 +208,24 @@ export async function deleteTripSnapshot(tripId: string | null | undefined): Pro
+         }
+     }
+ 
+-    // 4. ⚡ 清除 L3 Service Worker CacheStorage (五清閉環：抹除 trips-api-cache)
++    // 4. ⚡ 清除 L3 Service Worker CacheStorage (五清閉環：同步抹除 trips-api-cache 與歷史 apis，具備路徑邊界隔離)
+     if (typeof window !== "undefined" && "caches" in window) {
+         try {
+-            const cache = await caches.open("trips-api-cache")
+-            const keys = await cache.keys()
+-            for (const request of keys) {
+-                if (request.url.includes(`/api/trips/${tripId}`)) {
+-                    await cache.delete(request)
++            for (const cacheName of ["trips-api-cache", "apis"]) {
++                const cache = await caches.open(cacheName)
++                const keys = await cache.keys()
++                for (const request of keys) {
++                    let pathname = ""
++                    try {
++                        pathname = new URL(request.url, window.location.origin).pathname
++                    } catch {
++                        pathname = ""
++                    }
++                    const tripPrefix = `/api/trips/${tripId}`
++                    const isMatchingTripPath = pathname === tripPrefix || pathname.startsWith(`${tripPrefix}/`)
++                    if (isMatchingTripPath || (cacheName === "apis" && pathname === "/api/trips")) {
++                        await cache.delete(request)
++                    }
+                 }
+             }
+         } catch (err) {
+diff --git a/frontend/lib/sw-routing.ts b/frontend/lib/sw-routing.ts
+new file mode 100644
+index 0000000..83bb73b
+--- /dev/null
++++ b/frontend/lib/sw-routing.ts
+@@ -0,0 +1,146 @@
++/**
++ * Service Worker Pure Routing, Hostname Allowlist, Push Link Sanitizer & Cache Purge Helpers
++ * ==========================================================================================
++ * Zero side effects — shared cleanly between frontend/app/sw.ts (Serwist runtime) and Vitest unit tests.
++ */
++
++export const EXTERNAL_CDN_DOMAINS = [
++  "cloudinary.com",
++  "workers.dev",
++  "unsplash.com",
++  "googleusercontent.com",
++  "flagcdn.com",
++  "mapillary.com",
++] as const;
++
++export const SUPABASE_AUTH_DOMAINS = ["supabase.co"] as const;
++
++export const LEGACY_API_CACHE_NAMES = ["trips-api-cache", "apis"] as const;
++
++export function normalizeHostname(hostname: string): string {
++  return hostname.trim().toLowerCase().replace(/\.+$/, "");
++}
++
++export function isAllowedDomainOrSubdomain(
++  hostname: string,
++  allowedDomains: readonly string[]
++): boolean {
++  const normalized = normalizeHostname(hostname);
++  if (!normalized) return false;
++  return allowedDomains.some((rawDomain) => {
++    const domain = normalizeHostname(rawDomain);
++    if (!domain) return false;
++    return normalized === domain || normalized.endsWith(`.${domain}`);
++  });
++}
++
++export function isExternalCdnImageRequest({
++  url,
++  sameOrigin = true,
++}: {
++  url: Pick<URL, "hostname" | "pathname">;
++  sameOrigin?: boolean;
++}): boolean {
++  const isNextImage =
++    sameOrigin &&
++    (url.pathname === "/_next/image" || url.pathname.startsWith("/_next/image/"));
++  const isExternalCdn = isAllowedDomainOrSubdomain(url.hostname, EXTERNAL_CDN_DOMAINS);
++  return isNextImage || isExternalCdn;
++}
++
++export function isSensitiveOrDynamicApiRequest({
++  url,
++  sameOrigin = false,
++}: {
++  url: Pick<URL, "hostname" | "pathname">;
++  sameOrigin?: boolean;
++}): boolean {
++  const isSupabaseAuth =
++    isAllowedDomainOrSubdomain(url.hostname, SUPABASE_AUTH_DOMAINS) &&
++    url.pathname.includes("/auth/v1/");
++  const isSameOriginApi =
++    sameOrigin && (url.pathname === "/api" || url.pathname.startsWith("/api/"));
++  const isExplicitSensitiveApiPath =
++    url.pathname.startsWith("/api/auth/") ||
++    url.pathname.startsWith("/api/sign-cloudinary") ||
++    url.pathname.startsWith("/api/parse-receipt") ||
++    url.pathname === "/api/trips" ||
++    url.pathname.startsWith("/api/trips/");
++  return isSupabaseAuth || isSameOriginApi || isExplicitSensitiveApiPath;
++}
++
++export function isNavigationFallbackRequest({
++  request,
++  url,
++}: {
++  request: Pick<Request, "mode">;
++  url: Pick<URL, "pathname" | "searchParams">;
++}): boolean {
++  return (
++    request.mode === "navigate" &&
++    url.pathname !== "/api" &&
++    !url.pathname.startsWith("/api/") &&
++    !url.searchParams.has("_rsc")
++  );
++}
++
++function hasControlOrBackslash(input: string): boolean {
++  for (let i = 0; i < input.length; i++) {
++    const code = input.charCodeAt(i);
++    if (code <= 0x1f || code === 0x7f || code === 0x5c) {
++      return true;
++    }
++  }
++  return false;
++}
++
++export function sanitizePushLink(rawLink: unknown): string {
++  if (typeof rawLink !== "string" || hasControlOrBackslash(rawLink)) {
++    return "/";
++  }
++  const trimmed = rawLink.trim();
++  if (!trimmed || !trimmed.startsWith("/") || trimmed.startsWith("//")) {
++    return "/";
++  }
++  if (/^\/%(?:5c|2f)/i.test(trimmed)) {
++    return "/";
++  }
++  try {
++    const parsed = new URL(trimmed, "https://tabiji.invalid");
++    if (parsed.origin !== "https://tabiji.invalid") return "/";
++    if (!parsed.pathname.startsWith("/") || parsed.pathname.startsWith("//")) return "/";
++    if (hasControlOrBackslash(parsed.href)) return "/";
++    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
++  } catch {
++    return "/";
++  }
++}
++
++export function isSameOriginClientUrl(clientUrl: string, selfOrigin: string): boolean {
++  if (!clientUrl || !selfOrigin) return false;
++  try {
++    return new URL(clientUrl).origin === new URL(selfOrigin).origin;
++  } catch {
++    return false;
++  }
++}
++
++export async function purgeLegacyApiCaches(
++  cacheStorage: CacheStorage | undefined = typeof caches !== "undefined" ? caches : undefined
++): Promise<string[]> {
++  if (!cacheStorage || typeof cacheStorage.delete !== "function") {
++    return [];
++  }
++  const deletedNames: string[] = [];
++  await Promise.all(
++    LEGACY_API_CACHE_NAMES.map(async (cacheName) => {
++      try {
++        const deleted = await cacheStorage.delete(cacheName);
++        if (deleted) deletedNames.push(cacheName);
++      } catch {
++        // Ignore CacheStorage cleanup errors
++      }
++    })
++  );
++  return deletedNames;
++}
+diff --git a/frontend/scripts/build-sw.mjs b/frontend/scripts/build-sw.mjs
+index 6fc81c7..ed10091 100644
+--- a/frontend/scripts/build-sw.mjs
++++ b/frontend/scripts/build-sw.mjs
+@@ -29,6 +29,7 @@ const { generateStaticParams, GET } = createSerwistRoute({
+   // 🛡️ 關鍵修復：明確指定 globDirectory，防止從專案根目錄調用時 cwd 不匹配
+   globDirectory: frontendDir,
+   globPatterns: ["public/**/*"],
++  globIgnores: ["public/sw.js", "public/sw.js.map"],
+   additionalPrecacheEntries: [
+     { url: "/", revision: gitRev },
+   ],
+--- a/frontend/__tests__/adversarial-m2-rwd-responsiveness.test.tsx
++++ b/frontend/__tests__/adversarial-m2-rwd-responsiveness.test.tsx
+@@ -63,12 +63,14 @@
+       expect(status).toBe('')
+     })
+ 
+-    it('ADV-M2-1.2: frontend/app/sw.ts has zero git modifications', () => {
+-      const status = execSync('git status --porcelain frontend/app/sw.ts', {
+-        cwd: repoRoot,
+-        encoding: 'utf-8',
+-      }).trim()
+-      expect(status).toBe('')
++    it('ADV-M2-1.2: frontend/app/sw.ts enforces Security Sentinel API isolation, fallback shell & zero dead bgSync', () => {
++      const swContent = fs.readFileSync(path.join(frontendDir, 'app', 'sw.ts'), 'utf-8')
++      expect(swContent).toContain('isSensitiveOrDynamicApiRequest')
++      expect(swContent).toContain('isExternalCdnImageRequest')
++      expect(swContent).toContain('sanitizePushLink')
++      expect(swContent).toContain('app-shell-navigation')
++      expect(swContent).toContain('fallbacks:')
++      expect(swContent).not.toContain('BackgroundSyncPlugin')
+     })
+ 
+     it('ADV-M2-1.3: frontend/public/manifest.json has zero git modifications', () => {
+@@ -79,9 +81,9 @@
+       expect(status).toBe('')
+     })
+ 
+-    it('ADV-M2-1.4: git diff against HEAD shows zero changes in invariant files', () => {
++    it('ADV-M2-1.4: git diff against HEAD shows zero changes in portal/manifest invariant files', () => {
+       const diff = execSync(
+-        'git diff HEAD -- frontend/app/page.tsx frontend/app/sw.ts frontend/public/manifest.json',
++        'git diff HEAD -- frontend/app/page.tsx frontend/public/manifest.json',
+         { cwd: repoRoot, encoding: 'utf-8' }
+       ).trim()
+       expect(diff).toBe('')
+--- a/frontend/__tests__/official-portal-adversarial-challenger.test.ts
++++ b/frontend/__tests__/official-portal-adversarial-challenger.test.ts
+@@ -237,10 +237,13 @@
+       expect(diff.trim()).toBe("")
+     })
+ 
+-    it("frontend/app/sw.ts exists and is identical to HEAD", () => {
++    it("frontend/app/sw.ts enforces hardened API NetworkOnly, hostname suffix guard & push sanitization", () => {
+       expect(fs.existsSync(swPath)).toBe(true)
+-      const diff = execSync("git diff HEAD -- frontend/app/sw.ts", { cwd: repoRootDir, encoding: "utf-8" })
+-      expect(diff.trim()).toBe("")
++      const swSrc = fs.readFileSync(swPath, "utf-8")
++      expect(swSrc).toContain("isSensitiveOrDynamicApiRequest")
++      expect(swSrc).toContain("sanitizePushLink")
++      expect(swSrc).toContain("serwist.addEventListeners")
++      expect(swSrc).not.toContain("url.hostname.includes(")
+     })
+ 
+     it("frontend/public/manifest.json exists and is identical to HEAD", () => {
+@@ -249,8 +252,8 @@
+       expect(diff.trim()).toBe("")
+     })
+ 
+-    it("git status reports 0 modifications to invariant files", () => {
+-      const status = execSync("git status --porcelain frontend/app/page.tsx frontend/app/sw.ts frontend/public/manifest.json", { cwd: repoRootDir, encoding: "utf-8" })
++    it("git status reports 0 modifications to portal/manifest invariant files", () => {
++      const status = execSync("git status --porcelain frontend/app/page.tsx frontend/public/manifest.json", { cwd: repoRootDir, encoding: "utf-8" })
+       expect(status.trim()).toBe("")
+     })
+   })

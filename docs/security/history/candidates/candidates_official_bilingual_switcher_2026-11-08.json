@@ -1,0 +1,39 @@
+[
+  {
+    "id": "frontend/components/official/TypewriterHeading.tsx:language_switch_state_desync",
+    "file_path": "frontend/components/official/TypewriterHeading.tsx",
+    "attack_vector": "logic_boundary",
+    "hypothesis": "When dynamic text prop changes during language switch, charIndex and isTypingComplete state does not reset in render phase, causing ghost string slicing and invisible cursor race condition."
+  },
+  {
+    "id": "frontend/components/official/HeroTypewriterHeading.tsx:line_transition_ghost_state",
+    "file_path": "frontend/components/official/HeroTypewriterHeading.tsx",
+    "attack_vector": "state_desynchronization",
+    "hypothesis": "When line1 and line2 change dynamically upon bilingual toggle, currentLine remains at 3 and charIndex2 retains previous string length, causing line 2 characters to render prematurely while line 1 is typing."
+  },
+  {
+    "id": "frontend/lib/OfficialLanguageContext.tsx:storage_leak_and_route_unmount",
+    "file_path": "frontend/lib/OfficialLanguageContext.tsx",
+    "attack_vector": "session_isolation_and_cross_route_break",
+    "hypothesis": "Mounting language provider in page.tsx instead of layout.tsx unmounts language context when navigating to /official/terms or /official/privacy; furthermore, writing to localStorage pollutes main app preferences."
+  },
+  {
+    "id": "frontend/components/official/OfficialHeader.tsx:hash_navigation_query_wipeout",
+    "file_path": "frontend/components/official/OfficialHeader.tsx",
+    "attack_vector": "url_state_injection",
+    "hypothesis": "Manual pushState on anchor nav click hardcodes window.location.pathname + '#' + link.id, wiping out '?lang=en' search query parameter on user navigation."
+  },
+  {
+    "id": "frontend/components/official/OfficialFooter.tsx:adversarial_test_regression",
+    "file_path": "frontend/components/official/OfficialFooter.tsx",
+    "attack_vector": "test_contract_regression",
+    "hypothesis": "Adding 7th link to OfficialFooter breaks existing adversarial RWD test ADV-M2-3.9 expecting exactly 6 links, causing test suite failure."
+  },
+  {
+    "id": "frontend/components/official/TypewriterHeading.tsx:mobile_overflow_whitespace_pre",
+    "file_path": "frontend/components/official/TypewriterHeading.tsx",
+    "attack_vector": "mobile_viewport_overflow",
+    "hypothesis": "Using whitespace-pre instead of whitespace-pre-wrap on typewriter heading forces long English sentences to render on a single line, causing horizontal overflow blowout on 375px mobile screens."
+  }
+]
+

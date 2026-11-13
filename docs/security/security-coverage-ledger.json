@@ -1,15 +1,315 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-07T14:48:00.000000+00:00",
+  "last_audit_date": "2026-11-11",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 298,
-    "audited_targets": 298,
-    "verified_vulnerabilities": 56,
-    "remediated_vulnerabilities": 92,
-    "dismissed_hypotheses": 150
+    "total_targets": 377,
+    "audited_targets": 377,
+    "verified_vulnerabilities": 54,
+    "remediated_vulnerabilities": 156,
+    "dismissed_hypotheses": 167
   },
   "targets": [
+    {
+      "id": "backend/services/model_manager.py:free_api_key_grounding_trap",
+      "target_type": "model_config_sanitizer",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "quota_exhaustion_and_resource_denial"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_ai_rate_limit_grounding.md",
+      "validator_details": "Empirically verified by in-memory PoC (test_poc_free_api_key_grounding_trap in test_sentinel_ai_rate_limit_grounding.py): sanitize_config_for_model blindly injected google_maps into business tools, causing immediate 429 RESOURCE_EXHAUSTED on free-tier keys.",
+      "remediated_at": "2026-11-10T21:20:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_rate_limit_grounding_2026-11-10.diff"
+    },
+    {
+      "id": "backend/services/model_manager.py:subsecond_thundering_fallback",
+      "target_type": "ai_fallback_orchestrator",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "cascading_rate_limit_collapse"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_ai_rate_limit_grounding.md",
+      "validator_details": "Empirically verified by in-memory PoC (test_poc_call_with_fallback_dual_speed_quick_retry in test_sentinel_ai_rate_limit_grounding.py): 0ms cascading fallback triggered GCP sub-second burst rate limiters; remediated via quick retry and 0.15s smooth fallback jitter.",
+      "remediated_at": "2026-11-10T21:20:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_rate_limit_grounding_2026-11-10.diff"
+    },
+    {
+      "id": "backend/services/model_manager.py:global_circuit_breaker_pollution",
+      "target_type": "circuit_breaker",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "cross_tenant_denial_of_service"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_ai_rate_limit_grounding.md",
+      "validator_details": "Empirically verified by in-memory PoC (test_poc_circuit_breaker_api_key_isolation in test_sentinel_ai_rate_limit_grounding.py): global _CIRCUIT_STATE locked healthy models for 300s across all tenants; remediated via (hash(api_key), model_name) key isolation and 12s 429 cooldown.",
+      "remediated_at": "2026-11-10T21:20:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_rate_limit_grounding_2026-11-10.diff"
+    },
+    {
+      "id": "backend/services/model_manager.py:unstructured_429_metadata_blindness",
+      "target_type": "error_classification_engine",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "fault_classification_failure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_ai_rate_limit_grounding.md",
+      "validator_details": "Empirically verified by in-memory PoC (test_poc_parse_429_metadata_with_retry_info in test_sentinel_ai_rate_limit_grounding.py): lack of structured QuotaFailure and RetryInfo extraction caused transient burst limits to be misclassified; remediated via parse_429_metadata.",
+      "remediated_at": "2026-11-10T21:20:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_rate_limit_grounding_2026-11-10.diff"
+    },
+    {
+      "id": "backend/services/intent_router.py:praise_gratitude_misroute_leak",
+      "target_type": "ai_intent_router",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "prompt_injection_and_intent_misroute"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_ai_stream_guardrail.md",
+      "validator_details": "Empirically verified by in-memory PoC (test_poc_praise_and_gratitude_misroute in test_sentinel_ai_stream_guardrail.py, exit code 1): '你很棒' returns None, escaping to Stage 2 and falling back to SEARCH, triggering unintended web search.",
+      "remediated_at": "2026-11-10T19:10:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_stream_guardrail_2026-11-10.diff"
+    },
+    {
+      "id": "backend/main.py:streaming_json_protocol_leak",
+      "target_type": "api_chat_stream",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "information_disclosure_protocol_leak"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_ai_stream_guardrail.md",
+      "validator_details": "Verified by user screenshot (media_1794297753558_307ea777.jpg) and in-memory PoC: model outputs raw {'items': [...]} in mid-stream, emitted directly as text delta without bracket-balancing interception.",
+      "remediated_at": "2026-11-10T19:10:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_stream_guardrail_2026-11-10.diff"
+    },
+    {
+      "id": "backend/main.py:streaming_thought_leakage",
+      "target_type": "api_chat_stream",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "information_disclosure_thought_leak"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_ai_stream_guardrail.md",
+      "validator_details": "Verified by user log report and in-memory PoC: <thought> and <thinking> tags split across streaming chunks leak into text delta without stateful lookahead sliding window buffer.",
+      "remediated_at": "2026-11-10T19:10:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_stream_guardrail_2026-11-10.diff"
+    },
+    {
+      "id": "backend/services/model_manager.py:gemma_tools_payload_500_dos",
+      "target_type": "model_capability_manager",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "denial_of_service_and_server_error"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_ai_stream_guardrail.md",
+      "validator_details": "Verified by live task-12039.log: Google API returns HTTP 500 when tools are passed to gemma-4-31b-it; requiring capability stripping (tools=None) for non-function calling tasks.",
+      "remediated_at": "2026-11-10T19:10:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_ai_stream_guardrail_2026-11-10.diff"
+    },
+    {
+      "id": "frontend/components/views/profile-view.tsx:donation_amount_privacy_leakage",
+      "target_type": "frontend_profile_view",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "information_disclosure_and_commercial_framing"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_profile_donation_amount_privacy.md",
+      "validator_details": "Verified by in-memory PoC: raw NT$ currency amount display stripped from profile view summary line. Replaced by percentage value matching symmetrical layout.",
+      "remediated_at": "2026-11-08T19:45:38.393209+00:00",
+      "resolution": "Enforced in frontend/__tests__/profile-donation-privacy-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/components/views/profile-view.tsx:skeleton_cls_layout_shift",
+      "target_type": "frontend_profile_view",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "visual_instability_and_cls_regression"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_profile_donation_amount_privacy.md",
+      "validator_details": "Verified by in-memory PoC: skeleton width reduced from w-32 to w-14 to match percentage width, eliminating horizontal layout shift on load.",
+      "remediated_at": "2026-11-08T19:45:38.393209+00:00",
+      "resolution": "Enforced in frontend/__tests__/profile-donation-privacy-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/components/views/profile-view.tsx:micro_percentage_decimal_truncation",
+      "target_type": "frontend_profile_view",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "data_truncation_and_precision_loss"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_profile_donation_amount_privacy.md",
+      "validator_details": "Verified by in-memory PoC: micro-percentage between 0% and 1% preserves one decimal point (toFixed(1)), preventing 0% zeroing-out.",
+      "remediated_at": "2026-11-08T19:45:38.393620+00:00",
+      "resolution": "Enforced in frontend/__tests__/profile-donation-privacy-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/components/official/LiveDeviceTheater.tsx:fullbleed_authentic_mirroring",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "visual_integrity_and_theme_strobe"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_authentic_device_theater.md",
+      "validator_details": "Verified by in-memory PoC: static and DOM inspection confirms inner smartphone container adopts authentic Tabiji dual-theme tokens (bg-[#F6F5EE] dark:bg-[#121A18]). Zero black halo or theme strobe.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/authentic-device-theater-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/components/official/LiveDeviceTheater.tsx:viewport_mask_and_dom_collision",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "dom_selector_collision_and_test_pollution"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_authentic_device_theater.md",
+      "validator_details": "Verified by in-memory PoC: inner screen is wrapped with aria-hidden='true' and all mock UI uses non-button div/span tags, eliminating duplicate role='tab' or role='button' collisions in testing-library.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/authentic-device-theater-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/components/official/LiveDeviceTheater.tsx:micro_scroll_race_and_memory",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "client_side_dos_and_animation_desync"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_authentic_device_theater.md",
+      "validator_details": "Verified by in-memory PoC: micro-scroll is restricted to GPU transform y and locked to y:0 during isPaused or shouldReduceMotion, preventing animation desync and rAF memory leaks.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/authentic-device-theater-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/components/official/LiveDeviceTheater.tsx:touch_target_and_fixed_width_ergonomics",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "mobile_viewport_overflow_and_rwd_violation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_authentic_device_theater.md",
+      "validator_details": "Verified by in-memory PoC: all outer controls satisfy min-h-11 min-w-11 (>=44x44px) touch targets with active:scale-[0.97]. Zero unconstrained fixed width classes (>343px) are declared.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/authentic-device-theater-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/app/official/layout.tsx:mask_preload_and_csp",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "resource_injection",
+        "csp_directive_bypass"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_zen_editorial_visual_refactor.md",
+      "validator_details": "Verified by in-memory PoC: static analysis confirms all preload and mask paths strictly target same-origin relative assets without arbitrary CDN or script injections.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/zen-editorial-security-sentinel.test.ts"
+    },
+    {
+      "id": "frontend/components/official/OfficialHeader.tsx:composite_logo_redirect",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "open_redirect_and_anchor_hijacking"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_zen_editorial_visual_refactor.md",
+      "validator_details": "Verified by in-memory PoC: composite brand logo strictly points to compile-time literal /official, navigation links target whitelisted anchors, and launch CTA invokes sanitizeLaunchRedirectUrl.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/zen-editorial-security-sentinel.test.ts"
+    },
+    {
+      "id": "frontend/components/official/BentoMotionGrid.tsx:magazine_scroll_dos_and_compat",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "client_side_dos_and_memory_leak"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_zen_editorial_visual_refactor.md",
+      "validator_details": "Verified by in-memory PoC: animations are strictly restricted to GPU compositing properties (transform, opacity), viewport once=true prevents endless rAF loops, and useReducedMotion is enforced.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/zen-editorial-security-sentinel.test.ts"
+    },
+    {
+      "id": "frontend/components/official/SpatialRouteMotionCard.tsx:svg_stroke_and_touch_target",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "vector_xss_and_layout_distortion"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_zen_editorial_visual_refactor.md",
+      "validator_details": "Verified by in-memory PoC: SVG paths enforce vector-effect='non-scaling-stroke' and all interactive waypoint selector buttons satisfy min 44x44px touch targets.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/zen-editorial-security-sentinel.test.ts"
+    },
+    {
+      "id": "frontend/app/official/page.tsx:open_redirect_and_untrusted_search_param_navigation",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "open_redirect_and_client_navigation_hijack"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_portal_architecture.md",
+      "validator_details": "Verified by in-memory PoC: sanitizeLaunchRedirectUrl rejects protocols, double-slashes, backslashes, and javascript: links, only allowing whitelisted relative internal paths.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/official-portal-security-sentinel.test.ts"
+    },
+    {
+      "id": "frontend/app/official/layout.tsx:clickjacking_and_frame_embedding_risk",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "clickjacking_and_framing_protection"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_portal_architecture.md",
+      "validator_details": "Protected by global Next.js and backend middleware security headers enforcing X-Frame-Options: SAMEORIGIN/DENY.",
+      "remediated_at": null,
+      "resolution": "Enforced by Next.js security headers"
+    },
+    {
+      "id": "frontend/components/official/BentoMotionGrid.tsx:infinite_motion_raf_jetsam_dos",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "denial_of_service_client_main_thread_starvation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_portal_architecture.md",
+      "validator_details": "Animations run strictly on GPU compositor (transform/opacity only), eliminates reflow and honors prefers-reduced-motion.",
+      "remediated_at": null,
+      "resolution": "Emil Kowalski Design Engineering standards enforced"
+    },
+    {
+      "id": "frontend/app/official/terms/page.tsx:xss_untrusted_legal_terms_rendering",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "xss_untrusted_html_rendering"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_portal_architecture.md",
+      "validator_details": "Static pure JSX structure without dangerouslySetInnerHTML or unescaped query string reflection.",
+      "remediated_at": null,
+      "resolution": "Pure JSX static generation enforced"
+    },
     {
       "id": "frontend/app/sw.ts:incomplete_url_substring_sanitization",
       "target_type": "frontend_service_worker",
@@ -17,11 +317,11 @@
       "vectors_checked": [
         "weak_domain_substring_matching"
       ],
-      "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-07_ssrf_codeql.md",
-      "validator_details": "Confirmed by Subagent PoC: url.hostname.includes matches evil-cloudinary.com. Remediated with exact apex or .domain suffix match.",
-      "remediated_at": null,
-      "resolution": "Formulated in docs/security/history/patches/patch_candidate_ssrf_codeql_2026-11-07.diff"
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-11_sw_teamwork_hygiene.md",
+      "validator_details": "Remediated & Sandbox-Verified via sw-routing.ts isAllowedDomainOrSubdomain() with normalizeHostname FQDN trailing-dot guard across external CDN and supabase.co matchers; verified by sw-security-hygiene-sentinel.test.ts.",
+      "remediated_at": "2026-11-10T19:12:24Z",
+      "resolution": "Remediated in docs/security/history/patches/patch_candidate_sw_teamwork_hygiene_2026-11-11.diff and verified in frontend/__tests__/sw-security-hygiene-sentinel.test.ts"
     },
     {
       "id": "backend/services/geocode_service.py:polynomial_regex_travel_suffix_redos",
@@ -541,13 +841,14 @@
       "target_type": "service_worker",
       "trust_boundary": "browser_to_edge",
       "vectors_checked": [
-        "stale_cache_poisoning_and_collaborative_desync"
+        "stale_cache_poisoning_and_collaborative_desync",
+        "shared_device_api_cache_fallback"
       ],
-      "status": "CONFIRMED_PENDING_DEV",
-      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-23_realtime_decoupling.md",
-      "validator_details": "Confirmed by Sentinel & In-Memory PoC: Serwist StaleWhileRevalidate on /api/trips/ returns 7-day stale cache upon SWR revalidation, wiping out optimistic updates until hard refresh.",
-      "remediated_at": null,
-      "resolution": "Candidate patch formulated in docs/security/history/patches/patch_candidate_realtime_decoupling_2026-10-23.diff (NetworkOnly + activate purge)."
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-11_sw_teamwork_hygiene.md",
+      "validator_details": "Remediated & Sandbox-Verified: Expanded NetworkOnly to all same-origin /api and /api/* (including /api/trips without trailing slash, /api/users/*, /api/poi/*, /api/app/*) placed BEFORE ...defaultCache, plus purge of both trips-api-cache and apis in sw.ts activate and idb-storage.ts deleteTripSnapshot.",
+      "remediated_at": "2026-11-10T19:12:24Z",
+      "resolution": "Remediated in docs/security/history/patches/patch_candidate_sw_teamwork_hygiene_2026-11-11.diff and verified in frontend/__tests__/sw-security-hygiene-sentinel.test.ts"
     },
     {
       "id": "frontend/lib/hooks.ts:fetcher_http_cache_bypass",
@@ -3813,6 +4114,746 @@
       "validator_details": "Confirmed by test_sentinel_poc_save_and_import_to_trip_spatial_healing: Wired verify_and_heal_itinerary_coords into save_itinerary and import_to_trip prior to Supabase itinerary_items insertion.",
       "remediated_at": "2026-11-07T09:05:00Z",
       "resolution": "docs/security/history/patches/patch_candidate_ai_spatial_anchor_2026-11-07.diff"
+    },
+    {
+      "id": "frontend/components/official/HeroTypewriterHeading.tsx:line_transition_ghost_state",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "state_desynchronization",
+        "race_condition"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_bilingual_switcher.md",
+      "validator_details": "Verified by in-memory PoC: prop change during language toggle leaves currentLine at 3 and charIndex2 at 7, causing premature line 2 render. Remediated via render-phase state reset.",
+      "remediated_at": "2026-11-08T18:00:00.000000+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_official_bilingual_switcher_2026-11-08.diff"
+    },
+    {
+      "id": "frontend/components/official/TypewriterHeading.tsx:mobile_overflow_whitespace_pre",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "mobile_viewport_overflow",
+        "rwd_breakage"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_bilingual_switcher.md",
+      "validator_details": "Verified by in-memory PoC: whitespace-pre disables soft wrapping, causing 38-char English titles to blowout on 375px screens. Remediated with whitespace-pre-wrap.",
+      "remediated_at": "2026-11-08T18:00:00.000000+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_official_bilingual_switcher_2026-11-08.diff"
+    },
+    {
+      "id": "frontend/components/official/OfficialHeader.tsx:hash_navigation_query_wipeout",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "url_state_injection",
+        "query_preservation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_bilingual_switcher.md",
+      "validator_details": "Dismissed via Chesterton archaeology: relative hash fragment in pushState natively preserves existing query parameters per WHATWG standard.",
+      "remediated_at": null,
+      "resolution": "Preserved native fragment pushState in OfficialHeader.tsx"
+    },
+    {
+      "id": "frontend/lib/OfficialLanguageContext.tsx:storage_leak_and_route_unmount",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "client_session",
+      "vectors_checked": [
+        "session_isolation",
+        "local_storage_leakage"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_bilingual_switcher.md",
+      "validator_details": "Mitigated by architecture design: provider is mounted at official/layout.tsx and uses sessionStorage exclusively without polluting localStorage.",
+      "remediated_at": null,
+      "resolution": "Enforced in frontend/__tests__/official-bilingual-switcher-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/components/official/TypewriterHeading.tsx:language_switch_state_desync",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "timer_leak",
+        "active_text_tracking"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_bilingual_switcher.md",
+      "validator_details": "Verified by in-memory PoC: fadeTimer was cleared inside interval rather than effect cleanup, leaking timers. Remediated via render-phase activeText reset and dual-timer effect cleanup.",
+      "remediated_at": "2026-11-08T18:00:00.000000+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_official_bilingual_switcher_2026-11-08.diff"
+    },
+    {
+      "id": "frontend/components/official/OfficialFooter.tsx:adversarial_test_regression",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "test_contract",
+      "vectors_checked": [
+        "test_contract_regression",
+        "link_count_conservation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-08_official_bilingual_switcher.md",
+      "validator_details": "Empirically caught in vitest: extra 7th link broke ADV-M2-3.9 assertion. Remediated by keeping 3 feature navigation links in footer.",
+      "remediated_at": "2026-11-08T18:00:00.000000+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_official_bilingual_switcher_2026-11-08.diff"
+    },
+    {
+      "id": "backend/main.py:few_shot_anchor_and_context_injection_leakage",
+      "target_type": "backend_ai_chat",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "prompt_injection_and_language_hijack"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_pwa_ai_bilingual_pipeline.md",
+      "validator_details": "Mantis Block G PoC confirmed: Chinese dummy_history 1-shot anchor caused attention attractor drift. Remediated with dynamic locale-aware dummy_history and system instruction pipeline.",
+      "remediated_at": "2026-11-08T19:00:56.947630+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_pwa_ai_bilingual_pipeline_2026-11-09.diff"
+    },
+    {
+      "id": "backend/services/model_manager.py:diagnosis_intent_locale_bypass",
+      "target_type": "backend_intent_routing",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "denial_of_service_and_intent_misrouting"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_pwa_ai_bilingual_pipeline.md",
+      "validator_details": "Mantis Block G PoC confirmed: English diagnosis phrases failed DIAGNOSIS_KEYWORDS. Remediated by adding English keywords to keyword taxonomy.",
+      "remediated_at": "2026-11-08T19:00:56.947630+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_pwa_ai_bilingual_pipeline_2026-11-09.diff"
+    },
+    {
+      "id": "backend/routers/ai.py:itinerary_generation_locale_locking",
+      "target_type": "backend_trip_generator",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "schema_violation_and_contract_breakage"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_pwa_ai_bilingual_pipeline.md",
+      "validator_details": "Mantis Block G PoC confirmed: Hardcoded Traditional Chinese constraint in generate_trip_core. Remediated with dynamic lang_directive and English progress queues.",
+      "remediated_at": "2026-11-08T19:00:56.947630+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_pwa_ai_bilingual_pipeline_2026-11-09.diff"
+    },
+    {
+      "id": "backend/main.py:admin_guardrail_locale_leakage",
+      "target_type": "backend_security_guardrail",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "information_disclosure_and_guardrail_evasion"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_pwa_ai_bilingual_pipeline.md",
+      "validator_details": "Mantis Block G PoC confirmed: detect_admin_hijack_attempt lacked locale awareness. Remediated with bilingual response strings and English probe patterns.",
+      "remediated_at": "2026-11-08T19:00:56.947630+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_pwa_ai_bilingual_pipeline_2026-11-09.diff"
+    },
+    {
+      "id": "frontend/components/itinerary/TripDialogs.tsx:locale_parameter_truncation",
+      "target_type": "frontend_trip_dialogs",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "api_contract_truncation_and_desync"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_pwa_ai_bilingual_pipeline.md",
+      "validator_details": "Contract check confirmed: TripDialogs failed to forward locale to AI generation APIs. Remediated with end-to-end locale propagation.",
+      "remediated_at": "2026-11-08T19:00:56.947630+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_pwa_ai_bilingual_pipeline_2026-11-09.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:get_trip_expenses_bola",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "broken_object_level_authorization"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: GET /api/trips/{trip_id}/expenses returns 200 to non-member because check_trip_access is omitted. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:update_item_404_masking_and_single",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "exception_masking_and_single_row_assumption"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: PATCH /api/trips/items/{item_id} uses .single() and catches HTTPException 404 inside except Exception, leaking HTTP 500 on missing item. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:reorder_items_empty_and_batch",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "unbound_local_error_and_duplicate_id_handling"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: PATCH /api/trips/items/reorder raises UnboundLocalError when items=[] and false 404 on duplicate item_id without CHUNK_SIZE=50 batching. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:create_manual_trip_count_and_compensation",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "idempotency_and_partial_creation_consistency"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: POST /api/trips/create-manual masks HTTP 403 quota errors as 500, leaves orphan itineraries on trip_members failure, and lacks Idempotency-Key deduplication. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:save_itinerary_compensation_and_tz",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "idempotency_and_partial_creation_consistency"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: POST /api/trips/save-itinerary leaves orphaned itineraries and trip_members rows on itinerary_items insert failure, uses naive datetime.now(), and lacks Idempotency-Key deduplication. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:trip_content_rmw_concurrency_lock",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "concurrent_read_modify_write_race"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: update_day_data, update_trip_location, and update_trip_info perform unlocked RMW on itineraries.content JSONB, and update_trip_location leaks existence before membership check. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:day_management_lock_batch_and_404",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "concurrent_rmw_race_and_n_plus_1_queries"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: delete_day and add_day mask HTTP 400/403/404 as 500, lack trip_lock, and issue N+1 individual itinerary_items updates instead of CHUNK_SIZE=50 .in_() batches. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:update_trip_dates_lock_and_batch",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "concurrent_rmw_race_and_unvalidated_date_parse"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: update_trip_dates returns HTTP 500 on malformed dates, lacks trip_lock, and runs N+1 loops on day shortening. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/expenses.py:update_expense_404_masking_and_sanitization",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "exception_masking_and_error_detail_exposure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: PATCH /api/expenses/{expense_id} swallows HTTP 404 inside except Exception, returning HTTP 500 with raw exception string. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/expenses.py:add_expense_idempotency_and_error_guard",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "duplicate_submission_on_retry_and_error_exposure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: POST /api/expenses creates duplicate expenses on Idempotency-Key replay and leaks raw DB connection strings on 500 errors. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/ai.py:generate_day_review_bola_lock_locale",
+      "target_type": "backend_ai_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "broken_object_level_authorization"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: POST /api/ai/trips/{trip_id}/days/{day}/ai-review accepts unauthenticated callers (returns 200 without JWT/membership), lacks trip_lock, and ignores English locale. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/ai.py:parse_markdown_b64_json_and_locale",
+      "target_type": "backend_ai_router",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "input_validation_and_error_handling"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: POST /api/ai/parse-md accepts corrupt Base64 images and malformed LLM JSON as HTTP 500 and omits locale directive. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/main.py:global_exception_traceback_disclosure",
+      "target_type": "backend_app_middleware",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "internal_stack_trace_disclosure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: global_exception_handler returns str(exc), error_type, path, and traceback lines in HTTP 500 JSON responses. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/main.py:stream_chat_world_time_and_poi_guards",
+      "target_type": "backend_ai_chat",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "unbound_local_error_and_unbounded_fetch"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: repeated get_world_time function call leaves time_data unbound (UnboundLocalError), network fetches lack asyncio.wait_for bounds, and SSE thinking messages ignore English locale. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/services/model_manager.py:client_cache_unbounded_and_timeout",
+      "target_type": "backend_ai_service",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "unbounded_memory_growth_and_call_hang"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: _client_cache grows unboundedly without LRU eviction and SDK coroutines lack MODEL_CALL_TIMEOUT bounds. Live applied & verified via backend/tests/test_post_audit_sentinel_poc.py (21/21 passed) and full pytest (496 passed, 5 skipped).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/app.py:donation_progress_single_and_naive_tz",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "single_row_exception_and_naive_datetime"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_post_completion_audit.md",
+      "validator_details": "Dismissed via Chesterton's Fence inspection: get_donation_progress wraps .single() inside try/except and deterministically returns safe default {current: 0, goal: 2000, month} without HTTP 500 or secret leakage. Note: V2 re-audit subsequently upgraded this endpoint to server-side percentage calculation and strict fail-closed HTTP 503 / {available:false} semantics tracked under backend/routers/app.py:donation_progress_zero_fiat_fail_closed.",
+      "remediated_at": null,
+      "resolution": "Intentional fault-tolerant public fallback; no patch required."
+    },
+    {
+      "id": "frontend/lib/OfficialLanguageContext.tsx:sync_external_store_and_query_override",
+      "target_type": "frontend_state_context",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "stale_storage_precedence_and_react_state_desync"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_post_completion_audit.md",
+      "validator_details": "Dismissed via Chesterton's Fence inspection: sessionStorage persistence across sub-routes lacking ?lang= query params and popstate listener normalization are intentional bilingual switcher invariants verified by official portal tests.",
+      "remediated_at": null,
+      "resolution": "Intentional multi-route language persistence design; no patch required."
+    },
+    {
+      "id": "frontend/components/official/HeroTypewriterHeading.tsx:render_phase_setstate_compiler_violation",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "react_compiler_render_phase_setstate"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: HeroTypewriterHeading performs render-phase setActiveLines state resets in render, violating React 19 Compiler purity. Live applied & verified via frontend/__tests__/post-audit-remediation-sentinel.test.tsx (9/9 passed), tsc (rc=0), eslint (rc=0), and full vitest (103 files / 953 passed).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "frontend/components/official/TypewriterHeading.tsx:render_phase_setstate_and_ref_access",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "react_compiler_render_phase_setstate"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: TypewriterHeading executes render-phase setActiveText and prevTextRef comparisons, and companion motion cards omit English labels on selected sub-badges. Live applied & verified via frontend/__tests__/post-audit-remediation-sentinel.test.tsx (9/9 passed), tsc (rc=0), eslint (rc=0), and full vitest (103 files / 953 passed).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "frontend/app/official/terms/page.tsx:english_legal_rendering_omission",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "bilingual_legal_content_gap"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-09_post_completion_audit.md",
+      "validator_details": "Dismissed via Chesterton's Fence inspection: Section 3 explicitly binds Traditional Chinese as governing arbitration language under Republic of China (Taiwan) law while preserving static RSC metadata generation.",
+      "remediated_at": null,
+      "resolution": "Intentional governing-language legal constraint and static RSC architecture; no patch required."
+    },
+    {
+      "id": "frontend/components/itinerary/AiImportTripWizard.tsx:locale_forwarding_and_hook_deps",
+      "target_type": "frontend_itinerary_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "stale_closure_and_missing_locale_forwarding"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: AiImportTripWizard suppresses react-hooks/exhaustive-deps on handleFileSelected and omits locale when calling aiApi.parseMarkdown. Live applied & verified via frontend/__tests__/post-audit-remediation-sentinel.test.tsx (9/9 passed), tsc (rc=0), eslint (rc=0), and full vitest (103 files / 953 passed).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "frontend/components/itinerary/EditableDailyAIReview.tsx:locale_forwarding_and_loading_text",
+      "target_type": "frontend_itinerary_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "missing_locale_forwarding_and_i18n_gap"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: EditableDailyAIReview omits client lang on tripsApi.generateAIReview, uses unscoped optimisticReview state across days, and renders hardcoded Chinese loading label. Live applied & verified via frontend/__tests__/post-audit-remediation-sentinel.test.tsx (9/9 passed), tsc (rc=0), eslint (rc=0), and full vitest (103 files / 953 passed).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "frontend/components/itinerary/TripCoverMenu.tsx:missing_dialog_description_a11y",
+      "target_type": "frontend_itinerary_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "accessibility_dialog_description_missing"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: DialogContent in TripCoverMenu renders DialogTitle without a matching DialogDescription inside VisuallyHidden. Live applied & verified via frontend/__tests__/post-audit-remediation-sentinel.test.tsx (9/9 passed), tsc (rc=0), eslint (rc=0), and full vitest (103 files / 953 passed).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "frontend/lib/api.ts:liefi_network_fallback_and_idempotency",
+      "target_type": "frontend_api_client",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "offline_queue_network_drop_loss_and_replay_duplication"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "Red PoC confirmed: offlineFetch drops mutating requests on Lie-Fi TypeError rejections when navigator.onLine is true and omits plain-object Idempotency-Key headers; sync-hooks lacks __resetSyncProcessingForTesting(). Live applied & verified via frontend/__tests__/post-audit-remediation-sentinel.test.tsx (9/9 passed), tsc (rc=0), eslint (rc=0), and full vitest (103 files / 953 passed).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/app.py:donation_progress_zero_fiat_fail_closed",
+      "target_type": "backend_api_route",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "privacy_fiat_amount_disclosure",
+        "fail_open_fake_zero_on_outage",
+        "stale_cache_cross_month_drift"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "V2 re-audit remediation live applied & verified: computes clamped percentage server-side with UTC month rollover (omits current/goal keys completely), distinguishes missing config ({available:false}) from DB failure (HTTP 503), and enforces Cache-Control: no-store. Enforced by test_exploit_donation_progress_zero_fiat_utc_and_fail_closed.",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/services/model_manager.py:dual_track_timeout_and_deferred_eviction",
+      "target_type": "backend_ai_service",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "premature_timeout_cascade_and_false_circuit_ban",
+        "eager_close_active_stream_eviction"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "V2 re-audit remediation live applied & verified: dual-track timeout ceilings (PLANNING_SSE=120s via ContextVar call_timeout_scope, PLANNING=90s, default=45s), asyncio.TimeoutError transitions fallback without calling record_model_error(), and LRU eviction (>32) defers aclose() by RETIRED_CLIENT_CLOSE_DELAY=150.0s. Enforced by test_exploit_model_manager_dual_track_timeouts_zero_ban_and_150s_eviction.",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/ai.py:generate_trip_sse_timeout_scope",
+      "target_type": "backend_ai_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "streaming_planning_timeout_mismatch",
+        "test_mock_signature_breakage"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "V2 re-audit remediation live applied & verified: activates call_timeout_scope('PLANNING_SSE') inside generate_trip_core when progress_queue is provided (120s budget paired with 10s SSE heartbeat), preserving exact 5-arg call_extraction compatibility and 90s sync planning ceiling. Enforced by test_exploit_ai_stream_enables_120s_scope_with_5arg_mock.",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "frontend/lib/api.ts:donation_progress_offline_and_no_store",
+      "target_type": "frontend_api_client",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "offline_false_error_and_stale_cache_read",
+        "client_fiat_type_exposure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "V2 re-audit remediation live applied & verified: introduces zero-fiat DonationProgressResponse, short-circuits navigator.onLine === false to {available:false}, and passes cache: 'no-store' to fetch. Enforced by frontend/__tests__/donation-fail-closed-sentinel.test.tsx (exploit_8).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "frontend/components/views/profile-view.tsx:donation_fail_closed_and_zero_fiat",
+      "target_type": "frontend_profile_view",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "fail_open_fake_zero_percent",
+        "redundant_dismissed_network_fetch"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_post_completion_audit_v2.md",
+      "validator_details": "V2 re-audit remediation live applied & verified: eliminates initial {current:0,goal:2000} fake fallback state, stores nullable donationPercentage only, skips fetch cleanly when dismissedMonth matches current UTC month, and hides card via setShowDonation(false) on HTTP 503/offline/unavailable. Enforced by frontend/__tests__/donation-fail-closed-sentinel.test.tsx (exploit_9).",
+      "remediated_at": "2026-11-09T17:16:36.136036+00:00",
+      "resolution": "docs/security/history/patches/patch_candidate_post_completion_audit_2026-11-10.diff"
+    },
+    {
+      "id": "backend/routers/geocode.py:smart_fusion_results_keyerror_and_coords_guard",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "schema_desync_and_unhandled_keyerror"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox Red-to-Green PoC (backend/tests/test_bilingual_e2e_remediation_sentinel.py): 1) Schema desync checks solely for legacy 'recommendations' and drops smart_search v2 'results' items; 2) Missing 'reason', empty 'highlights: []' list (IndexError), and None lat/lng cause crashes or broken frontend DTOs; 3) Unbounded asyncio.gather lets slow smart_search drop/delay baseline Task A geocode results. Verified fixed with _timed_smart_search(..., timeout=8.0), dual 'results'/'recommendations' normalization, finite coord filtering, and benign legacy control.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "backend/services/smart_search_service.py:overpass_cascading_timeout_and_locale_drift",
+      "target_type": "backend_search_service",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "external_dependency_cascading_timeout"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox Red-to-Green PoC (test_red_smart_search_bounded_fallback_to_photon_and_english_messages): Previous [1000, 2000, 3000, 5000]m loop with 10s Overpass calls and unbounded parse_intent/geocode_place exceeded the 30s Next.js proxy ceiling (HTTP 500 ECONNRESET) and emitted Chinese strings ('旅遊 推薦', '未知') under EN mode. Verified fixed with 2.5s parse_intent/geocode_place caps, single <=3.0s Overpass call, immediate Photon fallback, finite coord check, and bilingual EN/ZH intent & empty-result copy.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "backend/services/poi_service.py:overpass_hardcoded_timeout_parameterization",
+      "target_type": "backend_poi_service",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "configurable_timeout_missing"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox Red-to-Green PoC (test_red_overpass_and_combined_accept_configurable_timeout, test_red_search_overpass_propagates_timeout_to_ql_and_httpx, test_benign_search_overpass_default_returns_empty_on_unknown_category): Hardcoded [timeout:10] and httpx.AsyncClient(timeout=10.0) prevented callers from imposing tighter SLA budgets.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "backend/utils/poi_utils.py:poi_cache_key_cross_locale_poisoning",
+      "target_type": "backend_cache_utility",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "cross_locale_cache_collision"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox Red-to-Green PoC (test_red_poi_cache_key_partitions_zh_and_en): generate_v2_cache_key omitted locale, generating identical poi:v2:* keys for zh and en callers and serving Chinese cached summaries to English requests. Verified fixed with poi:v2:{loc}:* where loc normalizes variants to 'en' or 'zh'.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "backend/routers/poi.py:poi_enrich_locale_isolation_and_test_reset",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "locale_cache_contamination_and_hardcoded_translation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox Red-to-Green PoC (test_red_poi_enrich_locale_isolation_and_reset_helper, test_red_enrich_poi_complete_and_chat_stream_landmark_accept_lang_en, test_benign_poi_categories_default_and_en): ai_enrich_poi partitioned cache without locale, prompted Chinese-only summaries, forced non-zh wiki text into zh-TW even for EN clients, and enrich_poi_complete lacked explicit lang parameterization (discovered via main.py:2144 chat_stream integration). Verified fixed with locale partitioning, bilingual AI prompt/translation paths, __resetPoiEnrichCacheForTesting(), CWE-209 safe 500s, and full lang propagation through enrich_poi_complete.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "backend/services/intent_router.py:diagnosis_intent_fastpath_shadowing",
+      "target_type": "backend_intent_routing",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "regex_precedence_shadowing_diagnosis_route"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox Red-to-Green PoC (test_red_intent_check_itinerary_makes_sense_is_diagnosis, test_red_intent_english_envelope_extracts_clean_diagnosis, test_benign_intent_check_weather_and_chinese_search_stay_search): \\bcheck\\b in Step 4 preempted Step 5 detect_diagnosis_intent, causing 'Check if my itinerary makes sense?' to fall into SEARCH instead of DIAGNOSIS; additionally EN system envelopes in main.py needed exact alignment in SYSTEM_PREFIX_ANCHOR_RE/SYSTEM_BOUNDARY_END_RE/SYSTEM_ALLOWED_SUFFIX_RE.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "backend/services/model_manager.py:interactive_flash_lite_routing_desync",
+      "target_type": "backend_ai_orchestrator",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "routing_latency_and_quota_exhaustion"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox Red-to-Green PoC (test_red_interactive_intents_route_to_flash_lite_first, test_red_heavy_routing_leads_with_flash_lite, test_benign_workhorse_and_extraction_routing_unchanged): Interactive intents and HEAVY_ROUTING previously fell through to gemini-3.8-flash (high latency / low RPD quota). Verified aligned to DAILY_ROUTING / Flash-Lite first while preserving WORKHORSE_ROUTING and EXTRACTION_ROUTING contracts.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "backend/routers/ai.py:actuary_empty_ledger_guardrail_calibration",
+      "target_type": "backend_ai_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "prompt_boundary_and_empty_ledger_false_rejection"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox Red-to-Green PoC (test_red_actuary_empty_ledger_escape_and_safe_500, test_benign_actuary_preserves_security_violation_instruction): Rigid JSON-only rule caused empty-ledger greetings to emit false-positive [SECURITY_VIOLATION], unescaped '</user_query>' permitted delimiter breakouts, and except Exception leaked str(e) (CWE-209). Verified fixed with bilingual Empty Ledger onboarding rules, &lt;/user_query&gt; sanitization, HTTPException passthrough, and localized safe 500 error details.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "backend/main.py:stream_chat_diagnosis_prompt_and_locale_leakage",
+      "target_type": "backend_sse_chat",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "streaming_diagnosis_prompt_omission"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox Red-to-Green PoC (test_red_chat_stream_upstream_passes_english_diagnosis_prompt_and_agents_locale, test_red_generate_trip_stream_english_error, test_benign_generate_trip_stream_zh_error, test_red_temporal_and_taxonomy_english_outputs): Previous DISMISSED verdict missed that upstream chat_stream never constructed/injected localized diagnosis_prompt, English landmark regex matched greedy prefixes ('Tell me about Senso-ji Temple'), and app.state.client lacked getattr safety. Verified fixed across get_diagnosis_prompt(), chat_stream, stream_chat_generator, agents.py, ai.py, temporal_service.py, and destination_taxonomy.py.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/lib/LanguageContext.tsx:portal_soft_nav_freeze_ppr_suspense_and_storage_isolation",
+      "target_type": "frontend_i18n_context",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "soft_navigation_desync_and_storage_isolation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox jsdom Red-to-Green PoC (frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx DEFECT-2 / DEFECT-2B / BENIGN-2): Because RootLayout mounts one shared LanguageProvider across /official and /, client soft navigation from /official?lang=en to /?lang=en never re-ran mount useEffect([]). Verified fixed with <Suspense>-wrapped LanguageUrlHandoffObserver checking !pathname.startsWith('/official'), preserving SENTINEL-1.1 zero localStorage mutation on /official*, stripping ?lang= via history.replaceState while keeping other params/hashes, and exposing isReady instead of detaching Context children on SSR.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/components/official/OfficialHeader.tsx:launch_app_lang_open_redirect_and_handoff",
+      "target_type": "frontend_official_portal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "portal_locale_drop_and_redirect_validation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox jsdom Red-to-Green PoC (frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx DEFECT-1 / BENIGN-1): Previous DISMISSED finding conflated open-redirect absence with functional portal-to-PWA handoff. Header, HeroShowcase, OfficialPage, and OfficialFooter all dropped active portal language by hardcoded '/' navigation. Verified fixed by passing static literals ('/?lang=en' | '/?lang=zh') through sanitizeLaunchRedirectUrl while preserving 0 portal localStorage calls (SENTINEL-1.1) and 6 text Links in OfficialFooter (SENTINEL-3.1).",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/components/POIDetailDrawer.tsx:stale_bilingual_state_and_locale_param",
+      "target_type": "frontend_poi_drawer",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "stale_locale_state_and_missing_api_locale"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-10_bilingual_handoff_and_telemetry.md",
+      "validator_details": "Sandbox Red->Green duel verified (Worktree sentinel-23a02618): Confirmed via sandbox jsdom Red-to-Green PoC (frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx DEFECT-3..6): POIDetailDrawer and sibling components omitted `lang` from useLanguage() and API locale payloads, kept stale aiData on locale switch, and contained shadowed inner `const lang` variable plus hardcoded Chinese labels. Verified fixed across POIDetailDrawer, POIPreviewCard (with cancelled race guard), ActuaryDialogCard, ThemeContext, i18n, and all 6 geocode map search callers.",
+      "remediated_at": "2026-11-10T06:36:00Z",
+      "resolution": "Remediated via bilingual handoff and telemetry patch; verified by tests/test_bilingual_e2e_remediation_sentinel.py & frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx"
+    },
+    {
+      "id": "frontend/app/sw.ts:bgsync_dead_route_and_outbox_split",
+      "target_type": "service_worker",
+      "trust_boundary": "browser_runtime",
+      "vectors_checked": [
+        "unreachable_route_handler_method_default"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-11_sw_teamwork_hygiene.md",
+      "validator_details": "Chesterton Archaeology & Sandbox-Verified: Confirmed Serwist Route defaults HTTP method to GET when omitted, making BackgroundSyncPlugin POST/PUT/PATCH/DELETE matcher 0% reachable while SyncQueue/useBackgroundSync handles live offline mutations with JWT refresh and 401 freeze.",
+      "remediated_at": "2026-11-10T19:12:24Z",
+      "resolution": "Removed dead bgSyncPlugin route in docs/security/history/patches/patch_candidate_sw_teamwork_hygiene_2026-11-11.diff; covered by sw-security-hygiene-sentinel.test.ts"
+    },
+    {
+      "id": "frontend/app/sw.ts:push_notification_open_redirect_backslash",
+      "target_type": "service_worker",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "notification_link_validation_and_origin_match"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-11_sw_teamwork_hygiene.md",
+      "validator_details": "Remediated & Sandbox-Verified: Extracted sanitizePushLink() blocking backslash, control chars, /%5c, and protocol-relative bypasses in push & notificationclick handlers, and replaced client.url.includes(origin) with isSameOriginClientUrl().",
+      "remediated_at": "2026-11-10T19:12:24Z",
+      "resolution": "Remediated in docs/security/history/patches/patch_candidate_sw_teamwork_hygiene_2026-11-11.diff and verified in frontend/__tests__/sw-security-hygiene-sentinel.test.ts"
+    },
+    {
+      "id": "frontend/scripts/build-sw.mjs:build_sw_self_precaching",
+      "target_type": "frontend_build_pipeline",
+      "trust_boundary": "build_time_manifest",
+      "vectors_checked": [
+        "build_manifest_self_inclusion"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-11_sw_teamwork_hygiene.md",
+      "validator_details": "Remediated & Sandbox-Verified: Added globIgnores: ['public/sw.js', 'public/sw.js.map'] to createSerwistRoute and rebuilt public/sw.js + public/sw.js.map cleanly.",
+      "remediated_at": "2026-11-10T19:12:24Z",
+      "resolution": "Remediated in docs/security/history/patches/patch_candidate_sw_teamwork_hygiene_2026-11-11.diff and verified in frontend/__tests__/sw-security-hygiene-sentinel.test.ts"
+    },
+    {
+      "id": ".gitignore:teamwork_scratch_hygiene_ad151",
+      "target_type": "release_workflow",
+      "trust_boundary": "git_stage_to_remote",
+      "vectors_checked": [
+        "ephemeral_workspace_artifact_staging_exposure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-11_sw_teamwork_hygiene.md",
+      "validator_details": "Remediated & Sandbox-Verified per AD-151 4-layer hygiene defense: added /.agents/teamwork/ to .gitignore, added [Teamwork Scratch Gate] to .agents/skills/push/SKILL.md, and added assertions in test_root_hygiene_sentinel.py & root-hygiene-sentinel.test.ts.",
+      "remediated_at": "2026-11-10T19:12:24Z",
+      "resolution": "Remediated in docs/security/history/patches/patch_candidate_sw_teamwork_hygiene_2026-11-11.diff and verified by test_root_hygiene_sentinel.py & root-hygiene-sentinel.test.ts"
     }
   ],
   "known_design_intents": {

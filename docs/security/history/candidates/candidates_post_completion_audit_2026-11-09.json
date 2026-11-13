@@ -1,0 +1,267 @@
+[
+  {
+    "id": "backend/routers/trips.py:get_trip_expenses_bola",
+    "file_path": "backend/routers/trips.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "broken_object_level_authorization",
+    "severity": "critical",
+    "start_line": 2135,
+    "end_line": 2208,
+    "hypothesis": "get_trip_expenses queries expenses for arbitrary trip_id without checking check_trip_access membership and lacks HTTPException re-raise before the generic 500 handler."
+  },
+  {
+    "id": "backend/routers/trips.py:update_item_404_masking_and_single",
+    "file_path": "backend/routers/trips.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "exception_masking_and_single_row_assumption",
+    "severity": "high",
+    "start_line": 1689,
+    "end_line": 1833,
+    "hypothesis": "update_item uses .single() which throws before checking empty results and catches HTTPException 404 inside except Exception, turning clean 404 responses into 500 errors leaking database strings."
+  },
+  {
+    "id": "backend/routers/trips.py:reorder_items_empty_and_batch",
+    "file_path": "backend/routers/trips.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "unbound_local_error_and_duplicate_id_handling",
+    "severity": "high",
+    "start_line": 1642,
+    "end_line": 1688,
+    "hypothesis": "reorder_items leaves results undefined when request.items is empty (causing UnboundLocalError) and compares len(db_items) to un-deduplicated item_ids without chunked .in_() queries."
+  },
+  {
+    "id": "backend/routers/trips.py:create_manual_trip_count_and_compensation",
+    "file_path": "backend/routers/trips.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "idempotency_and_partial_creation_consistency",
+    "severity": "high",
+    "start_line": 534,
+    "end_line": 593,
+    "hypothesis": "create_manual_trip assumes count_res.count is always int (failing on mock objects), lacks empty insert guard, lacks compensating delete when trip_members insert fails, masks HTTPException 403 as 500, and lacks Idempotency-Key caching."
+  },
+  {
+    "id": "backend/routers/trips.py:save_itinerary_compensation_and_tz",
+    "file_path": "backend/routers/trips.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "idempotency_and_partial_creation_consistency",
+    "severity": "high",
+    "start_line": 890,
+    "end_line": 992,
+    "hypothesis": "save_itinerary leaves orphaned itineraries and trip_members rows if itinerary_items insertion fails without compensating cleanup, uses naive datetime.now(), and lacks Idempotency-Key deduplication."
+  },
+  {
+    "id": "backend/routers/trips.py:trip_content_rmw_concurrency_lock",
+    "file_path": "backend/routers/trips.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "concurrent_read_modify_write_race",
+    "severity": "high",
+    "start_line": 1205,
+    "end_line": 1341,
+    "hypothesis": "update_day_data and update_trip_location perform unlocked read-modify-write updates on itineraries.content JSONB, and update_trip_location queries itineraries before membership verification using .single() without re-raising HTTPException."
+  },
+  {
+    "id": "backend/routers/trips.py:day_management_lock_batch_and_404",
+    "file_path": "backend/routers/trips.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "concurrent_rmw_race_and_n_plus_1_queries",
+    "severity": "high",
+    "start_line": 1873,
+    "end_line": 1961,
+    "hypothesis": "delete_day lacks per-trip async locking, uses .single(), issues N+1 individual row updates on itinerary_items shifts, and catches HTTPException 403/404 inside except Exception."
+  },
+  {
+    "id": "backend/routers/trips.py:update_trip_dates_lock_and_batch",
+    "file_path": "backend/routers/trips.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "concurrent_rmw_race_and_unvalidated_date_parse",
+    "severity": "high",
+    "start_line": 1441,
+    "end_line": 1544,
+    "hypothesis": "update_trip_dates lacks per-trip locking, uses .single(), runs unguarded datetime.strptime returning 500 on malformed dates, and performs N+1 item updates/deletes on day shortening."
+  },
+  {
+    "id": "backend/routers/expenses.py:update_expense_404_masking_and_sanitization",
+    "file_path": "backend/routers/expenses.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "exception_masking_and_error_detail_exposure",
+    "severity": "high",
+    "start_line": 485,
+    "end_line": 532,
+    "hypothesis": "update_expense raises HTTPException 404 inside try without except HTTPException: raise, turning 404 responses into 500 errors exposing internal database exception messages."
+  },
+  {
+    "id": "backend/routers/expenses.py:add_expense_idempotency_and_error_guard",
+    "file_path": "backend/routers/expenses.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "duplicate_submission_on_retry_and_error_exposure",
+    "severity": "medium",
+    "start_line": 193,
+    "end_line": 302,
+    "hypothesis": "add_expense lacks Idempotency-Key header deduplication for offline queue replay and returns raw exception text in HTTP 500 responses."
+  },
+  {
+    "id": "backend/routers/ai.py:generate_day_review_bola_lock_locale",
+    "file_path": "backend/routers/ai.py",
+    "target_type": "backend_ai_router",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "broken_object_level_authorization",
+    "severity": "critical",
+    "start_line": 892,
+    "end_line": 979,
+    "hypothesis": "generate_day_review lacks caller authentication and trip membership verification before reading itinerary items or writing itineraries.content, ignores locale, uses unlocked RMW with .single(), and masks HTTPException 404 as 500."
+  },
+  {
+    "id": "backend/routers/ai.py:parse_markdown_b64_json_and_locale",
+    "file_path": "backend/routers/ai.py",
+    "target_type": "backend_ai_router",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "input_validation_and_error_handling",
+    "severity": "high",
+    "start_line": 385,
+    "end_line": 521,
+    "hypothesis": "parse_markdown decodes image_base64 without validate=True or binascii.Error handling, treats json.JSONDecodeError as HTTP 500 leaking raw messages, and omits bilingual instruction support."
+  },
+  {
+    "id": "backend/main.py:global_exception_traceback_disclosure",
+    "file_path": "backend/main.py",
+    "target_type": "backend_app_middleware",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "internal_stack_trace_disclosure",
+    "severity": "high",
+    "start_line": 170,
+    "end_line": 190,
+    "hypothesis": "global_exception_handler returns raw str(exc), error_type, request path, and stack traceback lines directly in HTTP 500 response bodies."
+  },
+  {
+    "id": "backend/main.py:stream_chat_world_time_and_poi_guards",
+    "file_path": "backend/main.py",
+    "target_type": "backend_ai_chat",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "unbound_local_error_and_unbounded_fetch",
+    "severity": "high",
+    "start_line": 1330,
+    "end_line": 1415,
+    "hypothesis": "stream_chat_generator references time_data without initialization on repeated get_world_time calls (UnboundLocalError), awaits fetch_jina_reader without explicit timeout bounds, and hardcodes Chinese progress thoughts."
+  },
+  {
+    "id": "backend/services/model_manager.py:client_cache_unbounded_and_timeout",
+    "file_path": "backend/services/model_manager.py",
+    "target_type": "backend_ai_service",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "unbounded_memory_growth_and_call_hang",
+    "severity": "high",
+    "start_line": 418,
+    "end_line": 445,
+    "hypothesis": "_client_cache stores distinct API key clients in an unbounded dict without LRU eviction, while async model invocations omit asyncio.wait_for timeout guards."
+  },
+  {
+    "id": "backend/routers/app.py:donation_progress_single_and_naive_tz",
+    "file_path": "backend/routers/app.py",
+    "target_type": "backend_api_route",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "single_row_exception_and_naive_datetime",
+    "severity": "low",
+    "start_line": 13,
+    "end_line": 44,
+    "hypothesis": "get_donation_progress uses .single() which raises on empty rows instead of limit(1) handling and calls naive datetime.now()."
+  },
+  {
+    "id": "frontend/lib/OfficialLanguageContext.tsx:sync_external_store_and_query_override",
+    "file_path": "frontend/lib/OfficialLanguageContext.tsx",
+    "target_type": "frontend_state_context",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "stale_storage_precedence_and_react_state_desync",
+    "severity": "medium",
+    "start_line": 34,
+    "end_line": 118,
+    "hypothesis": "getInitialOfficialLanguage falls back to sessionStorage when URL specifies unsupported ?lang= values instead of resetting to zh, and uses useState plus popstate effect rather than useSyncExternalStore."
+  },
+  {
+    "id": "frontend/components/official/HeroTypewriterHeading.tsx:render_phase_setstate_compiler_violation",
+    "file_path": "frontend/components/official/HeroTypewriterHeading.tsx",
+    "target_type": "frontend_official_portal",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "react_compiler_render_phase_setstate",
+    "severity": "medium",
+    "start_line": 22,
+    "end_line": 97,
+    "hypothesis": "HeroTypewriterHeading calls setState hooks conditionally during render on prop changes, violating React 19 Compiler purity rules instead of keying an inner stateful component."
+  },
+  {
+    "id": "frontend/components/official/TypewriterHeading.tsx:render_phase_setstate_and_ref_access",
+    "file_path": "frontend/components/official/TypewriterHeading.tsx",
+    "target_type": "frontend_official_portal",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "react_compiler_render_phase_setstate",
+    "severity": "medium",
+    "start_line": 20,
+    "end_line": 86,
+    "hypothesis": "TypewriterHeading calls setState conditionally during render instead of isolating typing state behind a key-reset inner component."
+  },
+  {
+    "id": "frontend/app/official/terms/page.tsx:english_legal_rendering_omission",
+    "file_path": "frontend/app/official/terms/page.tsx",
+    "target_type": "frontend_official_portal",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "bilingual_legal_content_gap",
+    "severity": "medium",
+    "start_line": 13,
+    "end_line": 125,
+    "hypothesis": "Legal terms page renders only Traditional Chinese copy even when OfficialLanguageContext active language is English."
+  },
+  {
+    "id": "frontend/components/itinerary/AiImportTripWizard.tsx:locale_forwarding_and_hook_deps",
+    "file_path": "frontend/components/itinerary/AiImportTripWizard.tsx",
+    "target_type": "frontend_itinerary_component",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "stale_closure_and_missing_locale_forwarding",
+    "severity": "medium",
+    "start_line": 260,
+    "end_line": 362,
+    "hypothesis": "AiImportTripWizard suppresses exhaustive-deps for handleFileSelected inside paste useEffect and omits locale when invoking aiApi.parseMarkdown."
+  },
+  {
+    "id": "frontend/components/itinerary/EditableDailyAIReview.tsx:locale_forwarding_and_loading_text",
+    "file_path": "frontend/components/itinerary/EditableDailyAIReview.tsx",
+    "target_type": "frontend_itinerary_component",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "missing_locale_forwarding_and_i18n_gap",
+    "severity": "medium",
+    "start_line": 50,
+    "end_line": 166,
+    "hypothesis": "EditableDailyAIReview omits client lang when calling tripsApi.generateAIReview and renders hardcoded Chinese loading label."
+  },
+  {
+    "id": "frontend/components/itinerary/TripCoverMenu.tsx:missing_dialog_description_a11y",
+    "file_path": "frontend/components/itinerary/TripCoverMenu.tsx",
+    "target_type": "frontend_itinerary_component",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "accessibility_dialog_description_missing",
+    "severity": "low",
+    "start_line": 248,
+    "end_line": 269,
+    "hypothesis": "Cover image preview DialogContent renders DialogTitle inside VisuallyHidden without a matching DialogDescription."
+  },
+  {
+    "id": "frontend/lib/api.ts:liefi_network_fallback_and_idempotency",
+    "file_path": "frontend/lib/api.ts",
+    "target_type": "frontend_api_client",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "offline_queue_network_drop_loss_and_replay_duplication",
+    "severity": "high",
+    "start_line": 981,
+    "end_line": 1018,
+    "hypothesis": "offlineFetch only queues mutations when navigator.onLine is false, dropping failed mutating requests during Lie-Fi stalls and omitting stable Idempotency-Key headers across live and replayed requests."
+  }
+]
+

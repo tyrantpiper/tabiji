@@ -1,0 +1,39 @@
+[
+  {
+    "id": "frontend/components/official/LiveDeviceTheater.tsx:fullbleed_authentic_mirroring",
+    "file_path": "frontend/components/official/LiveDeviceTheater.tsx",
+    "target_id": "frontend/components/official/LiveDeviceTheater.tsx:fullbleed_authentic_mirroring",
+    "target_type": "frontend_official_portal",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "visual_integrity_and_theme_strobe",
+    "hypothesis": "Expanding internal phone screen to full-bleed dual theme could cause unhandled theme contrast mismatch, text illegibility, or FOUC color strobe during transition."
+  },
+  {
+    "id": "frontend/components/official/LiveDeviceTheater.tsx:viewport_mask_and_dom_collision",
+    "file_path": "frontend/components/official/LiveDeviceTheater.tsx",
+    "target_id": "frontend/components/official/LiveDeviceTheater.tsx:viewport_mask_and_dom_collision",
+    "target_type": "frontend_official_portal",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "dom_selector_collision_and_test_pollution",
+    "hypothesis": "Embedding high-fidelity Tabiji native mock UI inside device theater could inject interactive roles (role='tab', role='button') that collide with global page selectors in testing-library, causing suite-wide test failures."
+  },
+  {
+    "id": "frontend/components/official/LiveDeviceTheater.tsx:micro_scroll_race_and_memory",
+    "file_path": "frontend/components/official/LiveDeviceTheater.tsx",
+    "target_id": "frontend/components/official/LiveDeviceTheater.tsx:micro_scroll_race_and_memory",
+    "target_type": "frontend_official_portal",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "client_side_dos_and_animation_desync",
+    "hypothesis": "Autonomous micro-scroll animation inside phone screen could run decoupled from hover/pause state, leading to endless rAF loop, CPU thrashing, or perceptual motion sickness for prefers-reduced-motion users."
+  },
+  {
+    "id": "frontend/components/official/LiveDeviceTheater.tsx:touch_target_and_fixed_width_ergonomics",
+    "file_path": "frontend/components/official/LiveDeviceTheater.tsx",
+    "target_id": "frontend/components/official/LiveDeviceTheater.tsx:touch_target_and_fixed_width_ergonomics",
+    "target_type": "frontend_official_portal",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "mobile_viewport_overflow_and_rwd_violation",
+    "hypothesis": "Native micro-view cards within the 19.5:9 frame could declare fixed pixel widths (>343px) triggering ADV-M2-2.9 violations or breaking touch target minimums on outer controls."
+  }
+]
+

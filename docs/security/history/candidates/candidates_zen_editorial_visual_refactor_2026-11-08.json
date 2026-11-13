@@ -1,0 +1,27 @@
+[
+  {
+    "id": "frontend/app/official/layout.tsx::mask_preload_and_csp",
+    "file_path": "frontend/app/official/layout.tsx",
+    "attack_vector": "resource_injection",
+    "hypothesis": "Adding static preload tags for brand mask assets (/images/tabiji-person-outline.png?v=3) must strictly adhere to same-origin local assets to prevent arbitrary CDN injection or CSP directive violation."
+  },
+  {
+    "id": "frontend/components/official/OfficialHeader.tsx::composite_logo_redirect",
+    "file_path": "frontend/components/official/OfficialHeader.tsx",
+    "attack_vector": "open_redirect_and_anchor_hijacking",
+    "hypothesis": "Composite brand logo (traveler totem + cursive wordmark) and header navigation links must strictly route to /official and internal whitelisted anchors (#routes, #offline, #ledger) without exposing unvalidated protocol-relative or external redirection."
+  },
+  {
+    "id": "frontend/components/official/BentoMotionGrid.tsx::magazine_scroll_dos_and_compat",
+    "file_path": "frontend/components/official/BentoMotionGrid.tsx",
+    "attack_vector": "client_side_dos_and_memory_leak",
+    "hypothesis": "Refactoring Bento Grid to single-axis magazine scroll must preserve legacy exported component interfaces, isolate GPU compositing layers (transform/opacity only), and enforce prefers-reduced-motion to prevent client-side main-thread starvation."
+  },
+  {
+    "id": "frontend/components/official/SpatialRouteMotionCard.tsx::svg_stroke_and_touch_target",
+    "file_path": "frontend/components/official/SpatialRouteMotionCard.tsx",
+    "attack_vector": "vector_xss_and_layout_distortion",
+    "hypothesis": "Expanding SVG canvas to full-width magazine view must strictly enforce vectorEffect='non-scaling-stroke' and maintain minimum 44x44px touch targets on all interactive waypoints without z-index event capture vulnerabilities."
+  }
+]
+

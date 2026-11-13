@@ -1,0 +1,123 @@
+# ==============================================================================
+# Security Sentinel Candidate Patch (RFC Unified Diff)
+# Topic: AI Stream Guardrail, Intent Routing & Capability Stripping
+# Target Files:
+#   1. backend/services/intent_router.py
+#   2. backend/main.py
+#   3. backend/services/model_manager.py
+# Date: 2026-11-10
+# ==============================================================================
+
+--- a/backend/services/intent_router.py
++++ b/backend/services/intent_router.py
+@@ -29,6 +29,15 @@
+ GREETING_PATTERN = re.compile(
+     r"^[\s]*(你好|您好|哈囉|hello|hi|hey|早安|午安|晚安|嗨|嗨嗨|謝謝(你|您)?|感謝(你|您)?|多謝(你|您)?|感恩|thx|thanks|3q)[\s\!！\?？\.\~]*$",
+     re.IGNORECASE
++)
++
++# 🛡️ 2026: 擴充讚美、誇獎與感謝快篩正則 (0ms Fast-Path，徹底截斷無效搜尋與工具掛載)
++PRAISE_PATTERN = re.compile(
++    r"^[\s]*(你好|您好|哈囉|hello|hi|hey|早安|午安|晚安|嗨|嗨嗨|"
++    r"謝謝(你|您)?|感謝(你|您)?|多謝(你|您)?|感恩|thx|thanks|3q|"
++    r"你?(真|很|太|好|超)?(棒|強|厲害|讚|神|貼心|聰明|給力)(了|的)?|做得好|辛苦了|"
++    r"good\s*job|awesome|great(\s*job)?|amazing|well\s*done|bravo|nice|love\s*you)"
++    r"[\s\!！\?？\.\~～阿啊啦耶喔吧的\(\)]*$",
++    re.IGNORECASE
+ )
+ 
+ REMOVE_PATTERN = re.compile(
+@@ -176,8 +185,8 @@
+     if "http://" in trimmed or "https://" in trimmed:
+         return "SEARCH"
+ 
+-    # 2. 短問候語 (短路為 CHAT，完全卸載卡片工具以防幻覺)
+-    if len(trimmed) <= 8 and GREETING_PATTERN.match(trimmed):
++    # 2. 短問候與讚美語 (短路為 CHAT，完全卸載卡片工具以防幻覺、杜絕無效搜尋)
++    if len(trimmed) <= 30 and (GREETING_PATTERN.match(trimmed) or PRAISE_PATTERN.match(trimmed)):
+         return "CHAT"
+ 
+     # 3. 優先檢查移除行程 (避免「把淺草寺移除」被誤判為行程新增)
+
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -1750,14 +1750,71 @@
+                     
+-                    # [NEW] v5.2: 處理思考過程 (Thought Streaming)
+-                    if hasattr(chunk, 'thought') and chunk.thought:
+-                        yield f'event: thinking\ndata: {json.dumps({"status": "thinking", "thought": chunk.thought})}\n\n'
+-                        await asyncio.sleep(0)
+-                        
+-                    # 發送文字 chunk (使用 extract_clean_response_text 安全解析 parts，杜絕 non-text parts 警告)
+-                    chunk_text = extract_clean_response_text(chunk)
+-                    if chunk_text:
+-                        full_text += chunk_text
+-                        yield f'event: text\ndata: {json.dumps({"text": chunk_text})}\n\n'
+-                        await asyncio.sleep(0)
++                    # [2026 Sentinel] 狀態化前瞻滑動緩衝區 (Sliding Lookahead Stream Buffer)
++                    # 徹底消除跨 Chunk 思考標籤撕裂與中段 JSON 協定裸露
++                    chunk_text = extract_clean_response_text(chunk)
++                    if hasattr(chunk, 'thought') and chunk.thought:
++                        yield f'event: thinking\ndata: {json.dumps({"status": "thinking", "thought": chunk.thought})}\n\n'
++                        await asyncio.sleep(0)
++                    
++                    if chunk_text:
++                        stream_buffer += chunk_text
++                        
++                        # 1. 動態濾除思考標籤 (<thought>, <thinking>, 'Thinking Process:')
++                        THOUGHT_START = ("<thought>", "<thinking>", "Thinking Process:")
++                        THOUGHT_END = ("</thought>", "</thinking>")
++                        while any(t in stream_buffer for t in THOUGHT_START) or in_stream_thought:
++                            if not in_stream_thought:
++                                for t in THOUGHT_START:
++                                    if t in stream_buffer:
++                                        pre, _, post = stream_buffer.partition(t)
++                                        if pre:
++                                            full_text += pre
++                                            yield f'event: text\ndata: {json.dumps({"text": pre})}\n\n'
++                                        stream_buffer = post
++                                        in_stream_thought = True
++                                        break
++                            else:
++                                if any(e in stream_buffer for e in THOUGHT_END):
++                                    for e in THOUGHT_END:
++                                        if e in stream_buffer:
++                                            _, _, stream_buffer = stream_buffer.partition(e)
++                                            in_stream_thought = False
++                                            break
++                                else:
++                                    stream_buffer = ""
++                                    break
++                        
++                        # 2. 動態攔截輸出層 JSON 協定 (如 {"items": [...]} 或 {"day": 1})
++                        if not in_stream_json:
++                            json_m = re.search(r'\{\s*"items"\s*:\s*\[|\{\s*"day"\s*:', stream_buffer)
++                            if json_m:
++                                pre = stream_buffer[:json_m.start()]
++                                if pre:
++                                    full_text += pre
++                                    yield f'event: text\ndata: {json.dumps({"text": pre})}\n\n'
++                                in_stream_json = True
++                                intercepted_json_parts.append(stream_buffer[json_m.start():])
++                                stream_buffer = ""
++                            else:
++                                # 保留 30 字元滑動安全窗，防範跨 Chunk 標籤特徵拆裂
++                                if len(stream_buffer) > 35:
++                                    flushable = stream_buffer[:-30]
++                                    stream_buffer = stream_buffer[-30:]
++                                    full_text += flushable
++                                    yield f'event: text\ndata: {json.dumps({"text": flushable})}\n\n'
++                                    await asyncio.sleep(0)
++                        else:
++                            intercepted_json_parts.append(stream_buffer)
++                            stream_buffer = ""
+
+--- a/backend/services/model_manager.py
++++ b/backend/services/model_manager.py
+@@ -100,6 +100,12 @@
+     if model_name.startswith("gemma"):
++        # 🛡️ 2026 Gemma 4 雲端端點防護：純文字任務強制剝離 tools 與 thinking_config，避免 Google 端點 500
++        if intent_type in ("GEOCODE", "INTENT_PARSE", "CHAT"):
++            config_dict["tools"] = None
++            config_dict["thinking_config"] = None
+

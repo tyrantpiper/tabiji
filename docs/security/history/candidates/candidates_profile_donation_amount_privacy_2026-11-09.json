@@ -1,0 +1,30 @@
+[
+  {
+    "id": "frontend/components/views/profile-view.tsx:donation_amount_privacy_leakage",
+    "file_path": "frontend/components/views/profile-view.tsx",
+    "target_id": "frontend/components/views/profile-view.tsx:donation_amount_privacy_leakage",
+    "target_type": "frontend_profile_view",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "information_disclosure_and_commercial_framing",
+    "hypothesis": "Summary block in profile-view.tsx hardcodes raw fiat amount display (NT$3,250 / $6,000), causing financial sensitivity, commercial payment confusion, and privacy leakage in the personal settings view."
+  },
+  {
+    "id": "frontend/components/views/profile-view.tsx:skeleton_cls_layout_shift",
+    "file_path": "frontend/components/views/profile-view.tsx",
+    "target_id": "frontend/components/views/profile-view.tsx:skeleton_cls_layout_shift",
+    "target_type": "frontend_profile_view",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "visual_instability_and_cls_regression",
+    "hypothesis": "Donation loading skeleton uses w-32 designed for wide currency strings. Switching to percentage text without resizing the skeleton creates an 88px horizontal layout collapse upon data load, triggering CLS regressions."
+  },
+  {
+    "id": "frontend/components/views/profile-view.tsx:micro_percentage_decimal_truncation",
+    "file_path": "frontend/components/views/profile-view.tsx",
+    "target_id": "frontend/components/views/profile-view.tsx:micro_percentage_decimal_truncation",
+    "target_type": "frontend_profile_view",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "data_truncation_and_precision_loss",
+    "hypothesis": "Using bare Math.floor(percentage) truncates micro-progress between 0% and 1% (e.g. 0.3%) down to 0%, erroneously wiping out early community contribution progress."
+  }
+]
+

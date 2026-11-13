@@ -1,0 +1,96 @@
+--- a/frontend/components/official/TypewriterHeading.tsx
++++ b/frontend/components/official/TypewriterHeading.tsx
+@@ -34,16 +34,26 @@ export function TypewriterHeading({
++  const [activeText, setActiveText] = useState(text)
+   const [charIndex, setCharIndex] = useState(0)
+   const [isTypingComplete, setIsTypingComplete] = useState(false)
+   const [cursorVisible, setCursorVisible] = useState(true)
+ 
++  // Render-phase derived state reset when text prop changes
++  if (activeText !== text) {
++    setActiveText(text)
++    setCharIndex(0)
++    setIsTypingComplete(false)
++    setCursorVisible(true)
++  }
++
+   useEffect(() => {
+     if (shouldReduceMotion || !isInView) {
+       return
+     }
+ 
+     let currentIndex = 0
++    let fadeTimer: NodeJS.Timeout | null = null
++
+     const interval = setInterval(() => {
+       currentIndex += 1
+       setCharIndex(currentIndex)
+ 
+       if (currentIndex >= text.length) {
+         clearInterval(interval)
+         setIsTypingComplete(true)
+ 
+         // 打字完成後延遲淡出游標
+-        const fadeTimer = setTimeout(() => {
++        fadeTimer = setTimeout(() => {
+           setCursorVisible(false)
+         }, cursorFadeDelay)
+-
+-        return () => clearTimeout(fadeTimer)
+       }
+     }, charDelay)
+ 
+-    return () => clearInterval(interval)
++    return () => {
++      clearInterval(interval)
++      if (fadeTimer) clearTimeout(fadeTimer)
++    }
+   }, [isInView, text, charDelay, cursorFadeDelay, shouldReduceMotion])
+ 
+   const displayedText = shouldReduceMotion ? text : text.slice(0, charIndex)
+   const showCursor = !shouldReduceMotion && cursorVisible
+ 
+   const innerContent = (
+     <>
+       {/* 1. a11y & SEO 完整文字 (視覺隱藏，螢幕閱讀器與搜尋引擎零延遲讀取) */}
+       <span className="sr-only">{text}</span>
+ 
+-      {/* 2. 視覺打字逐字浮現層 */}
+-      <span aria-hidden="true" className="inline-block whitespace-pre">
++      {/* 2. 視覺打字逐字浮現層 (whitespace-pre-wrap 防範 375px 行動端溢位) */}
++      <span aria-hidden="true" className="inline-block whitespace-pre-wrap">
+         {displayedText}
+       </span>
+--- a/frontend/components/official/HeroTypewriterHeading.tsx
++++ b/frontend/components/official/HeroTypewriterHeading.tsx
+@@ -32,12 +32,22 @@ export function HeroTypewriterHeading({
++  const [activeLines, setActiveLines] = useState({ line1, line2 })
+   const [charIndex1, setCharIndex1] = useState(0)
+   const [charIndex2, setCharIndex2] = useState(0)
+   const [currentLine, setCurrentLine] = useState<1 | 2 | 3>(1)
+   const [cursorVisible, setCursorVisible] = useState(true)
+ 
++  // Render-phase state reset on prop change
++  if (activeLines.line1 !== line1 || activeLines.line2 !== line2) {
++    setActiveLines({ line1, line2 })
++    setCharIndex1(0)
++    setCharIndex2(0)
++    setCurrentLine(1)
++    setCursorVisible(true)
++  }
++
+   useEffect(() => {
+     if (shouldReduceMotion) {
+       return
+     }
+ 
+--- a/frontend/components/official/OfficialFooter.tsx
++++ b/frontend/components/official/OfficialFooter.tsx
+@@ -43,6 +43,0 @@ export function OfficialFooter() {
+-              <Link
+-                href="/official#experience"
+-                className="min-h-11 py-2.5 text-sm text-stone-600 dark:text-stone-400 hover:text-[#0B3026] dark:hover:text-emerald-400 transition-colors flex items-center"
+-              >
+-                行旅體驗 (Experience)
+-              </Link>
+

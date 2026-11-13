@@ -1,0 +1,48 @@
+[
+  {
+    "id": "backend/main.py:few_shot_anchor_and_context_injection_leakage",
+    "file_path": "backend/main.py",
+    "target_id": "backend/main.py:few_shot_anchor_and_context_injection_leakage",
+    "target_type": "backend_ai_chat",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "prompt_injection_and_language_hijack",
+    "hypothesis": "Hardcoded Chinese few-shot turns in dummy_history and unlocalized context headers force model attention onto Chinese tokens, causing language directive bypass and language drift when processing English queries."
+  },
+  {
+    "id": "backend/services/model_manager.py:diagnosis_intent_locale_bypass",
+    "file_path": "backend/services/model_manager.py",
+    "target_id": "backend/services/model_manager.py:diagnosis_intent_locale_bypass",
+    "target_type": "backend_intent_routing",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "denial_of_service_and_intent_misrouting",
+    "hypothesis": "DIAGNOSIS_KEYWORDS only checks Traditional Chinese substrings. An English user clicking the quick-checkup capsule fails fast-path routing, resulting in intent misclassification and failure to engage the specialized diagnosis system prompt."
+  },
+  {
+    "id": "backend/routers/ai.py:itinerary_generation_locale_locking",
+    "file_path": "backend/routers/ai.py",
+    "target_id": "backend/routers/ai.py:itinerary_generation_locale_locking",
+    "target_type": "backend_trip_generator",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "schema_violation_and_contract_breakage",
+    "hypothesis": "System prompt in generate_trip_core hardcodes 語言：全繁體中文. When an English user requests itinerary generation, the LLM is constrained to output Chinese titles and descriptions, violating client language expectations."
+  },
+  {
+    "id": "backend/main.py:admin_guardrail_locale_leakage",
+    "file_path": "backend/main.py",
+    "target_id": "backend/main.py:admin_guardrail_locale_leakage",
+    "target_type": "backend_security_guardrail",
+    "trust_boundary": "public_to_authenticated",
+    "attack_vector": "information_disclosure_and_guardrail_evasion",
+    "hypothesis": "detect_admin_hijack_attempt only outputs a hardcoded Traditional Chinese message. In English sessions, sending administrative probes returns unexpected Chinese text without localized assistance."
+  },
+  {
+    "id": "frontend/components/itinerary/TripDialogs.tsx:locale_parameter_truncation",
+    "file_path": "frontend/components/itinerary/TripDialogs.tsx",
+    "target_id": "frontend/components/itinerary/TripDialogs.tsx:locale_parameter_truncation",
+    "target_type": "frontend_trip_dialogs",
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "api_contract_truncation_and_desync",
+    "hypothesis": "handleAiGenerate fails to forward locale to generateTripStream and generateTrip, causing the server to permanently fall back to default zh regardless of the user's active UI setting."
+  }
+]
+

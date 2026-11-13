@@ -1,0 +1,34 @@
+[
+  {
+    "id": "backend/services/model_manager.py:free_api_key_grounding_trap",
+    "file_path": "backend/services/model_manager.py",
+    "target_type": "model_config_sanitizer",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "quota_exhaustion_and_resource_denial",
+    "hypothesis": "sanitize_config_for_model forcibly injects paid Google Search and Google Maps grounding tools into Gemini models during CHAT, DIAGNOSIS, ITINERARY, and COMPOSITE intents, triggering HTTP 429 RESOURCE_EXHAUSTED rejections on free-tier API keys."
+  },
+  {
+    "id": "backend/services/model_manager.py:subsecond_thundering_fallback",
+    "file_path": "backend/services/model_manager.py",
+    "target_type": "ai_fallback_orchestrator",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "cascading_rate_limit_collapse",
+    "hypothesis": "call_with_fallback immediately switches to fallback models with 0ms delay upon HTTP 429 without dual-speed quick retry or smooth jitter, triggering Google Cloud project-level sub-second burst rate limiters and knocking out all candidate models."
+  },
+  {
+    "id": "backend/services/model_manager.py:global_circuit_breaker_pollution",
+    "file_path": "backend/services/model_manager.py",
+    "target_type": "circuit_breaker",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "cross_tenant_denial_of_service",
+    "hypothesis": "_CIRCUIT_STATE uses a global dict keyed only by model_name without API key isolation, causing a single tenant's rate limit or error to lock healthy models globally for 300s across all users."
+  },
+  {
+    "id": "backend/services/model_manager.py:unstructured_429_metadata_blindness",
+    "file_path": "backend/services/model_manager.py",
+    "target_type": "error_classification_engine",
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "fault_classification_failure",
+    "hypothesis": "The system lacks structured 429 metadata extraction for QuotaFailure and RetryInfo (retryDelay), treating transient sub-second burst throttling identically to daily quota depletion."
+  }
+]

@@ -1,0 +1,56 @@
+[
+  {
+    "id": "frontend/app/sw.ts:incomplete_url_substring_sanitization",
+    "file_path": "frontend/app/sw.ts",
+    "start_line": 96,
+    "end_line": 135,
+    "severity": "high",
+    "attack_vector": "hostname_boundary_matching",
+    "hypothesis": "Hostname allowlist checks in isExternalCdn and isSupabaseAuth use substring matching (url.hostname.includes) without trailing-dot normalization or apex/subdomain suffix verification, allowing lookalike domains such as cdn-cloudinary.com.example or custom-supabase.co.example to match route predicates."
+  },
+  {
+    "id": "frontend/app/sw.ts:api_cache_cross_user_leakage",
+    "file_path": "frontend/app/sw.ts",
+    "start_line": 121,
+    "end_line": 146,
+    "severity": "high",
+    "attack_vector": "shared_device_api_cache_fallback",
+    "hypothesis": "The NetworkOnly API exclusion rule in sw.ts matches only /api/trips/ (with trailing slash) and three auth/cloudinary/receipt prefixes. Same-origin GET requests without a trailing slash such as /api/trips, /api/users/me/preferences, and /api/app/donation-progress fall through into @serwist/next defaultCache 'apis' NetworkFirst storage, persisting user-specific JSON across account switches."
+  },
+  {
+    "id": "frontend/app/sw.ts:bgsync_dead_route_and_outbox_split",
+    "file_path": "frontend/app/sw.ts",
+    "start_line": 8,
+    "end_line": 146,
+    "severity": "medium",
+    "attack_vector": "unreachable_route_handler_method_default",
+    "hypothesis": "The BackgroundSyncPlugin runtimeCaching entry in sw.ts omits the Serwist method property, so Serwist Route defaults to HTTP method GET while the matcher filters for POST/PUT/PATCH/DELETE. Meanwhile the live offline write path uses IndexedDB SyncQueue with dynamic JWT refresh and 401 pause protection. Removing the unreachable route requires Chesterton archaeology confirmation."
+  },
+  {
+    "id": "frontend/app/sw.ts:push_notification_open_redirect_backslash",
+    "file_path": "frontend/app/sw.ts",
+    "start_line": 250,
+    "end_line": 286,
+    "severity": "medium",
+    "attack_vector": "relative_path_and_origin_validation",
+    "hypothesis": "In push and notificationclick handlers, rawLink validation checks startsWith('/') and !startsWith('//') without normalizing backslash characters (/\\example.com) or control bytes, and client matching uses client.url.includes(self.location.origin) rather than URL origin equality."
+  },
+  {
+    "id": "frontend/scripts/build-sw.mjs:build_sw_self_precaching",
+    "file_path": "frontend/scripts/build-sw.mjs",
+    "start_line": 24,
+    "end_line": 43,
+    "severity": "low",
+    "attack_vector": "build_manifest_self_inclusion",
+    "hypothesis": "createSerwistRoute scans public/**/* without excluding public/sw.js and public/sw.js.map in globIgnores, causing the generated sw.js bundle to embed stale prior-build hashes of sw.js and sw.js.map inside self.__SW_MANIFEST."
+  },
+  {
+    "id": ".gitignore:teamwork_scratch_hygiene_ad151",
+    "file_path": ".gitignore",
+    "start_line": 48,
+    "end_line": 85,
+    "severity": "medium",
+    "attack_vector": "ephemeral_workspace_artifact_staging_exposure",
+    "hypothesis": ".gitignore excludes .agent/ and .worktrees/ but does not ignore .agents/teamwork/, leaving temporary multi-agent scratch files untracked yet stageable in git status until AD-151 4-layer hygiene defense is enforced across .gitignore, push workflow, and sentinel tests."
+  }
+]

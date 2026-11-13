@@ -1,0 +1,52 @@
+diff --git a/frontend/components/views/profile-view.tsx b/frontend/components/views/profile-view.tsx
+index 2bf0a9b..1e8371e 100644
+--- a/frontend/components/views/profile-view.tsx
++++ b/frontend/components/views/profile-view.tsx
+@@ -610,8 +610,8 @@ export function ProfileView() {
+                                                     </div>
+                                                 </div>
+                                                 <div className="flex justify-between items-end mb-4">
+-                                                    <Skeleton className="h-3 w-12 bg-[#0B3026]/10 dark:bg-white/10" />
+-                                                    <Skeleton className="h-6 w-32 bg-[#0B3026]/10 dark:bg-white/10" />
++                                                    <Skeleton className="h-3 w-16 bg-[#0B3026]/10 dark:bg-white/10" />
++                                                    <Skeleton className="h-6 w-14 bg-[#0B3026]/10 dark:bg-white/10" />
+                                                 </div>
+                                                 <div className="space-y-2 mb-4">
+                                                     <Skeleton className="h-2 w-1/2 bg-[#0B3026]/10 dark:bg-white/10" />
+@@ -752,17 +752,24 @@ export function ProfileView() {
+                                                 </div>
+                                             </div>
+ 
+-                                            <div className="flex justify-between items-end text-xs text-[#0B3026]/70 dark:text-[#88A29A] mb-3">
+-                                                <span className="mb-1">{t('profile_accumulator')}</span>
+-                                                <div className="text-right">
+-                                                    <span className="text-lg font-bold text-[#1E2927] dark:text-[#E5EBEA] mr-1">
+-                                                        NT${donationProgress.current.toLocaleString()}
+-                                                    </span>
+-                                                    <span className="text-xs text-[#0B3026]/50 dark:text-white/50">
+-                                                        / ${donationProgress.goal.toLocaleString()}
+-                                                    </span>
+-                                                </div>
+-                                            </div>
++                                            {(() => {
++                                                const displayPercentage = percentage > 0 && percentage < 1
++                                                    ? percentage.toFixed(1)
++                                                    : Math.floor(percentage);
++                                                return (
++                                                    <div className="flex justify-between items-end text-xs text-[#0B3026]/70 dark:text-[#88A29A] mb-3">
++                                                        <span className="mb-1">{t('profile_accumulator')}</span>
++                                                        <div
++                                                            className="text-right flex items-baseline justify-end"
++                                                            aria-label={`${t('profile_accumulator')}: ${displayPercentage}%`}
++                                                        >
++                                                            <span className="text-lg font-bold text-[#E56E25] dark:text-[#E56E25]">
++                                                                {displayPercentage}%
++                                                            </span>
++                                                        </div>
++                                                    </div>
++                                                );
++                                            })()}
+ 
+                                             <div className="text-[10px] text-[#0B3026]/70 dark:text-[#88A29A] mb-3 space-y-1">
+                                                 {percentage >= 0 && (
+

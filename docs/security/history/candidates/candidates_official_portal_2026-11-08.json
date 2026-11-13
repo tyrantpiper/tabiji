@@ -1,0 +1,35 @@
+[
+  {
+    "id": "frontend/app/official/page.tsx:open_redirect_and_untrusted_search_param_navigation",
+    "file_path": "frontend/app/official/page.tsx",
+    "start_line": 1,
+    "end_line": 120,
+    "attack_vector": "open_redirect_and_client_navigation_hijack",
+    "hypothesis": "If the Launch App CTA button or hero navigation reads user-supplied query parameters (e.g. ?redirect= or ?next=) and passes them to router.push or window.location without enforcing exact relative same-origin paths starting with a single '/' and not '//', an attacker can construct an Open Redirect link (e.g. https://tabijiapp.com/official?next=https://attacker.com) stealing session context or phishing users."
+  },
+  {
+    "id": "frontend/app/official/layout.tsx:clickjacking_and_frame_embedding_risk",
+    "file_path": "frontend/app/official/layout.tsx",
+    "start_line": 1,
+    "end_line": 60,
+    "attack_vector": "clickjacking_and_framing_protection",
+    "hypothesis": "If the official showcase or terms pages lack explicit framing guards or allow unrestricted iframe embedding, an attacker can embed tabijiapp.com/official in an invisible iframe to conduct UI redressing or clickjacking attacks against incoming visitors."
+  },
+  {
+    "id": "frontend/components/official/BentoMotionGrid.tsx:infinite_motion_raf_jetsam_dos",
+    "file_path": "frontend/components/official/BentoMotionGrid.tsx",
+    "start_line": 1,
+    "end_line": 150,
+    "attack_vector": "denial_of_service_client_main_thread_starvation",
+    "hypothesis": "If Framer Motion SVG path animations or Spring simulations run continuous unthrottled requestAnimationFrame loops without will-change: transform or trigger layout reflows on high-DPI mobile devices, main thread starvation can degrade performance below 15 FPS or trigger iOS WebKit Jetsam process termination."
+  },
+  {
+    "id": "frontend/app/official/terms/page.tsx:xss_untrusted_legal_terms_rendering",
+    "file_path": "frontend/app/official/terms/page.tsx",
+    "start_line": 1,
+    "end_line": 80,
+    "attack_vector": "xss_untrusted_html_rendering",
+    "hypothesis": "If legal terms or privacy policy pages dynamically interpolate search parameters, localized translation keys with unescaped HTML, or use dangerouslySetInnerHTML without DOMPurify, an attacker could achieve reflected or DOM-based XSS."
+  }
+]
+

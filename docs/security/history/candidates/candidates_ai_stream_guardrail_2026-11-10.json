@@ -1,0 +1,27 @@
+[
+  {
+    "id": "backend/services/intent_router.py:praise_gratitude_misroute_leak",
+    "file_path": "backend/services/intent_router.py",
+    "attack_vector": "prompt_injection_and_intent_misroute",
+    "hypothesis": "Fast-path classifier fails on user praise ('你很棒', '太強了', 'good job') causing intent escape to Stage 2, which times out or crashes and defaults to SEARCH with all tools mounted, triggering unintended search queries ('你很棒 旅遊 推薦') and cost leak."
+  },
+  {
+    "id": "backend/main.py:streaming_json_protocol_leak",
+    "file_path": "backend/main.py",
+    "attack_vector": "information_disclosure_protocol_leak",
+    "hypothesis": "Streaming text generator in /api/chat/stream directly emits unparsed function call JSON blocks (e.g. { 'items': [ ... ] }) as text delta into the user chat UI, leaking internal system function arguments and schema."
+  },
+  {
+    "id": "backend/main.py:streaming_thought_leakage",
+    "file_path": "backend/main.py",
+    "attack_vector": "information_disclosure_thought_leak",
+    "hypothesis": "When LLMs output reasoning or thinking tags (<thought>, <thinking>, 'Thinking Process:') across streaming chunks, lack of lookahead sliding buffer allows raw thought tokens to leak into text-delta events and display in the user chat bubble."
+  },
+  {
+    "id": "backend/services/model_manager.py:gemma_tools_payload_500_dos",
+    "file_path": "backend/services/model_manager.py",
+    "attack_vector": "denial_of_service_and_server_error",
+    "hypothesis": "MODEL_CAPS marks Gemma 4 models (gemma-4-31b-it, gemma-4-26b-a4b-it) with supports_tools=True, causing Google GenAI SDK to inject function declarations into payload, which Google's Gemma 4 cloud endpoint rejects with HTTP 500 Internal Server Error, paralyzing Stage 2 intent routing and extraction tasks."
+  }
+]
+

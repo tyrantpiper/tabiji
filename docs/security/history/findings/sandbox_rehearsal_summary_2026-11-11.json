@@ -1,0 +1,61 @@
+{
+  "worktree_path": "D:\\Project\\tabiji\\travel-pwa\\.worktrees\\sentinel-e5b8abb7",
+  "mirrored_files_count": 99,
+  "red_checks": {
+    "teamwork_ignored_rc_pre_patch": 1,
+    "sw_manifest_pre_patch": {
+      "count": 39,
+      "hasSw": true,
+      "hasMap": true
+    },
+    "sw_source_bugs_pre_patch": {
+      "hasSubstringHost": true,
+      "hasBackslashGap": false,
+      "hasOriginSubstring": true,
+      "hasDeadBgSync": true,
+      "lacksApisPurgeInSw": true,
+      "lacksApisPurgeInIdb": true
+    }
+  },
+  "green_checks": {
+    "build_sw_rc": 0,
+    "build_sw_stdout": "[build-sw] Starting build-time Service Worker compilation...\n✓ Running next.config.mjs took 35ms\n[build-sw] ✅ Generated static asset: D:\\Project\\tabiji\\travel-pwa\\.worktrees\\sentinel-e5b8abb7\\frontend\\public\\sw.js.map (357.66 KiB)\n[build-sw] ✅ Generated static asset: D:\\Project\\tabiji\\travel-pwa\\.worktrees\\sentinel-e5b8abb7\\frontend\\public\\sw.js (47.45 KiB)\n[build-sw] Service Worker build complete! Assets ready in public/ directory.",
+    "sw_manifest_after": {
+      "count": 37,
+      "hasRoot": true,
+      "hasSw": false,
+      "hasMap": false,
+      "hasNext": false
+    },
+    "tsc_rc": 0,
+    "tsc_stdout": "",
+    "lint_rc": 0,
+    "lint_stdout": "> tabiji-pwa@0.1.0 lint\n> eslint",
+    "vitest_rc": 0,
+    "vitest_tail": [
+      " \u001b[32m✓\u001b[39m __tests__/ai-import-templates-sentinel.test.ts \u001b[2m(\u001b[22m\u001b[2m1 test\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 3\u001b[2mms\u001b[22m\u001b[39m",
+      " \u001b[32m✓\u001b[39m __tests__/cover-pills-sentinel.test.ts \u001b[2m(\u001b[22m\u001b[2m12 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 4\u001b[2mms\u001b[22m\u001b[39m",
+      "",
+      "\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m106 passed\u001b[39m\u001b[22m\u001b[90m (106)\u001b[39m",
+      "\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m1035 passed\u001b[39m\u001b[22m\u001b[2m | \u001b[22m\u001b[33m4 skipped\u001b[39m\u001b[90m (1039)\u001b[39m",
+      "\u001b[2m   Start at \u001b[22m 03:04:15",
+      "\u001b[2m   Duration \u001b[22m 11.85s\u001b[2m (transform 6.09s, setup 9.81s, import 24.54s, tests 25.90s, environment 80.03s)\u001b[22m",
+      ""
+    ],
+    "pytest_rc": 0,
+    "pytest_tail": [
+      "........................................................................ [ 71%]",
+      "........................................................................ [ 83%]",
+      "........................................................................ [ 95%]",
+      ".........................                                                [100%]",
+      "596 passed, 5 skipped in 59.59s"
+    ],
+    "ledger_rc": 0,
+    "ledger_stdout": "🟢 [LEDGER GUARD] Verified 377 targets (156 remediated, 54 verified/unresolved, 167 dismissed/safe).",
+    "neural_seam_rc": 0,
+    "teamwork_check_ignore_rc": 0,
+    "teamwork_check_ignore_out": ".gitignore:51:/.agents/teamwork/\t.agents/teamwork/dummy.md",
+    "teamwork_ls_files": "",
+    "diff_stat": ".agents/skills/push/SKILL.md                       |  12 +\n .gitignore                                         |   1 +\n backend/tests/test_root_hygiene_sentinel.py        |  28 +++\n frontend/__tests__/root-hygiene-sentinel.test.ts   |  11 +\n .../__tests__/sw-security-hygiene-sentinel.test.ts | 273 +++++++++++++++++++++\n frontend/app/sw.ts                                 |  93 +++----\n frontend/lib/idb-storage.ts                        |  22 +-\n frontend/lib/sw-routing.ts                         | 146 +++++++++++\n frontend/public/sw.js                              |   4 +-\n frontend/public/sw.js.map                          |   8 +-\n frontend/scripts/build-sw.mjs                      |   1 +\n 11 files changed, 529 insertions(+), 70 deletions(-)"
+  }
+}
