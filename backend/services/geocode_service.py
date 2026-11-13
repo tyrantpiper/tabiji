@@ -406,19 +406,16 @@ Address: {address}
 Output:"""
     
     try:
-        def run_sync_genai():
-            client = genai.Client(api_key=api_key)
-            return client.models.generate_content(
-                model=WORKHORSE_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.0)
-            )
-        # Prevent event loop blocking
-        res = await asyncio.to_thread(run_sync_genai)
-        text = res.text.strip()
-        if text.startswith("```json"):
-            text = text[7:-3].strip()
+        raw = await call_extraction_server(prompt, intent_type="GEOCODE", api_key=api_key)
+        if not raw or not str(raw).strip():
+            return {}
+        text = str(raw).strip()
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if json_match:
+            text = json_match.group()
         data = json.loads(text)
+        if not isinstance(data, dict):
+            return {}
         return {k: v for k, v in data.items() if v and isinstance(v, str)}
     except Exception as e:
         print(f"⚠️ Gemma Address Parse Error: {e}")
@@ -954,12 +951,12 @@ async def reverse_geocode_with_ai_enhancement(lat: float, lng: float, api_key: s
 
         # 🆕 傳入 api_key 確保 BYOK 模式正常運作
         raw = await call_extraction_server(prompt, intent_type="GEOCODE", api_key=api_key)
-        text = raw.strip()
-        # 處理可能的 markdown 包裝
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
+        if not raw or not str(raw).strip():
+            return {**base_result, "lat": lat, "lng": lng}
+        text = str(raw).strip()
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if json_match:
+            text = json_match.group()
         
         # 🆕 Use orjson for faster AI response parsing
         enhanced = orjson.loads(text)
@@ -1534,10 +1531,11 @@ async def detect_country_from_trip_title(trip_title: str, api_key: str = None) -
 3. 如果是多國行程，回覆 NONE。
 4. 只輸出代碼，不要任何其他文字或解釋。"""
 
-        from services.model_manager import call_extraction_server
         raw = await call_extraction_server(prompt, intent_type="GEOCODE", api_key=api_key)
+        if not raw or not str(raw).strip():
+            return None
         
-        result = raw.strip().upper()
+        result = str(raw).strip().strip("`'\". ").upper()
         if result in COUNTRY_BOUNDS:
             print(f"🧠 Trip title '{trip_title}' → Country: {result}")
             return result
@@ -1627,8 +1625,10 @@ async def translate_place_name(query: str, country_code: str, api_key: str = Non
 
         # 🆕 傳入 api_key 確保地圖搜尋翻譯功能正常 (BYOK 模式)
         raw = await call_extraction_server(prompt, intent_type="GEOCODE", api_key=api_key)
+        if not raw or not str(raw).strip():
+            return [query]
         
-        lines = [line.strip() for line in raw.strip().split("\n") if line.strip()]
+        lines = [line.strip() for line in str(raw).strip().split("\n") if line.strip()]
         if lines:
             # 確保原始查詢也在列表中
             if query not in lines:
@@ -1803,7 +1803,9 @@ async def detect_country_from_query(query: str, api_key: str = None) -> str:
 
         from services.model_manager import call_extraction_server
         raw = await call_extraction_server(prompt, intent_type="GEOCODE", api_key=api_key)
-        result = raw.strip().upper()
+        if not raw or not str(raw).strip():
+            return None
+        result = str(raw).strip().upper()
         if result in COUNTRY_BOUNDS:
             print(f"🧠 Query '{query}' → Country: {result}")
             return result

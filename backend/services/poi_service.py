@@ -159,7 +159,8 @@ async def search_overpass(
     lat: float,
     lng: float,
     category: str,
-    radius: int = 1000
+    radius: int = 1000,
+    timeout: float = 10.0
 ) -> List[Dict]:
     """
     透過 OSM Overpass API 搜索附近 POI
@@ -169,6 +170,7 @@ async def search_overpass(
         lng: 中心點經度
         category: POI 類別 (pharmacy, restaurant, etc.)
         radius: 搜索半徑（公尺）
+        timeout: Overpass QL 與 HTTP 逾時（秒，預設 10.0）
     
     Returns:
         POI 列表
@@ -177,9 +179,10 @@ async def search_overpass(
     if not overpass_tag:
         return []
     
+    ql_timeout = max(1, int(round(timeout)))
     # Overpass QL 查詢語法
     query = f"""
-    [out:json][timeout:10];
+    [out:json][timeout:{ql_timeout}];
     (
       {overpass_tag}(around:{radius},{lat},{lng});
     );
@@ -197,7 +200,7 @@ async def search_overpass(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 OVERPASS_API,
                 data={"data": query},
@@ -336,7 +339,8 @@ async def search_poi_combined(
     lng: float,
     category: str,
     radius: int = 1000,
-    opentripmap_key: str = ""
+    opentripmap_key: str = "",
+    timeout: float = 10.0
 ) -> List[Dict]:
     """
     整合多個來源搜索 POI，合併去重
@@ -344,7 +348,7 @@ async def search_poi_combined(
     優先使用 Overpass（座標精確），OpenTripMap 補充評分
     """
     # 並行查詢兩個 API
-    overpass_task = search_overpass(lat, lng, category, radius)
+    overpass_task = search_overpass(lat, lng, category, radius, timeout=timeout)
     opentripmap_task = search_opentripmap(lat, lng, category, radius, opentripmap_key)
     
     overpass_results, opentripmap_results = await asyncio.gather(
@@ -385,21 +389,24 @@ async def search_poi_combined(
     return combined[:20]
 
 
-def format_pois_for_ai(pois: List[Dict], max_items: int = 5) -> str:
+def format_pois_for_ai(pois: List[Dict], max_items: int = 5, locale: str = "zh") -> str:
     """
     將 POI 列表格式化為精簡文字，供 AI 處理
     
     這是 Token 優化的關鍵！
     原始 JSON 可能 5KB，格式化後只有 ~500 bytes
     """
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
+    empty_msg = "No nearby places found." if is_en else "附近沒有找到相關地點。"
+    default_name = "Unknown Place" if is_en else "未知地點"
     if not pois or not isinstance(pois, list):
-        return "附近沒有找到相關地點。"
+        return empty_msg
     
     lines = []
     for i, poi in enumerate(pois[:max_items], 1):
         if not isinstance(poi, dict):
             continue
-        name = poi.get("name") or poi.get("place_name") or "未知地點"
+        name = poi.get("name") or poi.get("place_name") or default_name
         
         # 🛡️ 距離安全防禦：整數化輸出，無距離則優雅省略，杜絕 KeyError
         dist = poi.get("distance")
@@ -416,13 +423,14 @@ def format_pois_for_ai(pois: List[Dict], max_items: int = 5) -> str:
         line = f"{i}. {name}{dist_str} {rating_str}{hours_str}".strip()
         lines.append(line)
     
-    return "\n".join(lines) if lines else "附近沒有找到相關地點。"
+    return "\n".join(lines) if lines else empty_msg
 
 
 def get_ai_prompt_for_recommendation(
     pois_text: str,
     user_query: str,
-    user_preferences: Optional[Dict] = None
+    user_preferences: Optional[Dict] = None,
+    locale: str = "zh"
 ) -> str:
     """
     生成給 Gemini 的精簡 prompt
@@ -432,6 +440,30 @@ def get_ai_prompt_for_recommendation(
     - POI 資料已預處理
     - 用戶問題直接帶入
     """
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
+    if is_en:
+        preferences_str = ""
+        if user_preferences:
+            prefs = []
+            if user_preferences.get("prefer_rating"):
+                prefs.append("prefers high ratings")
+            if user_preferences.get("prefer_distance"):
+                prefs.append("prefers closer distance")
+            if user_preferences.get("prefer_price"):
+                prefs.append("budget-conscious")
+            if prefs:
+                preferences_str = f"\nUser preferences: {', '.join(prefs)}"
+
+        return f"""You are a professional travel assistant. Answer the user's question based on the nearby places below.
+
+Nearby Places:
+{pois_text}
+{preferences_str}
+
+User Query: {user_query}
+
+Provide a concise recommendation in natural English (under 80 words) explaining why."""
+
     preferences_str = ""
     if user_preferences:
         prefs = []
@@ -785,7 +817,7 @@ async def get_wikidata_labels(wikidata_id: str, client: httpx.AsyncClient = None
 
 # ==================== 三源整合 ====================
 
-async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None) -> Dict:
+async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None, lang: str = "zh") -> Dict:
     """
     三源互補整合：Wikidata + Wikipedia + WikiVoyage (2026 Phase 1 Parallel)
     """
@@ -794,10 +826,14 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None) -> Di
     
     if not name:
         return poi
+
+    is_en = bool(str(lang or "zh").strip().lower().startswith("en"))
+    wiki_lang = "en" if is_en else "zh"
+    used_fallback_lang = None
     
     poi["warnings"] = []
     poi["status"] = "SUCCESS"
-    poi["resolved_language"] = "zh-TW" # Default
+    poi["resolved_language"] = "en" if is_en else "zh-TW" # Default per requested locale
     poi["image_url"] = ""              # 🆕 Phase 5.3.1 Safety Init
     
     lat = poi.get("lat")
@@ -807,8 +843,8 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None) -> Di
     try:
         tasks = [
             asyncio.wait_for(get_wikidata_labels(wikidata_id, client=client), 6.0) if wikidata_id else asyncio.sleep(0),
-            asyncio.wait_for(get_wikipedia_summary(name, client=client, lat=lat, lng=lng), 6.0),
-            asyncio.wait_for(search_wikivoyage(name, client=client), 6.0)
+            asyncio.wait_for(get_wikipedia_summary(name, lang=wiki_lang, client=client, lat=lat, lng=lng), 6.0),
+            asyncio.wait_for(search_wikivoyage(name, lang=wiki_lang, client=client), 6.0)
         ]
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -833,7 +869,7 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None) -> Di
         # 定義：內部抓取函式 (方便 fallback 時重用)
         async def fetch_wiki(title_to_fetch: str):
             if not title_to_fetch: return "", ""
-            return await get_wikipedia_summary(title_to_fetch, client=client, lat=lat, lng=lng)
+            return await get_wikipedia_summary(title_to_fetch, lang=wiki_lang, client=client, lat=lat, lng=lng)
 
         if isinstance(res1, asyncio.TimeoutError):
             poi["warnings"].append("WIKIPEDIA_TIMEOUT")
@@ -852,11 +888,21 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None) -> Di
         if not wikipedia_result and wikidata_result:
             sitelinks = wikidata_result.get("sitelinks", {})
             
-            # Step 2: 優先核心語系 (zh -> ja -> en)
-            best_title = sitelinks.get("zhwiki") or sitelinks.get("jawiki") or sitelinks.get("enwiki")
+            # Step 2: 優先核心語系 (依請求語系切換優先序)
+            priority_links = (
+                [("enwiki", "en"), ("jawiki", "ja"), ("zhwiki", "zh")]
+                if is_en
+                else [("zhwiki", "zh"), ("jawiki", "ja"), ("enwiki", "en")]
+            )
+            best_title = ""
+            target_lang = wiki_lang
+            for link_key, link_lang in priority_links:
+                if sitelinks.get(link_key):
+                    best_title = sitelinks[link_key]
+                    target_lang = link_lang
+                    break
             
             # Step 3: 全球保底 (Phase 5.2: 抓取第一個可用語系)
-            target_lang = "zh" # Default
             if not best_title and sitelinks:
                 # 排除一些非百科的 Meta 連結
                 valid_wikis = [k for k in sitelinks.keys() if k.endswith("wiki") and not k.startswith("commons")]
@@ -872,8 +918,8 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None) -> Di
                     res_fallback = await asyncio.wait_for(get_wikipedia_summary(best_title, lang=target_lang, client=client, lat=lat, lng=lng), 2.0)
                     if isinstance(res_fallback, tuple):
                         wikipedia_result, wikipedia_image = res_fallback
-                        # 如果不是中文且抓取成功，標記需要翻譯
-                        if not target_lang.startswith("zh"):
+                        if wikipedia_result and not target_lang.startswith(wiki_lang):
+                            used_fallback_lang = target_lang
                             poi["resolved_language"] = target_lang
                     else:
                         wikipedia_result = res_fallback
@@ -914,16 +960,25 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None) -> Di
                 poi["image_url"] = f"https://commons.wikimedia.org/wiki/Special:FilePath/{img_name}?width=500"
 
             labels = wikidata_result.get("labels", {})
-            # BCP 47 優先權
-            primary = labels.get("zh-TW") or labels.get("zh-HK") or labels.get("zh-CN") or name
             ja_name = labels.get("ja-JP", "")
             en_name = labels.get("en-US", "")
-            
-            poi["resolved_language"] = "zh-TW" # 能查到 Wikidata 預設視為繁中處理
-            
-            secondary_parts = []
-            if ja_name and ja_name != primary: secondary_parts.append(ja_name)
-            if en_name: secondary_parts.append(f"({en_name})")
+            zh_name = labels.get("zh-TW") or labels.get("zh-HK") or labels.get("zh-CN") or ""
+
+            if is_en:
+                primary = en_name or zh_name or name
+                if not used_fallback_lang:
+                    poi["resolved_language"] = "en"
+                secondary_parts = []
+                if ja_name and ja_name != primary: secondary_parts.append(ja_name)
+                if zh_name and zh_name != primary: secondary_parts.append(f"({zh_name})")
+            else:
+                # BCP 47 優先權
+                primary = labels.get("zh-TW") or labels.get("zh-HK") or labels.get("zh-CN") or name
+                if not used_fallback_lang:
+                    poi["resolved_language"] = "zh-TW" # 能查到 Wikidata 預設視為繁中處理
+                secondary_parts = []
+                if ja_name and ja_name != primary: secondary_parts.append(ja_name)
+                if en_name: secondary_parts.append(f"({en_name})")
             
             poi["display_name"] = {
                 "primary": primary,
@@ -967,10 +1022,11 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None) -> Di
     return poi
 
 
-def format_enriched_poi_for_ai(poi: Dict) -> str:
+def format_enriched_poi_for_ai(poi: Dict, locale: str = "zh") -> str:
     """
     將豐富後的 POI 格式化為 AI 可讀文字
     """
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
     lines = []
     
     # 名稱 (主標題 + 副標題)
@@ -993,12 +1049,13 @@ def format_enriched_poi_for_ai(poi: Dict) -> str:
     
     # 官方連結
     if poi.get("official_url"):
-        lines.append(f"🔗 官網: {poi['official_url']}")
+        label = "Official Site" if is_en else "官網"
+        lines.append(f"🔗 {label}: {poi['official_url']}")
     
     return "\n".join(lines)
 
 
-def get_source_urls(poi: Dict, place_name: str) -> list:
+def get_source_urls(poi: Dict, place_name: str, locale: str = "zh") -> list:
     """
     🆕 v3.7.1: 提取來源 URLs 用於前端引用標示
     
@@ -1008,12 +1065,13 @@ def get_source_urls(poi: Dict, place_name: str) -> list:
             {"title": "WikiVoyage: 金閣寺", "url": "https://..."}
         ]
     """
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
     sources = []
     
     # Wikipedia 來源
     if poi.get("cultural_desc"):
-        # Wikipedia URL 格式
-        wiki_url = f"https://zh.wikipedia.org/wiki/{quote(place_name)}"
+        wiki_host = "en.wikipedia.org" if is_en else "zh.wikipedia.org"
+        wiki_url = f"https://{wiki_host}/wiki/{quote(place_name)}"
         sources.append({
             "title": f"Wikipedia: {place_name}",
             "url": wiki_url
@@ -1029,7 +1087,7 @@ def get_source_urls(poi: Dict, place_name: str) -> list:
     # 官方網站
     if poi.get("official_url"):
         sources.append({
-            "title": "官方網站",
+            "title": "Official Website" if is_en else "官方網站",
             "url": poi["official_url"]
         })
     
@@ -1040,7 +1098,8 @@ async def execute_resilient_nearby_search(
     anchor_place: str,
     category: str = "restaurant",
     keyword: str = "",
-    radius_meters: int = 500
+    radius_meters: int = 500,
+    locale: str = "zh"
 ) -> List[Dict[str, Any]]:
     """
     🌐 2026 雙軌韌性周邊搜尋執行器 (執行於伺服端 First-Pass 工具調用中)
@@ -1105,30 +1164,32 @@ async def execute_resilient_nearby_search(
         logger.warning(f"[NearbySearch] search_poi_combined timeout/error: {search_err}")
         raw_pois = []
 
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
     # 🛡️ 關鍵極速兜底：若 Overpass 逾時/429 或為空，立即啟動 Photon 毫秒級周邊模糊查詢
     if not raw_pois:
         try:
-            # 依關鍵字與類別判斷最佳 osm_tag 與 search_term (相容台灣、日本與歐美跨國圖資)
+            # 依關鍵字與類別判斷最佳 osm_tag 與 search_term (相容台灣、日本與歐美跨國圖資，含中英關鍵字清洗)
             clean_kw = sanitize_overpass_keyword(keyword)
             osm_tag = None
             term = clean_kw or category
+            term_lower = term.lower()
             
             # 智能映射 OSM Tag 與清洗通用虛詞
-            if category in ["restaurant", "food"] or any(k in term for k in ["拉麵", "美食", "餐廳", "小吃", "飯", "麵"]):
+            if category in ["restaurant", "food"] or any(k in term_lower for k in ["拉麵", "美食", "餐廳", "小吃", "飯", "麵", "ramen", "food", "restaurant", "dining"]):
                 osm_tag = "amenity:restaurant"
-                term = clean_kw if clean_kw and clean_kw not in ["美食", "特色美食", "必吃美食"] else "restaurant"
-            elif category == "cafe" or "咖啡" in term:
+                term = clean_kw if clean_kw and term_lower not in ["美食", "特色美食", "必吃美食", "food", "restaurant", "dining"] else "restaurant"
+            elif category == "cafe" or any(k in term_lower for k in ["咖啡", "cafe", "coffee"]):
                 osm_tag = "amenity:cafe"
-                term = clean_kw if clean_kw and clean_kw != "咖啡" else "cafe"
-            elif category in ["attraction", "sightseeing"] or any(k in term for k in ["景點", "必訪", "好玩", "參觀"]):
+                term = clean_kw if clean_kw and term_lower not in ["咖啡", "cafe", "coffee"] else "cafe"
+            elif category in ["attraction", "sightseeing"] or any(k in term_lower for k in ["景點", "必訪", "好玩", "參觀", "attraction", "sightseeing", "spots"]):
                 osm_tag = "tourism:attraction"
-                term = clean_kw if clean_kw and clean_kw not in ["景點", "必訪景點"] else "attraction"
-            elif category == "pharmacy" or any(k in term for k in ["藥局", "藥妝", "藥店"]):
+                term = clean_kw if clean_kw and term_lower not in ["景點", "必訪景點", "attraction", "sightseeing", "spots"] else "attraction"
+            elif category == "pharmacy" or any(k in term_lower for k in ["藥局", "藥妝", "藥店", "pharmacy", "drugstore"]):
                 osm_tag = "amenity:pharmacy"
-                term = clean_kw if clean_kw and clean_kw not in ["藥局", "藥妝"] else "pharmacy"
-            elif category == "convenience" or any(k in term for k in ["超商", "便利", "便利店", "便利商店"]):
+                term = clean_kw if clean_kw and term_lower not in ["藥局", "藥妝", "pharmacy", "drugstore"] else "pharmacy"
+            elif category == "convenience" or any(k in term_lower for k in ["超商", "便利", "便利店", "便利商店", "convenience"]):
                 osm_tag = "shop:convenience"
-                term = clean_kw if clean_kw and clean_kw not in ["超商", "便利店"] else "convenience"
+                term = clean_kw if clean_kw and term_lower not in ["超商", "便利店", "convenience"] else "convenience"
 
             user_agent = os.getenv("APP_USER_AGENT", "TabidachiTravelApp/2.0 (contact@tabidachi.app)")
             params = {
@@ -1140,6 +1201,7 @@ async def execute_resilient_nearby_search(
             if osm_tag:
                 params["osm_tag"] = osm_tag
 
+            default_nearby_name = "Unknown Place" if is_en else "周邊設施"
             async with httpx.AsyncClient(timeout=3.0, headers={"User-Agent": user_agent}) as client:
                 photon_resp = await client.get("https://photon.komoot.io/api/", params=params)
                 p_data = photon_resp.json() if photon_resp.status_code == 200 else {}
@@ -1160,7 +1222,7 @@ async def execute_resilient_nearby_search(
                         poi_lng, poi_lat = coords[0], coords[1]
                         dist = round(haversine_distance(f_lat, f_lng, poi_lat, poi_lng))
                         raw_pois.append({
-                            "name": props.get("name") or props.get("street") or "周邊設施",
+                            "name": props.get("name") or props.get("street") or default_nearby_name,
                             "category": category,
                             "lat": poi_lat,
                             "lng": poi_lng,
@@ -1183,6 +1245,7 @@ async def execute_resilient_nearby_search(
         filtered = raw_pois
 
     # 5. 格式壓縮輸出 Top 4 地點 (剔除多邊形與雜項頂點)
+    unnamed_label = "Unnamed Place" if is_en else "未命名設施"
     compact_results = []
     for item in filtered[:4]:
         p_lat = item.get("lat")
@@ -1190,7 +1253,7 @@ async def execute_resilient_nearby_search(
         if p_lat is None or p_lng is None:
             continue
         compact_results.append({
-            "name": item.get("name", "未命名設施"),
+            "name": item.get("name", unnamed_label),
             "category": item.get("category", category),
             "lat": round(float(p_lat), 6),
             "lng": round(float(p_lng), 6),

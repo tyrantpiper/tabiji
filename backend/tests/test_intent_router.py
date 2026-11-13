@@ -166,7 +166,8 @@ async def test_workhorse_classify_success():
 @pytest.mark.asyncio
 async def test_workhorse_classify_timeout():
     async def slow_mock(*args, **kwargs):
-        await asyncio.sleep(2.0)
+        # 超過 3.5s 外層總預算（1.2s per-model + fallback 預算），確認真實外層逾時仍平滑降級為 SEARCH
+        await asyncio.sleep(3.8)
         return '{"intent": "itinerary"}'
 
     with patch("services.intent_router.call_extraction_server", side_effect=slow_mock):

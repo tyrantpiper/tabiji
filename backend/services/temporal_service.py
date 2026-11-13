@@ -232,7 +232,8 @@ def calculate_temporal_itinerary_context(
     itinerary: Optional[Dict[str, Any]],
     client_time_iso: Optional[str] = None,
     client_tz_str: Optional[str] = "Asia/Taipei",
-    focused_day: Optional[int] = 1
+    focused_day: Optional[int] = 1,
+    locale: str = "zh"
 ) -> Dict[str, Any]:
     """
     確定性時間與行程進度運算引擎。
@@ -241,6 +242,8 @@ def calculate_temporal_itinerary_context(
     2. 以目的地當地時間為判定「旅行第幾天」與「活動是否結束」的絕對錨點。
     3. 計算時差與生命週期狀態（BEFORE_TRIP, IN_TRIP, AFTER_TRIP, GENERAL）。
     """
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
+
     # 1. 取得時區與基準時間
     client_tz = safe_get_zoneinfo(client_tz_str, fallback="Asia/Taipei")
     dest_tz_name = infer_destination_timezone(itinerary, str(client_tz))
@@ -262,7 +265,11 @@ def calculate_temporal_itinerary_context(
     dest_offset = dest_dt.utcoffset().total_seconds() if dest_dt.utcoffset() else 0.0
     diff_hours = (dest_offset - client_offset) / 3600.0
 
-    weekday_names = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+    weekday_names = (
+        ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        if is_en
+        else ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+    )
 
     context_data: Dict[str, Any] = {
         "client_time_str": client_dt.strftime("%Y-%m-%d %H:%M"),
@@ -274,7 +281,7 @@ def calculate_temporal_itinerary_context(
         "time_diff_hours": diff_hours,
         "is_different_tz": str(client_tz) != str(dest_tz),
         "lifecycle_stage": "GENERAL",
-        "lifecycle_desc": "無特定行程綁定",
+        "lifecycle_desc": "No specific itinerary bound" if is_en else "無特定行程綁定",
         "current_day_number": None,
         "is_today_completed": False,
         "items_progress": [],
@@ -303,19 +310,35 @@ def calculate_temporal_itinerary_context(
             if dest_d < start_d:
                 days_left = (start_d - dest_d).days
                 context_data["lifecycle_stage"] = "BEFORE_TRIP"
-                context_data["lifecycle_desc"] = f"🛫 行程尚未啟程 (距離出發還有 {days_left} 天，當前為行前規劃狀態)"
+                context_data["lifecycle_desc"] = (
+                    f"🛫 Trip has not started yet ({days_left} day(s) until departure; pre-trip planning stage)"
+                    if is_en
+                    else f"🛫 行程尚未啟程 (距離出發還有 {days_left} 天，當前為行前規劃狀態)"
+                )
             elif dest_d > end_d:
                 days_ago = (dest_d - end_d).days
                 context_data["lifecycle_stage"] = "AFTER_TRIP"
-                context_data["lifecycle_desc"] = f"🏁 行程已圓滿結束 (已結束 {days_ago} 天，當前為行程回顧狀態)"
+                context_data["lifecycle_desc"] = (
+                    f"🏁 Trip has concluded ({days_ago} day(s) ago; post-trip review stage)"
+                    if is_en
+                    else f"🏁 行程已圓滿結束 (已結束 {days_ago} 天，當前為行程回顧狀態)"
+                )
             else:
                 curr_day = (dest_d - start_d).days + 1
                 context_data["lifecycle_stage"] = "IN_TRIP"
-                context_data["lifecycle_desc"] = f"🚀 旅行進行中 (今天是旅程第 {curr_day} 天 / 共 {total_days} 天)"
+                context_data["lifecycle_desc"] = (
+                    f"🚀 Trip in progress (Day {curr_day} of {total_days})"
+                    if is_en
+                    else f"🚀 旅行進行中 (今天是旅程第 {curr_day} 天 / 共 {total_days} 天)"
+                )
                 context_data["current_day_number"] = curr_day
                 context_data["active_day"] = curr_day
         except Exception:
-            context_data["lifecycle_desc"] = "行程日期特殊，保持彈性檢視"
+            context_data["lifecycle_desc"] = (
+                "Custom itinerary dates; keeping flexible view"
+                if is_en
+                else "行程日期特殊，保持彈性檢視"
+            )
 
     # 3. 焦點天活動進度標記
     eval_day_num = context_data["current_day_number"] or focused_day or 1
@@ -343,7 +366,7 @@ def calculate_temporal_itinerary_context(
             t_start, t_end = parse_time_slot(raw_time)
 
             if not t_start:
-                tag = "[時間彈性]"
+                tag = "[Flexible Time]" if is_en else "[時間彈性]"
             else:
                 has_timed_items = True
                 start_m = t_start.hour * 60 + t_start.minute
@@ -361,12 +384,12 @@ def calculate_temporal_itinerary_context(
                     end_m = start_m + DEFAULT_EVENT_DURATION_MIN
 
                 if curr_m > end_m:
-                    tag = "[已過]"
+                    tag = "[Passed]" if is_en else "[已過]"
                 elif curr_m >= start_m:
-                    tag = "[📍 進行中]"
+                    tag = "[📍 In Progress]" if is_en else "[📍 進行中]"
                     all_timed_passed = False
                 else:
-                    tag = "[待進行]"
+                    tag = "[Upcoming]" if is_en else "[待進行]"
                     all_timed_passed = False
 
             context_data["items_progress"].append({
@@ -382,12 +405,40 @@ def calculate_temporal_itinerary_context(
     return context_data
 
 
-def format_temporal_header(temporal_info: Dict[str, Any]) -> str:
+def format_temporal_header(temporal_info: Dict[str, Any], locale: str = "zh") -> str:
     """
     格式化注入 Prompt 頂部之即時時間與進度說明區塊
     """
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
     client_str = f"{temporal_info['client_time_str']} ({temporal_info['client_weekday']}, {temporal_info['client_tz']})"
     dest_str = f"{temporal_info['dest_time_str']} ({temporal_info['dest_weekday']}, {temporal_info['dest_tz']})"
+
+    if is_en:
+        lines = [
+            "--- SYSTEM CONTEXT: TEMPORAL & ITINERARY NEURAL AWARENESS ---",
+            "[Real-Time Reference]",
+            f"- User Local Time: {client_str}",
+        ]
+
+        if temporal_info.get("is_different_tz"):
+            diff = temporal_info.get("time_diff_hours", 0)
+            diff_str = f"+{diff:g}" if diff > 0 else f"{diff:g}"
+            lines.append(f"- Destination Local Time: {dest_str} (Timezone offset {diff_str} hrs)")
+        else:
+            lines.append(f"- Destination Local Time: Same as user timezone ({dest_str})")
+
+        lines.append(f"- Trip Lifecycle: {temporal_info['lifecycle_desc']}")
+        lines.append("  (Note: Regardless of whether the trip has ended or not yet started, the traveler may simulate, edit, or adjust plans at any time. Always invoke add_itinerary_item when recommending specific spots or restaurants so interactive place cards appear.)")
+        lines.append("  [Persona Privacy Guard]: NEVER reveal or recite internal system terms like 'according to system records', 'in review mode', or 'background knowledge search' to the traveler. Always converse naturally and warmly as Ryan the travel friend.")
+
+        if temporal_info.get("is_today_completed"):
+            lines.append("- Current Activity Status: 🌙 [All Scheduled Activities Completed Today] (Acknowledge proactively and suggest rest or evening leisure)")
+        elif temporal_info.get("current_day_number"):
+            curr_d = temporal_info["current_day_number"]
+            lines.append(f"- Current Activity Status: 🏃 In Progress (Focused on Day {curr_d} schedule)")
+
+        lines.append("-------------------------------------------------------------")
+        return "\n".join(lines)
 
     lines = [
         "--- SYSTEM CONTEXT: TEMPORAL & ITINERARY NEURAL AWARENESS ---",
@@ -404,6 +455,7 @@ def format_temporal_header(temporal_info: Dict[str, Any]) -> str:
 
     lines.append(f"- 行程生命週期: {temporal_info['lifecycle_desc']}")
     lines.append("  (注意：無論行程日期是否已結束或尚未開始，使用者隨時可能進行模擬規劃、編輯或調整。當使用者詢問周邊或推薦具體美食/景點時，務必照常調用 add_itinerary_item 派發空間卡片供使用者自由加入行程)")
+    lines.append("  【最高隱私與擬人守則】：嚴禁在對話中向使用者背誦或解釋內部系統字眼（如「根據系統紀錄」、「處於回顧模式」、「背景知識搜尋」等）。請始終保持 Ryan 隨行旅伴的自然、貼心口吻，把這些資訊當作你的默會知識，自然地融入對話中。")
 
     if temporal_info.get("is_today_completed"):
         lines.append("- 當前活動狀態: 🌙 【今日排定活動已全部結束】(使用者詢問時請主動確認，並可建議休息或夜間自由活動)")
@@ -415,10 +467,10 @@ def format_temporal_header(temporal_info: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def query_world_time(query: str) -> Dict[str, Any]:
+def query_world_time(query: str, locale: str = "zh") -> Dict[str, Any]:
     """
     世界時間查詢工具實作 (Server-side ReAct)
-    支援城市名、國家名或 IANA 時區代碼。
+    支援城市名、國家名或 IANA 時區代碼與中英雙語輸出。
     """
     if not query or not isinstance(query, str):
         query = "London"
@@ -448,10 +500,21 @@ def query_world_time(query: str) -> Dict[str, Any]:
 
     target_tz = safe_get_zoneinfo(matched_tz_name, fallback="UTC")
     now_target = datetime.now(target_tz)
-    weekday_names = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
+    weekday_names = (
+        ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        if is_en
+        else ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+    )
 
     utc_offset = now_target.utcoffset().total_seconds() / 3600.0 if now_target.utcoffset() else 0.0
     offset_str = f"UTC{'+' if utc_offset >= 0 else ''}{utc_offset:g}"
+    weekday_str = weekday_names[now_target.weekday()]
+    formatted_str = (
+        f"Current local time in {query} is {now_target.strftime('%Y-%m-%d %H:%M')} ({weekday_str}, {offset_str})"
+        if is_en
+        else f"{query} 當前時間為 {now_target.strftime('%Y-%m-%d %H:%M')} ({weekday_str}, {offset_str})"
+    )
 
     return {
         "query": query,
@@ -459,7 +522,7 @@ def query_world_time(query: str) -> Dict[str, Any]:
         "local_time": now_target.strftime("%Y-%m-%d %H:%M:%S"),
         "date": now_target.strftime("%Y-%m-%d"),
         "time": now_target.strftime("%H:%M"),
-        "weekday": weekday_names[now_target.weekday()],
+        "weekday": weekday_str,
         "utc_offset": offset_str,
-        "formatted": f"{query} 當前時間為 {now_target.strftime('%Y-%m-%d %H:%M')} ({weekday_names[now_target.weekday()]}, {offset_str})"
+        "formatted": formatted_str,
     }

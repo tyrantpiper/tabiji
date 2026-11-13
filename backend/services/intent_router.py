@@ -19,6 +19,7 @@ from services.model_manager import (
     NEURAL_LINK_TOOLS,
     ALL_CHAT_TOOLS,
     call_extraction_server,
+    call_timeout_scope,
     detect_diagnosis_intent,
 )
 
@@ -28,6 +29,18 @@ from services.model_manager import (
 
 GREETING_PATTERN = re.compile(
     r"^[\s]*(你好|您好|哈囉|hello|hi|hey|早安|午安|晚安|嗨|嗨嗨|謝謝(你|您)?|感謝(你|您)?|多謝(你|您)?|感恩|thx|thanks|3q)[\s\!！\?？\.\~]*$",
+    re.IGNORECASE
+)
+
+# 🛡️ 2026: 擴充讚美、誇獎與感謝快篩正則 (0ms Fast-Path，徹底截斷無效搜尋與工具掛載)
+PRAISE_PATTERN = re.compile(
+    r"^[\s]*(你好|您好|哈囉|hello|hi|hey|早安|午安|晚安|嗨|嗨嗨|"
+    r"(非常|十分|太)?(感謝|謝謝|多謝)(你|您)?(了)?|感恩|thx|thanks(\s*(a\s*lot|so\s*much))?|thank\s*you(\s*(so\s*much|very\s*much))?|3q|"
+    r"你?(真|很|太|好|超)?(棒|強|厲害|讚|神|貼心|聰明|給力|不賴|不錯|有料|神準)(了|的)?|"
+    r"(真|很|太|超)?(不賴|不錯|可以|給過|行喔|水喔|水啦|屌喔|牛逼|厲害欸)|做得好|辛苦(你|您)?(了|啦)|"
+    r"(you\s*are|you['’]re)\s*(the\s*best|awesome|great|amazing|wonderful)|"
+    r"good\s*job|awesome|great(\s*job)?|amazing|well\s*done|bravo|nice|love\s*you)"
+    r"[\s\!！\?？\.\~～阿啊啦耶喔吧的唷呦捏呢呀哈欸誒\(\)\^_\^XD]*$",
     re.IGNORECASE
 )
 
@@ -83,18 +96,18 @@ INVISIBLE_FORMAT_CHARS_RE = re.compile(
 
 # 🛡️ 系統合法前置與後置 Context 標記：涵蓋全庫所有系統脈絡包裝格式
 SYSTEM_PREFIX_ANCHOR_RE = re.compile(
-    r"^\s*(?:--- SYSTEM CONTEXT:\s*(?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\)|[A-Za-z0-9_ -]+)\s*---|--- USER PREFERENCES|【系統背景|【當前行程脈絡】|用戶詢問關於「|"
-    r"📍 \*\*附近|🔬 以下是來自維基百科|💰 \*\*即時機票參考價格|"
-    r"\[系統即時解析外部網頁資訊|\[系統提示：使用者上傳了一張圖片|\[WEATHER\]|\[2026 Neural Weather\]|\[CURRENT TIME)"
+    r"^\s*(?:--- SYSTEM CONTEXT:\s*(?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\)|[A-Za-z0-9_ -]+)\s*---|--- USER PREFERENCES|【系統背景|【當前行程脈絡】|用戶詢問關於「|The user is asking about \"[^\"\n]+\"\.|User is asking about [\"「]|"
+    r"📍 \*\*(?:附近|Nearby )|🔬 以下是來自維基百科|💰 \*\*(?:即時機票參考價格|Live Flight Fare Reference )|"
+    r"\[系統即時解析外部網頁資訊|\[Live External Webpage Content \(Source: |\[SYSTEM REAL-TIME WEB PAGE ANALYSIS|\[系統提示：使用者上傳了一張圖片|\[System Notice: The uploaded image could not be parsed\]|\[SYSTEM HINT:|\[WEATHER\]|\[2026 Neural Weather\]|\[CURRENT TIME)"
 )
 SYSTEM_BOUNDARY_END_RE = re.compile(
-    r"(?:--- END OF SYSTEM CONTEXT ---|-{20,}|用戶原始問題：|使用者需求：)\s*",
+    r"(?:--- END OF SYSTEM CONTEXT ---|-{20,}|用戶原始問題：|使用者需求：|Original question:|User's original question:|User [Rr]equest:)\s*",
     re.DOTALL,
 )
 USER_INPUT_OPEN_TAG_RE = re.compile(r"<user_input_([a-zA-Z0-9_-]+)>\s*")
 SYSTEM_ALLOWED_SUFFIX_RE = re.compile(
-    r"^\s*(?:$|📍 \*\*附近|--- SYSTEM CONTEXT:\s*(?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\))\s*---|--- USER PREFERENCES|💰 \*\*即時機票參考價格|"
-    r"\[CURRENT TIME|\[WEATHER\]|請根據以上(?:即時資料|資料)回答用戶問題)"
+    r"^\s*(?:$|📍 \*\*(?:附近|Nearby )|--- SYSTEM CONTEXT:\s*(?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\))\s*---|--- USER PREFERENCES|💰 \*\*(?:即時機票參考價格|Live Flight Fare Reference )|"
+    r"\[CURRENT TIME|\[WEATHER\]|請根據以上(?:即時資料|資料)回答用戶問題|(?:Please )?[Aa]nswer the user's question based on)"
 )
 SPOOFED_USER_TAG_RE = re.compile(r"</?user_input_[a-zA-Z0-9_-]*>")
 
@@ -174,25 +187,30 @@ def _fast_path_classify(message: str) -> Optional[str]:
     if "http://" in trimmed or "https://" in trimmed:
         return "SEARCH"
 
-    # 2. 短問候語 (短路為 CHAT，完全卸載卡片工具以防幻覺)
-    if len(trimmed) <= 8 and GREETING_PATTERN.match(trimmed):
+    # 2. 短問候與讚美語 (短路為 CHAT，完全卸載卡片工具以防幻覺、杜絕無效搜尋)
+    if len(trimmed) <= 30 and (GREETING_PATTERN.match(trimmed) or PRAISE_PATTERN.match(trimmed)):
         return "CHAT"
 
     # 3. 優先檢查移除行程 (避免「把淺草寺移除」被誤判為行程新增)
     if REMOVE_PATTERN.search(trimmed):
         return "REMOVE_ITINERARY"
 
-    # 4. 主動搜尋動作詞檢測 (搜索、搜尋、上網查、查一下、google 等最優先攔截，避免「查這家好不好吃」被誤判為健檢)
-    has_search_action = bool(re.search(
-        r"(\b(search|google|look\s*up|find|check)\b|搜索|搜尋|上網查|查一下|幫我查|查看看|查詢|找一下|找找|谷歌|聯網|網路搜索|網路搜尋)",
+    # 4. 主動搜尋動作詞檢測 (搜索、搜尋、上網查、查一下、google 等最優先攔截；
+    # 若僅命中英文 "check" 且同時符合診斷關鍵字如 "Check if my itinerary makes sense?"，放行給 Step 5 診斷，同時保留 "Check weather..." -> SEARCH)
+    strong_search_action = bool(re.search(
+        r"(\b(search|google|look\s*up|find)\b|搜索|搜尋|上網查|查一下|幫我查|查看看|查詢|找一下|找找|谷歌|聯網|網路搜索|網路搜尋)",
         trimmed, re.IGNORECASE
     ))
-    if has_search_action:
+    if strong_search_action:
         return "SEARCH"
 
     # 5. 檢查診斷意圖
     if detect_diagnosis_intent(trimmed):
         return "DIAGNOSIS"
+
+    # 6. 英文 "check" 一般查詢兜底 (如 "Check weather in Kyoto tomorrow")
+    if re.search(r"\bcheck\b", trimmed, re.IGNORECASE):
+        return "SEARCH"
 
     # 6. 檢查記帳與行程意圖
     # 🛡️ 排除詢問價格之疑問句（如「多少錢」、「算貴嗎」、「預算」、「預估」、「how much」），避免誤觸記帳
@@ -215,32 +233,34 @@ def _fast_path_classify(message: str) -> Optional[str]:
 
 
 async def _workhorse_classify(message: str, api_key: Optional[str] = None) -> str:
-    """Stage 2: 31B 工作馬極速語意前置分類 (帶隱形字元清洗與 1.8s 硬性超時保護)"""
+    """Stage 2: 31B 工作馬極速語意前置分類 (帶隱形字元清洗、單次 1.2s 與總預算 3.5s 超時保護)"""
     eval_text = _extract_clean_user_text(message, max_len=200)
     prompt = CHAT_INTENT_PROMPT.format(message=eval_text)
     try:
-        # 🛡️ 放寬至 1.8 秒超時保護，兼顧首包延遲與跨國網路穩定性
-        raw_text = await asyncio.wait_for(
-            call_extraction_server(prompt, intent_type="INTENT_PARSE", api_key=api_key),
-            timeout=1.8
-        )
-        match = re.search(r'\{[\s\S]*\}', raw_text)
-        if match:
-            data = json.loads(match.group())
-            intent = data.get("intent", "").lower()
-            intent_map = {
-                "chat": "CHAT",
-                "itinerary": "ITINERARY",
-                "remove_itinerary": "REMOVE_ITINERARY",
-                "expense": "EXPENSE",
-                "composite": "COMPOSITE",
-                "diagnosis": "DIAGNOSIS",
-                "search": "SEARCH",
-            }
-            if intent in intent_map:
-                return intent_map[intent]
+        # 🛡️ 內層 per-model 1.2s + 外層 3.5s 超時保護，確保單一模型 503/慢回應時仍來得及切入備援模型完成分類
+        with call_timeout_scope(1.2):
+            raw_text = await asyncio.wait_for(
+                call_extraction_server(prompt, intent_type="INTENT_PARSE", api_key=api_key),
+                timeout=3.5
+            )
+        if raw_text and raw_text.strip():
+            match = re.search(r'\{[\s\S]*\}', raw_text)
+            if match:
+                data = json.loads(match.group())
+                intent = data.get("intent", "").lower()
+                intent_map = {
+                    "chat": "CHAT",
+                    "itinerary": "ITINERARY",
+                    "remove_itinerary": "REMOVE_ITINERARY",
+                    "expense": "EXPENSE",
+                    "composite": "COMPOSITE",
+                    "diagnosis": "DIAGNOSIS",
+                    "search": "SEARCH",
+                }
+                if intent in intent_map:
+                    return intent_map[intent]
     except asyncio.TimeoutError:
-        print("⏱️ [IntentRouter] 31B 工作馬分類逾時 (>1.8s)，平滑降級為全功能 SEARCH 意圖保持工具可用性")
+        print("⏱️ [IntentRouter] 31B 工作馬分類逾時 (>3.5s)，平滑降級為全功能 SEARCH 意圖保持工具可用性")
     except Exception as e:
         print(f"⚠️ [IntentRouter] 31B 工作馬分類失敗: {e}，平滑降級為 SEARCH 意圖")
 

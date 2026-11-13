@@ -102,8 +102,9 @@ NOISE_TITLE_PATTERNS = [
 
 # ==================== 3. Query Extraction & Dual Rewriting ====================
 
-def detect_destination(query: str, history: Optional[List[dict]] = None) -> Dict[str, Any]:
+def detect_destination(query: str, history: Optional[List[dict]] = None, locale: str = "zh") -> Dict[str, Any]:
     """辨識目的地代碼 (TW, JP, KR, TH, GLOBAL) 與名稱"""
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
     combined_text = query
     if history:
         for msg in reversed(history[-4:]):
@@ -126,7 +127,7 @@ def detect_destination(query: str, history: Optional[List[dict]] = None) -> Dict
 
     return {
         "code": "GLOBAL",
-        "matched_name": "全球",
+        "matched_name": "Local" if is_en else "全球",
         "taxonomy": None
     }
 
@@ -171,6 +172,12 @@ def clean_conversational_query(user_msg: str) -> str:
         user_msg.strip(),
         flags=re.IGNORECASE
     ).strip()
+    clean_msg = re.sub(
+        r'^(?:can you please|could you please|please|kindly|help me|can you|could you)?\s*(?:search for|search|look[- ]?up|lookup|google|find out|find|tell me about|what are the|query)\s+(?:the\s+|about\s+)?',
+        '',
+        clean_msg,
+        flags=re.IGNORECASE
+    ).strip()
     clean_msg = re.sub(r'(?:現在的|當前的|推薦的|熱門的|有沒有|我想知道|我想了解|有哪些|哪裡有|告訴我)', ' ', clean_msg)
     clean_msg = re.sub(r'[嗎？\?~～!！\.]+$', '', clean_msg).strip()
     clean_msg = re.sub(r'\s+', ' ', clean_msg).strip()
@@ -199,13 +206,14 @@ def resolve_destination_regions(dest_code: str, query: str) -> Tuple[str, str]:
     return local_reg, "us-en"
 
 
-def generate_dual_queries(query: str, history: Optional[List[dict]] = None) -> Tuple[str, str, Dict[str, Any]]:
+def generate_dual_queries(query: str, history: Optional[List[dict]] = None, locale: str = "zh") -> Tuple[str, str, Dict[str, Any]]:
     """
     雙軌關鍵字合成 (Local Deep-Dive + Global Reddit Traveler)
     回傳: (local_query, global_query, metadata)
     """
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
     clean_text = clean_conversational_query(query)
-    dest_info = detect_destination(query, history=history)
+    dest_info = detect_destination(query, history=history, locale=locale)
     code = dest_info["code"]
     tax = dest_info.get("taxonomy")
 
@@ -221,11 +229,11 @@ def generate_dual_queries(query: str, history: Optional[List[dict]] = None) -> T
 
     if code != "GLOBAL" and tax:
         matched_dest = dest_info["matched_name"]
-        local_terms = tax["local_keywords"]
+        local_terms = "local travel tips" if is_en and code in ("EU", "US", "SG", "VN", "HK") else tax["local_keywords"]
         global_terms = tax["global_reddit_terms"]
 
         # 在地軌：若問題內未包含目的地名稱，補上目的地
-        if matched_dest not in clean_text:
+        if matched_dest.lower() not in clean_text.lower():
             local_query = f"{matched_dest} {clean_text} {local_terms}".strip()
         else:
             local_query = f"{clean_text} {local_terms}".strip()
@@ -237,13 +245,25 @@ def generate_dual_queries(query: str, history: Optional[List[dict]] = None) -> T
         dynamic_country = detect_global_country_entity(query, history=history)
         if dynamic_country:
             c_zh, c_en = dynamic_country
-            local_query = f"{clean_text} 旅遊 推薦".strip() if c_zh in clean_text else f"{c_zh} {clean_text} 旅遊 推薦".strip()
+            if is_en:
+                local_query = (
+                    f"{clean_text} travel guide tips".strip()
+                    if c_en.lower() in clean_text.lower()
+                    else f"{c_en} {clean_text} travel guide tips".strip()
+                )
+                metadata["matched_destination"] = c_en
+            else:
+                local_query = f"{clean_text} 旅遊 推薦".strip() if c_zh in clean_text else f"{c_zh} {clean_text} 旅遊 推薦".strip()
+                metadata["matched_destination"] = c_zh
             # 全球軌動態注入地道英文國名，直接擊中 Reddit 國際旅人版！
             global_query = f"{c_en} travel reddit recommendations tips hidden gems".strip()
-            metadata["matched_destination"] = c_zh
         else:
             # 通用全球目的地
-            local_query = f"{clean_text} 旅遊 推薦".strip()
+            if is_en:
+                local_query = f"{clean_text} travel guide tips".strip()
+                metadata["matched_destination"] = "Local"
+            else:
+                local_query = f"{clean_text} 旅遊 推薦".strip()
             global_query = f"{clean_text} travel reddit recommendations tips".strip()
 
     return local_query, global_query, metadata

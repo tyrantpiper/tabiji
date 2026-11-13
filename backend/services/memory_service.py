@@ -59,14 +59,14 @@ class MemoryService:
         prompt = f"用戶說：\n<user_query>{message}</user_query>\n\nAI 回應：\n<ai_response>{ai_response}</ai_response>"
 
         try:
-            # 🆕 v5.0: 使用 call_extraction + DAILY_ROUTING 降級保護
+            # 🆕 v5.0: 使用 call_extraction + MEMORY_EXTRACT (顯式 JSON Schema 與低思考開銷)
             raw_result = await call_extraction(
                 api_key, prompt,
-                intent_type="SUMMARIZE",
+                intent_type="MEMORY_EXTRACT",
                 routing_strategy=DAILY_ROUTING,
                 system_instruction=sys_inst,
             )
-            cleaned = raw_result.replace("```json", "").replace("```", "").strip()
+            cleaned = (raw_result or "").replace("```json", "").replace("```", "").strip()
             if not cleaned or cleaned == "[]":
                 return
 
@@ -76,7 +76,11 @@ class MemoryService:
                 prefs = [p.model_dump() for p in parsed.preferences]
             except Exception:
                 # Fallback: 嘗試直接解析為 list (向後兼容)
-                raw_parsed = json.loads(cleaned)
+                try:
+                    raw_parsed = json.loads(cleaned)
+                except Exception as je:
+                    print(f"⚠️ MemoryService JSON 解析失敗: {je} | snippet={cleaned[:120]!r}")
+                    return
                 if isinstance(raw_parsed, list):
                     prefs = raw_parsed
                 elif isinstance(raw_parsed, dict) and "preferences" in raw_parsed:

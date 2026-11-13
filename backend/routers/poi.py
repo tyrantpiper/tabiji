@@ -12,7 +12,7 @@ import json
 import re
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from fastapi import APIRouter, Depends, HTTPException, Request, Header, Query
 from fastapi.responses import StreamingResponse
 import httpx
 import uuid
@@ -37,13 +37,24 @@ from services.poi_service import (
     search_wikivoyage
 )
 from services.smart_search_service import smart_search
-from services.model_manager import call_extraction
+from services.model_manager import (
+    call_extraction,
+    NonRetryableAuthError,
+    NonRetryableRequestError,
+    AllModelsFailedError,
+    map_ai_exception_to_http_status,
+)
 from utils.poi_utils import generate_v2_cache_key
 
 router = APIRouter(prefix="/api", tags=["poi"])
 
 # 🆕 Phase 2 Cache (Process-level with v2 versioning)
 POI_ENRICH_CACHE: Dict[str, Dict] = {}
+
+
+def __resetPoiEnrichCacheForTesting() -> None:
+    """重置 POI_ENRICH_CACHE 測試輔助函數（原地 clear，維持模組引用契約）。"""
+    POI_ENRICH_CACHE.clear()
 
 
 class PoiResolveLinkRequest(BaseModel):
@@ -143,13 +154,17 @@ async def ai_enrich_poi(fastapi_req: Request, request: POIAIEnrichRequest):
     具備背景並行抓取、三級保底鏈防護與 v2 版本化快取。
     """
     try:
-        # 🆕 Step 3: 快取檢查 (v2 versioned)
+        locale = request.locale or "zh"
+        is_en = bool(str(locale).strip().lower().startswith("en"))
+
+        # 🆕 Step 3: 快取檢查 (v2 versioned + locale partitioned)
         cache_key = generate_v2_cache_key(
             name=request.name,
             lat=request.lat,
             lng=request.lng,
             poi_id=request.poi_id,
-            wikidata_id=request.wikidata_id
+            wikidata_id=request.wikidata_id,
+            locale=locale,
         )
         
         if cache_key in POI_ENRICH_CACHE:
@@ -158,17 +173,18 @@ async def ai_enrich_poi(fastapi_req: Request, request: POIAIEnrichRequest):
 
         api_key = request.api_key
         if not api_key:
-            raise HTTPException(status_code=400, detail="需要 API Key")
+            raise HTTPException(status_code=400, detail="API Key required" if is_en else "需要 API Key")
         
-        print(f"🔍 [POI Enrich] 開始抓取與摘要: {request.name} (Wiki + AI)...")
+        print(f"🔍 [POI Enrich] 開始抓取與摘要: {request.name} (Wiki + AI, locale={locale})...")
         
+        lang_label = "English summary" if is_en else "Traditional Chinese summary"
         prompt = f"""
 You are a travel guide assistant. Search the web for reviews and vibes for:
 - Name: {request.name}
 - Type: {request.type}
 - Location: {request.lat}, {request.lng}
 
-Output in this EXACT JSON format (Traditional Chinese summary):
+Output in this EXACT JSON format ({lang_label}):
 {{
     "summary": "1-2 sentence vibe check",
     "must_try": ["Item 1", "Item 2"],
@@ -188,21 +204,31 @@ Output in this EXACT JSON format (Traditional Chinese summary):
             "wikidata_id": request.wikidata_id or "",
             "lat": request.lat,
             "lng": request.lng
-        }, fastapi_req.app.state.client)
+        }, getattr(fastapi_req.app.state, "client", None), lang="en" if is_en else "zh")
         
         ai_result, wiki_result = await asyncio.gather(ai_task, wiki_task, return_exceptions=True)
         
         # 1. 處理 AI 摘要結果
         ai_data = {}
-        if not isinstance(ai_result, Exception):
+        ai_warning: Optional[str] = None
+        if isinstance(ai_result, NonRetryableAuthError):
+            raise ai_result
+        if isinstance(ai_result, Exception):
+            print(f"⚠️ [POI Enrich] AI 調用失敗 ({request.name}): {type(ai_result).__name__}: {ai_result}")
+            ai_warning = "AI_UNAVAILABLE"
+        elif isinstance(ai_result, str) and ai_result.strip():
             json_match = re.search(r'\{[\s\S]*\}', ai_result)
             if json_match:
                 try:
                     ai_data = json.loads(json_match.group())
-                except:
-                    ai_data = {"summary": ai_result[:200]}
+                except Exception as je:
+                    print(f"⚠️ [POI Enrich] AI JSON 解析失敗 ({request.name}): {je} | snippet={ai_result[:160]!r}")
+                    ai_data = {"summary": ai_result.strip()[:200]}
             else:
-                ai_data = {"summary": str(ai_result)[:200]}
+                ai_data = {"summary": ai_result.strip()[:200]}
+        else:
+            print(f"⚠️ [POI Enrich] AI 回傳空內容 ({request.name})")
+            ai_warning = "AI_EMPTY_OUTPUT"
         
         # 2. 處理 Wiki 結果
         if isinstance(wiki_result, Exception):
@@ -213,27 +239,44 @@ Output in this EXACT JSON format (Traditional Chinese summary):
                 "travel_tips": None
             }
         
-        # 🆕 Phase 5.2: AI Translation Fallback
+        # 🆕 Phase 5.2: AI Translation Fallback (雙語對齊)
         resolved_lang = wiki_result.get("resolved_language", "zh-TW")
         cultural_desc = wiki_result.get("cultural_desc")
         
-        if cultural_desc and resolved_lang != "zh-TW" and not str(resolved_lang).startswith("zh"):
-            print(f"🌐 [AI Translate] Translating {resolved_lang} to zh-TW...")
-            translation_prompt = f"請將以下維基百科描述翻譯為繁體中文（zh-TW），保持旅遊指南的專業語氣：\n\n{cultural_desc}"
-            try:
-                translated = await call_extraction(
-                    api_key=api_key,
-                    prompt=translation_prompt,
-                    intent_type="SUMMARIZE"  # Use SUMMARIZE for simple translation tasks to avoid schema overhead
-                )
-                if translated:
-                    wiki_result["cultural_desc"] = translated
-                    wiki_result["resolved_language"] = f"zh-TW (translated from {resolved_lang})"
-            except Exception as te:
-                print(f"⚠️ Translation failed: {te}")
+        if is_en:
+            if cultural_desc and not str(resolved_lang).lower().startswith("en"):
+                print(f"🌐 [AI Translate] Translating {resolved_lang} to en...")
+                translation_prompt = f"Translate the following Wikipedia description into natural, fluent English with a professional travel guide tone:\n\n{cultural_desc}"
+                try:
+                    translated = await call_extraction(
+                        api_key=api_key,
+                        prompt=translation_prompt,
+                        intent_type="SUMMARIZE"
+                    )
+                    if translated and translated.strip():
+                        wiki_result["cultural_desc"] = translated.strip()
+                        wiki_result["resolved_language"] = f"en (translated from {resolved_lang})"
+                except Exception as te:
+                    print(f"⚠️ Translation failed: {te}")
+        else:
+            if cultural_desc and resolved_lang != "zh-TW" and not str(resolved_lang).startswith("zh"):
+                print(f"🌐 [AI Translate] Translating {resolved_lang} to zh-TW...")
+                translation_prompt = f"請將以下維基百科描述翻譯為繁體中文（zh-TW），保持旅遊指南的專業語氣：\n\n{cultural_desc}"
+                try:
+                    translated = await call_extraction(
+                        api_key=api_key,
+                        prompt=translation_prompt,
+                        intent_type="SUMMARIZE"  # Use SUMMARIZE for simple translation tasks to avoid schema overhead
+                    )
+                    if translated and translated.strip():
+                        wiki_result["cultural_desc"] = translated.strip()
+                        wiki_result["resolved_language"] = f"zh-TW (translated from {resolved_lang})"
+                except Exception as te:
+                    print(f"⚠️ Translation failed: {te}")
 
         # 3. 數據合流與保底鏈 (Summary Fallback Chain)
-        final_summary = ai_data.get("summary") or wiki_result.get("cultural_desc") or f"{request.name} 是位於當地的地點。"
+        default_summary = f"{request.name} is a notable local point of interest." if is_en else f"{request.name} 是位於當地的地點。"
+        final_summary = ai_data.get("summary") or wiki_result.get("cultural_desc") or default_summary
         
         # 4. 狀態判定
         ai_success = bool(ai_data.get("summary"))
@@ -245,6 +288,10 @@ Output in this EXACT JSON format (Traditional Chinese summary):
         if not ai_success and wiki_status == "FAILED":
             final_status = "FAILED"
             
+        merged_warnings = list(wiki_result.get("warnings") or [])
+        if ai_warning and ai_warning not in merged_warnings:
+            merged_warnings.append(ai_warning)
+
         result_payload = {
             "summary": final_summary,
             "must_try": ai_data.get("must_try") or [],
@@ -252,10 +299,10 @@ Output in this EXACT JSON format (Traditional Chinese summary):
             "business_status": ai_data.get("business_status") or "UNKNOWN",
             "cultural_desc": wiki_result.get("cultural_desc"),
             "travel_tips": wiki_result.get("travel_tips"),
-            "resolved_language": wiki_result.get("resolved_language") or "zh-TW",
+            "resolved_language": wiki_result.get("resolved_language") or ("en" if is_en else "zh-TW"),
             "image_url": wiki_result.get("image_url"), # 🆕 Phase 5.4: Expose image
             "status": final_status,
-            "warnings": (wiki_result.get("warnings") or []),
+            "warnings": merged_warnings,
             "official_url": wiki_result.get("official_url")
         }
 
@@ -268,9 +315,16 @@ Output in this EXACT JSON format (Traditional Chinese summary):
         
     except HTTPException:
         raise
+    except (NonRetryableAuthError, NonRetryableRequestError, AllModelsFailedError) as e:
+        is_en_err = bool(request.locale and str(request.locale).strip().lower().startswith("en"))
+        status_code, _, detail = map_ai_exception_to_http_status(e, is_en=is_en_err)
+        raise HTTPException(status_code=status_code, detail=detail)
     except Exception as e:
         print(f"🔥 AI POI 整合失敗：{e}")
-        raise HTTPException(status_code=500, detail=f"AI 增強失敗: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="AI enrichment temporarily unavailable" if request.locale and str(request.locale).strip().lower().startswith("en") else "AI 增強失敗，請稍後重試"
+        )
 
 
 @router.post("/poi/enrich")
@@ -294,8 +348,12 @@ async def enrich_poi(fastapi_req: Request, body: POIEnrichRequest):
             "lng": body.lng
         }
         
-        enriched = await enrich_poi_complete(poi, fastapi_req.app.state.client)
-        formatted = format_enriched_poi_for_ai(enriched)
+        enriched = await enrich_poi_complete(
+            poi,
+            getattr(fastapi_req.app.state, "client", None),
+            lang="en" if str(body.locale or "zh").strip().lower().startswith("en") else "zh",
+        )
+        formatted = format_enriched_poi_for_ai(enriched, locale=body.locale or "zh")
         
         return {
             "success": True,
@@ -361,22 +419,31 @@ async def ai_recommend_poi(request: POIRecommendRequest):
     2. 只傳精簡摘要給 Gemini（~200 tokens vs ~2000 tokens）
     3. 節省 80%+ Token 消耗
     """
+    locale = request.locale or "zh"
+    is_en = bool(str(locale).strip().lower().startswith("en"))
     if not request.pois:
-        return {"recommendation": "附近沒有找到相關地點，請嘗試其他類別或擴大搜索範圍。"}
+        return {
+            "recommendation": (
+                "No nearby places found. Please try another category or expand the search radius."
+                if is_en
+                else "附近沒有找到相關地點，請嘗試其他類別或擴大搜索範圍。"
+            )
+        }
     
     if not request.api_key:
         raise HTTPException(status_code=400, detail="API key required")
     
     try:
         # Step 1: 格式化 POI 為精簡文字
-        pois_text = format_pois_for_ai(request.pois, max_items=5)
+        pois_text = format_pois_for_ai(request.pois, max_items=5, locale=locale)
         print(f"🤖 [POI Recommend] 正在為 {len(request.pois)} 個地點進行 AI 推薦評估...")
         
         # Step 2: 生成精簡 prompt
         prompt = get_ai_prompt_for_recommendation(
             pois_text,
             request.user_query,
-            request.user_preferences
+            request.user_preferences,
+            locale=locale,
         )
         
         # 🆕 v5.0: 使用 call_extraction 獲得 3 層降級保護
@@ -385,27 +452,47 @@ async def ai_recommend_poi(request: POIRecommendRequest):
         
         recommendation_text = await call_extraction(
             request.api_key, prompt,
-            intent_type="POI_ENRICH",
+            intent_type="POI_RECOMMEND",
             routing_strategy=DAILY_ROUTING,
         )
+        if not recommendation_text or not recommendation_text.strip():
+            raise HTTPException(
+                status_code=503,
+                detail="AI recommendation returned empty response" if is_en else "AI 推薦回傳空白內容，請稍後重試",
+            )
         
         print(f"✅ [POI Recommend] AI 推薦完成")
         return {
-            "recommendation": recommendation_text,
+            "recommendation": recommendation_text.strip(),
             "pois_count": len(request.pois),
             "token_optimized": True
         }
         
     except HTTPException:
         raise
+    except (NonRetryableAuthError, NonRetryableRequestError, AllModelsFailedError) as e:
+        status_code, _, detail = map_ai_exception_to_http_status(e, is_en=is_en)
+        raise HTTPException(status_code=status_code, detail=detail)
     except Exception as e:
         print(f"🔥 POI Recommend Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/poi/categories")
-async def get_poi_categories():
+async def get_poi_categories(locale: str = Query("zh")):
     """📋 取得支援的 POI 類別列表"""
+    is_en = bool(str(locale or "zh").strip().lower().startswith("en"))
+    if is_en:
+        return {
+            "categories": [
+                {"id": "department_store", "name": "Department Store", "icon": "🏬"},
+                {"id": "restaurant", "name": "Restaurants & Dining", "icon": "🍽️"},
+                {"id": "convenience", "name": "Convenience Store", "icon": "🏪"},
+                {"id": "supermarket", "name": "Supermarket", "icon": "🛒"},
+                {"id": "pharmacy", "name": "Pharmacy & Drugstore", "icon": "💊"},
+                {"id": "popular", "name": "Popular Attractions", "icon": "🔥"}
+            ]
+        }
     return {
         "categories": [
             {"id": "department_store", "name": "百貨公司", "icon": "🏬"},
@@ -499,11 +586,18 @@ async def ai_smart_search(request: SmartSearchRequest):
             lng=request.lng,
             region=request.region,
             trip_title=request.trip_title,
-            max_results=request.max_results
+            max_results=request.max_results,
+            locale=request.locale or "zh"
         )
         
         return result
         
+    except HTTPException:
+        raise
+    except (NonRetryableAuthError, NonRetryableRequestError, AllModelsFailedError) as e:
+        is_en_ss = bool(request.locale and str(request.locale).strip().lower().startswith("en"))
+        status_code, _, detail = map_ai_exception_to_http_status(e, is_en=is_en_ss)
+        raise HTTPException(status_code=status_code, detail=detail)
     except Exception as e:
         print(f"🔥 Smart Search Error: {e}")
         raise HTTPException(status_code=500, detail=f"Smart search failed: {str(e)}")

@@ -14,18 +14,26 @@ def round_poi_coord(coord: float) -> str:
     """將座標四捨五入至小數點後 6 位，確保快取命中率"""
     return f"{coord:.6f}"
 
-def generate_v2_cache_key(name: str, lat: float, lng: float, poi_id: str = None, wikidata_id: str = None) -> str:
+def generate_v2_cache_key(
+    name: str,
+    lat: float,
+    lng: float,
+    poi_id: str = None,
+    wikidata_id: str = None,
+    locale: str = "zh"
+) -> str:
     """
-    生成 POI 增強快取 Key (v2)
+    生成 POI 增強快取 Key (v2，含語系隔離)
     優先順序：poi_id > wikidata_id > normalized_name+coords:v2
     """
+    loc = "en" if str(locale or "zh").strip().lower().startswith("en") else "zh"
     if poi_id:
-        return f"poi:v2:id:{poi_id}"
+        return f"poi:v2:{loc}:id:{poi_id}"
     if wikidata_id:
-        return f"poi:v2:wiki:{wikidata_id}"
-    
+        return f"poi:v2:{loc}:wiki:{wikidata_id}"
+
     norm_name = normalize_poi_name(name)
     r_lat = round_poi_coord(lat)
     r_lng = round_poi_coord(lng)
-    
-    return f"poi:v2:loc:{norm_name}:{r_lat}:{r_lng}"
+
+    return f"poi:v2:{loc}:loc:{norm_name}:{r_lat}:{r_lng}"

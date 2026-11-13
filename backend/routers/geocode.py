@@ -26,12 +26,25 @@ from services.smart_search_service import smart_search
 router = APIRouter(prefix="/api/geocode", tags=["geocode"])
 
 
+async def _timed_smart_search(**kwargs):
+    """獨立包裹 Task B (smart_search) 逾時保護，確保不拖垮並行的 Task A 地理編碼結果。"""
+    try:
+        return await asyncio.wait_for(smart_search(**kwargs), timeout=8.0)
+    except asyncio.TimeoutError:
+        log_debug("⏱️ [Fusion] smart_search timed out (>8.0s), falling back to base geocode")
+        return None
+    except Exception as exc:
+        log_debug(f"⚠️ [Fusion] smart_search failed cleanly: {exc}")
+        return None
+
+
 @router.post("/search")
 @limiter.limit("30/minute")
 async def geocode_search(
     request: Request,
     body: GeocodeSearchRequest,
-    x_gemini_key: str = Header(None, alias="X-Gemini-Key")
+    x_gemini_key: str = Header(None, alias="X-Gemini-Key"),
+    x_gemini_api_key: str = Header(None, alias="X-Gemini-API-Key"),
 ):
     """🔍 智能地理編碼搜尋（四層架構）
     
@@ -43,7 +56,10 @@ async def geocode_search(
     
     🆕 支援結構化過濾參數 (country/region)
     """
-    log_debug(f"REQ: q='{body.query}', trip='{body.tripTitle}', country={body.country}, region={body.region}, zoom={body.zoom}, bias={body.lat},{body.lng}")
+    resolved_gemini_key = x_gemini_key or x_gemini_api_key
+    locale = body.locale or "zh"
+    is_en = str(locale).strip().lower().startswith("en")
+    log_debug(f"REQ: q='{body.query}', trip='{body.tripTitle}', country={body.country}, region={body.region}, zoom={body.zoom}, bias={body.lat},{body.lng}, locale={locale}")
     
     # 💡 搜尋融合 (Search Fusion) Phase 1: 意圖雙向觸發
     # 如果偵測到具體的 POI 意圖（如「拉麵」、「景點」），同步啟動 Smart Search 挖掘。
@@ -54,7 +70,7 @@ async def geocode_search(
         body.query, 
         body.limit, 
         body.tripTitle, 
-        x_gemini_key, 
+        resolved_gemini_key, 
         body.lat, 
         body.lng,
         body.country,
@@ -63,18 +79,19 @@ async def geocode_search(
         body.bbox
     ))
     
-    # Task B: 智慧意圖挖掘 (僅在偵測到意圖且有 API Key 時)
-    trigger_smart = is_poi_query(body.query) and x_gemini_key
+    # Task B: 智慧意圖挖掘 (僅在偵測到意圖且有 API Key 時，受獨立 8.0s 逾時保護)
+    trigger_smart = bool(is_poi_query(body.query) and resolved_gemini_key)
     if trigger_smart:
         log_debug(f"🧠 [Fusion] POI Intent Detected: '{body.query}' -> Triggering Smart Search")
-        search_tasks.append(smart_search(
-            api_key=x_gemini_key,
+        search_tasks.append(_timed_smart_search(
+            api_key=resolved_gemini_key,
             query=body.query,
             lat=body.lat or 35.6895, # 預設東京 or 傳入座標
             lng=body.lng or 139.6917,
             region=body.region or body.tripTitle,
             trip_title=body.tripTitle,
-            max_results=body.limit
+            max_results=body.limit,
+            locale=locale,
         ))
     
     # 並行處理
@@ -91,24 +108,53 @@ async def geocode_search(
     if trigger_smart and len(results) > 1 and not isinstance(results[1], Exception):
         smart_results = results[1]
         
-    # 🧬 結果匯流 (Normalization)
-    if smart_results and "recommendations" in smart_results:
-        # 將 Smart Search 的推薦轉化為地圖 Pin 點格式
+    # 🧬 結果匯流 (Normalization)：優先讀取 v2 "results"，向後相容舊版 "recommendations"
+    raw_smart_items = None
+    if isinstance(smart_results, dict):
+        if isinstance(smart_results.get("results"), list) and smart_results["results"]:
+            raw_smart_items = smart_results["results"]
+        elif isinstance(smart_results.get("recommendations"), list) and smart_results["recommendations"]:
+            raw_smart_items = smart_results["recommendations"]
+
+    if raw_smart_items:
         fusion_pois = []
-        for rec in smart_results["recommendations"]:
+        default_addr = "Nearby" if is_en else "推薦地點"
+        default_name = "Unknown Place" if is_en else "未知地點"
+        for rec in raw_smart_items:
+            if not isinstance(rec, dict):
+                continue
+            lat_val = rec.get("lat")
+            lng_val = rec.get("lng")
+            if lat_val is None or lng_val is None:
+                continue
+            highlights = rec.get("highlights")
+            first_highlight = highlights[0] if isinstance(highlights, list) and len(highlights) > 0 else None
+            name = rec.get("name") or default_name
+            address = rec.get("address") or first_highlight or default_addr
+            reason = rec.get("reason")
+            if reason:
+                subtitle = reason
+            elif rec.get("address"):
+                subtitle = rec["address"]
+            elif rec.get("distance") is not None:
+                subtitle = f"{rec['distance']}m"
+            else:
+                subtitle = ""
+            display_name = f"✨ {name} ({subtitle})" if subtitle else f"✨ {name}"
             fusion_pois.append({
-                "name": rec["name"],
-                "display_name": f"✨ {rec['name']} ({rec['reason']})", # 顯示推薦理由
-                "lat": rec["lat"],
-                "lng": rec["lng"],
+                "name": name,
+                "display_name": display_name,
+                "lat": lat_val,
+                "lng": lng_val,
                 "type": "poi",
                 "importance": 0.9,
-                "address": rec.get("highlights", ["推薦地點"])[0],
+                "address": address,
                 "source": "smart_fusion"
             })
-        # 決定混合策略：POI 置頂，地理定位置後（這讓「搜拉麵」能直接看到店）
-        base_list = geocode_results.get("results", []) if isinstance(geocode_results, dict) else (geocode_results if isinstance(geocode_results, list) else [])
-        return {"results": fusion_pois + base_list, "source": "smart_fusion"}
+        if fusion_pois:
+            # 決定混合策略：POI 置頂，地理定位置後（這讓「搜拉麵」能直接看到店）
+            base_list = geocode_results.get("results", []) if isinstance(geocode_results, dict) else (geocode_results if isinstance(geocode_results, list) else [])
+            return {"results": fusion_pois + base_list, "source": "smart_fusion"}
         
     return geocode_results
 
@@ -177,13 +223,19 @@ async def geocode_resolve_link(request: Request, body: dict):
 
 @router.post("/resolve-address", response_model=None)
 @limiter.limit("20/minute")
-async def resolve_address(request: Request, body: ResolveAddressRequest, x_gemini_key: str = Header(None, alias="X-Gemini-Key")):
+async def resolve_address(
+    request: Request,
+    body: ResolveAddressRequest,
+    x_gemini_key: str = Header(None, alias="X-Gemini-Key"),
+    x_gemini_api_key: str = Header(None, alias="X-Gemini-API-Key"),
+):
     """📍 獨立地址解析器 (FOSS 規範)
     專門處理結構化地址與 5 大黃金屬性。
     統一返回 ResolveAddressErrorResponse DTO 以利前端判斷 retryable。
     """
+    resolved_gemini_key = x_gemini_key or x_gemini_api_key
     try:
-        result = await resolve_address_pipeline(body.address, user_gemini_key=x_gemini_key)
+        result = await resolve_address_pipeline(body.address, user_gemini_key=resolved_gemini_key)
         if result:
             return {"success": True, **result}
         

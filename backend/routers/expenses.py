@@ -8,6 +8,7 @@ from models.base import (
     ReceiptDiagnostics
 )
 from utils.deps import get_supabase, get_verified_user
+from utils.idempotency import get_idempotent_response, store_idempotent_response
 import json
 import uuid
 import hashlib
@@ -193,6 +194,7 @@ def calculate_total_fallback(data_source: Any, provided_total: Optional[float] =
 @router.post("")
 async def add_expense(
     request: ExpenseRequest, 
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
@@ -201,6 +203,10 @@ async def add_expense(
         if request.itinerary_id:
             if not check_trip_access(supabase, request.itinerary_id, user_id):
                 raise HTTPException(status_code=403, detail="您沒有權限為此行程新增費用")
+
+        cached_response = get_idempotent_response("add_expense", user_id, idempotency_key)
+        if cached_response is not None:
+            return cached_response
 
         # 🛡️ 真相源校驗
         provided_total = request.total_amount if request.total_amount is not None else request.amount_jpy
@@ -293,12 +299,14 @@ async def add_expense(
             print(f"❌ Supabase Insertion Failed: {res}")
             raise HTTPException(status_code=500, detail="資料庫寫入失敗，請稍後再試")
 
-        return {"status": "success"}
+        result = {"status": "success"}
+        store_idempotent_response("add_expense", user_id, idempotency_key, result)
+        return result
     except HTTPException:
         raise
     except Exception as e:
         print(f"❌ Add Expense Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="新增費用失敗，請稍後重試")
 
 
 @router.get("/{trip_id}/expenses")
@@ -507,9 +515,11 @@ async def update_expense(
             raise HTTPException(status_code=404, detail="更新失敗：找不到記錄或資料庫錯誤")
 
         return {"status": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Update Expense Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="更新費用失敗，請稍後重試")
 
 
 @router.delete("/{expense_id}")

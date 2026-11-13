@@ -17,7 +17,7 @@ import string
 import copy
 import hashlib
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Any
 from fastapi import APIRouter, Depends, HTTPException, Header
 
@@ -39,14 +39,59 @@ from models.base import (
     ExpenseResponse,      # 🆕 Data Parity
     ReceiptDiagnostics    # 🆕 Data Parity
 )
-from .expenses import normalize_items  # 🆕 Data Parity
+from .expenses import normalize_items, check_trip_access  # 🆕 Data Parity + BOLA Guard
 from services.link_resolver import resolve_google_maps_link
 from services.cover_service import resolve_destination_cover_url
+from utils.concurrency import trip_lock
 from utils.deps import get_supabase, get_verified_user
 from utils.helpers import generate_room_code, generate_public_id, ensure_user_exists
+from utils.idempotency import get_idempotent_response, store_idempotent_response
 from utils.constants import DAY_MAP_FIELDS, CLONEABLE_FIELDS
 
 router = APIRouter(prefix="/api/trips", tags=["trips"])
+
+
+def _first_row(data: Any) -> Optional[dict]:
+    """Safely extract the first row dict from either PostgREST list or .single() dict."""
+    if not data:
+        return None
+    if isinstance(data, list):
+        return data[0] if isinstance(data[0], dict) else None
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+def _safe_single_data(query: Any) -> Optional[dict]:
+    """Execute a .single() query while converting PGRST116 0-row errors into None for 404 handling."""
+    try:
+        res = query.execute()
+    except Exception as exc:
+        msg = str(exc)
+        if "PGRST116" in msg or "0 rows" in msg or "multiple (or no) rows" in msg:
+            return None
+        raise
+    return _first_row(getattr(res, "data", None))
+
+
+def _chunked(seq: List[str], size: int = 50):
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
+def _rollback_created_trip(supabase: Any, trip_id: Optional[str]) -> None:
+    """Best-effort compensating deletion across child tables and parent itinerary to prevent quota-consuming orphans."""
+    if not trip_id:
+        return
+    for tbl, col in (
+        ("itinerary_items", "itinerary_id"),
+        ("trip_members", "itinerary_id"),
+        ("itineraries", "id"),
+    ):
+        try:
+            supabase.table(tbl).delete().eq(col, trip_id).execute()
+        except Exception as rollback_err:
+            print(f"⚠️ Compensating cleanup error ({tbl}): {rollback_err}")
 
 def resolve_trip_currency(trip: Optional[dict], content: Optional[dict]) -> str:
     """確定性解析行程幣別，含舊行程標題語意回溯"""
@@ -534,18 +579,24 @@ async def delete_trip(
 @router.post("/create-manual")
 async def create_manual_trip(
     request: CreateManualTripRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
     """🔥 手動建立空白行程"""
     try:
+        cached = get_idempotent_response("create_manual_trip", user_id, idempotency_key)
+        if cached is not None:
+            return cached
+
         # 🆕 Phase 2: 行程數量限制（最多 3 個自建行程）
         count_res = supabase.table("itineraries")\
             .select("id", count="exact")\
             .eq("created_by", user_id)\
             .execute()
         
-        owned_count = count_res.count or 0
+        raw_count = getattr(count_res, "count", None)
+        owned_count = raw_count if isinstance(raw_count, int) else len(count_res.data or [])
         if owned_count >= 3:
             raise HTTPException(
                 status_code=403, 
@@ -578,18 +629,30 @@ async def create_manual_trip(
         await ensure_user_exists(supabase, user_id, request.creator_name)
         
         trip_res = supabase.table("itineraries").insert(trip_data).execute()
+        if not trip_res.data:
+            raise HTTPException(status_code=500, detail="建立行程失敗：資料庫未傳回建立結果")
         trip_id = trip_res.data[0]['id']
 
-        # 加入成員
-        supabase.table("trip_members").insert({
-            "itinerary_id": trip_id,
-            "user_id": user_id,
-            "user_name": request.creator_name
-        }).execute()
+        # 加入成員 (若失敗則執行補償刪除，避免留下孤兒行程佔用配額)
+        try:
+            supabase.table("trip_members").insert({
+                "itinerary_id": trip_id,
+                "user_id": user_id,
+                "user_name": request.creator_name
+            }).execute()
+        except Exception as member_err:
+            print(f"⚠️ create_manual_trip member insert failed, rolling back trip {trip_id}: {member_err}")
+            _rollback_created_trip(supabase, trip_id)
+            raise HTTPException(status_code=500, detail="建立行程成員關聯失敗，已回滾復原")
 
-        return {"status": "success", "trip_id": trip_id, "share_code": room_code, "public_id": pub_id}
+        response_payload = {"status": "success", "trip_id": trip_id, "share_code": room_code, "public_id": pub_id}
+        store_idempotent_response("create_manual_trip", user_id, idempotency_key, response_payload)
+        return response_payload
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"🔥 create_manual_trip error: {e}")
+        raise HTTPException(status_code=500, detail="建立行程失敗，請稍後重試")
 
 
 @router.patch("/{trip_id}/title")
@@ -816,6 +879,7 @@ async def get_latest_itinerary(
 @router.post("/save-itinerary")
 async def save_itinerary(
     request: SaveItineraryRequest, 
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
@@ -828,7 +892,12 @@ async def save_itinerary(
     print(f"   User ID: {request.user_id}")
     print(f"   項目數量: {len(request.items)}")
     
+    created_trip_id: Optional[str] = None
     try:
+        cached = get_idempotent_response("save_itinerary", user_id, idempotency_key)
+        if cached is not None:
+            return cached
+
         # 🆕 Phase 2: 行程數量限制 (最多 3 個自建行程)
         # 🛡️ 競態防禦：在此進行最終檢查。注意：最高強度的防禦建議在資料庫端建立 Trigger
         # SQL範例: CREATE TRIGGER check_trip_limit BEFORE INSERT ON itineraries ...
@@ -851,7 +920,7 @@ async def save_itinerary(
         pub_id = generate_public_id()
         
         # 🆕 自動計算 end_date (支援天數防禦性展延，絕不截斷)
-        start_date = request.start_date or datetime.now().strftime("%Y-%m-%d")
+        start_date = request.start_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         max_day = max((item.day_number for item in request.items), default=1) if request.items else 1
         try:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
@@ -924,6 +993,7 @@ async def save_itinerary(
             raise HTTPException(status_code=500, detail="無法建立主行程")
             
         trip_id = trip_res.data[0]["id"]
+        created_trip_id = trip_id
         print(f"✅ 主行程建立成功 ID: {trip_id}, 房間號: {room_code}")
 
         # 3. 自動把創建者加入成員列表
@@ -981,14 +1051,22 @@ async def save_itinerary(
                         print(f"         Data: {item}")
                 raise item_err
             
-        return {"status": "success", "trip_id": trip_id, "share_code": room_code, "public_id": pub_id}
+        response_payload = {"status": "success", "trip_id": trip_id, "share_code": room_code, "public_id": pub_id}
+        store_idempotent_response("save_itinerary", user_id, idempotency_key, response_payload)
+        return response_payload
 
     except HTTPException:
+        if created_trip_id:
+            print(f"⚠️ save_itinerary aborted via HTTPException after parent insert; rolling back trip {created_trip_id}")
+            _rollback_created_trip(supabase, created_trip_id)
         raise
     except Exception as e:
+        if created_trip_id:
+            print(f"⚠️ save_itinerary failed after parent insert; rolling back trip {created_trip_id}")
+            _rollback_created_trip(supabase, created_trip_id)
         print(f"🔥 Save Error: {e}")
         print(f"   Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="儲存行程失敗，請稍後重試")
 
 
 @router.post("/import-to-trip")
@@ -1024,8 +1102,7 @@ async def import_to_trip(
 
         existing_content = existing_trip.get("content") or {}
         
-        # 2. 合併 content 資料
-        # 🆕 區分兩種合併模式：
+        # 2. 合併 content 資料輔助函數
         #    - merge_dicts: 用於 daily_locations (一天只有一個中心點，覆蓋)
         #    - deep_merge_day_arrays: 用於 notes/costs/tickets (同一天可追加)
         
@@ -1056,24 +1133,6 @@ async def import_to_trip(
                 else:
                     result[day_key] = new_items  # 非陣列則覆蓋
             return result
-            
-        # 🛡️ 戰略修復 4.0: 全欄位保留型深度合併 (Neural Preservation Merge)
-        # 確保在匯入內容時，不會抹除 credit_cards, flight_info, hotel_info 等欄位
-        updated_content = (existing_content or {}).copy()
-        
-        # B. 深度合併每日數組數據 (追加)
-        if request.day_notes:
-            updated_content["day_notes"] = deep_merge_day_arrays(updated_content.get("day_notes"), request.day_notes)
-        if request.day_costs:
-            updated_content["day_costs"] = deep_merge_day_arrays(updated_content.get("day_costs"), request.day_costs)
-        if request.day_tickets:
-            updated_content["day_tickets"] = deep_merge_day_arrays(updated_content.get("day_tickets"), request.day_tickets)
-        if request.day_checklists:
-            updated_content["day_checklists"] = deep_merge_day_arrays(updated_content.get("day_checklists"), request.day_checklists)
-        
-        # C. 合併 AI 審核 (保留原有的或更新)
-        if request.ai_review:
-            updated_content["ai_review"] = request.ai_review
         
         # 3. 取得現有地點組合，執行「智能去重」(Smart Deduplication) 與空間錨點取樣
         existing_items_res = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng").eq("itinerary_id", request.trip_id).execute()
@@ -1103,89 +1162,113 @@ async def import_to_trip(
             },
             existing_items=existing_items_list,
         )
-        updated_content["daily_locations"] = merge_dicts(
-            resolved_import_daily_locs or {},
-            existing_content.get("daily_locations") or {},
-        )
 
-        # 5. 更新主行程 content
-        supabase.table("itineraries").update({"content": updated_content}).eq("id", request.trip_id).execute()
-
+        # 5. Per-trip RMW 鎖序列化讀取、合併與寫入（防止併發匯入/更新覆蓋 JSONB 或產生重複細項）
         items_data = []
-        max_imported_day = 0
         skipped_count = 0
-        
-        for idx, item in enumerate(request.items):
-            # 去重檢查：若 (天數, 地名) 已存在則跳過
-            if (item.day_number, item.place_name) in existing_set:
-                skipped_count += 1
-                continue
-                
-            healed_coord = healed_import_items[idx] if idx < len(healed_import_items) else {}
-            max_imported_day = max(max_imported_day, item.day_number)
-            items_data.append({
-                "itinerary_id": request.trip_id,
-                "day_number": item.day_number,
-                "time_slot": item.time_slot,
-                "place_name": item.place_name,
-                "original_name": item.original_name,
-                "category": item.category,
-                "notes": item.desc,
-                "location_lat": healed_coord.get("lat", item.lat),
-                "location_lng": healed_coord.get("lng", item.lng),
-                "cost_amount": item.cost_amount,
-                "reservation_code": item.reservation_code,
-                "tags": item.tags,
-                "sub_items": item.sub_items,
-                "link_url": item.link_url,
-                "website_link": item.website_link,
-                "memo": item.memo,
-                "image_url": item.image_url,
-                "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
-                "hide_navigation": item.hide_navigation,
-                "is_private": item.is_private,
-                "is_highlight": item.is_highlight,
-                "preview_metadata": item.preview_metadata
-            })
-            
-        # 🛡️ 戰略修復 v6.2: 自動同步行程結束日期 (Robust Date Range Sync)
-        # 🆕 v10: 優先使用 AI 偵測到的 start_date (若現有行程尚未設定或需要同步)
-        sync_start_date = request.start_date or existing_trip.get("start_date")
-        
-        if max_imported_day > 0 and sync_start_date:
-            try:
-                # datetime/timedelta now at top level
-                # 🛡️ 彈性解析：處理可能的 ISO 時間戳
-                raw_start = str(sync_start_date).split('T')[0]
-                start_dt = datetime.strptime(raw_start, "%Y-%m-%d")
-                
-                # 若行程原本沒日期，則更新為 AI 偵測到的日期
-                if not existing_trip.get("start_date") and request.start_date:
-                    print(f"📅 [Auto-Sync] Setting missing start_date to: {request.start_date}")
-                    supabase.table("itineraries").update({"start_date": request.start_date}).eq("id", request.trip_id).execute()
+        async with trip_lock(request.trip_id):
+            fresh_trip_res = supabase.table("itineraries").select("*").eq("id", request.trip_id).execute()
+            if fresh_trip_res is not None and not getattr(fresh_trip_res, "data", None):
+                raise HTTPException(status_code=404, detail="找不到指定的行程")
+            fresh_trip = _first_row(getattr(fresh_trip_res, "data", None)) or existing_trip
+            fresh_content = dict(fresh_trip.get("content") or {})
 
-                # 計算新天數對應的結束日期
-                new_end_dt = start_dt + timedelta(days=max_imported_day - 1)
-                new_end_date = new_end_dt.strftime("%Y-%m-%d")
-                
-                # 獲取目前的結束日期並正規化
-                current_days = 1
-                if existing_trip.get("end_date"):
-                    raw_end = str(existing_trip["end_date"]).split('T')[0]
-                    old_end_dt = datetime.strptime(raw_end, "%Y-%m-%d")
-                    current_days = (old_end_dt - start_dt).days + 1
-                
-                if max_imported_day > current_days:
-                    print(f"📅 [Auto-Sync] Extending trip end_date to: {new_end_date} (Day {max_imported_day})")
-                    supabase.table("itineraries").update({"end_date": new_end_date}).eq("id", request.trip_id).execute()
-                else:
-                    print(f"📅 [Auto-Sync] No extension needed (Day {max_imported_day} <= {current_days})")
-            except Exception as date_err:
-                print(f"⚠️ [Date Sync Critical Failure] {date_err} | Start: {existing_trip.get('start_date')}")
+            # 🛡️ 戰略修復 4.0: 全欄位保留型深度合併 (Neural Preservation Merge)
+            # 確保在匯入內容時，不會抹除 credit_cards, flight_info, hotel_info, day_ai_reviews 等欄位
+            updated_content = fresh_content.copy()
 
-        if items_data:
-            print(f"   📦 準備插入 {len(items_data)} 個細項 (已跳過 {skipped_count} 個重複項)...")
-            supabase.table("itinerary_items").insert(items_data).execute()
+            # B. 深度合併每日數組數據 (追加)
+            if request.day_notes:
+                updated_content["day_notes"] = deep_merge_day_arrays(updated_content.get("day_notes"), request.day_notes)
+            if request.day_costs:
+                updated_content["day_costs"] = deep_merge_day_arrays(updated_content.get("day_costs"), request.day_costs)
+            if request.day_tickets:
+                updated_content["day_tickets"] = deep_merge_day_arrays(updated_content.get("day_tickets"), request.day_tickets)
+            if request.day_checklists:
+                updated_content["day_checklists"] = deep_merge_day_arrays(updated_content.get("day_checklists"), request.day_checklists)
+
+            # C. 合併 AI 審核 (保留原有的或更新)
+            if request.ai_review:
+                updated_content["ai_review"] = request.ai_review
+
+            updated_content["daily_locations"] = merge_dicts(
+                resolved_import_daily_locs or {},
+                fresh_content.get("daily_locations") or {},
+            )
+
+            # 更新主行程 content
+            supabase.table("itineraries").update({"content": updated_content}).eq("id", request.trip_id).execute()
+
+            fresh_items_res = supabase.table("itinerary_items").select("day_number, place_name").eq("itinerary_id", request.trip_id).execute()
+            for item in (getattr(fresh_items_res, "data", None) or []):
+                existing_set.add((item["day_number"], item["place_name"]))
+
+            max_imported_day = 0
+            for idx, item in enumerate(request.items):
+                # 去重檢查：若 (天數, 地名) 已存在則跳過
+                if (item.day_number, item.place_name) in existing_set:
+                    skipped_count += 1
+                    continue
+
+                healed_coord = healed_import_items[idx] if idx < len(healed_import_items) else {}
+                max_imported_day = max(max_imported_day, item.day_number)
+                items_data.append({
+                    "itinerary_id": request.trip_id,
+                    "day_number": item.day_number,
+                    "time_slot": item.time_slot,
+                    "place_name": item.place_name,
+                    "original_name": item.original_name,
+                    "category": item.category,
+                    "notes": item.desc,
+                    "location_lat": healed_coord.get("lat", item.lat),
+                    "location_lng": healed_coord.get("lng", item.lng),
+                    "cost_amount": item.cost_amount,
+                    "reservation_code": item.reservation_code,
+                    "tags": item.tags,
+                    "sub_items": item.sub_items,
+                    "link_url": item.link_url,
+                    "website_link": item.website_link,
+                    "memo": item.memo,
+                    "image_url": item.image_url,
+                    "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
+                    "hide_navigation": item.hide_navigation,
+                    "is_private": item.is_private,
+                    "is_highlight": item.is_highlight,
+                    "preview_metadata": item.preview_metadata
+                })
+
+            # 🛡️ 戰略修復 v6.2: 自動同步行程結束日期 (Robust Date Range Sync)
+            sync_start_date = request.start_date or fresh_trip.get("start_date")
+
+            if max_imported_day > 0 and sync_start_date:
+                try:
+                    raw_start = str(sync_start_date).split('T')[0]
+                    start_dt = datetime.strptime(raw_start, "%Y-%m-%d")
+
+                    if not fresh_trip.get("start_date") and request.start_date:
+                        print(f"📅 [Auto-Sync] Setting missing start_date to: {request.start_date}")
+                        supabase.table("itineraries").update({"start_date": request.start_date}).eq("id", request.trip_id).execute()
+
+                    new_end_dt = start_dt + timedelta(days=max_imported_day - 1)
+                    new_end_date = new_end_dt.strftime("%Y-%m-%d")
+
+                    current_days = 1
+                    if fresh_trip.get("end_date"):
+                        raw_end = str(fresh_trip["end_date"]).split('T')[0]
+                        old_end_dt = datetime.strptime(raw_end, "%Y-%m-%d")
+                        current_days = (old_end_dt - start_dt).days + 1
+
+                    if max_imported_day > current_days:
+                        print(f"📅 [Auto-Sync] Extending trip end_date to: {new_end_date} (Day {max_imported_day})")
+                        supabase.table("itineraries").update({"end_date": new_end_date}).eq("id", request.trip_id).execute()
+                    else:
+                        print(f"📅 [Auto-Sync] No extension needed (Day {max_imported_day} <= {current_days})")
+                except Exception as date_err:
+                    print(f"⚠️ [Date Sync Critical Failure] {date_err} | Start: {fresh_trip.get('start_date')}")
+
+            if items_data:
+                print(f"   📦 準備插入 {len(items_data)} 個細項 (已跳過 {skipped_count} 個重複項)...")
+                supabase.table("itinerary_items").insert(items_data).execute()
             
         return {
             "status": "success", 
@@ -1199,7 +1282,7 @@ async def import_to_trip(
     except Exception as e:
         print(f"🔥 Import Error: {e}")
         print(f"   Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="匯入行程失敗，請稍後重試")
 
 
 @router.patch("/{trip_id}/day-data")
@@ -1221,70 +1304,71 @@ async def update_day_data(
         if not member_check.data:
             raise HTTPException(status_code=403, detail="您沒有權限修改此行程資訊")
         print(f"📝 更新 Day {request.day} 資訊 for Trip {trip_id}")
-        
-        # 1. 取得現有行程 (包含頂層欄位以進行 Lazy Migration)
-        # 🔧 FIX: Use select("*") to avoid crashing if legacy columns don't exist in DB
-        trip_res = supabase.table("itineraries").select("*").eq("id", trip_id).execute()
-        if not trip_res.data:
-            raise HTTPException(status_code=404, detail="Trip not found")
-        
-        trip = trip_res.data[0]
-        content = trip.get("content") or {}
-        
-        # 🧠 Lazy Migration Strategy (Merge-on-Write)
-        # 確保在寫入前，content 包含了所有 Legacy Data
-        def migrate_field(field_name: str):
-            # 如果 content 沒有該欄位 (或為空)，但頂層有，則遷移進來
-            if not content.get(field_name) and trip.get(field_name):
-                content[field_name] = trip.get(field_name)
-                print(f"📦 [Lazy Migration] Migrated {field_name} from legacy column to content")
+
+        async with trip_lock(trip_id):
+            # 1. 取得現有行程 (包含頂層欄位以進行 Lazy Migration)
+            # 🔧 FIX: Use select("*") to avoid crashing if legacy columns don't exist in DB
+            trip_res = supabase.table("itineraries").select("*").eq("id", trip_id).execute()
+            trip = _first_row(trip_res.data)
+            if not trip:
+                raise HTTPException(status_code=404, detail="Trip not found")
+            
+            content = dict(trip.get("content") or {})
+            
+            # 🧠 Lazy Migration Strategy (Merge-on-Write)
+            # 確保在寫入前，content 包含了所有 Legacy Data
+            def migrate_field(field_name: str):
+                # 如果 content 沒有該欄位 (或為空)，但頂層有，則遷移進來
+                if not content.get(field_name) and trip.get(field_name):
+                    content[field_name] = trip.get(field_name)
+                    print(f"📦 [Lazy Migration] Migrated {field_name} from legacy column to content")
+                    
+            migrate_field("day_notes")
+            migrate_field("day_costs")
+            migrate_field("day_tickets")
+            migrate_field("day_checklists")
+            migrate_field("ai_review")
+            migrate_field("day_ai_reviews")
+            migrate_field("daily_locations") # Note: Usually fetched separately but good to ensure
+            
+            # 2. 更新對應的資料 (注意: 前端傳來的 key 是字串或整數，需統一處理)
+            day_key = str(request.day)
+            
+            if request.day_notes is not None:
+                existing_notes = dict(content.get("day_notes") or {})
+                # 前端傳來的格式: { "1": [...] } 或 { 1: [...] }
+                new_data = request.day_notes.get(day_key) or request.day_notes.get(request.day) or []
+                existing_notes[day_key] = new_data
+                content["day_notes"] = existing_notes
                 
-        migrate_field("day_notes")
-        migrate_field("day_costs")
-        migrate_field("day_tickets")
-        migrate_field("day_checklists")
-        migrate_field("ai_review")
-        migrate_field("day_ai_reviews")
-        migrate_field("daily_locations") # Note: Usually fetched separately but good to ensure
-        
-        # 2. 更新對應的資料 (注意: 前端傳來的 key 是字串或整數，需統一處理)
-        day_key = str(request.day)
-        
-        if request.day_notes is not None:
-            existing_notes = content.get("day_notes", {})
-            # 前端傳來的格式: { "1": [...] } 或 { 1: [...] }
-            new_data = request.day_notes.get(day_key) or request.day_notes.get(request.day) or []
-            existing_notes[day_key] = new_data
-            content["day_notes"] = existing_notes
+            if request.day_costs is not None:
+                existing_costs = dict(content.get("day_costs") or {})
+                new_data = request.day_costs.get(day_key) or request.day_costs.get(request.day) or []
+                existing_costs[day_key] = new_data
+                content["day_costs"] = existing_costs
+                
+            if request.day_tickets is not None:
+                existing_tickets = dict(content.get("day_tickets") or {})
+                new_data = request.day_tickets.get(day_key) or request.day_tickets.get(request.day) or []
+                existing_tickets[day_key] = new_data
+                content["day_tickets"] = existing_tickets
             
-        if request.day_costs is not None:
-            existing_costs = content.get("day_costs", {})
-            new_data = request.day_costs.get(day_key) or request.day_costs.get(request.day) or []
-            existing_costs[day_key] = new_data
-            content["day_costs"] = existing_costs
-            
-        if request.day_tickets is not None:
-            existing_tickets = content.get("day_tickets", {})
-            new_data = request.day_tickets.get(day_key) or request.day_tickets.get(request.day) or []
-            existing_tickets[day_key] = new_data
-            content["day_tickets"] = existing_tickets
-        
-        # 🆕 行前清單
-        if request.day_checklists is not None:
-            existing_checklists = content.get("day_checklists", {})
-            new_data = request.day_checklists.get(day_key) or request.day_checklists.get(request.day) or []
-            existing_checklists[day_key] = new_data
-            content["day_checklists"] = existing_checklists
-            
-        # 🆕 AI 深度審核
-        if request.day_ai_reviews is not None:
-            existing_reviews = content.get("day_ai_reviews", {})
-            new_data = request.day_ai_reviews.get(day_key) or request.day_ai_reviews.get(request.day) or ""
-            existing_reviews[day_key] = new_data
-            content["day_ai_reviews"] = existing_reviews
-            
-        # 3. 儲存更新後的 content
-        supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute()
+            # 🆕 行前清單
+            if request.day_checklists is not None:
+                existing_checklists = dict(content.get("day_checklists") or {})
+                new_data = request.day_checklists.get(day_key) or request.day_checklists.get(request.day) or []
+                existing_checklists[day_key] = new_data
+                content["day_checklists"] = existing_checklists
+                
+            # 🆕 AI 深度審核
+            if request.day_ai_reviews is not None:
+                existing_reviews = dict(content.get("day_ai_reviews") or {})
+                new_data = request.day_ai_reviews.get(day_key) or request.day_ai_reviews.get(request.day) or ""
+                existing_reviews[day_key] = new_data
+                content["day_ai_reviews"] = existing_reviews
+                
+            # 3. 儲存更新後的 content
+            supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute()
         
         return {"status": "success", "message": "Day data updated"}
 
@@ -1306,12 +1390,7 @@ async def update_trip_location(
 ):
     """🗺️ 更新行程的每日地點"""
     try:
-        # 1. 先讀取現有的 content
-        res = supabase.table("itineraries").select("content").eq("id", trip_id).single().execute()
-        if not res.data:
-            raise HTTPException(status_code=404, detail="找不到此行程")
-        
-        # 🧪 權限檢查：只有行程成員可以修改地點
+        # 🧪 權限檢查：先驗證行程成員身分，杜絕未授權存在性探測
         member_check = supabase.table("trip_members")\
             .select("user_id")\
             .eq("itinerary_id", trip_id)\
@@ -1321,23 +1400,32 @@ async def update_trip_location(
         if not member_check.data:
             raise HTTPException(status_code=403, detail="您沒有權限修改此行程的資訊")
 
-        content = res.data['content'] or {}
-        
-        # 2. 更新該日期的地點
-        if 'daily_locations' not in content:
-            content['daily_locations'] = {}
-        
-        content['daily_locations'][str(request.day)] = {
-            "name": request.name,
-            "lat": request.lat,
-            "lng": request.lng
-        }
-        
-        # 3. 寫回資料庫
-        supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute()
+        async with trip_lock(trip_id):
+            # 1. 讀取現有的 content (非 single 容錯查詢)
+            res = supabase.table("itineraries").select("content").eq("id", trip_id).execute()
+            trip_row = _first_row(res.data)
+            if not trip_row:
+                raise HTTPException(status_code=404, detail="找不到此行程")
+
+            content = dict(trip_row.get('content') or {})
+            
+            # 2. 更新該日期的地點
+            daily_locs = dict(content.get('daily_locations') or {})
+            daily_locs[str(request.day)] = {
+                "name": request.name,
+                "lat": request.lat,
+                "lng": request.lng
+            }
+            content['daily_locations'] = daily_locs
+            
+            # 3. 寫回資料庫
+            supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute()
         return {"status": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"🔥 Update Location Error: {e}")
+        raise HTTPException(status_code=500, detail="更新每日地點失敗，請稍後重試")
 
 
 
@@ -1352,9 +1440,11 @@ async def leave_trip(
         raise HTTPException(status_code=401, detail="Authentication required")
 
     try:
-        # 1. Check trip ownership
-        trip_res = supabase.table("itineraries").select("created_by").eq("id", trip_id).single().execute()
-        if trip_res.data and trip_res.data.get("created_by") == user_id:
+        # 1. Check trip ownership (safe PGRST116 handling)
+        trip = _safe_single_data(
+            supabase.table("itineraries").select("created_by").eq("id", trip_id).single()
+        )
+        if trip and trip.get("created_by") == user_id:
             raise HTTPException(status_code=400, detail="Owner cannot leave trip. Please delete the trip instead.")
 
         # 2. Remove from trip_members
@@ -1369,7 +1459,7 @@ async def leave_trip(
         raise
     except Exception as e:
         print(f"🔥 Leave Trip Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="退出行程失敗，請稍後重試")
 
 
 @router.patch("/{trip_id}/info")
@@ -1400,34 +1490,36 @@ async def update_trip_info(
         provided_data = request.model_dump(exclude_unset=True)
         print(f"🛠️ [Partial Update] Fields to update: {list(provided_data.keys())}")
         
-        # 1. 取得最新 content (單一來源)
-        trip_res = supabase.table("itineraries").select("content, flight_info, hotel_info").eq("id", trip_id).single().execute()
-        if not trip_res.data:
-            raise HTTPException(status_code=404, detail="Trip not found")
+        async with trip_lock(trip_id):
+            # 1. 取得最新 content (單一來源，非 single 容錯查詢)
+            trip_res = supabase.table("itineraries").select("content, flight_info, hotel_info").eq("id", trip_id).execute()
+            trip_row = _first_row(trip_res.data)
+            if not trip_row:
+                raise HTTPException(status_code=404, detail="Trip not found")
+                
+            current_content = dict(trip_row.get("content") or {})
+            update_columns = {}
+
+            # 2. 迭代處理提供的欄位
+            if "credit_cards" in provided_data:
+                cards = provided_data["credit_cards"]
+                current_content["credit_cards"] = cards
+                print(f"   🃏 Cards updated: {len(cards)} items")
+
+            if "flight_info" in provided_data:
+                f_info = provided_data["flight_info"]
+                update_columns["flight_info"] = f_info
+                current_content["flight_info"] = f_info
+                
+            if "hotel_info" in provided_data:
+                h_info = provided_data["hotel_info"]
+                update_columns["hotel_info"] = h_info
+                current_content["hotel_info"] = h_info
+
+            # 3. 執行單次原子化寫入 (Atomic Unit of Work)
+            update_columns["content"] = current_content
             
-        current_content = trip_res.data.get("content") or {}
-        update_columns = {}
-
-        # 2. 迭代處理提供的欄位
-        if "credit_cards" in provided_data:
-            cards = provided_data["credit_cards"]
-            current_content["credit_cards"] = cards
-            print(f"   🃏 Cards updated: {len(cards)} items")
-
-        if "flight_info" in provided_data:
-            f_info = provided_data["flight_info"]
-            update_columns["flight_info"] = f_info
-            current_content["flight_info"] = f_info
-            
-        if "hotel_info" in provided_data:
-            h_info = provided_data["hotel_info"]
-            update_columns["hotel_info"] = h_info
-            current_content["hotel_info"] = h_info
-
-        # 3. 執行單次原子化寫入 (Atomic Unit of Work)
-        update_columns["content"] = current_content
-        
-        supabase.table("itineraries").update(update_columns).eq("id", trip_id).execute()
+            supabase.table("itineraries").update(update_columns).eq("id", trip_id).execute()
         print(f"✅ Strategy 3.1: Partial update successful for Trip {trip_id}")
         
         return {"status": "success"}
@@ -1448,59 +1540,70 @@ async def update_trip_dates(
     """📅 原子化更新行程日期區間 (With Zero-Regression Shifting Engine)"""
     print(f"📅 更新行程 {trip_id} 日期: {request.start_date} ~ {request.end_date}, on_shorten={request.on_shorten}, user={user_id}")
     try:
-        # 1. 取得目前行程
-        trip_res = supabase.table("itineraries").select("created_by, start_date, end_date, content").eq("id", trip_id).single().execute()
-        if not trip_res.data:
-            raise HTTPException(status_code=404, detail="行程不存在")
+        async with trip_lock(trip_id):
+            # 1. 取得目前行程 (保留 .single() 以相容既有測試合約並防衛 PGRST116)
+            trip = _safe_single_data(
+                supabase.table("itineraries").select("created_by, start_date, end_date, content").eq("id", trip_id).single()
+            )
+            if not trip:
+                raise HTTPException(status_code=404, detail="行程不存在")
 
-        trip = trip_res.data
-        content = trip.get("content") or {}
-        created_by = trip.get("created_by", "")
+            content = dict(trip.get("content") or {})
+            created_by = trip.get("created_by", "")
 
-        # 2. 權限檢查 (創立者或成員皆有權限)
-        if user_id:
-            is_creator = (user_id == created_by)
-            if not is_creator:
-                member_check = supabase.table("trip_members")\
-                    .select("user_id")\
+            # 2. 權限檢查 (創立者或成員皆有權限)
+            if user_id:
+                is_creator = (user_id == created_by)
+                if not is_creator:
+                    member_check = supabase.table("trip_members")\
+                        .select("user_id")\
+                        .eq("itinerary_id", trip_id)\
+                        .eq("user_id", user_id)\
+                        .execute()
+                    if not member_check.data:
+                        raise HTTPException(status_code=403, detail="您沒有權限修改此行程日期")
+
+            # 3. 日期計算與格式防呆
+            old_start_str = trip.get("start_date") or request.start_date
+            old_end_str = trip.get("end_date") or old_start_str
+            try:
+                old_start = datetime.strptime(str(old_start_str).split('T')[0], "%Y-%m-%d")
+                old_end = datetime.strptime(str(old_end_str).split('T')[0], "%Y-%m-%d")
+                new_start = datetime.strptime(str(request.start_date).split('T')[0], "%Y-%m-%d")
+                new_end = datetime.strptime(str(request.end_date).split('T')[0], "%Y-%m-%d")
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="無效的日期格式，請使用 YYYY-MM-DD")
+
+            if new_end < new_start:
+                raise HTTPException(status_code=400, detail="結束日期不能早於開始日期")
+
+            old_days = max(1, (old_end - old_start).days + 1)
+            new_days = max(1, (new_end - new_start).days + 1)
+
+            # 🛡️ 4. 解耦出發日與天數序號 (Zero-Shift Duration Preservation Engine + Batch Ops)
+            # 改期時 Day 1~N 序號 100% 原位保留（天數相等或增加時不更動既有活動）。
+            # 僅當天數縮短 (new_days < old_days) 時，才以批次 .in_() 處理超出天數 (day_number > new_days) 之合併或截斷。
+            if new_days < old_days:
+                excess_items = supabase.table("itinerary_items")\
+                    .select("id, day_number")\
                     .eq("itinerary_id", trip_id)\
-                    .eq("user_id", user_id)\
+                    .gt("day_number", new_days)\
                     .execute()
-                if not member_check.data:
-                    raise HTTPException(status_code=403, detail="您沒有權限修改此行程日期")
+                excess_rows = excess_items.data or []
+                excess_ids = [item["id"] for item in excess_rows]
 
-        # 3. 日期計算
-        old_start_str = trip.get("start_date") or request.start_date
-        old_end_str = trip.get("end_date") or old_start_str
-        
-        old_start = datetime.strptime(old_start_str.split('T')[0], "%Y-%m-%d")
-        old_end = datetime.strptime(old_end_str.split('T')[0], "%Y-%m-%d")
-        new_start = datetime.strptime(request.start_date.split('T')[0], "%Y-%m-%d")
-        new_end = datetime.strptime(request.end_date.split('T')[0], "%Y-%m-%d")
+                if excess_ids:
+                    if request.on_shorten == "merge":
+                        for batch in _chunked(excess_ids):
+                            supabase.table("itinerary_items")\
+                                .update({"day_number": new_days})\
+                                .in_("id", batch)\
+                                .execute()
+                    else:
+                        for batch in _chunked(excess_ids):
+                            supabase.table("itinerary_items").delete().in_("id", batch).execute()
 
-        if new_end < new_start:
-            raise HTTPException(status_code=400, detail="結束日期不能早於開始日期")
-
-        old_days = max(1, (old_end - old_start).days + 1)
-        new_days = max(1, (new_end - new_start).days + 1)
-
-        # 🛡️ 4. 解耦出發日與天數序號 (Zero-Shift Duration Preservation Engine)
-        # 改期時 Day 1~N 序號 100% 原位保留（天數相等或增加時不更動既有活動）。
-        # 僅當天數縮短 (new_days < old_days) 時，才處理超出天數 (day_number > new_days) 之合併或截斷。
-        if new_days < old_days:
-            excess_items = supabase.table("itinerary_items")\
-                .select("id, day_number")\
-                .eq("itinerary_id", trip_id)\
-                .gt("day_number", new_days)\
-                .execute()
-            
-            if excess_items.data:
                 if request.on_shorten == "merge":
-                    for item in excess_items.data:
-                        supabase.table("itinerary_items")\
-                            .update({"day_number": new_days})\
-                            .eq("id", item["id"])\
-                            .execute()
                     for field in DAY_MAP_FIELDS:
                         if field in content and isinstance(content[field], dict):
                             for k in list(content[field].keys()):
@@ -1511,21 +1614,19 @@ async def update_trip_dates(
                                         content[field][str(new_days)] += f"\n{content[field][k]}"
                                     del content[field][k]
                 else:
-                    for item in excess_items.data:
-                        supabase.table("itinerary_items").delete().eq("id", item["id"]).execute()
                     for field in DAY_MAP_FIELDS:
                         if field in content and isinstance(content[field], dict):
                             for k in list(content[field].keys()):
                                 if k.isdigit() and int(k) > new_days:
                                     del content[field][k]
 
-        # 5. 更新 itineraries 表 (原子寫入)
-        updates = {
-            "start_date": request.start_date,
-            "end_date": request.end_date,
-            "content": content
-        }
-        supabase.table("itineraries").update(updates).eq("id", trip_id).execute()
+            # 5. 更新 itineraries 表 (原子寫入)
+            updates = {
+                "start_date": request.start_date,
+                "end_date": request.end_date,
+                "content": content
+            }
+            supabase.table("itineraries").update(updates).eq("id", trip_id).execute()
         print(f"✅ 成功原子化更新 Trip {trip_id} 日期為 {request.start_date} ~ {request.end_date} (共 {new_days} 天)")
 
         return {
@@ -1648,12 +1749,15 @@ async def reorder_items(
     """🔄 批次更新多個項目的排序順序"""
     print(f"🔄 批次排序: {len(request.items)} 項目, user={user_id}")
     try:
+        results = []
         if request.items:
-            # 🛡️ 權限檢查 (BOLA Defense)：驗證所有排序項目皆隸屬於同一合法行程，徹底杜絕跨租戶注入
-            item_ids = [i.item_id for i in request.items]
-            items_query = supabase.table("itinerary_items").select("id, itinerary_id").in_("id", item_ids).execute()
-            db_items = items_query.data or []
-            if len(db_items) != len(item_ids):
+            # 🛡️ 權限檢查 (BOLA Defense)：去重並分段驗證所有排序項目皆隸屬於同一合法行程
+            unique_item_ids = list(dict.fromkeys(i.item_id for i in request.items))
+            db_items = []
+            for batch in _chunked(unique_item_ids):
+                items_query = supabase.table("itinerary_items").select("id, itinerary_id").in_("id", batch).execute()
+                db_items.extend(items_query.data or [])
+            if len(db_items) != len(unique_item_ids):
                 raise HTTPException(status_code=404, detail="部分行程項目不存在")
             
             itinerary_ids = {row["itinerary_id"] for row in db_items}
@@ -1665,7 +1769,6 @@ async def reorder_items(
             if not member_check.data:
                 raise HTTPException(status_code=403, detail="您沒有權限排序此行程")
 
-            results = []
             for item in request.items:
                 data = {"sort_order": item.sort_order}
                 
@@ -1696,14 +1799,15 @@ async def update_item(
     """📝 修改單一細項"""
     print(f"📝 嘗試更新細項 {item_id}, user={user_id}")
     try:
-        # 🛡️ 權限檢查
-        # 🛡️ 權限檢查與資料快照 (Select expanded for Visual Synergy)
-        item_check = supabase.table("itinerary_items").select("itinerary_id, link_url, location_lat, location_lng, image_url, image_urls, place_name").eq("id", item_id).single().execute()
-        if item_check.data:
-            tid = item_check.data["itinerary_id"]
-            member_check = supabase.table("trip_members").select("user_id").eq("itinerary_id", tid).eq("user_id", user_id).execute()
-            if not member_check.data:
-                 raise HTTPException(status_code=403, detail="您沒有權限修改此項目")
+        # 🛡️ 權限檢查與資料快照 (非 single 查詢：缺失項目先回 404，防止 PGRST116 轉為 500)
+        item_check = supabase.table("itinerary_items").select("itinerary_id, link_url, location_lat, location_lng, image_url, image_urls, place_name").eq("id", item_id).execute()
+        item_row = _first_row(item_check.data)
+        if not item_row:
+            raise HTTPException(status_code=404, detail="找不到此行程項目")
+        tid = item_row["itinerary_id"]
+        member_check = supabase.table("trip_members").select("user_id").eq("itinerary_id", tid).eq("user_id", user_id).execute()
+        if not member_check.data:
+            raise HTTPException(status_code=403, detail="您沒有權限修改此項目")
         # 只更新有值的欄位
         data = {}
         if request.time_slot is not None: data["time_slot"] = request.time_slot
@@ -1716,8 +1820,8 @@ async def update_item(
 
         # 🕵️ JIT Resolution logic (Sub-Atomic Guard)
         # 如果收到潛在的同步信號（lat 為 None）且網址異動
-        if request.link_url is not None and request.lat is None and item_check.data:
-            current_url = item_check.data.get("link_url", "") or ""
+        if request.link_url is not None and request.lat is None and item_row:
+            current_url = item_row.get("link_url", "") or ""
             new_url = request.link_url or ""
             
             # Normalize for comparison
@@ -1739,7 +1843,7 @@ async def update_item(
                                 if new_thumb and isinstance(new_thumb, str):
                                     # 1. Gallery Merger (Cumulative Synergy)
                                     # Priority order: Frontend Payload > DB Current > Resolved Thumbnail
-                                    raw_urls = request.image_urls if request.image_urls is not None else (item_check.data.get("image_urls") or [])
+                                    raw_urls = request.image_urls if request.image_urls is not None else (item_row.get("image_urls") or [])
                                     target_urls = raw_urls if isinstance(raw_urls, list) else []
                                     
                                     # Prepend new thumbnail to gallery if it's unique
@@ -1751,13 +1855,13 @@ async def update_item(
                                     
                                     # 2. Cover Protection (Human-Priority Guard)
                                     # Only set as primary if BOTH the editor payload and DB are empty
-                                    if not request.image_url and not item_check.data.get("image_url"):
+                                    if not request.image_url and not item_row.get("image_url"):
                                         request.image_url = clean_thumb
                                         print("📸 Visual Synergy: Primary cover populated (Empty-State Recovery)")
 
                                 # 3. Title Intelligence (Merit Preservation)
                                 # Never overwrite a name if the user or the DB already has one
-                                if meta.get("title") and not request.place_name and not item_check.data.get("place_name"):
+                                if meta.get("title") and not request.place_name and not item_row.get("place_name"):
                                     request.place_name = meta["title"]
                                     print(f"🏷️ Title Synergy: Auto-filling name: {meta['title']}")
 
@@ -1769,7 +1873,7 @@ async def update_item(
                     else:
                         # 🛡️ v35.24: Conditional Cleanse (Anti-Sticky-Pin)
                         # Only invalidate if URL actually changed
-                        current_db_url = item_check.data.get("link_url") or ""
+                        current_db_url = item_row.get("link_url") or ""
                         if request.link_url and request.link_url.rstrip("/") != current_db_url.rstrip("/"):
                             data["location_lat"] = None
                             data["location_lng"] = None
@@ -1781,7 +1885,7 @@ async def update_item(
                 except Exception as ex:
                     print(f"⚠️ JIT Resolution Failed: {ex}")
                     # 🛡️ v35.24: Same conditional cleanse for exception path
-                    current_db_url = item_check.data.get("link_url") or ""
+                    current_db_url = item_row.get("link_url") or ""
                     if request.link_url and request.link_url.rstrip("/") != current_db_url.rstrip("/"):
                         data["location_lat"] = None
                         data["location_lng"] = None
@@ -1826,10 +1930,12 @@ async def update_item(
 
         print("✅ 更新成功")
         return {"status": "success", "data": res.data}
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         print(f"🔥 Update Item Exception: {e}")
-        raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="更新行程項目失敗，請稍後重試")
 
 
 @router.delete("/items/{item_id}")
@@ -1889,74 +1995,84 @@ async def delete_day(
         member_check = supabase.table("trip_members").select("user_id").eq("itinerary_id", trip_id).eq("user_id", user_id).execute()
         if not member_check.data:
             raise HTTPException(status_code=403, detail="您沒有權限修改此行程")
-        # 1. 取得現有行程與 content
-        trip = supabase.table("itineraries").select("start_date, end_date, content").eq("id", trip_id).single().execute()
-        if not trip.data:
-            raise HTTPException(status_code=404, detail="行程不存在")
 
-        # 2. 刪除該天的所有細項 (Activities)
-        res = supabase.table("itinerary_items")\
-            .delete()\
-            .eq("itinerary_id", trip_id)\
-            .eq("day_number", day_number)\
-            .execute()
-        deleted_count = len(res.data) if res.data else 0
-        
-        # 3. 調整後續天數的 activities (day_number - 1)
-        remaining = supabase.table("itinerary_items")\
-            .select("id, day_number")\
-            .eq("itinerary_id", trip_id)\
-            .gt("day_number", day_number)\
-            .execute()
-        
-        for item in remaining.data:
-             supabase.table("itinerary_items")\
-                .update({"day_number": item["day_number"] - 1})\
-                .eq("id", item["id"])\
+        async with trip_lock(trip_id):
+            # 1. 取得現有行程與 content (非 single 安全查詢)
+            trip_res = supabase.table("itineraries").select("start_date, end_date, content").eq("id", trip_id).execute()
+            trip_row = _first_row(trip_res.data)
+            if not trip_row:
+                raise HTTPException(status_code=404, detail="行程不存在")
+
+            # 2. 刪除該天的所有細項 (Activities)
+            res = supabase.table("itinerary_items")\
+                .delete()\
+                .eq("itinerary_id", trip_id)\
+                .eq("day_number", day_number)\
                 .execute()
-
-        # 4. 🧠 Deep Content Shift (處理 content 內的 Map 結構)
-        # 用來防止「幽靈資料」：刪除的天數資料必須清空，後面的資料必須往前補
-        content = trip.data.get("content") or {}
-        
-        # 計算最大天數 (為了迴圈邊界)
-        start_date = datetime.strptime(trip.data["start_date"], "%Y-%m-%d") if trip.data.get("start_date") else None
-        end_date = datetime.strptime(trip.data["end_date"], "%Y-%m-%d") if trip.data.get("end_date") else None
-        current_max_day = (end_date - start_date).days + 1 if (start_date and end_date) else 30 # Fallback 30
-
-        for field in DAY_MAP_FIELDS:
-            if field in content and isinstance(content[field], dict):
-                # A. 先刪除目標天數的資料 (壁紙撕掉)
-                if str(day_number) in content[field]:
-                    del content[field][str(day_number)]
-                
-                # B. 後面的天數往前移 (10 -> 9, 9 -> 8 ... day_number+1 -> day_number)
-                # 必須從 day_number + 1 開始往後掃描直到 current_max_day
-                for i in range(day_number + 1, current_max_day + 2): # +2 for safety buffer
-                    old_key = str(i)
-                    new_key = str(i - 1)
-                    
-                    if old_key in content[field]:
-                        # 搬移資料
-                        content[field][new_key] = content[field][old_key]
-                        # 刪除舊位址 (這是關鍵，不然會變成複製)
-                        del content[field][old_key]
-
-        # 5. 更新行程 (Content + EndDate)
-        updates = {"content": content}
-        
-        if end_date:
-            new_end = end_date - timedelta(days=1)
-            updates["end_date"] = new_end.strftime("%Y-%m-%d")
+            deleted_count = len(res.data) if res.data else 0
             
-        supabase.table("itineraries").update(updates).eq("id", trip_id).execute()
+            # 3. 調整後續天數的 activities (依目標 day_number 分組，由小到大批次 .in_() 更新，消除 N+1 迴圈)
+            remaining = supabase.table("itinerary_items")\
+                .select("id, day_number")\
+                .eq("itinerary_id", trip_id)\
+                .gt("day_number", day_number)\
+                .execute()
+            
+            by_target_day = {}
+            for item in (remaining.data or []):
+                target_day = item["day_number"] - 1
+                by_target_day.setdefault(target_day, []).append(item["id"])
+            for target_day in sorted(by_target_day.keys()):
+                for batch in _chunked(by_target_day[target_day]):
+                    supabase.table("itinerary_items")\
+                        .update({"day_number": target_day})\
+                        .in_("id", batch)\
+                        .execute()
+
+            # 4. 🧠 Deep Content Shift (處理 content 內的 Map 結構)
+            # 用來防止「幽靈資料」：刪除的天數資料必須清空，後面的資料必須往前補
+            content = dict(trip_row.get("content") or {})
+            
+            # 計算最大天數 (為了迴圈邊界)
+            start_date = datetime.strptime(trip_row["start_date"], "%Y-%m-%d") if trip_row.get("start_date") else None
+            end_date = datetime.strptime(trip_row["end_date"], "%Y-%m-%d") if trip_row.get("end_date") else None
+            current_max_day = (end_date - start_date).days + 1 if (start_date and end_date) else 30 # Fallback 30
+
+            for field in DAY_MAP_FIELDS:
+                if field in content and isinstance(content[field], dict):
+                    # A. 先刪除目標天數的資料 (壁紙撕掉)
+                    if str(day_number) in content[field]:
+                        del content[field][str(day_number)]
+                    
+                    # B. 後面的天數往前移 (10 -> 9, 9 -> 8 ... day_number+1 -> day_number)
+                    # 必須從 day_number + 1 開始往後掃描直到 current_max_day
+                    for i in range(day_number + 1, current_max_day + 2): # +2 for safety buffer
+                        old_key = str(i)
+                        new_key = str(i - 1)
+                        
+                        if old_key in content[field]:
+                            # 搬移資料
+                            content[field][new_key] = content[field][old_key]
+                            # 刪除舊位址 (這是關鍵，不然會變成複製)
+                            del content[field][old_key]
+
+            # 5. 更新行程 (Content + EndDate)
+            updates = {"content": content}
+            
+            if end_date:
+                new_end = end_date - timedelta(days=1)
+                updates["end_date"] = new_end.strftime("%Y-%m-%d")
+                
+            supabase.table("itineraries").update(updates).eq("id", trip_id).execute()
 
         print(f"   ✅ Day {day_number} 刪除完成，Content 已校正，Activities 已位移")
         return {"status": "success", "deleted_items": deleted_count}
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 Delete Day Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="刪除天數失敗，請稍後重試")
 
 
 @router.post("/{trip_id}/days")
@@ -1973,151 +2089,158 @@ async def add_day(
         member_check = supabase.table("trip_members").select("user_id").eq("itinerary_id", trip_id).eq("user_id", user_id).execute()
         if not member_check.data:
             raise HTTPException(status_code=403, detail="您沒有權限修改此行程")
-        # 1. 取得現有行程資訊
-        trip = supabase.table("itineraries").select("start_date, end_date, content").eq("id", trip_id).single().execute()
-        if not trip.data:
-            raise HTTPException(status_code=404, detail="行程不存在")
-            
-        content = trip.data.get("content") or {}
 
-        # 2. 計算目前的天數 (精確計算) & Ghostbuster 👻 找出隱藏的最大天數
-        start_date = datetime.strptime(trip.data["start_date"], "%Y-%m-%d") if trip.data.get("start_date") else datetime.now()
-        end_date = datetime.strptime(trip.data["end_date"], "%Y-%m-%d") if trip.data.get("end_date") else start_date
-        date_calculated_days = (end_date - start_date).days + 1
-        
-        # 🔍 Ghostbuster: 掃描 content 找出真正的 max key (解決字串排序問題 "10" < "2")
-        all_content_keys = []
-        for field in DAY_MAP_FIELDS:
-            if field in content and isinstance(content[field], dict):
-                all_content_keys.extend(content[field].keys())
-        
-        valid_day_nums = [int(k) for k in all_content_keys if k.isdigit()] # 強制轉 INT
-        content_max_day = max(valid_day_nums) if valid_day_nums else 0
-        
-        # 取最大的作為當前邊界，確保位移時能覆蓋到所有幽靈資料
-        # 但如果是 "新增到結尾"，我們應該忽略幽靈，直接覆蓋在正確的天數上
-        shift_limit_day = max(date_calculated_days, content_max_day)
-        
-        if content_max_day > date_calculated_days:
-            print(f"   👻 發現幽靈資料! Content Max: {content_max_day} > Date Max: {date_calculated_days}")
-
-        new_day = -1
-        source_day_for_clone = None
-
-        # 3. 根據 position 處理
-        if request.position == "end":
-            # 新增到最後一天之後 - 直接鎖定正確的日期順序，無視幽靈 (Overwrite)
-            new_day = date_calculated_days + 1
-            print(f"   ➕ 新增 Day {new_day} 到結尾 (覆蓋該位置可能的幽靈)")
-            source_day_for_clone = new_day - 1 # 若要複製，來源是原本的最後一天
-            
-        elif request.position.startswith("before:"):
-            # 插入到指定天之前
-            insert_before = int(request.position.split(":")[1])
-            insert_before = max(1, insert_before)
-            new_day = insert_before
-            source_day_for_clone = insert_before 
-            
-            # A. 調整 Activities
-            items_to_shift = supabase.table("itinerary_items")\
-                .select("id, day_number")\
-                .eq("itinerary_id", trip_id)\
-                .gte("day_number", insert_before)\
-                .order("day_number", desc=True)\
-                .execute()
-            
-            for item in items_to_shift.data:
-                supabase.table("itinerary_items")\
-                    .update({"day_number": item["day_number"] + 1})\
-                    .eq("id", item["id"])\
-                    .execute()
-            
-            # B. 🧠 Deep Content Shift (Reverse Order)
-            # 這裡必須使用 shift_limit_day，確保連同幽靈資料一起往後移，避免資料損失
-            for field in DAY_MAP_FIELDS:
-                if field not in content: content[field] = {}
-                if not isinstance(content[field], dict): content[field] = {}
-
-                for i in range(shift_limit_day, insert_before - 1, -1):
-                    old_key = str(i)
-                    new_key = str(i + 1)
-                    
-                    if old_key in content[field]:
-                        content[field][new_key] = content[field][old_key]
-                        del content[field][old_key]
-            
-            # 修正 Clone Source
-            if insert_before == 1:
-                source_day_for_clone = 2 
-            else:
-                source_day_for_clone = insert_before - 1
-
-            print(f"   ➕ 插入 Day {new_day}, Content 已反向位移")
-
-        else:
+        insert_before_val: Optional[int] = None
+        if request.position.startswith("before:"):
+            try:
+                insert_before_val = max(1, int(request.position.split(":", 1)[1]))
+            except (ValueError, IndexError):
+                raise HTTPException(status_code=400, detail="無效的 position 格式")
+        elif request.position != "end":
             raise HTTPException(status_code=400, detail="無效的 position 格式")
-        
-        # 4. 🔥 Scorched Earth Clean (焦土清理)
-        # 強制清理 new_day 位置，不管之前有沒有幽靈，都得死
-        target_key = str(new_day)
-        print(f"   🔥 執行焦土清理 Day {new_day}")
-        
-        cleaned_count = 0
-        for field in DAY_MAP_FIELDS:
-             if field not in content: content[field] = {}
-             if target_key in content[field]:
-                 del content[field][target_key]
-                 print(f"      🧹 已清除殘留資料: {field}[{target_key}]")
-                 cleaned_count += 1
-        
-        if cleaned_count > 0:
-            print(f"   ✅ 焦土清理完成，共清除 {cleaned_count} 個欄位")
 
-        # 5. 🧠 Smart Clone 執行 (如果需要)
-        # 此時 new_day 已經絕對乾淨
-        if request.clone_content and source_day_for_clone:
-            print(f"   🌱 執行智慧移植: 從 Day {source_day_for_clone} -> Day {new_day}")
-            src_key = str(source_day_for_clone)
+        async with trip_lock(trip_id):
+            # 1. 取得現有行程資訊 (非 single 安全查詢)
+            trip_res = supabase.table("itineraries").select("start_date, end_date, content").eq("id", trip_id).execute()
+            trip_row = _first_row(trip_res.data)
+            if not trip_row:
+                raise HTTPException(status_code=404, detail="行程不存在")
+                
+            content = dict(trip_row.get("content") or {})
+
+            # 2. 計算目前的天數 (精確計算) & Ghostbuster 👻 找出隱藏的最大天數
+            utc_today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+            start_date = datetime.strptime(trip_row["start_date"], "%Y-%m-%d") if trip_row.get("start_date") else utc_today_midnight
+            end_date = datetime.strptime(trip_row["end_date"], "%Y-%m-%d") if trip_row.get("end_date") else start_date
+            date_calculated_days = (end_date - start_date).days + 1
             
-            # 🆕 身分洗白 (Identity Wash) 強化版
-            def wash_ids(items):
-                if not isinstance(items, list): return items
-            # uuid now at top level
-                new_items = copy.deepcopy(items)
-                for item in new_items:
-                    if isinstance(item, dict) and "id" in item:
-                        item["id"] = str(uuid.uuid4())
-                return new_items
+            # 🔍 Ghostbuster: 掃描 content 找出真正的 max key (解決字串排序問題 "10" < "2")
+            all_content_keys = []
+            for field in DAY_MAP_FIELDS:
+                if field in content and isinstance(content[field], dict):
+                    all_content_keys.extend(content[field].keys())
+            
+            valid_day_nums = [int(k) for k in all_content_keys if k.isdigit()] # 強制轉 INT
+            content_max_day = max(valid_day_nums) if valid_day_nums else 0
+            
+            # 取最大的作為當前邊界，確保位移時能覆蓋到所有幽靈資料
+            # 但如果是 "新增到結尾"，我們應該忽略幽靈，直接覆蓋在正確的天數上
+            shift_limit_day = max(date_calculated_days, content_max_day)
+            
+            if content_max_day > date_calculated_days:
+                print(f"   👻 發現幽靈資料! Content Max: {content_max_day} > Date Max: {date_calculated_days}")
 
-            for field in CLONEABLE_FIELDS: # 只複製允許的欄位
-                if field in content and src_key in content[field]:
-                    data = content[field][src_key]
-                    
-                    # 🛡️ 對所有清單類型欄位執行身分洗白
-                    if field in ["day_checklists", "day_costs", "day_tickets"] and isinstance(data, list):
-                        data = wash_ids(data)
-                        print(f"      🆔 已為 {field} 內的 {len(data)} 個項目重整唯一身份")
+            new_day = -1
+            source_day_for_clone = None
+
+            # 3. 根據 position 處理
+            if request.position == "end":
+                # 新增到最後一天之後 - 直接鎖定正確的日期順序，無視幽靈 (Overwrite)
+                new_day = date_calculated_days + 1
+                print(f"   ➕ 新增 Day {new_day} 到結尾 (覆蓋該位置可能的幽靈)")
+                source_day_for_clone = new_day - 1 # 若要複製，來源是原本的最後一天
+                
+            elif insert_before_val is not None:
+                # 插入到指定天之前
+                insert_before = insert_before_val
+                new_day = insert_before
+                source_day_for_clone = insert_before 
+                
+                # A. 調整 Activities (依新天數分組，由大到小批次 .in_() 更新)
+                items_to_shift = supabase.table("itinerary_items")\
+                    .select("id, day_number")\
+                    .eq("itinerary_id", trip_id)\
+                    .gte("day_number", insert_before)\
+                    .order("day_number", desc=True)\
+                    .execute()
+                
+                by_new_day = {}
+                for item in (items_to_shift.data or []):
+                    target_day = item["day_number"] + 1
+                    by_new_day.setdefault(target_day, []).append(item["id"])
+                for target_day in sorted(by_new_day.keys(), reverse=True):
+                    for batch in _chunked(by_new_day[target_day]):
+                        supabase.table("itinerary_items")\
+                            .update({"day_number": target_day})\
+                            .in_("id", batch)\
+                            .execute()
+                
+                # B. 🧠 Deep Content Shift (Reverse Order)
+                # 這裡必須使用 shift_limit_day，確保連同幽靈資料一起往後移，避免資料損失
+                for field in DAY_MAP_FIELDS:
+                    if field not in content: content[field] = {}
+                    if not isinstance(content[field], dict): content[field] = {}
+
+                    for i in range(shift_limit_day, insert_before - 1, -1):
+                        old_key = str(i)
+                        new_key = str(i + 1)
                         
-                    content[field][target_key] = data
-                    print(f"      ✅ 複製 {field}")
+                        if old_key in content[field]:
+                            content[field][new_key] = content[field][old_key]
+                            del content[field][old_key]
+                
+                # 修正 Clone Source
+                if insert_before == 1:
+                    source_day_for_clone = 2 
+                else:
+                    source_day_for_clone = insert_before - 1
 
-        # 6. 更新行程 (Content + EndDate)
-        # 如果是 Append End: 總天數 = 舊天數 + 1
-        # 如果是 Insert Before: 總天數 = 舊天數 + 1 (因為所有東西都推後了一天)
-        # 注意：如果原本有幽靈資料 (Max > Date)，Insert 後 Max 也會 +1。
-        # 我們這裡只關心 "合法的行程長度"。如果原本有 5 天 (date), Insert 1 天 -> 變成 6 天。
-        # 不管 content max 是多少，end date 應該只反應合法的增加。
-        
-        final_total_days = date_calculated_days + 1
-        
-        new_end_date = start_date + timedelta(days=final_total_days - 1)
-        
-        updates = {
-            "content": content,
-            "end_date": new_end_date.strftime("%Y-%m-%d")
-        }
-        
-        supabase.table("itineraries").update(updates).eq("id", trip_id).execute()
+                print(f"   ➕ 插入 Day {new_day}, Content 已反向位移")
+            
+            # 4. 🔥 Scorched Earth Clean (焦土清理)
+            # 強制清理 new_day 位置，不管之前有沒有幽靈，都得死
+            target_key = str(new_day)
+            print(f"   🔥 執行焦土清理 Day {new_day}")
+            
+            cleaned_count = 0
+            for field in DAY_MAP_FIELDS:
+                 if field not in content: content[field] = {}
+                 if target_key in content[field]:
+                     del content[field][target_key]
+                     print(f"      🧹 已清除殘留資料: {field}[{target_key}]")
+                     cleaned_count += 1
+            
+            if cleaned_count > 0:
+                print(f"   ✅ 焦土清理完成，共清除 {cleaned_count} 個欄位")
+
+            # 5. 🧠 Smart Clone 執行 (如果需要)
+            # 此時 new_day 已經絕對乾淨
+            if request.clone_content and source_day_for_clone:
+                print(f"   🌱 執行智慧移植: 從 Day {source_day_for_clone} -> Day {new_day}")
+                src_key = str(source_day_for_clone)
+                
+                # 🆕 身分洗白 (Identity Wash) 強化版
+                def wash_ids(items):
+                    if not isinstance(items, list): return items
+                    new_items = copy.deepcopy(items)
+                    for item in new_items:
+                        if isinstance(item, dict) and "id" in item:
+                            item["id"] = str(uuid.uuid4())
+                    return new_items
+
+                for field in CLONEABLE_FIELDS: # 只複製允許的欄位
+                    if field in content and src_key in content[field]:
+                        data = content[field][src_key]
+                        
+                        # 🛡️ 對所有清單類型欄位執行身分洗白
+                        if field in ["day_checklists", "day_costs", "day_tickets"] and isinstance(data, list):
+                            data = wash_ids(data)
+                            print(f"      🆔 已為 {field} 內的 {len(data)} 個項目重整唯一身份")
+                            
+                        content[field][target_key] = data
+                        print(f"      ✅ 複製 {field}")
+
+            # 6. 更新行程 (Content + EndDate)
+            final_total_days = date_calculated_days + 1
+            
+            new_end_date = start_date + timedelta(days=final_total_days - 1)
+            
+            updates = {
+                "content": content,
+                "end_date": new_end_date.strftime("%Y-%m-%d")
+            }
+            
+            supabase.table("itineraries").update(updates).eq("id", trip_id).execute()
         
         return {"status": "success", "new_day": new_day, "total_days": final_total_days}
 
@@ -2144,9 +2267,13 @@ async def get_trip_expenses(
     邏輯：抓出 (該行程的所有公帳) OR (該行程中 我建立的私帳)
     """
     try:
+        # 🛡️ BOLA 物件授權防衛：非行程建立者或成員禁止查詢任何費用明細
+        if not check_trip_access(supabase, trip_id, user_id):
+            raise HTTPException(status_code=403, detail="您不是此行程的成員，無法存取費用列表")
+
         print(f"💰 [Trips] Fetching expenses for trip {trip_id}, user {user_id}")
         res = supabase.table("expenses").select("*").eq("itinerary_id", trip_id).execute()
-        all_expenses = res.data
+        all_expenses = res.data or []
         
         filtered = []
         for exp in all_expenses:
@@ -2202,9 +2329,11 @@ async def get_trip_expenses(
                 
         print(f"✅ [Trips] Returned {len(filtered)} standardized expenses")
         return filtered
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 Fetch Trip Expenses Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="讀取行程費用失敗，請稍後重試")
 
 
 @router.patch("/{trip_id}/ledger-share")
