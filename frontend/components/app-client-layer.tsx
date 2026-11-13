@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic"
 import { Suspense, useEffect } from "react"
+import { usePathname } from "next/navigation"
 import { initSessionLifecycleListener, fetchLatestRecoveryKey, isUserLoggedIn } from "@/lib/auth-session"
 import { getSupabaseClient } from "@/lib/supabase"
 import { useLanguage } from "@/lib/LanguageContext"
@@ -16,6 +17,14 @@ import { SessionReauthModal } from "@/components/auth/session-reauth-modal"
 const ChatWidget = dynamic(() => import("@/components/chat-widget").then(mod => mod.default), {
     ssr: false,
 })
+
+function OfficialRouteGuardedChatWidget() {
+    const pathname = usePathname()
+    if (pathname?.startsWith("/official")) {
+        return null
+    }
+    return <ChatWidget />
+}
 
 export function AppClientLayer() {
     const { lang } = useLanguage()
@@ -61,7 +70,7 @@ export function AppClientLayer() {
     return (
         <>
             <Suspense fallback={null}>
-                <ChatWidget />
+                <OfficialRouteGuardedChatWidget />
             </Suspense>
             <SessionReauthModal />
         </>

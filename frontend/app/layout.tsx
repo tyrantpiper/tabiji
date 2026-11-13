@@ -117,7 +117,9 @@ export default function RootLayout({
                 <AppClientLayer />
                 <SpeculationRules />
                 <ServiceWorkerRegister />
-                <PWAInstallPrompt />
+                <Suspense fallback={null}>
+                  <PWAInstallPrompt />
+                </Suspense>
               </TripProvider>
             </IdbSwrProvider>
           </LanguageProvider>
