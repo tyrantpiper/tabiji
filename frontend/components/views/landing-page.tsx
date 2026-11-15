@@ -1,13 +1,14 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { AnimatePresence } from "framer-motion"
-import { ArrowRight, ShieldCheck, History } from "lucide-react"
+import { ArrowRight, ShieldCheck, History, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { WelcomeWizard } from "@/components/onboarding/WelcomeWizard"
 import { useOnboardingStore } from "@/lib/stores/onboardingStore"
 import { useLanguage } from "@/lib/LanguageContext"
+import { cn } from "@/lib/utils"
 import dynamic from "next/dynamic"
 
 // 🚀 [Perf Audit 2026] 斷開首頁與核心 App 的強連結
@@ -75,6 +76,34 @@ function generateUUID() {
     return generateSecureUUID();
 }
 
+function clearActiveSelection(inputEl: HTMLInputElement | null) {
+    if (inputEl) {
+        try {
+            if (
+                inputEl.selectionStart !== inputEl.selectionEnd &&
+                typeof inputEl.setSelectionRange === "function"
+            ) {
+                const end = inputEl.value.length
+                inputEl.setSelectionRange(end, end)
+            }
+        } catch {
+            // Ignore input types that do not support selection ranges
+        }
+        inputEl.blur()
+    }
+    if (typeof window !== "undefined" && typeof window.getSelection === "function") {
+        window.getSelection()?.removeAllRanges()
+    }
+}
+
+function runViewTransition(update: () => void) {
+    if (typeof document !== "undefined" && typeof document.startViewTransition === "function") {
+        document.startViewTransition(update)
+    } else {
+        update()
+    }
+}
+
 export function LandingPage() {
     const { t } = useLanguage()
     const [mounted, setMounted] = useState(false)
@@ -83,9 +112,28 @@ export function LandingPage() {
     const [showRecover, setShowRecover] = useState(false)
     const [recoverCode, setRecoverCode] = useState("")
     const [showWizard, setShowWizard] = useState(false)
+    const [isLoggingIn, setIsLoggingIn] = useState(false)
+    const [isRecovering, setIsRecovering] = useState(false)
+    const isLoggingInRef = useRef(false)
+    const isRecoveringRef = useRef(false)
+    const isMountedRef = useRef(true)
+    const recoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const nicknameInputRef = useRef<HTMLInputElement>(null)
+    const recoverInputRef = useRef<HTMLInputElement>(null)
 
     // 🆕 Onboarding state
     const { isCompleted: isOnboardingComplete } = useOnboardingStore()
+
+    useEffect(() => {
+        isMountedRef.current = true
+        return () => {
+            isMountedRef.current = false
+            if (recoverTimerRef.current !== null) {
+                clearTimeout(recoverTimerRef.current)
+                recoverTimerRef.current = null
+            }
+        }
+    }, [])
 
     useEffect(() => {
         /* eslint-disable -- SSR hydration pattern: must set mounted after client render */
@@ -106,63 +154,89 @@ export function LandingPage() {
     }, [])
 
     const handleLogin = async () => {
+        if (isLoggingInRef.current || isRecoveringRef.current) return
         if (!nickname.trim()) { toast.warning(t('landing_please_enter_nickname')); return }
-        localStorage.setItem("user_nickname", nickname)
 
-        // 1. 若連線正常，優先透過 ensureValidSession 讓伺服器正規派發合法憑證與使用者 ID (若本機已有則複用)
-        let uuid = localStorage.getItem("user_uuid")
-        if (!uuid && navigator.onLine) {
-            await ensureValidSession().catch(() => null)
-            uuid = localStorage.getItem("user_uuid")
-        }
+        clearActiveSelection(nicknameInputRef.current)
+        isLoggingInRef.current = true
+        setIsLoggingIn(true)
 
-        // 2. 📴 離線防衛降級路徑：完全斷網時本機安全派發離線 UUID，保證 100% 正常進入 AppShell
-        if (!uuid) {
-            uuid = generateUUID()
-            localStorage.setItem("user_uuid", uuid)
-        }
+        try {
+            localStorage.setItem("user_nickname", nickname)
 
-        // 🆕 Sync nickname to backend database (Nickname <-> RecoveryKey Binding)
-        if (navigator.onLine) {
-            try {
-                await usersApi.updateProfile(uuid, { name: nickname })
-                debugLog("✅ [Profile] Nickname synced to backend:", nickname)
-            } catch (err) {
-                // Non-blocking: sync failure shouldn't block login
-                debugWarn("⚠️ [Profile] Failed to sync nickname to backend:", err)
+            // 1. 若連線正常，優先透過 ensureValidSession 讓伺服器正規派發合法憑證與使用者 ID (若本機已有則複用)
+            let uuid = localStorage.getItem("user_uuid")
+            if (!uuid && navigator.onLine) {
+                await ensureValidSession().catch(() => null)
+                if (!isMountedRef.current) return
+                uuid = localStorage.getItem("user_uuid")
             }
-        }
 
-        // 🆕 通知 ChatWidget 用戶已登入
-        window.dispatchEvent(new CustomEvent('user-login-state-changed'))
-
-        const performTransition = () => {
-            if (!isOnboardingComplete) {
-                setShowWizard(true)
-            } else {
-                setIsLoggedIn(true)
+            // 2. 📴 離線防衛降級路徑：完全斷網時本機安全派發離線 UUID，保證 100% 正常進入 AppShell
+            if (!uuid) {
+                uuid = generateUUID()
+                localStorage.setItem("user_uuid", uuid)
             }
-        }
 
-        // 🏆 [2026 Native Flow] 使用瀏覽器內置過渡引擎，確保 60FPS 流暢換場
-        if (typeof document !== 'undefined' && 'startViewTransition' in document) {
-            document.startViewTransition(performTransition)
-        } else {
-            performTransition()
+            // 🆕 Sync nickname to backend database (Nickname <-> RecoveryKey Binding)
+            if (navigator.onLine) {
+                try {
+                    await usersApi.updateProfile(uuid, { name: nickname })
+                    debugLog("✅ [Profile] Nickname synced to backend:", nickname)
+                } catch (err) {
+                    // Non-blocking: sync failure shouldn't block login
+                    debugWarn("⚠️ [Profile] Failed to sync nickname to backend:", err)
+                }
+            }
+
+            if (!isMountedRef.current) return
+
+            // 🆕 通知 ChatWidget 用戶已登入
+            window.dispatchEvent(new CustomEvent('user-login-state-changed'))
+
+            const performTransition = () => {
+                if (!isMountedRef.current) return
+                if (!isOnboardingComplete) {
+                    setShowWizard(true)
+                } else {
+                    setIsLoggedIn(true)
+                }
+            }
+
+            // 🏆 [2026 Native Flow] 使用瀏覽器內置過渡引擎，確保 60FPS 流暢換場
+            runViewTransition(performTransition)
+        } catch (err) {
+            console.error("Login Error", err)
+            if (isMountedRef.current) {
+                isLoggingInRef.current = false
+                setIsLoggingIn(false)
+                const message = err instanceof Error && err.message ? err.message : t('landing_login_failed')
+                toast.error(message)
+            }
         }
     }
 
     const handleRecover = async () => {
+        if (isRecoveringRef.current || isLoggingInRef.current) return
+
         const cleanCode = recoverCode.trim()
         if (!isValidRecoveryKey(cleanCode)) {
             toast.error(t('landing_invalid_code') || "引繼碼格式不正確")
             return
         }
 
+        clearActiveSelection(recoverInputRef.current)
+        isRecoveringRef.current = true
+        setIsRecovering(true)
+
         // 🛡️ Cryptographic account recovery via signed session token
         const toastId = toast.loading("Verifying identity...")
         try {
             const session = await restoreAccountWithKey(cleanCode)
+            if (!isMountedRef.current) {
+                toast.dismiss(toastId)
+                return
+            }
 
             // Default nickname fallback
             const fallbackName = nickname || "Traveler"
@@ -176,6 +250,11 @@ export function LandingPage() {
                 if (data.avatar_url) fetchedAvatar = data.avatar_url
             } catch (err) {
                 debugWarn("Profile fetch failed, using fallback", err)
+            }
+
+            if (!isMountedRef.current) {
+                toast.dismiss(toastId)
+                return
             }
 
             localStorage.setItem("user_nickname", fetchedName)
@@ -212,52 +291,60 @@ export function LandingPage() {
             toast.success(`Welcome back, ${fetchedName}!`)
 
             const goToApp = () => {
-                if (typeof document !== 'undefined' && 'startViewTransition' in document) {
-                    document.startViewTransition(() => setIsLoggedIn(true))
-                } else {
-                    setIsLoggedIn(true)
-                }
+                if (!isMountedRef.current) return
+                runViewTransition(() => setIsLoggedIn(true))
             }
 
             // 🏆 [2026 Smooth Handoff] 讓成功訊息顯示 0.8秒後，優雅地換場
-            setTimeout(goToApp, 800)
+            recoverTimerRef.current = setTimeout(goToApp, 800)
 
         } catch (e: unknown) {
             console.error("Recovery Error", e)
             toast.dismiss(toastId)
 
+            if (!isMountedRef.current) return
+
             const isOffline = typeof navigator !== "undefined" && !navigator.onLine
             if (isOffline) {
-                // Allow offline recovery for local-first cached operations
-                localStorage.setItem("user_uuid", cleanCode)
-                localStorage.setItem("user_nickname", nickname || "Traveler")
-                localStorage.removeItem("active_trip_id")
-                localStorage.removeItem("active_trip_title")
                 try {
-                    const rawTripStorage = localStorage.getItem("tabidachi-trip-storage")
-                    if (rawTripStorage) {
-                        const parsed = JSON.parse(rawTripStorage)
-                        if (parsed && parsed.state) {
-                            parsed.state.activeTripId = null
-                            parsed.state.activeTripTitle = null
-                            localStorage.setItem("tabidachi-trip-storage", JSON.stringify(parsed))
+                    // Allow offline recovery for local-first cached operations
+                    localStorage.setItem("user_uuid", cleanCode)
+                    localStorage.setItem("user_nickname", nickname || "Traveler")
+                    localStorage.removeItem("active_trip_id")
+                    localStorage.removeItem("active_trip_title")
+                    try {
+                        const rawTripStorage = localStorage.getItem("tabidachi-trip-storage")
+                        if (rawTripStorage) {
+                            const parsed = JSON.parse(rawTripStorage)
+                            if (parsed && parsed.state) {
+                                parsed.state.activeTripId = null
+                                parsed.state.activeTripTitle = null
+                                localStorage.setItem("tabidachi-trip-storage", JSON.stringify(parsed))
+                            }
                         }
+                    } catch {}
+                    if (typeof window !== "undefined") {
+                        sessionStorage.setItem("tabiji_identity_transition_lock", Date.now().toString())
                     }
-                } catch {}
-                if (typeof window !== "undefined") {
-                    sessionStorage.setItem("tabiji_identity_transition_lock", Date.now().toString())
+                    toast.success("Account recovered (Offline Mode)")
+                    recoverTimerRef.current = setTimeout(() => {
+                        if (!isMountedRef.current) return
+                        runViewTransition(() => setIsLoggedIn(true))
+                    }, 800)
+                } catch (offlineErr) {
+                    console.error("Offline Recovery Error", offlineErr)
+                    if (isMountedRef.current) {
+                        isRecoveringRef.current = false
+                        setIsRecovering(false)
+                        const message = offlineErr instanceof Error && offlineErr.message ? offlineErr.message : t('landing_recover_failed')
+                        toast.error(message)
+                    }
                 }
-                toast.success("Account recovered (Offline Mode)")
-                setTimeout(() => {
-                    if (typeof document !== 'undefined' && 'startViewTransition' in document) {
-                        document.startViewTransition(() => setIsLoggedIn(true))
-                    } else {
-                        setIsLoggedIn(true)
-                    }
-                }, 800)
             } else {
                 const message = e instanceof Error ? e.message : "Failed to verify recovery key"
                 toast.error(message)
+                isRecoveringRef.current = false
+                setIsRecovering(false)
             }
         }
     }
@@ -340,28 +427,66 @@ export function LandingPage() {
                     {t('landing_subtitle')}
                 </p>
 
-                <div className="w-full max-w-xs space-y-6">
+                <div className={cn("w-full max-w-xs space-y-6", (isLoggingIn || isRecovering) && "select-none")}>
 
                     {!showRecover ? (
                         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-700">
                             <div className="space-y-2">
                                 <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest ml-1">{t('landing_nickname_label')}</label>
                                 <Input
+                                    ref={nicknameInputRef}
                                     placeholder={t('landing_nickname_placeholder')}
-                                    className="h-14 bg-white dark:bg-slate-800 border-stone-200 dark:border-slate-700 text-lg text-center rounded-2xl shadow-sm focus-visible:ring-slate-900 dark:focus-visible:ring-slate-500 dark:text-white dark:placeholder:text-slate-500"
+                                    className={cn(
+                                        "h-14 bg-white dark:bg-slate-800 border-stone-200 dark:border-slate-700 text-lg text-center rounded-2xl shadow-sm focus-visible:ring-slate-900 dark:focus-visible:ring-slate-500 dark:text-white dark:placeholder:text-slate-500",
+                                        isLoggingIn && "select-none"
+                                    )}
                                     value={nickname}
                                     onChange={(e) => setNickname(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter" && !e.nativeEvent.isComposing && !isLoggingInRef.current) {
+                                            e.preventDefault()
+                                            handleLogin()
+                                        }
+                                    }}
+                                    disabled={isLoggingIn}
+                                    enterKeyHint="go"
                                     autoComplete="off"
                                 />
                             </div>
 
-                            <Button onClick={handleLogin} className="w-full h-14 rounded-2xl bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-slate-100 text-white dark:text-slate-900 shadow-xl shadow-slate-200/50 dark:shadow-black/20 transition-all hover:scale-[1.02] text-lg font-medium">
-                                {t('landing_start_journey')} <ArrowRight className="ml-2 w-5 h-5" />
+                            <Button
+                                type="button"
+                                onClick={handleLogin}
+                                disabled={isLoggingIn}
+                                aria-busy={isLoggingIn}
+                                className={cn(
+                                    "w-full h-14 rounded-2xl bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-slate-100 text-white dark:text-slate-900 shadow-xl shadow-slate-200/50 dark:shadow-black/20 transition-all text-lg font-medium select-none",
+                                    !isLoggingIn && "hover:scale-[1.02]"
+                                )}
+                            >
+                                {isLoggingIn ? (
+                                    <>
+                                        <Loader2 className="size-5 animate-spin shrink-0" />
+                                        <span className="truncate">{t('landing_preparing_journey')}</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        {t('landing_start_journey')} <ArrowRight className="ml-2 w-5 h-5" />
+                                    </>
+                                )}
                             </Button>
 
                             <div className="pt-6">
                                 <div className="relative"><div className="absolute inset-0 flex items-center"><span className="w-full border-t border-stone-200 dark:border-slate-700" /></div><div className="relative flex justify-center text-xs uppercase"><span className="bg-stone-50 dark:bg-slate-900 px-2 text-stone-400 dark:text-slate-500">{t('landing_or')}</span></div></div>
-                                <Button variant="ghost" className="w-full mt-4 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-stone-100 dark:hover:bg-slate-800" onClick={() => setShowRecover(true)}><History className="w-4 h-4 mr-2" /> {t('landing_use_recovery')}</Button>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    disabled={isLoggingIn}
+                                    className="w-full mt-4 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white hover:bg-stone-100 dark:hover:bg-slate-800 select-none"
+                                    onClick={() => { if (!isLoggingInRef.current) setShowRecover(true) }}
+                                >
+                                    <History className="w-4 h-4 mr-2" /> {t('landing_use_recovery')}
+                                </Button>
                             </div>
                         </div>
                     ) : (
@@ -371,8 +496,51 @@ export function LandingPage() {
                                 <h3 className="font-bold text-slate-800 dark:text-white">{t('landing_account_recovery')}</h3>
                                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('landing_enter_uuid')}</p>
                             </div>
-                            <Input className="h-10 text-xs font-mono bg-stone-50 dark:bg-slate-900 dark:border-slate-600 dark:text-white mb-4 text-center" placeholder="tbj_rec_xxxxxxxx_... 或 UUID" value={recoverCode} onChange={e => setRecoverCode(e.target.value)} />
-                            <div className="flex gap-2"><Button variant="outline" className="flex-1 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700" onClick={() => setShowRecover(false)}>{t('cancel')}</Button><Button className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white" onClick={handleRecover}>{t('landing_recover')}</Button></div>
+                            <Input
+                                ref={recoverInputRef}
+                                className={cn(
+                                    "h-10 text-xs font-mono bg-stone-50 dark:bg-slate-900 dark:border-slate-600 dark:text-white mb-4 text-center",
+                                    isRecovering && "select-none"
+                                )}
+                                placeholder="tbj_rec_xxxxxxxx_... 或 UUID"
+                                value={recoverCode}
+                                onChange={e => setRecoverCode(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter" && !e.nativeEvent.isComposing && !isRecoveringRef.current) {
+                                        e.preventDefault()
+                                        handleRecover()
+                                    }
+                                }}
+                                disabled={isRecovering}
+                                enterKeyHint="go"
+                            />
+                            <div className="flex gap-2">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={isRecovering}
+                                    className="flex-1 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700 select-none"
+                                    onClick={() => { if (!isRecoveringRef.current) setShowRecover(false) }}
+                                >
+                                    {t('cancel')}
+                                </Button>
+                                <Button
+                                    type="button"
+                                    disabled={isRecovering}
+                                    aria-busy={isRecovering}
+                                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white select-none"
+                                    onClick={handleRecover}
+                                >
+                                    {isRecovering ? (
+                                        <>
+                                            <Loader2 className="size-4 animate-spin shrink-0" />
+                                            <span className="truncate">{t('landing_recovering')}</span>
+                                        </>
+                                    ) : (
+                                        t('landing_recover')
+                                    )}
+                                </Button>
+                            </div>
                         </div>
                     )}
 
