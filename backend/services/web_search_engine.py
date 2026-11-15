@@ -302,6 +302,46 @@ SOCIAL_MEDIA_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# 社群登入牆特徵（避免機房 IP 遇到 HTTP 200 登入牆被誤判為有效貼文內文）
+_SOCIAL_LOGIN_WALL_TITLES = frozenset({
+    "登入 • instagram",
+    "login • instagram",
+    "log in • instagram",
+    "log into facebook",
+    "登入 facebook",
+})
+_SOCIAL_LOGIN_WALL_PHRASES = (
+    "登入 • instagram",
+    "login • instagram",
+    "log in • instagram",
+    "歡迎回到 instagram",
+    "welcome back to instagram",
+    "create an account or log in to instagram",
+    "log into facebook to start sharing",
+    "登入即可查看",
+)
+
+
+def _is_social_login_wall(
+    url: str,
+    title: str = "",
+    description: str = "",
+    markdown: str = "",
+) -> bool:
+    """判定社群網址是否回傳了通用登入牆頁面而非真實貼文內容"""
+    if not SOCIAL_MEDIA_PATTERN.search(url or ""):
+        return False
+
+    norm_title = title.strip().lower()
+    norm_desc = description.strip().lower()
+    if norm_title in _SOCIAL_LOGIN_WALL_TITLES:
+        return True
+    if norm_title == "instagram" and not norm_desc:
+        return True
+
+    combined = f"{norm_title}\n{norm_desc}\n{markdown[:600].strip().lower()}"
+    return any(phrase in combined for phrase in _SOCIAL_LOGIN_WALL_PHRASES)
+
 
 async def fetch_opengraph_metadata(url: str) -> Optional[Dict[str, str]]:
     """
@@ -336,6 +376,9 @@ async def fetch_opengraph_metadata(url: str) -> Optional[Dict[str, str]]:
             if title or description:
                 clean_title = html.unescape(title) if title else ""
                 clean_desc = html.unescape(description) if description else ""
+                if _is_social_login_wall(url, title=clean_title, description=clean_desc):
+                    print("⚠️ [SearchEngine] OpenGraph 命中社群登入牆，捨棄無效登入頁摘要")
+                    return None
 
                 parts = []
                 if clean_title:
@@ -375,8 +418,28 @@ async def fetch_jina_reader(
             "markdown": ""
         }
 
+    og_attempted = False
+
+    async def _og_fallback_or_error(error_code: str, message: str) -> Dict[str, Any]:
+        # 避免社群 URL 已在 Tier 1 失敗／命中登入牆後重複請求兩次 OpenGraph
+        if not og_attempted:
+            og_fallback = await fetch_opengraph_metadata(real_url)
+            if og_fallback and og_fallback.get("markdown"):
+                return {
+                    "status": "success",
+                    "url": real_url,
+                    "markdown": og_fallback["markdown"]
+                }
+        return {
+            "status": "error",
+            "error_code": error_code,
+            "message": message,
+            "markdown": ""
+        }
+
     # 1. 社群媒體網址優先路徑 (IG / Threads / FB 防爬牆極強，OpenGraph 直取最穩)
     if SOCIAL_MEDIA_PATTERN.search(real_url):
+        og_attempted = True
         og_data = await fetch_opengraph_metadata(real_url)
         if og_data and og_data.get("markdown"):
             return {
@@ -405,6 +468,13 @@ async def fetch_jina_reader(
         if resp.status_code == 200:
             md_content = resp.text.strip()
             if md_content:
+                if _is_social_login_wall(real_url, markdown=md_content):
+                    return {
+                        "status": "error",
+                        "error_code": "LOGIN_WALL",
+                        "message": "該社群貼文受登入牆保護，無法直接讀取內文，已為您自動採用搜尋摘要進行分析",
+                        "markdown": ""
+                    }
                 return {
                     "status": "success",
                     "url": real_url,
@@ -419,60 +489,24 @@ async def fetch_jina_reader(
         elif resp.status_code in [401, 403]:
             # Jina 免費節點 ASN 聲譽風控或目標網站反爬 -> 嘗試 OpenGraph 回退
             print(f"⚠️ [SearchEngine] Jina Reader HTTP {resp.status_code}，嘗試 OpenGraph 備援...")
-            og_fallback = await fetch_opengraph_metadata(real_url)
-            if og_fallback and og_fallback.get("markdown"):
-                return {
-                    "status": "success",
-                    "url": real_url,
-                    "markdown": og_fallback["markdown"]
-                }
-            return {
-                "status": "error",
-                "error_code": "READER_UNAVAILABLE",
-                "message": "該網頁受防爬保護或連線受限，已為您自動採用搜尋摘要進行分析",
-                "markdown": ""
-            }
+            return await _og_fallback_or_error(
+                "READER_UNAVAILABLE",
+                "該網頁受防爬保護或連線受限，已為您自動採用搜尋摘要進行分析",
+            )
         else:
-            og_fallback = await fetch_opengraph_metadata(real_url)
-            if og_fallback and og_fallback.get("markdown"):
-                return {
-                    "status": "success",
-                    "url": real_url,
-                    "markdown": og_fallback["markdown"]
-                }
-            return {
-                "status": "error",
-                "error_code": f"HTTP_{resp.status_code}",
-                "message": f"網頁讀取服務回應異常代碼 {resp.status_code}",
-                "markdown": ""
-            }
+            return await _og_fallback_or_error(
+                f"HTTP_{resp.status_code}",
+                f"網頁讀取服務回應異常代碼 {resp.status_code}",
+            )
     except httpx.TimeoutException:
         print("⏱️ [SearchEngine] Jina Reader 讀取逾時 (>4.0s)，嘗試 OpenGraph 備援...")
-        og_fallback = await fetch_opengraph_metadata(real_url)
-        if og_fallback and og_fallback.get("markdown"):
-            return {
-                "status": "success",
-                "url": real_url,
-                "markdown": og_fallback["markdown"]
-            }
-        return {
-            "status": "error",
-            "error_code": "TIMEOUT",
-            "message": "網頁回應過慢，已為您自動採用搜尋摘要進行分析",
-            "markdown": ""
-        }
+        return await _og_fallback_or_error(
+            "TIMEOUT",
+            "網頁回應過慢，已為您自動採用搜尋摘要進行分析",
+        )
     except Exception as e:
         print(f"⚠️ [SearchEngine] Jina Reader 讀取異常: {e}，嘗試 OpenGraph 備援...")
-        og_fallback = await fetch_opengraph_metadata(real_url)
-        if og_fallback and og_fallback.get("markdown"):
-            return {
-                "status": "success",
-                "url": real_url,
-                "markdown": og_fallback["markdown"]
-            }
-        return {
-            "status": "error",
-            "error_code": "NETWORK_ERROR",
-            "message": "網路連線異常，已為您自動採用搜尋摘要進行分析",
-            "markdown": ""
-        }
+        return await _og_fallback_or_error(
+            "NETWORK_ERROR",
+            "網路連線異常，已為您自動採用搜尋摘要進行分析",
+        )

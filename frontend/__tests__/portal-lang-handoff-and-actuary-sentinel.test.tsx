@@ -239,7 +239,7 @@ describe('Bilingual Handoff & Frontend E2E Remediation Sentinel', () => {
 
       const callArgs = vi.mocked(aiApi.actuaryChat).mock.calls[0]
       expect(callArgs[4]).toBe('en')
-      expect(screen.getByText('Sources')).toBeDefined()
+      expect(await screen.findByText('Sources')).toBeDefined()
       expect(screen.queryByText('參考來源')).toBeNull()
 
       const cardSrc = fs.readFileSync(path.join(frontendDir, 'components', 'ActuaryDialogCard.tsx'), 'utf-8')
