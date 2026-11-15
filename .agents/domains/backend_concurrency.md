@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **社群登入牆攔截與 OpenGraph 單次嘗試契約 (INV-BE-SOCIAL-LOGINWALL-01)**: fetch_opengraph_metadata() 與 fetch_jina_reader() 必須透過 _is_social_login_wall() 攔截社群登入牆，OpenGraph 命中時回傳 None、Jina HTTP 200 命中時回傳 error_code='LOGIN_WALL' 且維持 markdown=''，負向控制必須驗證含 Instagram 字樣之一般部落格不被誤判；同時因 main.py 對 fetch_jina_reader 設有 4.0s asyncio.wait_for 上限，Tier 1 已嘗試過 OpenGraph 之社群網址在 Tier 2 Jina 失敗時必須以 og_attempted 阻斷重複發送第二次相同 OpenGraph 請求，非社群網址保留 _og_fallback_or_error() 備援。
+
 - **DB-to-Edge Webhook Vault HMAC 與純 Deno WebCrypto 清理雙軌契約**: 凡由 Postgres Trigger 經 pg_net 呼叫 Supabase Edge Function 之非同步清理流程，強制使用 Vault 密鑰 + HMAC-SHA256 防重放驗簽 (300s) 與純 Deno WebCrypto 簽名外部請求；禁止依賴 app.settings.* 或在 Edge Function 引入 npm:cloudinary，並須透過 net._http_response 實測 HTTP 200 回執率。
 
 - **Antigravity Preview Agent 互動建立必須顯式指定 remote 環境**: 在調用 antigravity-preview-09-2026 的 interactions.create 時，請求參數必須顯式包含 environment="remote"；傳入不存在或已過期的 interaction_id 探針時後端必須回傳 400，並精準映射至 404/401/429 狀態碼。
@@ -95,6 +97,8 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **社群爬蟲 HTTP 200 登入牆偽陽性與無 Mock 外網測試陷阱 (FP-067)**: Instagram/Facebook 對雲端機房 IP（如 GitHub Actions Azure 或 Cloud Run）常回傳 HTTP 200 通用登入頁（登入 • Instagram / Login • Instagram / 歡迎回到 Instagram）而非 401/403。fetch_opengraph_metadata() 若未比對登入牆特徵會回傳 status='success' 污染 AI grounding_context_text；且 pytest 若直連外網社群網址將呈現本機通過、CI 紅燈。
+
 - **Supabase Trigger 讀取 app.settings 靜默 NULL 造成 401 與套件欄位誤判**: Supabase 代管 Postgres 未預設 app.settings.service_role_key，Trigger 取值為 NULL 會引發 Webhook 連續 HTTP 401（實測曾累積 338 筆失敗）；同時 Deno Edge Runtime 無法運行含 vm2 的 npm:cloudinary，且 itineraries.public_id 為 pub_* 分享代碼而非 Cloudinary Asset ID。應改用 Vault cleanup_webhook_secret 搭配 SECURITY DEFINER + extensions.hmac(..., 'sha256') 與 verify_cleanup_webhook_signature RPC (300s 視窗)，Edge Function 使用純 Deno WebCrypto SHA-1，並以 DB 三表觸發器 (expenses/itineraries/itinerary_items) 搭配後端清理 users.avatar_url 與 trip_capsule_entries.photo_url。
 
 - **Gemini 3.8 與 Gemma 系列 thought_signature 400 錯誤避免誤判為配置不支援**: 當 Gemini 3.8 或後續模型回傳 thought_signature 相關 400 INVALID_ARGUMENT 時，系統不可武斷將其歸類為 config_unsupported 觸發全域降級。應針對錯誤詳情進行精確模式比對，並在降級時優先剝離思考簽名配置進行原模型重試。

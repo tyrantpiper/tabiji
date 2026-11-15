@@ -3,6 +3,8 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **CI 單元測試零即時外網社群依賴與非同步 DOM 查詢不變量 (INV-CI-TEST-DETERMINISM-01)**: 所有單元測試（Vitest 與 Pytest）嚴禁在未經 mock 的狀態下直連外部防爬蟲社群網站（應使用 httpx.Response mock 夾具驗證解析與降級邏輯）；前端 RTL 對非同步請求後的 DOM 更新必須使用 async findBy* / waitFor 查詢。另於整理提交前若因本機 predev 觸發 build-sw.mjs 僅更新 public/sw.js 之 HEAD short SHA，應還原該非程式碼建置雜訊後再送出。
+
 - **安全稽核前必先完成線上五端真實拓撲 Grounding**: 啟動跨模組資安審計與修復前，必須優先以實測驗證 Vercel、Google Cloud Run、Cloudflare Workers/D1、Cloudinary 與 Supabase 線上現況與日誌，嚴禁僅憑離線臆測驅動跨檔案大改；Cloud Run 日誌對無效測試路徑 /api/cloudinary-test 回傳 HTTP 404 屬正常未命中行為。
 
 - **多代理人暫存工作區（.agents/teamwork/）版控雙重隔離防線（AD-151）**: 多代理人協同運作產生的臨時暫存檔與溝通日誌（.agents/teamwork/）必須在 .gitignore 嚴格宣告忽略，並於 /push Quality Gate 的 Teamwork Scratch Gate 進行物理探針檢查（git ls-files .agents/teamwork），嚴禁任何協作暫存碎片進入 Git 版控歷史。
@@ -94,6 +96,8 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Vitest RTL API Stub 驗證後接同步 getByText 導致 CI 競態失敗陷阱 (FP-068)**: 非同步元件在 useEffect 觸發 API 期間常先切換 loading/isThinking 狀態再 await 回應；若測試僅以 waitFor(() => expect(api).toHaveBeenCalled()) 等待送出請求後即呼叫同步 screen.getByText(...)，在本地高速環境恰好於 state commit 後執行而假性通過，在負載較重之 GitHub CI Runner 上則因仍停留在 Calculating... 狀態觸發 TestingLibraryElementError。驗證非同步回傳渲染的 DOM 節點必須改用 await screen.findBy* 或將 DOM 斷言置於 waitFor() 內。
+
 - **未盤點線上五端拓撲即執行全面靜態加固造成過度工程回滾**: 未先查證 Vercel 線上 Commit、Cloud Run 路由與環境變數、Cloudflare Worker WAF 規則（如 Python urllib UA 觸發 1010）及 Supabase 即時 schema_migrations / pg_net 日誌前，依靜態假設發起多輪全面修改會產生脫離真實部署環境的 70+ 過度工程檔案並被迫全數還原。另使用 Supabase CLI db push 前須確認 8 碼檔名與線上 14 碼版本號對齊。
 
 - **以 git diff HEAD === '' 當凍結不變量會阻斷合法安全修補並卡死 CI 閘門**: 凍結核心（Frozen Core）應撰寫為行為契約測試（驗證離線/資安不變量），而非在單元測試中硬性斷言 git diff HEAD -- file === ''。後者會導致任何合法的上游依賴修補或預編譯直接判定為測試失敗，並造成提交循環死鎖。

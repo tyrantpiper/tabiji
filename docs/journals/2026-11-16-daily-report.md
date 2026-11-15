@@ -84,6 +84,33 @@
 
 ---
 
+## 5. 第三階段增量交付：CI 雙路修復、社群登入牆防護與實測驗證 (`9e17be2`)
+
+> **時間戳記**: `2026-11-16 04:09` (UTC+8)
+> **對應提交**: `9e17be2` (`fix(search,ci): filter social login walls and fix CI test determinism`)
+
+### 🟢 Features & Fixes
+- **Source Control 整理與變動範圍（`3` 檔案，`+164 / -56`；另清除 `predev` 自動更新之 `frontend/public/sw.js` `+1/-1` 與 `sw.js.map` `+2/-2` 版本雜訊）**:
+  - [portal-lang-handoff-and-actuary-sentinel.test.tsx](file:///d:/Project/tabiji/travel-pwa/frontend/__tests__/portal-lang-handoff-and-actuary-sentinel.test.tsx#L240-L243): `+1 / -1`（`DEFECT-5` 將同步 `screen.getByText('Sources')` 改為 `await screen.findByText('Sources')`，修復 CI 平行負載下 `ActuaryDialogCard` 仍處於 `Calculating...` 時提早斷言的競態失敗）。
+  - [web_search_engine.py](file:///d:/Project/tabiji/travel-pwa/backend/services/web_search_engine.py#L305-L512): `+86 / -52`（新增 `_SOCIAL_LOGIN_WALL_TITLES`、`_SOCIAL_LOGIN_WALL_PHRASES` 與 `_is_social_login_wall()`；於 `fetch_opengraph_metadata()` 識別社群登入牆後回傳 `None`；於 `fetch_jina_reader()` 攔截 Jina HTTP 200 登入牆回應回傳 `error_code="LOGIN_WALL"`，並以 `og_attempted` + 共用 `_og_fallback_or_error()` 收斂原本四處重複的 OpenGraph 回退區塊，維持非社群網址回退行為並避免社群網址重複請求逾時）。
+  - [test_instagram_and_context_poison.py](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_instagram_and_context_poison.py#L32-L114): `+77 / -3`（移除對外部 `www.instagram.com` 的真實網路請求改以 `get_search_client` mock；新增 `test_instagram_login_wall_rejected_and_degrades_cleanly()` 覆蓋中文登入牆 + Jina 403 不重複請求 OpenGraph、英文 HTTP 200 `LOGIN_WALL` 及含 Instagram 字樣之良性部落格控制組）。
+- **本機實機日誌遙測**: 確認本機發送含 Instagram Reel 連結之 `SEARCH` 對話可經 Tier 1 OpenGraph (`301` ➔ `200 OK`) 順利餵入 `gemini-3.5-flash-lite` 串流生成；行程載入 (`GET /api/trips/...`) 與帳號保險庫同步 (`GET /api/auth/credential`) 皆回傳 `200 OK`。
+
+### 🏛️ Architecture Decisions
+- **AD-201（社群登入牆特徵過濾與 OpenGraph 單次嘗試收斂）**: 針對 IG/FB 在機房 IP 回傳 HTTP 200 通用登入頁的場景，透過 `_is_social_login_wall()` 在 `url` 命中 `SOCIAL_MEDIA_PATTERN` 時過濾通用登入標題與片語；且因 `main.py` 對 `fetch_jina_reader()` 外層設有 `4.0s` `asyncio.wait_for` 預算，Tier 1 已失敗／命中登入牆之社群網址在 Tier 2 Jina 異常後透過 `og_attempted` 跳過重複 OpenGraph 請求，不對非社群網址造成任何備援退化。
+
+### 🛡️ Failed Paths & Technical Debt
+- **FP-067**: 雲端機房 IP 對 Instagram 請求回傳 HTTP 200 通用登入牆（`登入 • Instagram` / `歡迎回到 Instagram`）而非 401/403，未檢查即被當作 `success` 污染 AI Context，且無 mock 測試造成本地通過、GitHub CI 必敗。
+- **FP-068**: `ActuaryDialogCard` 在 `useEffect` 先渲染 `Calculating...` 再 `await actuaryChat`；`DEFECT-5` 僅等待 `toHaveBeenCalled()` 後緊接同步 `screen.getByText('Sources')`，造成慢速 CI 環境穩定拋 `TestingLibraryElementError`。
+- **DEBT-AUTH-VAULT-DEDUP-01**: 本機後端日誌觀測到單次頁面載入／切換語言期間會觸發 4 次 `GET /api/auth/credential 200 OK`（源於 `AppClientLayer`、`initSessionLifecycleListener` 與 `ProfileView` 各自呼叫尚未做併發去重之 `fetchLatestRecoveryKey()`），屬非致命頻率最佳化待辦。
+- **DEBT-ENV-OPS**: 沿用既有待辦——`DEBT-SW-PRECACHE-SYNC`（`predev` 觸發 `build-sw.mjs` 產生 `public/sw.js` SHA 變動）、實機 iOS Safari 延遲與 IME 煙霧測試，以及遠端 GitHub `2 moderate` Dependabot 安全提示追蹤。
+
+### 🎯 Next Steps
+- 確認後執行 `git push origin main`，驗證 GitHub Actions CI (`Frontend Quality Checks` / `Backend Quality Checks`) 全綠通過。
+- 後續可評估為 `fetchLatestRecoveryKey()` 加入 in-flight 單例去重（搭配 `__reset...ForTesting()`）與檢查 GitHub Dependabot `2 moderate` 警示。
+
+---
+
 ## 🧬 Machine-Executable Invariant Rules
 
 ```json
@@ -136,6 +163,34 @@
     "id": "INV-UI-LOADING-LOCK-01",
     "title": "非同步表單雙軌互斥鎖、IME 組字守衛與卸載安全轉場法則",
     "content": "凡涉及非同步身分建立或遠端請求之登陸/還原表單，送出前須先通過空白與格式校驗，再同步鎖定 useRef（阻斷單幀連點重入）與 useState（鎖定輸入框、主按鈕與切換鈕 disabled/aria-busy/select-none）；輸入框 Enter 送出必須掛載 !e.nativeEvent.isComposing；document.startViewTransition 必須檢查 typeof === 'function'；且非同步完成與延遲換場計時器必須受 isMountedRef 與 unmount cleanup 保護，異常時於 catch 解鎖並以 toast.error 呈現，嚴禁對 onClick 外拋 unhandled rejection。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "FAILED_PATH",
+    "id": "FP-067",
+    "title": "社群爬蟲 HTTP 200 登入牆偽陽性與無 Mock 外網測試陷阱 (FP-067)",
+    "content": "Instagram/Facebook 對雲端機房 IP（如 GitHub Actions Azure 或 Cloud Run）常回傳 HTTP 200 通用登入頁（登入 • Instagram / Login • Instagram / 歡迎回到 Instagram）而非 401/403。fetch_opengraph_metadata() 若未比對登入牆特徵會回傳 status='success' 污染 AI grounding_context_text；且 pytest 若直連外網社群網址將呈現本機通過、CI 紅燈。"
+  },
+  {
+    "domain": "backend_concurrency",
+    "type": "INVARIANT_RULE",
+    "id": "INV-BE-SOCIAL-LOGINWALL-01",
+    "title": "社群登入牆攔截與 OpenGraph 單次嘗試契約 (INV-BE-SOCIAL-LOGINWALL-01)",
+    "content": "fetch_opengraph_metadata() 與 fetch_jina_reader() 必須透過 _is_social_login_wall() 攔截社群登入牆，OpenGraph 命中時回傳 None、Jina HTTP 200 命中時回傳 error_code='LOGIN_WALL' 且維持 markdown=''，負向控制必須驗證含 Instagram 字樣之一般部落格不被誤判；同時因 main.py 對 fetch_jina_reader 設有 4.0s asyncio.wait_for 上限，Tier 1 已嘗試過 OpenGraph 之社群網址在 Tier 2 Jina 失敗時必須以 og_attempted 阻斷重複發送第二次相同 OpenGraph 請求，非社群網址保留 _og_fallback_or_error() 備援。"
+  },
+  {
+    "domain": "devops_security",
+    "type": "FAILED_PATH",
+    "id": "FP-068",
+    "title": "Vitest RTL API Stub 驗證後接同步 getByText 導致 CI 競態失敗陷阱 (FP-068)",
+    "content": "非同步元件在 useEffect 觸發 API 期間常先切換 loading/isThinking 狀態再 await 回應；若測試僅以 waitFor(() => expect(api).toHaveBeenCalled()) 等待送出請求後即呼叫同步 screen.getByText(...)，在本地高速環境恰好於 state commit 後執行而假性通過，在負載較重之 GitHub CI Runner 上則因仍停留在 Calculating... 狀態觸發 TestingLibraryElementError。驗證非同步回傳渲染的 DOM 節點必須改用 await screen.findBy* 或將 DOM 斷言置於 waitFor() 內。"
+  },
+  {
+    "domain": "devops_security",
+    "type": "INVARIANT_RULE",
+    "id": "INV-CI-TEST-DETERMINISM-01",
+    "title": "CI 單元測試零即時外網社群依賴與非同步 DOM 查詢不變量 (INV-CI-TEST-DETERMINISM-01)",
+    "content": "所有單元測試（Vitest 與 Pytest）嚴禁在未經 mock 的狀態下直連外部防爬蟲社群網站（應使用 httpx.Response mock 夾具驗證解析與降級邏輯）；前端 RTL 對非同步請求後的 DOM 更新必須使用 async findBy* / waitFor 查詢。另於整理提交前若因本機 predev 觸發 build-sw.mjs 僅更新 public/sw.js 之 HEAD short SHA，應還原該非程式碼建置雜訊後再送出。"
   }
 ]
 ```
