@@ -468,9 +468,24 @@ export function ProfileView() {
 
     const handleClearCache = () => {
         if (confirm("This will clear all app cache. Continue?")) {
-            const uuid = localStorage.getItem("user_uuid")  // 🆕 Preserve UUID
+            // 🛡️ 清快取時保留引繼碼、使用者識別與憑證，避免單機誤清除後永久鎖死
+            const PRESERVED_KEYS = [
+                "user_uuid",
+                "user_recovery_key",
+                "tabiji_session_token",
+                "tabiji_pop_token",
+                "user_nickname",
+                "user_avatar",
+            ]
+            const preserved: Record<string, string> = {}
+            for (const key of PRESERVED_KEYS) {
+                const val = localStorage.getItem(key)
+                if (val !== null) preserved[key] = val
+            }
             localStorage.clear()
-            if (uuid) localStorage.setItem("user_uuid", uuid)  // 🆕 Restore UUID
+            for (const [key, val] of Object.entries(preserved)) {
+                localStorage.setItem(key, val)
+            }
             window.location.reload()
         }
     }

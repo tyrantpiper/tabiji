@@ -11,6 +11,7 @@
 import { SyncEngineControl } from "./sync-engine";
 
 const TOKEN_KEY = "tabiji_session_token";
+const POP_TOKEN_KEY = "tabiji_pop_token";
 const RECOVERY_KEY = "user_uuid";
 
 let inFlightSessionPromise: Promise<string | null> | null = null;
@@ -101,6 +102,30 @@ export function isTokenValid(token: string | null): boolean {
     }
 }
 
+function isJwtStructure(token: string | null): boolean {
+    if (!token || typeof token !== "string") return false;
+    try {
+        const parts = token.split(".");
+        const b64UrlPart = /^[A-Za-z0-9_-]+={0,2}$/;
+        if (parts.length !== 3 || !b64UrlPart.test(parts[0]) || !b64UrlPart.test(parts[1]) || !b64UrlPart.test(parts[2])) {
+            return false;
+        }
+        const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const jsonStr = typeof atob !== "undefined"
+            ? decodeURIComponent(
+                atob(base64)
+                    .split("")
+                    .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+                    .join("")
+            )
+            : Buffer.from(base64, "base64").toString("utf-8");
+        const payload = JSON.parse(jsonStr);
+        return Boolean(payload && typeof payload === "object" && !Array.isArray(payload));
+    } catch {
+        return false;
+    }
+}
+
 /**
  * 取得當前已緩存的 Session Token (同步快速讀取)
  * 🛡️ 具備過期與格式自癒能力：若發現已過期或損毀自動自 localStorage 剔除
@@ -112,6 +137,9 @@ export function getCachedToken(): string | null {
         if (!token) return null;
         if (!isTokenValid(token)) {
             console.warn("🛡️ [Auth] Cached session token is expired or corrupted, purging...");
+            if (isJwtStructure(token)) {
+                localStorage.setItem(POP_TOKEN_KEY, token);
+            }
             localStorage.removeItem(TOKEN_KEY);
             return null;
         }
@@ -215,7 +243,9 @@ export async function ensureValidSession(): Promise<string | null> {
     inFlightSessionPromise = (async () => {
         try {
             const storedKey = getRecoveryKey();
-            const rawToken = typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
+            const rawToken = typeof window !== "undefined"
+                ? (localStorage.getItem(TOKEN_KEY) || localStorage.getItem(POP_TOKEN_KEY))
+                : null;
             const headers: Record<string, string> = { "Content-Type": "application/json" };
             if (rawToken) {
                 headers["Authorization"] = `Bearer ${rawToken}`;
@@ -240,6 +270,7 @@ export async function ensureValidSession(): Promise<string | null> {
                         // 🛡️ 訪客自癒機制：無效孤兒 UUID 立即物理清除，重置冷卻，絕不觸發彈窗！
                         console.warn("🛡️ [Auth] Purging invalid orphan identity for unauthenticated visitor.");
                         localStorage.removeItem(TOKEN_KEY);
+                        localStorage.removeItem(POP_TOKEN_KEY);
                         localStorage.removeItem("user_recovery_key");
                         localStorage.removeItem(RECOVERY_KEY);
                         lastExchangeFailedAt = 0; // 🔓 立即解開冷卻，保證使用者輸入暱稱時可秒開換票
@@ -251,6 +282,7 @@ export async function ensureValidSession(): Promise<string | null> {
             const data = await res.json();
             if (data?.access_token) {
                 localStorage.setItem(TOKEN_KEY, data.access_token);
+                localStorage.setItem(POP_TOKEN_KEY, data.access_token);
                 // 🛡️ 雙軌固化：既有 UUID 與新版專屬引繼碼同步持久化
                 if (data.recovery_key) {
                     const currentKey = localStorage.getItem("user_recovery_key");
@@ -315,6 +347,7 @@ export async function restoreAccountWithKey(recoveryKey: string): Promise<Sessio
     const data = await res.json();
     if (data?.access_token) {
         localStorage.setItem(TOKEN_KEY, data.access_token);
+        localStorage.setItem(POP_TOKEN_KEY, data.access_token);
         localStorage.setItem(RECOVERY_KEY, data.user_id);
         if (data.recovery_key) {
             localStorage.setItem("user_recovery_key", data.recovery_key);
@@ -333,7 +366,7 @@ export async function restoreAccountWithKey(recoveryKey: string): Promise<Sessio
  * 個人頁面專用：主動輪替引繼金鑰並使舊金鑰作廢 (Key Rotation & Revocation)
  */
 export async function rotateAccountRecoveryKey(): Promise<string> {
-    const token = getCachedToken();
+    const token = getCachedToken() || (typeof window !== "undefined" ? localStorage.getItem(POP_TOKEN_KEY) : null);
     if (!token) throw new Error("No active session token available");
 
     const res = await fetch("/api/auth/rotate", {
@@ -354,6 +387,7 @@ export async function rotateAccountRecoveryKey(): Promise<string> {
         localStorage.setItem("user_recovery_key", data.recovery_key);
         if (data.access_token) {
             localStorage.setItem(TOKEN_KEY, data.access_token);
+            localStorage.setItem(POP_TOKEN_KEY, data.access_token);
         }
         return data.recovery_key as string;
     }
@@ -366,7 +400,9 @@ export async function rotateAccountRecoveryKey(): Promise<string> {
  * 🛡️ 支援寬限期：優先採用快取有效 Token，若已過期則回退攜帶本地歷史 Token 供後端驗簽自癒
  */
 export async function fetchLatestRecoveryKey(): Promise<string | null> {
-    const token = typeof window !== "undefined" ? (getCachedToken() || localStorage.getItem(TOKEN_KEY)) : null;
+    const token = typeof window !== "undefined"
+        ? (getCachedToken() || localStorage.getItem(TOKEN_KEY) || localStorage.getItem(POP_TOKEN_KEY))
+        : null;
     if (!token) return null;
 
     try {
@@ -378,6 +414,7 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
         if (!res.ok) {
             if (res.status === 401 && typeof window !== "undefined") {
                 localStorage.removeItem(TOKEN_KEY);
+                localStorage.removeItem(POP_TOKEN_KEY);
             }
             return null;
         }
@@ -444,6 +481,7 @@ export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<st
     }
 
     localStorage.setItem(TOKEN_KEY, data.access_token);
+    localStorage.setItem(POP_TOKEN_KEY, data.access_token);
     localStorage.setItem("user_recovery_key", cleanKey);
     localStorage.setItem(RECOVERY_KEY, data.user_id);
     lastRestoredAt = Date.now();
@@ -466,6 +504,7 @@ export async function resetAndStartFreshSession(): Promise<SessionInfo | null> {
     if (typeof window === "undefined") return null;
     localStorage.removeItem("user_recovery_key");
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(POP_TOKEN_KEY);
     localStorage.removeItem(RECOVERY_KEY);
     lastExchangeFailedAt = 0;
 
@@ -480,6 +519,7 @@ export async function resetAndStartFreshSession(): Promise<SessionInfo | null> {
         const data = await res.json();
         if (data?.access_token && data?.user_id) {
             localStorage.setItem(TOKEN_KEY, data.access_token);
+            localStorage.setItem(POP_TOKEN_KEY, data.access_token);
             localStorage.setItem(RECOVERY_KEY, data.user_id);
             if (data.recovery_key) {
                 localStorage.setItem("user_recovery_key", data.recovery_key);
