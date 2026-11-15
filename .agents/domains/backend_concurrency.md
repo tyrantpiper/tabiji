@@ -3,6 +3,8 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **DB-to-Edge Webhook Vault HMAC 與純 Deno WebCrypto 清理雙軌契約**: 凡由 Postgres Trigger 經 pg_net 呼叫 Supabase Edge Function 之非同步清理流程，強制使用 Vault 密鑰 + HMAC-SHA256 防重放驗簽 (300s) 與純 Deno WebCrypto 簽名外部請求；禁止依賴 app.settings.* 或在 Edge Function 引入 npm:cloudinary，並須透過 net._http_response 實測 HTTP 200 回執率。
+
 - **Antigravity Preview Agent 互動建立必須顯式指定 remote 環境**: 在調用 antigravity-preview-09-2026 的 interactions.create 時，請求參數必須顯式包含 environment="remote"；傳入不存在或已過期的 interaction_id 探針時後端必須回傳 400，並精準映射至 404/401/429 狀態碼。
 
 - **各主流模型思考配置（Thinking Budget）相容性矩陣契約**: 思考模式配置存在嚴格的模型版本差異：Gemini 2.5 系列關閉/低思考使用數值型 thinking_budget=0；Gemini 3.8 系列採用枚舉型 ThinkingLevel.LOW / MEDIUM / HIGH；Gemma 4 系列採用 minimal / high 宣告。跨模型傳遞配置前必須經過適配矩陣轉換，嚴禁混用。
@@ -93,6 +95,8 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Supabase Trigger 讀取 app.settings 靜默 NULL 造成 401 與套件欄位誤判**: Supabase 代管 Postgres 未預設 app.settings.service_role_key，Trigger 取值為 NULL 會引發 Webhook 連續 HTTP 401（實測曾累積 338 筆失敗）；同時 Deno Edge Runtime 無法運行含 vm2 的 npm:cloudinary，且 itineraries.public_id 為 pub_* 分享代碼而非 Cloudinary Asset ID。應改用 Vault cleanup_webhook_secret 搭配 SECURITY DEFINER + extensions.hmac(..., 'sha256') 與 verify_cleanup_webhook_signature RPC (300s 視窗)，Edge Function 使用純 Deno WebCrypto SHA-1，並以 DB 三表觸發器 (expenses/itineraries/itinerary_items) 搭配後端清理 users.avatar_url 與 trip_capsule_entries.photo_url。
+
 - **Gemini 3.8 與 Gemma 系列 thought_signature 400 錯誤避免誤判為配置不支援**: 當 Gemini 3.8 或後續模型回傳 thought_signature 相關 400 INVALID_ARGUMENT 時，系統不可武斷將其歸類為 config_unsupported 觸發全域降級。應針對錯誤詳情進行精確模式比對，並在降級時優先剝離思考簽名配置進行原模型重試。
 
 - **RPD 配額未滿卻頻繁遭遇 429 速率限制之四層成因與退避治理**: 429 觸發多源於短突發速率（RPM/TPM）或免費金鑰之付費 Grounding 工具耗盡，非每日總請求數（RPD）耗盡。移除 SEARCH 意圖之 First-Pass 雙重呼叫可降低 60% 瞬間突發；免費金鑰停用 Google 原生 Grounding；SlowAPI 改用金鑰雜湊分桶避免本機 127.0.0.1 誤限流；暫態 429 不計入 300s 熔斷池。
