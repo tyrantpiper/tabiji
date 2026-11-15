@@ -56,6 +56,34 @@
 
 ---
 
+## 4. 第二階段增量交付：`LandingPage` 載入鎖定、防反白與 IME 守衛 (`e5f24c7`)
+
+> **時間戳記**: `2026-11-16 03:14` (UTC+8)
+> **對應提交**: `e5f24c7` (`feat(landing): add loading lock, spinner feedback and IME submit guard`)
+
+### 🟢 Features & Fixes
+- **變動範圍 (`4` 檔案，合計 `+856 / -72`，忽略縮排 `-w` 為 `+808 / -24`)**:
+  - [landing-page.tsx](file:///d:/Project/tabiji/travel-pwa/frontend/components/views/landing-page.tsx): `+240 / -72`（`-w`: `+192 / -24`）
+  - [remaining.ts](file:///d:/Project/tabiji/travel-pwa/frontend/lib/i18n/remaining.ts): `+8 / -0`（新增 `landing_preparing_journey`、`landing_login_failed`、`landing_recovering`、`landing_recover_failed` 雙語鍵）
+  - [translations.ts](file:///d:/Project/tabiji/travel-pwa/frontend/lib/translations.ts): `+8 / -0`（同步 4 組雙語鍵）
+  - [landing-page-loading-lock.test.tsx](file:///d:/Project/tabiji/travel-pwa/frontend/__tests__/landing-page-loading-lock.test.tsx): `+600 / -0`（13 項鎖定、防連點、IME、卸載清理與錯誤回退測試）
+- **核心行為**:
+  - 保留原有 `ensureValidSession()`、`generateUUID()` 離線降級與 `usersApi.updateProfile()` 底層邏輯不變。
+  - 點擊「開始旅程」或「帳號還原」於校驗通過後，立即執行 `clearActiveSelection()` 收合並清除既有的文字反白與 `blur()`，同步鎖定 `useRef` 互斥閘門與 `useState`（`isLoggingIn` / `isRecovering`）。
+  - 鎖定期間對外層表單容器、`<Input>` 與 `<Button>` 全面施加 `disabled` + `aria-busy` + `select-none`，並顯示 `<Loader2 className="size-5 animate-spin shrink-0" />`（「正在準備旅程...」 / 「還原中...」）。
+  - 雙輸入框補齊 `enterKeyHint="go"` 與 `!e.nativeEvent.isComposing` IME 組字防誤觸守衛，以及 `isMountedRef`、`recoverTimerRef` 卸載清理與 `typeof document.startViewTransition === 'function'` 型別降級保護。
+
+### 🛡️ 踩坑與測試品質記錄
+- **SVG 圖示尺寸覆寫**: `button.tsx` 之 `[&_svg:not([class*='size-'])]:size-4`（權重 `(0,2,1)`）會覆寫 `w-5 h-5`，改用 `size-5` 維持 `20px` 視覺量體。
+- **CSS Cascade Layer 與指標穿透**: Tailwind v4 `.select-none` 依賴 `globals.css` 未分層 `.select-none`（`!important`）覆蓋 `input` 預設 `user-select: text !important`；同時將 `select-none` 掛載於載入中表單外層容器，吸收 `disabled:pointer-events-none` 的指標穿透選取風險。
+- **全棧 Quality Gate 實測**: `tsc --noEmit` (0)、`eslint --max-warnings=0 .` (0)、Frontend Vitest (`110` 檔 / `1064` passed / `4` pre-existing skipped)、Backend Pytest (`643` passed / `5` skipped)、`next build` (0)、`neural_seam_harness.py` (`10/10` PASS)、`validate_security_ledger.py` (`377` targets PASS)。
+
+### 🎯 Next Steps
+- 確認提交與遠端同步指令（`git push origin main`）。
+- 實機 iOS Safari 針對 2–3 秒網路延遲進行觸控長按與實體 IME 煙霧測試。
+
+---
+
 ## 🧬 Machine-Executable Invariant Rules
 
 ```json
@@ -94,6 +122,20 @@
     "id": "INV-DEVOPS-LIVE-TOPOLOGY-01",
     "title": "安全稽核前必先完成線上五端真實拓撲 Grounding",
     "content": "啟動跨模組資安審計與修復前，必須優先以實測驗證 Vercel、Google Cloud Run、Cloudflare Workers/D1、Cloudinary 與 Supabase 線上現況與日誌，嚴禁僅憑離線臆測驅動跨檔案大改；Cloud Run 日誌對無效測試路徑 /api/cloudinary-test 回傳 HTTP 404 屬正常未命中行為。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "FAILED_PATH",
+    "id": "FP-066",
+    "title": "Button SVG 預設 size-4 覆寫與 disabled 指標穿透文字反白陷阱",
+    "content": "button.tsx 宣告 [&_svg:not([class*='size-'])]:size-4（權重 0,2,1），會將僅設定 w-5 h-5 的 Loader2 圖示縮小至 16px，必須顯式傳入 size-5 才能保持 20px；此外 button/input 之 disabled:pointer-events-none 會使鎖定期間的觸控長按穿透至父層容器，必須同步於送出前執行 clearActiveSelection() 收合選區並 blur()，且在鎖定狀態對表單外層容器掛載未分層 .select-none（!important）覆蓋 input 預設 user-select: text。"
+  },
+  {
+    "domain": "ios_ui",
+    "type": "INVARIANT_RULE",
+    "id": "INV-UI-LOADING-LOCK-01",
+    "title": "非同步表單雙軌互斥鎖、IME 組字守衛與卸載安全轉場法則",
+    "content": "凡涉及非同步身分建立或遠端請求之登陸/還原表單，送出前須先通過空白與格式校驗，再同步鎖定 useRef（阻斷單幀連點重入）與 useState（鎖定輸入框、主按鈕與切換鈕 disabled/aria-busy/select-none）；輸入框 Enter 送出必須掛載 !e.nativeEvent.isComposing；document.startViewTransition 必須檢查 typeof === 'function'；且非同步完成與延遲換場計時器必須受 isMountedRef 與 unmount cleanup 保護，異常時於 catch 解鎖並以 toast.error 呈現，嚴禁對 onClick 外拋 unhandled rejection。"
   }
 ]
 ```

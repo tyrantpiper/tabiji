@@ -3,6 +3,8 @@
 > **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
 
 ## 🏛️ 架構決策 (Decisions)
+- **非同步表單雙軌互斥鎖、IME 組字守衛與卸載安全轉場法則**: 凡涉及非同步身分建立或遠端請求之登陸/還原表單，送出前須先通過空白與格式校驗，再同步鎖定 useRef（阻斷單幀連點重入）與 useState（鎖定輸入框、主按鈕與切換鈕 disabled/aria-busy/select-none）；輸入框 Enter 送出必須掛載 !e.nativeEvent.isComposing；document.startViewTransition 必須檢查 typeof === 'function'；且非同步完成與延遲換場計時器必須受 isMountedRef 與 unmount cleanup 保護，異常時於 catch 解鎖並以 toast.error 呈現，嚴禁對 onClick 外拋 unhandled rejection。
+
 - **打字機動畫標題雙層 DOM 無障礙設計與 React Compiler 渲染隔離**: 打字機文字元件必須包含 sr-only 完整可讀文字與 aria-hidden 動態層以維護 a11y；外層 key 隔離內層 state 避免 React 19 / React Compiler 於渲染階段觸發狀態循環更新；支援 prefers-reduced-motion 降級為靜態文字。
 
 - **Multi-Action Input Right Padding Minimum Scale**: Form inputs housing 3 or more absolute right action buttons (e.g. Refresh, Eye Toggle, Copy) MUST enforce at least pr-44 (11rem / 176px) to guarantee zero character overlap with button icons.
@@ -42,6 +44,8 @@
 - **Framer Motion 一次性動畫遞增 key 重播**: 鈴鐺動畫以 key={ringCount} 重播，取代布林狀態重設，消除快速連點卡死。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Button SVG 預設 size-4 覆寫與 disabled 指標穿透文字反白陷阱**: button.tsx 宣告 [&_svg:not([class*='size-'])]:size-4（權重 0,2,1），會將僅設定 w-5 h-5 的 Loader2 圖示縮小至 16px，必須顯式傳入 size-5 才能保持 20px；此外 button/input 之 disabled:pointer-events-none 會使鎖定期間的觸控長按穿透至父層容器，必須同步於送出前執行 clearActiveSelection() 收合選區並 blur()，且在鎖定狀態對表單外層容器掛載未分層 .select-none（!important）覆蓋 input 預設 user-select: text。
+
 - **SVG 羅盤指針 transform-origin 使用像素單位導致響應式縮放位移刺穿卡片**: 在 SVG 向量動效中，transform-origin: 100px 在不同螢幕 DPI 縮放時會被視為絕對像素偏移。旋轉中心必須使用 transformBox: 'view-box' 配合百分比或 viewBox 原生座標，外層容器必須添加 overflow-hidden。
 
 - **ScrollSpy 高亮標記與平滑捲動互斥競態（Flapping Race）**: 點擊導航錨點觸發平滑捲動時，途中被 IntersectionObserver 觸發回彈判定，導致 0.8s 內產生多次振盪閃爍。應在點擊時以 isManualScrollingRef 互斥鎖暫停 Observer 回調寫入 state 約 900ms，捲動抵達後再解除鎖定。
