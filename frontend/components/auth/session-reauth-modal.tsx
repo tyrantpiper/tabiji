@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useCallback } from "react"
+import { useSWRConfig } from "swr"
 import {
     Dialog,
     DialogContent,
@@ -18,9 +19,25 @@ import { toast } from "sonner"
 
 const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
 
+export function formatReauthReason(reason: string | null, zh: boolean): string | null {
+    if (!reason) return null;
+    if (reason.includes("Account already upgraded")) {
+        return zh
+            ? "此帳號已升級為新版引繼碼 (tbj_rec_*)。若您剛從正式網域 (tabijiapp.com) 切換至舊網域 (vercel.app)，因瀏覽器跨網域儲存空間互相獨立，請從已登入網域的「個人頁面 ➔ 引繼碼」複製 tbj_rec_* 貼於下方即可完成同步。"
+            : reason;
+    }
+    if (reason.includes("Credential has been rotated")) {
+        return zh
+            ? "此帳號的引繼碼已在其他裝置或網域輪替更新，請貼上最新引繼碼 (tbj_rec_*) 以恢復同步。"
+            : reason;
+    }
+    return reason;
+}
+
 export function SessionReauthModal() {
     const { lang } = useLanguage()
     const zh = lang === "zh"
+    const { mutate: globalMutate } = useSWRConfig()
 
     const [isOpen, setIsOpen] = useState(false)
     const [recoveryKeyInput, setRecoveryKeyInput] = useState("")
@@ -70,6 +87,18 @@ export function SessionReauthModal() {
 
         try {
             await reanchorSessionWithKey(cleanKey)
+            await globalMutate(
+                (key) =>
+                    (Array.isArray(key) && typeof key[0] === "string" && key[0].startsWith("/api/")) ||
+                    (typeof key === "string" && key.startsWith("poi_pool_")),
+                undefined,
+                { revalidate: true }
+            )
+            if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("tabidachi-trigger-refresh", {
+                    detail: { source: "session-restored", timestamp: Date.now() }
+                }))
+            }
             setIsSuccess(true)
             toast.success(zh ? "✨ 引繼碼驗證成功！雲端同步已無縫復原。" : "✨ Re-authenticated successfully! Sync restored.")
             setTimeout(() => {
@@ -83,7 +112,7 @@ export function SessionReauthModal() {
         } finally {
             setIsSubmitting(false)
         }
-    }, [recoveryKeyInput, zh])
+    }, [recoveryKeyInput, zh, globalMutate])
 
     const handleDismissOffline = () => {
         dismissReauthPrompt()
@@ -112,7 +141,7 @@ export function SessionReauthModal() {
                     <DialogDescription className="text-xs text-[#1E2927]/70 dark:text-[#E5EBEA]/70 leading-relaxed space-y-1.5">
                         {customReason && (
                             <span className="block font-medium text-[#E56E25] bg-[#E56E25]/10 p-2 rounded-lg border border-[#E56E25]/20">
-                                ⚠️ {customReason}
+                                ⚠️ {formatReauthReason(customReason, zh)}
                             </span>
                         )}
                         <span className="block">

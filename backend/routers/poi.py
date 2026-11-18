@@ -397,7 +397,7 @@ async def search_nearby_poi(
         raise HTTPException(status_code=400, detail="Radius must be between 100 and 5000 meters")
     
     try:
-        pois = await search_poi_combined(lat, lng, category, radius)
+        pois = await search_poi_combined(lat, lng, category, radius, timeout=2.5)
         return {
             "count": len(pois),
             "radius": radius,

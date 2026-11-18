@@ -344,8 +344,9 @@ async def create_or_exchange_session(
                     is_new=False,
                 )
         
-        # 🛡️ 雙軌平滑升級：若帳號已升級，校驗合法持有證明 (Proof-of-Possession)
+        # 🛡️ 雙軌平滑升級：若帳號已升級，校驗合法持有證明 (Proof-of-Possession) 或同源帳號錨點 (expected_user_id)
         if user_rec and user_rec.get("recovery_key_id"):
+            db_ver = int(user_rec.get("credential_version") or 1)
             is_authenticated = False
             token_ver = 1
             if auth_header and auth_header.startswith("Bearer "):
@@ -361,22 +362,26 @@ async def create_or_exchange_session(
                     except Exception:
                         pass
 
-            if not is_authenticated:
-                raise HTTPException(
-                    status_code=401, 
-                    detail="Account already upgraded. Please use your modern recovery key (tbj_rec_*)."
-                )
-
             # 🛡️ 狀態機二元分流防衛 (ADR-009 State-Bifurcated Guard)
-            # 若帳號曾受威脅並執行金鑰輪替 (db_ver > 1)，舊版 Token (token_ver < db_ver) 視為已撤銷，徹底阻斷旁路提權
-            db_ver = int(user_rec.get("credential_version") or 1)
-            if db_ver > 1 and token_ver < db_ver:
+            # 若帳號曾受威脅並執行金鑰輪替 (db_ver > 1)，持有舊版 Token (token_ver < db_ver) 視為已撤銷，徹底阻斷旁路提權
+            if is_authenticated and db_ver > 1 and token_ver < db_ver:
                 raise HTTPException(
                     status_code=401,
                     detail="Credential has been rotated. This session is revoked."
                 )
 
-            # 🛡️ 驗證通過之合法舊設備：解密保險庫下發最新金鑰與新 Session，消除死結
+            # 🛡️ 跨網域同源錨點自癒：當舊網域分頁僅存同源 user_uuid 而遺失 Token（token 被清理且未持有已撤銷舊 PoP），
+            # 必須同時具備 body.expected_user_id == clean_uid 才允許自雲端保險庫領回既有的 tbj_rec_*
+            has_matching_anchor = bool(
+                body.expected_user_id and body.expected_user_id.strip().lower() == clean_uid
+            )
+            if not is_authenticated and not has_matching_anchor:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Account already upgraded. Please use your modern recovery key (tbj_rec_*)."
+                )
+
+            # 🛡️ 驗證通過之合法舊設備/跨網域同源設備：解密保險庫下發最新金鑰與新 Session，消除死結
             decrypted_key = decrypt_recovery_key_with_fallback(user_rec.get("recovery_key_encrypted"), secret)
             token = create_session_jwt(clean_uid, secret, db_ver)
             return SessionResponse(

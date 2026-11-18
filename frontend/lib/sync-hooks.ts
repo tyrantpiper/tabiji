@@ -180,14 +180,20 @@ export function useBackgroundSync() {
             useSyncStatusStore.getState().setIsOnline(false);
         };
 
+        const handleSessionRestored = () => {
+            processQueue();
+        };
+
         const interval = setInterval(processQueue, 30000);
         window.addEventListener('online', handleOnline);
         window.addEventListener('offline', handleOffline);
+        window.addEventListener('tabiji:session_restored', handleSessionRestored);
 
         return () => {
             clearInterval(interval);
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
+            window.removeEventListener('tabiji:session_restored', handleSessionRestored);
         };
     }, []);
 }

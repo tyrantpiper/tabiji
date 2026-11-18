@@ -1,5 +1,5 @@
 import useSWR from "swr"
-import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { travelDataApi, API_HOST } from './api'
 import { getTripSnapshotSync, saveTripSnapshot, preloadTripSnapshot, getTripsListSnapshotSync, preloadTripsListSnapshot, saveTripsListSnapshot, getTripCapsuleSnapshotSync, saveTripCapsuleSnapshot } from './idb-storage'
 import type { Trip, CapsuleProgressSummary } from './itinerary-types'
@@ -15,6 +15,17 @@ export class HttpError extends Error {
 }
 
 import { getCachedToken, ensureValidSession, getLastAuthExchangeError, triggerReauthPrompt, wasLastAuthExchangeTransientFailure } from './auth-session'
+
+const lastTripDetailMutateMap = new Map<string, number>()
+
+export function __resetTripDetailMutateMapForTesting() {
+    lastTripDetailMutateMap.clear()
+}
+
+const stopAuthAndNotFoundRetry = (err: unknown) => {
+    // 🛡️ 401 未授權 / 403 BOLA 阻斷 / 404 資源不存在，徹底禁止無效重試
+    if (err instanceof HttpError && (err.status === 401 || err.status === 403 || err.status === 404)) return
+}
 
 export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
     let token = getCachedToken()
@@ -162,13 +173,14 @@ export function useTripDetail(
         }
     }, [tripId, data, mutate])
 
-    // 🔧 FIX: 當 userId 從 Zustand hydration 準備好後，保底刷新 (帶 2 秒去重時間閘門)
-    const lastMutateTimeRef = useRef(0)
+            // 🔧 FIX: 當 userId 從 Zustand hydration 準備好後，依模組級雙鍵跨元件去重 (避免多實例重複觸發)
     useEffect(() => {
         if (userId && tripId && mutate) {
+            const dedupeKey = `${tripId}:${userId}`
             const now = Date.now()
-            if (now - lastMutateTimeRef.current > 2000) {
-                lastMutateTimeRef.current = now
+            const lastAt = lastTripDetailMutateMap.get(dedupeKey) ?? 0
+            if (now - lastAt > 2000) {
+                lastTripDetailMutateMap.set(dedupeKey, now)
                 mutate()
             }
         }
@@ -247,7 +259,10 @@ export function useExpenses(tripId: string | null, userId: string | null) {
     const { data, error, mutate } = useSWR(
         (tripId && userId) ? [`/api/trips/${tripId}/expenses`, userId] : null,
         fetcherWithUserId,
-        { revalidateOnFocus: false }
+        {
+            revalidateOnFocus: false,
+            onErrorRetry: stopAuthAndNotFoundRetry,
+        }
     )
     return {
         expenses: data || [],
@@ -344,6 +359,7 @@ export function useTripCapsules(tripId: string | null | undefined, userId: strin
             revalidateOnFocus: false,
             dedupingInterval: 10000,
             fallbackData: getTripCapsuleSnapshotSync<CapsuleProgressSummary>(tripId, userId) || undefined,
+            onErrorRetry: stopAuthAndNotFoundRetry,
             onSuccess: (freshData) => {
                 if (tripId && userId && freshData) {
                     saveTripCapsuleSnapshot(tripId, userId, freshData)

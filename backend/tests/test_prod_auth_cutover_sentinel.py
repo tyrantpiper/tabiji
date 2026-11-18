@@ -133,8 +133,12 @@ def _disable_limiter():
 
 def test_unauthenticated_expected_user_id_does_not_bypass_pop_or_revocation(monkeypatch):
     """
-    Disproves unsound plan: passing recovery_key == expected_user_id == clean_uid WITHOUT
-    a valid Proof-of-Possession JWT MUST fail with 401 on already-upgraded accounts (both db_ver=1 and db_ver=4).
+    Verifies cross-origin anchor self-healing vs bare UUID rejection & ADR-009 revocation:
+    1. Bare UUID without expected_user_id MUST fail with 401 on upgraded accounts.
+    2. Mismatched expected_user_id != victim_uid MUST fail with 401.
+    3. Revoked Bearer token (token_ver < db_ver on db_ver > 1) MUST fail 401 even when expected_user_id == victim_uid.
+    4. Cross-origin tokenless tab sending matching recovery_key == expected_user_id == clean_uid
+       safely self-heals from the server vault and returns current db_ver JWT.
     """
     current_secret = "current-prod-session-secret-2026-xyz"
     vault_secret = "current-prod-vault-master-key-2026-xyz"
@@ -143,6 +147,7 @@ def test_unauthenticated_expected_user_id_does_not_bypass_pop_or_revocation(monk
 
     uid_v1 = str(uuid.uuid4())
     uid_v4 = str(uuid.uuid4())
+    other_uid = str(uuid.uuid4())
     k1, id1, h1 = generate_prefixed_recovery_key()
     k4, id4, h4 = generate_prefixed_recovery_key()
     vault_key = hashlib.sha256(f"tabiji-recovery-vault-salt-{vault_secret}".encode()).digest()
@@ -167,13 +172,49 @@ def test_unauthenticated_expected_user_id_does_not_bypass_pop_or_revocation(monk
     app.dependency_overrides[get_supabase] = lambda: mock_sb
     try:
         with TestClient(app) as client:
-            for victim_uid in (uid_v1, uid_v4):
-                res = client.post(
+            for victim_uid, expected_key, ver in ((uid_v1, k1, 1), (uid_v4, k4, 4)):
+                # Bare UUID blind probe without expected_user_id -> 401
+                res_bare = client.post(
                     "/api/auth/session",
-                    json={"recovery_key": victim_uid, "expected_user_id": victim_uid},
+                    json={"recovery_key": victim_uid},
                 )
-                assert res.status_code == 401
-                assert "tbj_rec_" in res.json()["detail"]
+                assert res_bare.status_code == 401
+                assert "tbj_rec_" in res_bare.json()["detail"]
+
+                # Cross-account expected_user_id mismatch -> 401
+                res_mismatch = client.post(
+                    "/api/auth/session",
+                    json={"recovery_key": victim_uid, "expected_user_id": other_uid},
+                )
+                assert res_mismatch.status_code == 401
+
+                # Tokenless same-origin tab with matching anchor -> 200 silent self-healing
+                res_anchor = client.post(
+                    "/api/auth/session",
+                    json={"recovery_key": victim_uid, "expected_user_id": victim_uid.upper()},
+                )
+                assert res_anchor.status_code == 200
+                body_anchor = res_anchor.json()
+                assert body_anchor["user_id"] == victim_uid
+                assert body_anchor["recovery_key"] == expected_key
+                assert body_anchor["upgraded"] is True
+                decoded = jwt.decode(
+                    body_anchor["access_token"],
+                    current_secret,
+                    algorithms=["HS256"],
+                    issuer="tabiji-core",
+                )
+                assert decoded["ver"] == ver
+
+            # Revoked PoP token (ver=3 < db_ver=4) MUST be rejected even with matching expected_user_id
+            revoked_v3 = _mint_jwt(uid_v4, current_secret, ver=3)
+            res_rev = client.post(
+                "/api/auth/session",
+                json={"recovery_key": uid_v4, "expected_user_id": uid_v4},
+                headers={"Authorization": f"Bearer {revoked_v3}"},
+            )
+            assert res_rev.status_code == 401
+            assert "revoked" in res_rev.json()["detail"].lower()
     finally:
         app.dependency_overrides.clear()
 

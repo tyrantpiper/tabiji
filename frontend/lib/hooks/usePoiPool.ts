@@ -37,6 +37,7 @@ export function usePoiPool(userId: string | null) {
         {
             revalidateOnFocus: false,
             dedupingInterval: 30000,
+            shouldRetryOnError: false,
         }
     )
 

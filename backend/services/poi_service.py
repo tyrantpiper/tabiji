@@ -7,7 +7,7 @@ import os
 import httpx
 import asyncio
 import re
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from math import radians, cos, sin, sqrt, atan2
 from urllib.parse import quote
 from datetime import datetime
@@ -64,6 +64,21 @@ OVERPASS_API = "https://overpass-api.de/api/interpreter"
 # OpenTripMap API (免費無限制)
 OPENTRIPMAP_API = "https://api.opentripmap.com/0.1/en/places"
 
+# Photon Reverse & Nominatim Spatial Fallback Endpoints
+PHOTON_REVERSE_API = "https://photon.komoot.io/reverse"
+NOMINATIM_SEARCH_API = "https://nominatim.openstreetmap.org/search"
+
+# 🛡️ 5 分鐘空間結果記憶體快取 (TTL = 300s, max 256 entries)
+NEARBY_POI_CACHE_TTL_SEC = 300.0
+NEARBY_POI_CACHE_MAX_ENTRIES = 256
+NEARBY_POI_CACHE: Dict[Tuple[float, float, str, int], Tuple[float, List[Dict]]] = {}
+
+
+def __resetNearbyPoiCacheForTesting() -> None:
+    """Explicit test reset hook for module-level nearby POI cache."""
+    NEARBY_POI_CACHE.clear()
+
+
 # POI 類別映射: 前端類別 -> Overpass 查詢標籤
 CATEGORY_OVERPASS_MAP = {
     "department_store": 'nwr["shop"="department_store"]',
@@ -72,6 +87,26 @@ CATEGORY_OVERPASS_MAP = {
     "supermarket": 'nwr["shop"="supermarket"]',
     "pharmacy": 'nwr["amenity"="pharmacy"]',
     "popular": 'nwr["tourism"~"attraction|museum|viewpoint|gallery|theme_park"]'  # 景點直接由 Overpass 高速支援
+}
+
+# POI 類別映射: 前端類別 -> Photon /reverse Elasticsearch OSM tag filter
+CATEGORY_PHOTON_QUERY_FILTER = {
+    "department_store": "osm_value:department_store OR osm_value:mall OR osm_value:shopping_centre",
+    "restaurant": "osm_value:restaurant OR osm_value:fast_food OR osm_value:food_court OR osm_value:cafe",
+    "convenience": "osm_value:convenience",
+    "supermarket": "osm_value:supermarket OR osm_value:grocery",
+    "pharmacy": "osm_value:pharmacy OR osm_value:chemist",
+    "popular": "osm_value:attraction OR osm_value:museum OR osm_value:viewpoint OR osm_value:gallery OR osm_value:theme_park OR osm_value:monument OR osm_value:castle OR osm_value:ruins",
+}
+
+# POI 類別映射: 前端類別 -> Nominatim Tag 查詢兜底
+CATEGORY_NOMINATIM_TAG_MAP = {
+    "department_store": "[shop=department_store]",
+    "restaurant": "[amenity=restaurant]",
+    "convenience": "[shop=convenience]",
+    "supermarket": "[shop=supermarket]",
+    "pharmacy": "[amenity=pharmacy]",
+    "popular": "[tourism=attraction]",
 }
 
 # POI 類別映射: 前端類別 -> OpenTripMap kinds
@@ -186,7 +221,7 @@ async def search_overpass(
     (
       {overpass_tag}(around:{radius},{lat},{lng});
     );
-    out center;
+    out center 25 qt;
     """
     
     # [SAFETY] SSRF Protection
@@ -334,6 +369,290 @@ async def search_opentripmap(
         return []
 
 
+def _select_wiki_lang_for_coords(lat: float, lng: float) -> str:
+    """Select regional Wikipedia edition from coordinates for richer local landmarks."""
+    if 21.5 <= lat <= 25.5 and 119.5 <= lng <= 122.5:
+        return "zh"
+    if 24.0 <= lat <= 45.6 and 122.9 <= lng <= 154.0:
+        return "ja"
+    if 18.0 <= lat <= 53.6 and 73.5 <= lng <= 135.1:
+        return "zh"
+    return "en"
+
+
+async def _query_photon_reverse_once(
+    client: httpx.AsyncClient,
+    lat: float,
+    lng: float,
+    category: str,
+    radius_km: float,
+    query_filter: str,
+) -> List[Dict]:
+    params = {
+        "lat": lat,
+        "lon": lng,
+        "radius": radius_km,
+        "limit": 25,
+        "distance_sort": "true",
+        "query_string_filter": query_filter,
+    }
+    resp = await client.get(PHOTON_REVERSE_API, params=params)
+    if resp.status_code != 200:
+        return []
+    data = resp.json()
+    pois: List[Dict] = []
+    for idx, feat in enumerate(data.get("features", [])):
+        props = feat.get("properties") or {}
+        coords = (feat.get("geometry") or {}).get("coordinates") or []
+        name = (props.get("name") or "").strip()
+        if not name or len(coords) < 2:
+            continue
+        poi_lng, poi_lat = coords[0], coords[1]
+        if poi_lat is None or poi_lng is None:
+            continue
+        street = props.get("street") or ""
+        housenumber = props.get("housenumber") or ""
+        district = props.get("district") or props.get("city") or ""
+        addr_parts = [p for p in (district, f"{street} {housenumber}".strip()) if p]
+        osm_id = props.get("osm_id") or f"r{idx}_{round(float(poi_lat), 5)}_{round(float(poi_lng), 5)}"
+        pois.append({
+            "id": f"photon_{osm_id}",
+            "name": name,
+            "category": category,
+            "lat": float(poi_lat),
+            "lng": float(poi_lng),
+            "distance": round(haversine_distance(lat, lng, float(poi_lat), float(poi_lng))),
+            "address": ", ".join(addr_parts),
+            "phone": "",
+            "website": "",
+            "opening_hours": "",
+            "wikidata_id": "",
+            "source": "photon_reverse",
+        })
+    pois.sort(key=lambda x: x["distance"])
+    return pois
+
+
+async def _search_photon_reverse_nearby(
+    lat: float,
+    lng: float,
+    category: str,
+    radius: int = 1000,
+    timeout: float = 3.5,
+) -> List[Dict]:
+    """Tier 1 resilient spatial fallback via Photon /reverse + structured OSM tag filters."""
+    query_filter = CATEGORY_PHOTON_QUERY_FILTER.get(category)
+    if not query_filter or not is_safe_url(PHOTON_REVERSE_API):
+        return []
+
+    initial_radius_km = max(1.5, min(round(radius / 1000.0, 2), 10.0))
+    headers = {"User-Agent": os.getenv("APP_USER_AGENT", "TabidachiTravelApp/2.0 (contact@tabidachi.app)")}
+    try:
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            pois = await _query_photon_reverse_once(client, lat, lng, category, initial_radius_km, query_filter)
+            if len(pois) < 2 and initial_radius_km <= 2.0:
+                expanded = await _query_photon_reverse_once(client, lat, lng, category, 6.0, query_filter)
+                if len(expanded) > len(pois):
+                    pois = expanded
+            return pois[:20]
+    except Exception as e:
+        logger.debug(f"[NearbySearch] Photon reverse error: {e}")
+        return []
+
+
+async def _search_wikipedia_geosearch_nearby(
+    lat: float,
+    lng: float,
+    category: str,
+    radius: int = 1000,
+    timeout: float = 3.0,
+) -> List[Dict]:
+    """Tier 2 landmark discovery via Wikipedia Geosearch API."""
+    lang = _select_wiki_lang_for_coords(lat, lng)
+    wiki_url = f"https://{lang}.wikipedia.org/w/api.php"
+    if not is_safe_url(wiki_url):
+        return []
+
+    gsradius = min(max(int(radius * 2), 2000), 10000)
+    params = {
+        "action": "query",
+        "list": "geosearch",
+        "gscoord": f"{lat}|{lng}",
+        "gsradius": gsradius,
+        "gslimit": 20,
+        "format": "json",
+    }
+    headers = {"User-Agent": os.getenv("APP_USER_AGENT", "TabidachiTravelApp/2.0 (contact@tabidachi.app)")}
+    try:
+        async with WIKI_SEMAPHORE:
+            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+                resp = await client.get(wiki_url, params=params)
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
+        pois: List[Dict] = []
+        for item in ((data.get("query") or {}).get("geosearch") or []):
+            title = (item.get("title") or "").strip()
+            p_lat = item.get("lat")
+            p_lng = item.get("lon")
+            if not title or p_lat is None or p_lng is None:
+                continue
+            dist = round(haversine_distance(lat, lng, float(p_lat), float(p_lng)))
+            pois.append({
+                "id": f"wiki_{lang}_{item.get('pageid')}",
+                "name": title,
+                "category": category,
+                "lat": float(p_lat),
+                "lng": float(p_lng),
+                "distance": dist,
+                "address": "",
+                "phone": "",
+                "website": f"https://{lang}.wikipedia.org/?curid={item.get('pageid')}" if item.get("pageid") else "",
+                "opening_hours": "",
+                "wikidata_id": "",
+                "source": "wikipedia",
+            })
+        pois.sort(key=lambda x: x["distance"])
+        return pois[:20]
+    except Exception as e:
+        logger.debug(f"[NearbySearch] Wikipedia geosearch error: {e}")
+        return []
+
+
+async def _search_nominatim_nearby(
+    lat: float,
+    lng: float,
+    category: str,
+    radius: int = 1000,
+    timeout: float = 3.0,
+) -> List[Dict]:
+    """Tier 3 single-shot bounded Nominatim fallback (never looped/retried to respect 1 req/s policy)."""
+    osm_tag = CATEGORY_NOMINATIM_TAG_MAP.get(category)
+    if not osm_tag or not is_safe_url(NOMINATIM_SEARCH_API):
+        return []
+
+    delta_lat = max(radius, 1500) / 111320.0
+    cos_lat = max(abs(cos(radians(lat))), 0.2)
+    delta_lng = delta_lat / cos_lat
+    viewbox = f"{lng - delta_lng:.6f},{lat + delta_lat:.6f},{lng + delta_lng:.6f},{lat - delta_lat:.6f}"
+    params = {
+        "q": osm_tag,
+        "format": "jsonv2",
+        "viewbox": viewbox,
+        "bounded": 1,
+        "limit": 20,
+    }
+    headers = {"User-Agent": os.getenv("APP_USER_AGENT", "TabidachiTravelApp/2.0 (contact@tabidachi.app)")}
+    try:
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            resp = await client.get(NOMINATIM_SEARCH_API, params=params)
+            if resp.status_code != 200:
+                return []
+            items = resp.json()
+        if not isinstance(items, list):
+            return []
+        pois: List[Dict] = []
+        for item in items:
+            raw_name = (item.get("name") or (item.get("display_name") or "").split(",")[0]).strip()
+            p_lat = item.get("lat")
+            p_lng = item.get("lon")
+            if not raw_name or p_lat is None or p_lng is None:
+                continue
+            f_lat, f_lng = float(p_lat), float(p_lng)
+            pois.append({
+                "id": f"nom_{item.get('osm_id', round(f_lat, 5))}",
+                "name": raw_name,
+                "category": category,
+                "lat": f_lat,
+                "lng": f_lng,
+                "distance": round(haversine_distance(lat, lng, f_lat, f_lng)),
+                "address": item.get("display_name", ""),
+                "phone": "",
+                "website": "",
+                "opening_hours": "",
+                "wikidata_id": "",
+                "source": "nominatim",
+            })
+        pois.sort(key=lambda x: x["distance"])
+        return pois[:20]
+    except Exception as e:
+        logger.debug(f"[NearbySearch] Nominatim fallback error: {e}")
+        return []
+
+
+def _merge_and_dedupe_pois(batches: List[List[Dict]]) -> List[Dict]:
+    """Merge prioritized POI batches while preserving the highest-priority source and deduplicating overlaps."""
+    merged: List[Dict] = []
+    seen_wikidata: set[str] = set()
+    seen_names: set[str] = set()
+
+    for batch in batches:
+        for poi in batch or []:
+            if not isinstance(poi, dict):
+                continue
+            p_lat = poi.get("lat")
+            p_lng = poi.get("lng")
+            if p_lat is None or p_lng is None:
+                continue
+            w_id = (poi.get("wikidata_id") or "").strip()
+            name_norm = (poi.get("name") or "").strip().lower()
+            if w_id and w_id in seen_wikidata:
+                continue
+            if name_norm and name_norm in seen_names:
+                continue
+            is_spatial_dup = False
+            if name_norm:
+                prefix = name_norm[:4]
+                for existing in merged:
+                    ex_name = (existing.get("name") or "").strip().lower()
+                    if ex_name and (ex_name.startswith(prefix) or name_norm.startswith(ex_name[:4])):
+                        if haversine_distance(float(p_lat), float(p_lng), float(existing["lat"]), float(existing["lng"])) < 35:
+                            is_spatial_dup = True
+                            break
+            if is_spatial_dup:
+                continue
+            if w_id:
+                seen_wikidata.add(w_id)
+            if name_norm:
+                seen_names.add(name_norm)
+            merged.append(poi)
+
+    merged.sort(key=lambda x: x.get("distance", 0))
+    return merged[:20]
+
+
+async def search_nearby_fallback(
+    lat: float,
+    lng: float,
+    category: str,
+    radius: int = 1000,
+    timeout: float = 3.5,
+) -> List[Dict]:
+    """Multi-tier spatial fallback: Photon /reverse -> Wikipedia Geosearch -> single-shot Nominatim."""
+    if category == "popular":
+        photon_res, wiki_res = await asyncio.gather(
+            _search_photon_reverse_nearby(lat, lng, category, radius, timeout=timeout),
+            _search_wikipedia_geosearch_nearby(lat, lng, category, radius, timeout=min(timeout, 3.0)),
+            return_exceptions=True,
+        )
+        p_list = photon_res if isinstance(photon_res, list) else []
+        w_list = wiki_res if isinstance(wiki_res, list) else []
+        combined = _merge_and_dedupe_pois([p_list, w_list])
+        if combined:
+            return combined
+        return await _search_nominatim_nearby(lat, lng, category, radius, timeout=min(timeout, 3.0))
+
+    photon_list = await _search_photon_reverse_nearby(lat, lng, category, radius, timeout=timeout)
+    if photon_list:
+        return photon_list
+
+    nom_list = await _search_nominatim_nearby(lat, lng, category, radius, timeout=min(timeout, 3.0))
+    if nom_list:
+        return nom_list
+
+    return await _search_wikipedia_geosearch_nearby(lat, lng, category, radius, timeout=min(timeout, 2.5))
+
+
 async def search_poi_combined(
     lat: float,
     lng: float,
@@ -343,50 +662,60 @@ async def search_poi_combined(
     timeout: float = 10.0
 ) -> List[Dict]:
     """
-    整合多個來源搜索 POI，合併去重
-    
-    優先使用 Overpass（座標精確），OpenTripMap 補充評分
+    整合多個來源並行避險搜索 POI，合併去重與 5 分鐘空間快取
+
+    優先採用 Overpass（標籤與座標最精確），OpenTripMap 補充評分；
+    同時並行啟動 Photon /reverse + Wiki Geosearch 空間備援，消除單點 502/逾時空回傳。
     """
-    # 並行查詢兩個 API
-    overpass_task = search_overpass(lat, lng, category, radius, timeout=timeout)
+    cache_key = (round(float(lat), 3), round(float(lng), 3), str(category), int(radius))
+    now_ts = time.monotonic()
+    cached_entry = NEARBY_POI_CACHE.get(cache_key)
+    if cached_entry is not None:
+        cached_at, cached_pois = cached_entry
+        if now_ts - cached_at < NEARBY_POI_CACHE_TTL_SEC:
+            return [dict(item) for item in cached_pois]
+        NEARBY_POI_CACHE.pop(cache_key, None)
+
+    overpass_timeout = min(float(timeout), 2.5)
+    fallback_timeout = min(max(float(timeout), 3.0), 4.0)
+
+    # 並行啟動主源與備援，確保總延遲 <= max(2.5s, 備援 ~1s) 而非串列累加
+    overpass_task = search_overpass(lat, lng, category, radius, timeout=overpass_timeout)
     opentripmap_task = search_opentripmap(lat, lng, category, radius, opentripmap_key)
-    
-    overpass_results, opentripmap_results = await asyncio.gather(
+    fallback_task = search_nearby_fallback(lat, lng, category, radius, timeout=fallback_timeout)
+
+    overpass_results, opentripmap_results, fallback_results = await asyncio.gather(
         overpass_task,
         opentripmap_task,
+        fallback_task,
         return_exceptions=True
     )
-    
+
     # 處理異常
     overpass_results = overpass_results if isinstance(overpass_results, list) else []
     opentripmap_results = opentripmap_results if isinstance(opentripmap_results, list) else []
-    
+    fallback_results = fallback_results if isinstance(fallback_results, list) else []
+
     # 建立 Wikidata ID 對照表（用於合併評分）
     wikidata_ratings = {}
     for poi in opentripmap_results:
         if poi.get("wikidata_id"):
             wikidata_ratings[poi["wikidata_id"]] = poi.get("rating", 0)
-    
+
     # 為 Overpass 結果補充評分
     for poi in overpass_results:
         if poi.get("wikidata_id") and poi["wikidata_id"] in wikidata_ratings:
             poi["rating"] = wikidata_ratings[poi["wikidata_id"]]
-    
-    # 合併結果，Overpass 優先（座標更精確）
-    combined = overpass_results.copy()
-    
-    # 加入 OpenTripMap 獨有的（無 Overpass 對應）
-    overpass_names = {p.get("name", "").lower() for p in overpass_results}
-    overpass_wikidata_ids = {p.get("wikidata_id") for p in overpass_results if p.get("wikidata_id")}
-    for poi in opentripmap_results:
-        w_id = poi.get("wikidata_id")
-        p_name = poi.get("name", "").lower()
-        if (w_id and w_id not in overpass_wikidata_ids) or (not w_id and p_name not in overpass_names):
-            combined.append(poi)
-    
-    # 重新排序
-    combined.sort(key=lambda x: x["distance"])
-    return combined[:20]
+
+    combined = _merge_and_dedupe_pois([overpass_results, opentripmap_results, fallback_results])
+
+    if combined:
+        if len(NEARBY_POI_CACHE) >= NEARBY_POI_CACHE_MAX_ENTRIES:
+            oldest_key = next(iter(NEARBY_POI_CACHE))
+            NEARBY_POI_CACHE.pop(oldest_key, None)
+        NEARBY_POI_CACHE[cache_key] = (now_ts, [dict(item) for item in combined])
+
+    return combined
 
 
 def format_pois_for_ai(pois: List[Dict], max_items: int = 5, locale: str = "zh") -> str:
@@ -1153,19 +1482,19 @@ async def execute_resilient_nearby_search(
     clean_kw = sanitize_overpass_keyword(keyword)
     safe_radius = max(100, min(int(radius_meters), 1500))
 
-    # 3. 雙軌查詢 (優先嘗試 search_poi_combined，超時 2.5s)
+    # 3. 雙軌查詢 (優先嘗試 search_poi_combined，單次受控逾時 2.5s / 外層 4.0s)
     raw_pois = []
     try:
         raw_pois = await asyncio.wait_for(
-            search_poi_combined(f_lat, f_lng, category=category, radius=safe_radius),
-            timeout=2.5
+            search_poi_combined(f_lat, f_lng, category=category, radius=safe_radius, timeout=2.5),
+            timeout=4.0
         )
     except Exception as search_err:
         logger.warning(f"[NearbySearch] search_poi_combined timeout/error: {search_err}")
         raw_pois = []
 
     is_en = bool(locale and str(locale).strip().lower().startswith("en"))
-    # 🛡️ 關鍵極速兜底：若 Overpass 逾時/429 或為空，立即啟動 Photon 毫秒級周邊模糊查詢
+    # 🛡️ 關鍵極速兜底：若仍為空，立即啟動 Photon bbox 限定與距離過濾查詢
     if not raw_pois:
         try:
             # 依關鍵字與類別判斷最佳 osm_tag 與 search_term (相容台灣、日本與歐美跨國圖資，含中英關鍵字清洗)
@@ -1192,10 +1521,15 @@ async def execute_resilient_nearby_search(
                 term = clean_kw if clean_kw and term_lower not in ["超商", "便利店", "convenience"] else "convenience"
 
             user_agent = os.getenv("APP_USER_AGENT", "TabidachiTravelApp/2.0 (contact@tabidachi.app)")
+            max_dist_m = max(safe_radius * 4, 6000)
+            delta_lat = max_dist_m / 111320.0
+            delta_lng = delta_lat / max(abs(cos(radians(f_lat))), 0.2)
+            bbox_str = f"{f_lng - delta_lng:.6f},{f_lat - delta_lat:.6f},{f_lng + delta_lng:.6f},{f_lat + delta_lat:.6f}"
             params = {
                 "q": term,
                 "lat": f_lat,
                 "lon": f_lng,
+                "bbox": bbox_str,
                 "limit": 6
             }
             if osm_tag:
@@ -1210,7 +1544,7 @@ async def execute_resilient_nearby_search(
                 if not p_data.get("features") and osm_tag:
                     fallback_resp = await client.get(
                         "https://photon.komoot.io/api/",
-                        params={"q": clean_kw or category, "lat": f_lat, "lon": f_lng, "limit": 6}
+                        params={"q": clean_kw or category, "lat": f_lat, "lon": f_lng, "bbox": bbox_str, "limit": 6}
                     )
                     if fallback_resp.status_code == 200:
                         p_data = fallback_resp.json()
@@ -1221,6 +1555,8 @@ async def execute_resilient_nearby_search(
                     if len(coords) >= 2:
                         poi_lng, poi_lat = coords[0], coords[1]
                         dist = round(haversine_distance(f_lat, f_lng, poi_lat, poi_lng))
+                        if dist > max_dist_m:
+                            continue
                         raw_pois.append({
                             "name": props.get("name") or props.get("street") or default_nearby_name,
                             "category": category,
