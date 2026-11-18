@@ -2,6 +2,8 @@
  * Tabidachi 邊緣同源防護罩 (Edge Shield - Hardened v2)
  * 解決 GET/HEAD TypeError、支援 Gemini 流式串流、放行 Vercel 本地 API
  */
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 // Web Crypto API helper to verify HS256 JWT in Cloudflare Worker
 async function verifyJwtSub(authHeader, secret) {
   if (!authHeader || !authHeader.startsWith("Bearer ") || !secret) {
@@ -28,10 +30,11 @@ async function verifyJwtSub(authHeader, secret) {
 
     const payload = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp && payload.exp < now) {
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp) || payload.exp < now) {
       return null;
     }
-    return payload.sub || null;
+    const sub = payload?.sub ? String(payload.sub).trim() : "";
+    return UUID_V4_REGEX.test(sub) ? sub : null;
   } catch (err) {
     return null;
   }
@@ -49,9 +52,22 @@ export default {
 
     // 1.5 轉發至 POI Service 景點微服務 (Cloudflare D1 儲存)
     const POI_POOL_ENDPOINTS = ['/api/poi/all', '/api/poi/import-link', '/api/poi/add', '/api/poi/batch-save'];
+    const BACKEND_POI_ENDPOINTS = [
+      '/api/poi/nearby',
+      '/api/poi/categories',
+      '/api/poi/media-proxy',
+      '/api/poi/resolve-link',
+      '/api/poi/ai-enrich',
+      '/api/poi/enrich',
+      '/api/poi/recommend',
+    ];
     const isPoiPoolRequest = (
       POI_POOL_ENDPOINTS.includes(pathname) ||
-      (/^\/api\/poi\/[^/]+(\/(note|pin|category))?$/.test(pathname) && ['PATCH', 'DELETE', 'GET'].includes(request.method))
+      (
+        !BACKEND_POI_ENDPOINTS.includes(pathname) &&
+        /^\/api\/poi\/[^/]+(\/(note|pin|category))?$/.test(pathname) &&
+        ['PATCH', 'DELETE', 'OPTIONS'].includes(request.method)
+      )
     );
     if (isPoiPoolRequest && env.POI_SERVICE) {
       const CORS_HEADERS = {
@@ -82,8 +98,9 @@ export default {
         headers.delete("X-User-ID");
         headers.set("X-User-ID", verifiedSub);
       } else {
-        // 後備防禦：未配置密鑰前，無條件剝除外部偽造標頭
+        // 後備防禦：未配置密鑰前，無條件剝除外部偽造標頭與未驗簽授權標頭
         headers.delete("X-User-ID");
+        headers.delete("Authorization");
       }
 
       try {

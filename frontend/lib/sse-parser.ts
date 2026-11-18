@@ -11,7 +11,7 @@ export interface SSEEvent {
     data: string
 }
 
-import { getCachedToken, ensureValidSession } from './auth-session'
+import * as authSession from './auth-session'
 
 export interface SSEHandlers {
     onStart?: () => void
@@ -180,9 +180,9 @@ export async function streamChat(
     const defaultTime = clientTime || new Date().toISOString()
     const defaultTz = clientTimezone || (typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei")
 
-    let token = getCachedToken()
+    let token = authSession.getCachedToken()
     if (!token && typeof window !== "undefined") {
-        token = await ensureValidSession().catch(() => null)
+        token = await authSession.ensureValidSession().catch(() => null)
     }
 
     const headers: Record<string, string> = {
@@ -232,9 +232,12 @@ export async function streamChat(
 
         if (!isGeminiKeyAuthError && hasSessionToken) {
             console.warn("⚠️ [SSE] Received 401 Unauthorized during stream handshake, refreshing session token...")
-            const freshToken = await ensureValidSession(true).catch(() => null)
+            const freshToken = await authSession.ensureValidSession(true).catch(() => null)
             if (!freshToken) {
-                localStorage.removeItem("tabiji_session_token")
+                const isTransientFailure = typeof authSession.wasLastAuthExchangeTransientFailure === "function" && authSession.wasLastAuthExchangeTransientFailure()
+                if (!isTransientFailure) {
+                    localStorage.removeItem("tabiji_session_token")
+                }
             }
             if (freshToken && !signal?.aborted) {
                 headers["Authorization"] = `Bearer ${freshToken}`

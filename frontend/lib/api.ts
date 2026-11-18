@@ -21,7 +21,7 @@ if (typeof window === "undefined" || process.env.NODE_ENV === "development") {
     console.log("🚀 [API] Connected to:", API_HOST || "(same-origin /api)");
 }
 
-import { getCachedToken, ensureValidSession, triggerReauthPrompt } from './auth-session';
+import { getCachedToken, ensureValidSession, getLastAuthExchangeError, triggerReauthPrompt, wasLastAuthExchangeTransientFailure } from './auth-session';
 
 const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const urlStr = typeof input === "string" ? input : (input instanceof URL ? input.toString() : (input as Request)?.url || "");
@@ -58,7 +58,7 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     }
     const res = await activeFetch(input, init);
     // 🛡️ 401 自動換票與自癒重試防禦 (Self-Healing Recovery & 1-time Re-execution)
-    if (res.status === 401 && typeof window !== "undefined" && !urlStr.includes("/api/poi/") && !urlStr.includes("/api/ai/test-key")) {
+    if (res.status === 401 && typeof window !== "undefined" && !urlStr.includes("/api/ai/test-key")) {
         // 區分「Gemini API Key 無效 (401)」vs「Tabiji Session JWT 過期 (401)」，絕不因用戶端 AI 金鑰過期而誤刪 Session Token
         const peekData = typeof res.clone === "function" ? await res.clone().json().catch(() => null) : null;
         const detailText = String((peekData as { detail?: string } | null)?.detail || "").toLowerCase();
@@ -88,10 +88,15 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
                     _isRetry: true
                 } as RequestInit & { _isRetry?: boolean };
                 return activeFetch(input, retryInit);
-            } else {
-                // 🛡️ 換票失敗（代表憑證已徹底作廢或輪替）：主動喚起重認證視窗，絕不讓頁面靜默失敗！
-                localStorage.removeItem("tabiji_session_token");
-                triggerReauthPrompt("您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。");
+            } else if (!urlStr.includes("/api/poi/")) {
+                // 🛡️ 換票失敗：僅在後端明確拒收憑證 (非 5xx/離線等暫態錯誤) 時才清除 Token 並喚起重認證視窗
+                const isTransientFailure = typeof wasLastAuthExchangeTransientFailure === "function" && wasLastAuthExchangeTransientFailure();
+                if (!isTransientFailure) {
+                    localStorage.removeItem("tabiji_session_token");
+                    triggerReauthPrompt(
+                        getLastAuthExchangeError() || "您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。"
+                    );
+                }
             }
         }
     }

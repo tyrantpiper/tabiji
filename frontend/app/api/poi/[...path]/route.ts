@@ -8,10 +8,21 @@ const BACKEND_BASE = (process.env.INTERNAL_BACKEND_URL || process.env.NEXT_PUBLI
  * - POI 口袋庫端點 (all, import-link, add, :id, :id/*) ➔ 100% 直連 Cloudflare D1
  * - POI AI 與搜尋端點 (categories, nearby, recommend, ai-enrich, enrich) ➔ 直連 FastAPI 後端
  */
+const BACKEND_POI_SUBPATHS = new Set([
+    "nearby",
+    "categories",
+    "media-proxy",
+    "resolve-link",
+    "ai-enrich",
+    "enrich",
+    "recommend",
+]);
+
 function isPoiPoolSubpath(subPath: string): boolean {
     const actions = ["all", "import-link", "add", "batch-save"];
     if (actions.includes(subPath)) return true;
-    return /^([0-9a-fA-F-]+|poi_[^/]+)(\/(note|pin|category))?$/.test(subPath);
+    if (BACKEND_POI_SUBPATHS.has(subPath)) return false;
+    return /^([0-9a-fA-F-]{8,}|poi_[^/]+)(\/(note|pin|category))?$/.test(subPath);
 }
 
 async function proxyRequest(
@@ -50,12 +61,6 @@ async function proxyRequest(
             redirect: "manual",
         });
 
-        // 🛡️ 本地開發與測試環境優雅降級：若遠端 D1 判定為測試固定帳號或拒絕存取，
-        // GET /api/poi/all 優雅回傳空陣列 []，防止本地 App Session Token 遭到非預期清除
-        if (resp.status === 401 && isPool && subPath === "all" && method === "GET") {
-            return NextResponse.json([]);
-        }
-
         const respHeaders = new Headers(resp.headers);
         respHeaders.delete("content-encoding"); // 避免代理雙重壓縮損壞
 
@@ -65,9 +70,6 @@ async function proxyRequest(
             headers: respHeaders,
         });
     } catch (err) {
-        if (isPool && subPath === "all" && method === "GET") {
-            return NextResponse.json([]);
-        }
         console.error(`[POI Proxy] Failed to reach ${isPool ? "Cloudflare D1" : "Backend"}:`, err);
         return NextResponse.json(
             { error: "POI_SERVICE_UNREACHABLE", detail: String(err) },

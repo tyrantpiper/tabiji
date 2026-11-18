@@ -1,0 +1,20 @@
+[
+  {
+    "id": "cloudflare/poi-service/wrangler.jsonc:workers_dev_ingress_isolation",
+    "file_path": "cloudflare/poi-service/wrangler.jsonc",
+    "start_line": 1,
+    "end_line": 16,
+    "attack_vector": "service_binding_routing_completeness",
+    "hypothesis": "Verify whether wrangler.jsonc explicitly configures workers_dev and preview_urls settings to restrict worker invocation strictly to internal Cloudflare Service Bindings rather than leaving default public subdomain routing enabled.",
+    "severity": "high"
+  },
+  {
+    "id": "cloudflare/poi-service/worker.js:workers_dev_host_and_token_validation_boundary",
+    "file_path": "cloudflare/poi-service/worker.js",
+    "start_line": 24,
+    "end_line": 44,
+    "attack_vector": "downstream_header_and_host_contract",
+    "hypothesis": "Verify whether extractUserId and fetch enforce explicit host scope checks and cryptographic verification when processing incoming user identity claims from Bearer headers.",
+    "severity": "high"
+  }
+]

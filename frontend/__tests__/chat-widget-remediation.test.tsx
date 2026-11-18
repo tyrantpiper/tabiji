@@ -2,10 +2,23 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 
-const mockStreamChat = vi.fn()
-const mockToastError = vi.fn()
-const mockToastInfo = vi.fn()
-const mockToastSuccess = vi.fn()
+const {
+    mockStreamChat,
+    mockToastError,
+    mockToastInfo,
+    mockToastSuccess,
+    mockGetCachedToken,
+    mockEnsureValidSession,
+    mockWasTransientFailure,
+} = vi.hoisted(() => ({
+    mockStreamChat: vi.fn(),
+    mockToastError: vi.fn(),
+    mockToastInfo: vi.fn(),
+    mockToastSuccess: vi.fn(),
+    mockGetCachedToken: vi.fn(() => 'mock-session-jwt'),
+    mockEnsureValidSession: vi.fn().mockResolvedValue('mock-session-jwt'),
+    mockWasTransientFailure: vi.fn(() => false),
+}))
 
 vi.mock('@/lib/sse-parser', async () => {
     const actual = await vi.importActual<typeof import('@/lib/sse-parser')>('@/lib/sse-parser')
@@ -52,8 +65,9 @@ vi.mock('@/lib/search-cache', () => ({
 }))
 
 vi.mock('@/lib/auth-session', () => ({
-    getCachedToken: () => 'mock-session-jwt',
-    ensureValidSession: vi.fn().mockResolvedValue('mock-session-jwt'),
+    getCachedToken: mockGetCachedToken,
+    ensureValidSession: mockEnsureValidSession,
+    wasLastAuthExchangeTransientFailure: mockWasTransientFailure,
 }))
 
 vi.mock('sonner', () => ({
@@ -74,6 +88,9 @@ describe('ChatWidget & ActuaryDialogCard Remediation RTL Tests', () => {
 
     beforeEach(() => {
         vi.clearAllMocks()
+        mockGetCachedToken.mockReturnValue('mock-session-jwt')
+        mockEnsureValidSession.mockResolvedValue('mock-session-jwt')
+        mockWasTransientFailure.mockReturnValue(false)
         localStorage.setItem('user_uuid', 'user-1')
         localStorage.setItem('user_nickname', 'Ryan')
         Element.prototype.scrollIntoView = vi.fn()
@@ -351,6 +368,91 @@ describe('ChatWidget & ActuaryDialogCard Remediation RTL Tests', () => {
         })
         expect(ensureValidSession).not.toHaveBeenCalled()
         expect(localStorage.getItem('tabiji_session_token')).toBe('mock-session-jwt')
+        view2.unmount()
+    })
+
+    it('background /api/chat/summarize boots missing JWT, retries once on non-Gemini 401, and leaves token intact on Gemini 401', async () => {
+        // 1. Cold boot token missing -> calls ensureValidSession(), then hits non-Gemini 401 -> calls ensureValidSession(true) and succeeds
+        mockGetCachedToken.mockReturnValue(null as unknown as string)
+        mockEnsureValidSession
+            .mockResolvedValueOnce('initial-jwt')
+            .mockResolvedValueOnce('fresh-summary-jwt')
+        mockWasTransientFailure.mockReturnValue(false)
+        localStorage.setItem('tabiji_session_token', 'initial-jwt')
+
+        mockStreamChat.mockImplementation(async (_url, msg, _hist, _key, handlers) => {
+            handlers.onStart?.()
+            handlers.onText?.(`Reply to ${msg}`)
+            handlers.onDone?.({
+                model_used: 'gemini-3.5-flash-lite',
+                raw_parts: [{ text: `Reply to ${msg}` }],
+                sources: [],
+            })
+        })
+
+        const summarizeAuthHeaders: Array<string | null> = []
+        global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input)
+            const auth = new Headers(init?.headers).get('Authorization')
+            if (url.endsWith('/api/chat/summarize')) {
+                summarizeAuthHeaders.push(auth)
+                if (auth === 'Bearer initial-jwt') {
+                    return new Response(JSON.stringify({ detail: 'Invalid or expired token' }), { status: 401 })
+                }
+                return new Response(JSON.stringify({ summary: 'Tokyo itinerary memory summary' }), { status: 200 })
+            }
+            return new Response('{}', { status: 200 })
+        }) as unknown as typeof fetch
+
+        const view1 = renderOpenChatWidget()
+        const textarea1 = screen.getByRole('textbox')
+        // 1 greeting + 10 rounds * 2 = 21 messages; on 10th send messages.length is 19, wait -> 11th send has messages.length === 21 (>= PREHEAT_THRESHOLD 20)
+        for (let i = 1; i <= 11; i++) {
+            fireEvent.change(textarea1, { target: { value: `Turn ${i}` } })
+            fireEvent.keyDown(textarea1, { key: 'Enter', shiftKey: false })
+            await waitFor(() => {
+                expect(screen.getByText(`Reply to Turn ${i}`)).toBeInTheDocument()
+            })
+        }
+
+        await waitFor(() => {
+            expect(summarizeAuthHeaders).toEqual(['Bearer initial-jwt', 'Bearer fresh-summary-jwt'])
+        })
+        expect(mockEnsureValidSession).toHaveBeenCalledWith()
+        expect(mockEnsureValidSession).toHaveBeenCalledWith(true)
+        await waitFor(() => {
+            expect(mockToastSuccess).toHaveBeenCalled()
+        })
+        view1.unmount()
+
+        // 2. Gemini API Key 401 on /api/chat/summarize MUST NOT refresh session or wipe tabiji_session_token
+        vi.clearAllMocks()
+        mockGetCachedToken.mockReturnValue('valid-session-jwt')
+        localStorage.setItem('tabiji_session_token', 'valid-session-jwt')
+        const geminiAuthHeaders: Array<string | null> = []
+        global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input)
+            if (url.endsWith('/api/chat/summarize')) {
+                geminiAuthHeaders.push(new Headers(init?.headers).get('Authorization'))
+                return new Response(JSON.stringify({ detail: 'Your Google Gemini API Key is invalid' }), { status: 401 })
+            }
+            return new Response('{}', { status: 200 })
+        }) as unknown as typeof fetch
+
+        const view2 = renderOpenChatWidget()
+        const textarea2 = screen.getByRole('textbox')
+        for (let i = 1; i <= 11; i++) {
+            fireEvent.change(textarea2, { target: { value: `GeminiTurn ${i}` } })
+            fireEvent.keyDown(textarea2, { key: 'Enter', shiftKey: false })
+            await waitFor(() => {
+                expect(screen.getByText(`Reply to GeminiTurn ${i}`)).toBeInTheDocument()
+            })
+        }
+        await waitFor(() => {
+            expect(geminiAuthHeaders).toEqual(['Bearer valid-session-jwt'])
+        })
+        expect(mockEnsureValidSession).not.toHaveBeenCalled()
+        expect(localStorage.getItem('tabiji_session_token')).toBe('valid-session-jwt')
         view2.unmount()
     })
 })

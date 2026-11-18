@@ -3,6 +3,8 @@
   "name": "tabijiapp-edge-shield",
   "main": "worker.js",
   "compatibility_date": "2026-03-01",
+  "workers_dev": false,
+  "preview_urls": false,
   "routes": [
     { "pattern": "tabijiapp.com/api*", "zone_name": "tabijiapp.com" },
     { "pattern": "www.tabijiapp.com/api*", "zone_name": "tabijiapp.com" }

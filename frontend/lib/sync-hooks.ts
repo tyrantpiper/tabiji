@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { SyncQueue, MAX_RETRIES, SyncRequest, SyncEngineControl } from './sync-engine';
 import { toast } from "sonner";
 import { useSyncStatusStore } from './stores/syncStatusStore';
-import { getCachedToken, ensureValidSession, triggerReauthPrompt } from './auth-session';
+import { getCachedToken, ensureValidSession, getLastAuthExchangeError, triggerReauthPrompt, wasLastAuthExchangeTransientFailure } from './auth-session';
 
 /**
  * 🛠️ React Hook: useOfflineMutation
@@ -130,11 +130,14 @@ export function useBackgroundSync() {
                                 }
                             }
 
-                            // 🛡️ [Sentinel Patch] 若二次嘗試仍為 401，代表金鑰已輪替或身分撤銷：物理凍結 Outbox 並跳出重新認證，絕對不計入 retryCount、絕對不丟棄資料！
+                            // 🛡️ [Sentinel Patch] 若二次嘗試仍為 401，僅在非暫態錯誤時凍結 Outbox 與彈窗；暫態錯誤仍不 dequeue 保護離線突變
                             if (res.status === 401 && typeof window !== 'undefined') {
-                                console.error('[SyncEngine] 🚨 401 encountered during replay. Freezing outbox to preserve unsynced data.');
-                                SyncEngineControl.pause();
-                                triggerReauthPrompt();
+                                const isTransientFailure = typeof wasLastAuthExchangeTransientFailure === "function" && wasLastAuthExchangeTransientFailure();
+                                if (!isTransientFailure) {
+                                    console.error('[SyncEngine] 🚨 401 encountered during replay. Freezing outbox to preserve unsynced data.');
+                                    SyncEngineControl.pause();
+                                    triggerReauthPrompt(getLastAuthExchangeError() || undefined);
+                                }
                                 break; // ❌ 絕對不 incrementRetry，絕對不 dequeue！保護離線突變
                             }
 

@@ -1,0 +1,1311 @@
+diff --git a/backend/routers/auth.py b/backend/routers/auth.py
+index 9232227..180a23a 100644
+--- a/backend/routers/auth.py
++++ b/backend/routers/auth.py
+@@ -128,6 +128,79 @@ def decrypt_recovery_key(encrypted_payload: Optional[str], vault_key: bytes) ->
+         return None
+ 
+ 
++def get_legacy_session_secrets(current_secret: Optional[str] = None) -> list[str]:
++    """
++    🔄 金鑰輪替過渡期歷史 Session 簽章密鑰列表
++    僅供 auth.py PoP 升級橋與 90 天寬限端點驗簽舊裝置憑證，絕不開放一般業務依賴直接使用，
++    藉此強制舊 JWT 透過 /api/auth/session 靜默遷移至最新密鑰簽發的憑證。
++    """
++    candidates: list[str] = []
++    for env_name in ("LEGACY_SESSION_SECRET_KEY", "PREVIOUS_SESSION_SECRET_KEY"):
++        raw = os.getenv(env_name, "")
++        for part in raw.split(","):
++            s = part.strip()
++            if s and len(s) >= 16 and s != current_secret and s not in candidates:
++                candidates.append(s)
++    return candidates
++
++
++def decrypt_recovery_key_with_fallback(encrypted_payload: Optional[str], current_secret: str) -> Optional[str]:
++    """Decrypts vault payload with primary key first, then bounded legacy vault/session transition secrets."""
++    if not encrypted_payload:
++        return None
++    primary_vault_key = derive_vault_key(current_secret)
++    decrypted = decrypt_recovery_key(encrypted_payload, primary_vault_key)
++    if decrypted is not None:
++        return decrypted
++
++    for env_name in ("LEGACY_VAULT_MASTER_KEY", "PREVIOUS_VAULT_MASTER_KEY"):
++        raw = os.getenv(env_name, "")
++        for part in raw.split(","):
++            v_sec = part.strip()
++            if v_sec and len(v_sec) >= 16:
++                alt_key = hashlib.sha256(f"tabiji-recovery-vault-salt-{v_sec}".encode()).digest()
++                decrypted = decrypt_recovery_key(encrypted_payload, alt_key)
++                if decrypted is not None:
++                    return decrypted
++
++    for leg_sec in get_legacy_session_secrets(current_secret):
++        alt_master = hashlib.sha256(f"tabiji-dedicated-vault-salt-{leg_sec}".encode()).hexdigest()
++        alt_key = hashlib.sha256(f"tabiji-recovery-vault-salt-{alt_master}".encode()).digest()
++        decrypted = decrypt_recovery_key(encrypted_payload, alt_key)
++        if decrypted is not None:
++            return decrypted
++
++    return None
++
++
++def decode_device_session_jwt(
++    token: str,
++    current_secret: str,
++    verify_exp: bool = True,
++) -> Optional[dict]:
++    """
++    🔐 多密鑰安全驗簽 (先驗當前密鑰，再依序驗舊版過渡密鑰)
++    必須嚴格符合 HS256 / iss=tabiji-core / type=device_session / UUID v4 sub。
++    """
++    secrets_to_try = [current_secret] + get_legacy_session_secrets(current_secret)
++    required_claims = ["sub", "iss", "iat", "exp", "type"] if verify_exp else ["sub", "iss", "iat", "type"]
++    for cand_secret in secrets_to_try:
++        try:
++            payload = jwt.decode(
++                token,
++                cand_secret,
++                algorithms=["HS256"],
++                issuer="tabiji-core",
++                options={"verify_exp": verify_exp, "require": required_claims},
++            )
++            sub = str(payload.get("sub") or "").strip()
++            if payload.get("type") == "device_session" and UUID_V4_REGEX.match(sub):
++                return payload
++        except jwt.PyJWTError:
++            continue
++    return None
++
++
+ def verify_recovery_key(full_key: str, stored_hash: Optional[str]) -> bool:
+     if not stored_hash or not is_valid_tbj_rec(full_key):
+         return False
+@@ -277,25 +350,16 @@ async def create_or_exchange_session(
+             token_ver = 1
+             if auth_header and auth_header.startswith("Bearer "):
+                 cand_token = auth_header.split(" ")[1].strip()
+-                try:
+-                    payload = jwt.decode(
+-                        cand_token,
+-                        secret,
+-                        algorithms=["HS256"],
+-                        issuer="tabiji-core",
+-                        options={"verify_exp": False, "require": ["sub", "iss", "iat", "type"]}
+-                    )
+-                    now = int(time.time())
+-                    sub = str(payload.get("sub") or "").strip()
+-                    if (
+-                        payload.get("type") == "device_session"
+-                        and sub.lower() == clean_uid
+-                        and (now - payload.get("iat", 0) <= 90 * 86400)
+-                    ):
+-                        token_ver = int(payload.get("ver") or 1)
+-                        is_authenticated = True
+-                except Exception:
+-                    pass
++                payload = decode_device_session_jwt(cand_token, secret, verify_exp=False)
++                if payload is not None:
++                    try:
++                        now = int(time.time())
++                        sub = str(payload.get("sub") or "").strip()
++                        if sub.lower() == clean_uid and (now - payload.get("iat", 0) <= 90 * 86400):
++                            token_ver = int(payload.get("ver") or 1)
++                            is_authenticated = True
++                    except Exception:
++                        pass
+ 
+             if not is_authenticated:
+                 raise HTTPException(
+@@ -313,8 +377,7 @@ async def create_or_exchange_session(
+                 )
+ 
+             # 🛡️ 驗證通過之合法舊設備：解密保險庫下發最新金鑰與新 Session，消除死結
+-            vault_key = derive_vault_key(secret)
+-            decrypted_key = decrypt_recovery_key(user_rec.get("recovery_key_encrypted"), vault_key)
++            decrypted_key = decrypt_recovery_key_with_fallback(user_rec.get("recovery_key_encrypted"), secret)
+             token = create_session_jwt(clean_uid, secret, db_ver)
+             return SessionResponse(
+                 access_token=token,
+@@ -486,46 +549,31 @@ async def get_verified_session_with_grace(
+ 
+     token = auth_header.split(" ")[1].strip()
+ 
+-    # 1. 優先標準解碼校驗 (未過期)
+-    try:
+-        payload = jwt.decode(
+-            token, 
+-            secret, 
+-            algorithms=["HS256"],
+-            issuer="tabiji-core",
+-            options={"require": ["sub", "iss", "iat", "exp", "type"]}
+-        )
+-        sub = str(payload.get("sub") or "").strip()
+-        if payload.get("type") == "device_session" and UUID_V4_REGEX.match(sub):
++    # 1. 優先標準解碼校驗 (未過期，含過渡期歷史密鑰)
++    payload = decode_device_session_jwt(token, secret, verify_exp=True)
++    if payload is not None:
++        try:
++            sub = str(payload.get("sub") or "").strip()
+             return VerifiedSession(
+                 user_id=sub,
+                 token_version=int(payload.get("ver") or 1)
+             )
+-    except jwt.ExpiredSignatureError:
+-        # 2. 🛡️ 寬限期驗簽 (過期 <= 90 天之合法伺服器簽署歷史憑證)
++        except Exception:
++            pass
++
++    # 2. 🛡️ 寬限期驗簽 (過期 <= 90 天之合法伺服器簽署歷史憑證，含過渡期歷史密鑰)
++    payload = decode_device_session_jwt(token, secret, verify_exp=False)
++    if payload is not None:
+         try:
+-            payload = jwt.decode(
+-                token,
+-                secret,
+-                algorithms=["HS256"],
+-                issuer="tabiji-core",
+-                options={"verify_exp": False, "require": ["sub", "iss", "iat", "type"]}
+-            )
+             now = int(time.time())
+             sub = str(payload.get("sub") or "").strip()
+-            if (
+-                payload.get("type") == "device_session" 
+-                and UUID_V4_REGEX.match(sub)
+-                and (now - payload.get("iat", 0) <= 90 * 86400)
+-            ):
++            if now - payload.get("iat", 0) <= 90 * 86400:
+                 return VerifiedSession(
+                     user_id=sub,
+                     token_version=int(payload.get("ver") or 1)
+                 )
+         except Exception:
+             pass
+-    except Exception:
+-        pass
+ 
+     raise HTTPException(status_code=401, detail="Invalid or expired token")
+ 
+@@ -626,8 +674,7 @@ async def get_user_recovery_credential(
+             )
+ 
+         enc_payload = user_row.get("recovery_key_encrypted")
+-        vault_key = derive_vault_key(secret)
+-        decrypted_key = decrypt_recovery_key(enc_payload, vault_key) if enc_payload else None
++        decrypted_key = decrypt_recovery_key_with_fallback(enc_payload, secret) if enc_payload else None
+ 
+         return CredentialResponse(
+             recovery_key=decrypted_key,
+diff --git a/cloudflare/edge-shield/worker.js b/cloudflare/edge-shield/worker.js
+index a65536d..e229657 100644
+--- a/cloudflare/edge-shield/worker.js
++++ b/cloudflare/edge-shield/worker.js
+@@ -2,6 +2,8 @@
+  * Tabidachi 邊緣同源防護罩 (Edge Shield - Hardened v2)
+  * 解決 GET/HEAD TypeError、支援 Gemini 流式串流、放行 Vercel 本地 API
+  */
++const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++
+ // Web Crypto API helper to verify HS256 JWT in Cloudflare Worker
+ async function verifyJwtSub(authHeader, secret) {
+   if (!authHeader || !authHeader.startsWith("Bearer ") || !secret) {
+@@ -28,10 +30,11 @@ async function verifyJwtSub(authHeader, secret) {
+ 
+     const payload = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
+     const now = Math.floor(Date.now() / 1000);
+-    if (payload.exp && payload.exp < now) {
++    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp) || payload.exp < now) {
+       return null;
+     }
+-    return payload.sub || null;
++    const sub = payload?.sub ? String(payload.sub).trim() : "";
++    return UUID_V4_REGEX.test(sub) ? sub : null;
+   } catch (err) {
+     return null;
+   }
+@@ -49,9 +52,22 @@ export default {
+ 
+     // 1.5 轉發至 POI Service 景點微服務 (Cloudflare D1 儲存)
+     const POI_POOL_ENDPOINTS = ['/api/poi/all', '/api/poi/import-link', '/api/poi/add', '/api/poi/batch-save'];
++    const BACKEND_POI_ENDPOINTS = [
++      '/api/poi/nearby',
++      '/api/poi/categories',
++      '/api/poi/media-proxy',
++      '/api/poi/resolve-link',
++      '/api/poi/ai-enrich',
++      '/api/poi/enrich',
++      '/api/poi/recommend',
++    ];
+     const isPoiPoolRequest = (
+       POI_POOL_ENDPOINTS.includes(pathname) ||
+-      (/^\/api\/poi\/[^/]+(\/(note|pin|category))?$/.test(pathname) && ['PATCH', 'DELETE', 'GET'].includes(request.method))
++      (
++        !BACKEND_POI_ENDPOINTS.includes(pathname) &&
++        /^\/api\/poi\/[^/]+(\/(note|pin|category))?$/.test(pathname) &&
++        ['PATCH', 'DELETE', 'OPTIONS'].includes(request.method)
++      )
+     );
+     if (isPoiPoolRequest && env.POI_SERVICE) {
+       const CORS_HEADERS = {
+@@ -82,8 +98,9 @@ export default {
+         headers.delete("X-User-ID");
+         headers.set("X-User-ID", verifiedSub);
+       } else {
+-        // 後備防禦：未配置密鑰前，無條件剝除外部偽造標頭
++        // 後備防禦：未配置密鑰前，無條件剝除外部偽造標頭與未驗簽授權標頭
+         headers.delete("X-User-ID");
++        headers.delete("Authorization");
+       }
+ 
+       try {
+diff --git a/cloudflare/edge-shield/wrangler.jsonc b/cloudflare/edge-shield/wrangler.jsonc
+index 195fc03..33b1749 100644
+--- a/cloudflare/edge-shield/wrangler.jsonc
++++ b/cloudflare/edge-shield/wrangler.jsonc
+@@ -3,6 +3,8 @@
+   "name": "tabijiapp-edge-shield",
+   "main": "worker.js",
+   "compatibility_date": "2026-03-01",
++  "workers_dev": false,
++  "preview_urls": false,
+   "routes": [
+     { "pattern": "tabijiapp.com/api*", "zone_name": "tabijiapp.com" },
+     { "pattern": "www.tabijiapp.com/api*", "zone_name": "tabijiapp.com" }
+diff --git a/cloudflare/poi-service/worker.js b/cloudflare/poi-service/worker.js
+index fd42895..427e030 100644
+--- a/cloudflare/poi-service/worker.js
++++ b/cloudflare/poi-service/worker.js
+@@ -21,25 +21,53 @@ function jsonResponse(data, status = 200) {
+ 
+ const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+ 
+-function extractUserId(request) {
++async function verifyJwtSub(authHeader, secret) {
++  if (!authHeader || !authHeader.startsWith("Bearer ") || !secret) {
++    return null;
++  }
++  const token = authHeader.substring(7).trim();
++  const parts = token.split(".");
++  if (parts.length !== 3) return null;
++
++  const [headerB64, payloadB64, signatureB64] = parts;
++  try {
++    const signatureBin = Uint8Array.from(atob(signatureB64.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
++    const enc = new TextEncoder();
++    const cryptoKey = await crypto.subtle.importKey(
++      "raw",
++      enc.encode(secret),
++      { name: "HMAC", hash: "SHA-256" },
++      false,
++      ["verify"]
++    );
++    const data = enc.encode(`${headerB64}.${payloadB64}`);
++    const isValid = await crypto.subtle.verify("HMAC", cryptoKey, signatureBin, data);
++    if (!isValid) return null;
++
++    const payload = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
++    const now = Math.floor(Date.now() / 1000);
++    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp) || payload.exp < now) {
++      return null;
++    }
++    const sub = payload?.sub ? String(payload.sub).trim() : "";
++    return UUID_V4_REGEX.test(sub) ? sub : null;
++  } catch {
++    return null;
++  }
++}
++
++async function extractUserId(request, env) {
++  // 🛡️ 若下游已綁定 SESSION_SECRET，必須密碼學驗簽 HS256 JWT，嚴禁信任未驗簽標頭或 atob()  payload
++  if (env?.SESSION_SECRET) {
++    return await verifyJwtSub(request.headers.get("Authorization") || "", env.SESSION_SECRET);
++  }
++
++  // 🛡️ 僅於透過 Edge Shield Service Binding 內部呼叫時採信上游邊緣已清洗之 X-User-ID
+   const xUser = request.headers.get("X-User-ID");
+   if (xUser && UUID_V4_REGEX.test(xUser.trim())) {
+     return xUser.trim();
+   }
+ 
+-  const auth = request.headers.get("Authorization");
+-  if (auth && auth.startsWith("Bearer ")) {
+-    try {
+-      const parts = auth.split(" ")[1].split(".");
+-      if (parts.length === 3) {
+-        const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+-        if (payload && payload.sub && UUID_V4_REGEX.test(String(payload.sub).trim())) {
+-          return String(payload.sub).trim();
+-        }
+-      }
+-    } catch {}
+-  }
+-
+   return null;
+ }
+ 
+@@ -278,8 +306,12 @@ export default {
+     }
+ 
+     const url = new URL(request.url);
++    if (url.hostname.endsWith(".workers.dev")) {
++      return jsonResponse({ error: "Forbidden: Direct workers.dev ingress disabled" }, 403);
++    }
++
+     const pathname = url.pathname;
+-    const userId = extractUserId(request);
++    const userId = await extractUserId(request, env);
+     if (!userId) {
+       return jsonResponse({ error: "Unauthorized: Invalid or missing X-User-ID (RFC 4122 UUIDv4 required)" }, 401);
+     }
+diff --git a/cloudflare/poi-service/wrangler.jsonc b/cloudflare/poi-service/wrangler.jsonc
+index d980d3f..e828d9e 100644
+--- a/cloudflare/poi-service/wrangler.jsonc
++++ b/cloudflare/poi-service/wrangler.jsonc
+@@ -3,6 +3,8 @@
+   "name": "tabijiapp-poi-service",
+   "main": "worker.js",
+   "compatibility_date": "2026-03-01",
++  "workers_dev": false,
++  "preview_urls": false,
+   "observability": {
+     "enabled": true
+   },
+diff --git a/frontend/__tests__/chat-widget-remediation.test.tsx b/frontend/__tests__/chat-widget-remediation.test.tsx
+index 455e64c..d1e4078 100644
+--- a/frontend/__tests__/chat-widget-remediation.test.tsx
++++ b/frontend/__tests__/chat-widget-remediation.test.tsx
+@@ -2,10 +2,23 @@ import React from 'react'
+ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+ 
+-const mockStreamChat = vi.fn()
+-const mockToastError = vi.fn()
+-const mockToastInfo = vi.fn()
+-const mockToastSuccess = vi.fn()
++const {
++    mockStreamChat,
++    mockToastError,
++    mockToastInfo,
++    mockToastSuccess,
++    mockGetCachedToken,
++    mockEnsureValidSession,
++    mockWasTransientFailure,
++} = vi.hoisted(() => ({
++    mockStreamChat: vi.fn(),
++    mockToastError: vi.fn(),
++    mockToastInfo: vi.fn(),
++    mockToastSuccess: vi.fn(),
++    mockGetCachedToken: vi.fn(() => 'mock-session-jwt'),
++    mockEnsureValidSession: vi.fn().mockResolvedValue('mock-session-jwt'),
++    mockWasTransientFailure: vi.fn(() => false),
++}))
+ 
+ vi.mock('@/lib/sse-parser', async () => {
+     const actual = await vi.importActual<typeof import('@/lib/sse-parser')>('@/lib/sse-parser')
+@@ -52,8 +65,9 @@ vi.mock('@/lib/search-cache', () => ({
+ }))
+ 
+ vi.mock('@/lib/auth-session', () => ({
+-    getCachedToken: () => 'mock-session-jwt',
+-    ensureValidSession: vi.fn().mockResolvedValue('mock-session-jwt'),
++    getCachedToken: mockGetCachedToken,
++    ensureValidSession: mockEnsureValidSession,
++    wasLastAuthExchangeTransientFailure: mockWasTransientFailure,
+ }))
+ 
+ vi.mock('sonner', () => ({
+@@ -74,6 +88,9 @@ describe('ChatWidget & ActuaryDialogCard Remediation RTL Tests', () => {
+ 
+     beforeEach(() => {
+         vi.clearAllMocks()
++        mockGetCachedToken.mockReturnValue('mock-session-jwt')
++        mockEnsureValidSession.mockResolvedValue('mock-session-jwt')
++        mockWasTransientFailure.mockReturnValue(false)
+         localStorage.setItem('user_uuid', 'user-1')
+         localStorage.setItem('user_nickname', 'Ryan')
+         Element.prototype.scrollIntoView = vi.fn()
+@@ -353,4 +370,89 @@ describe('ChatWidget & ActuaryDialogCard Remediation RTL Tests', () => {
+         expect(localStorage.getItem('tabiji_session_token')).toBe('mock-session-jwt')
+         view2.unmount()
+     })
++
++    it('background /api/chat/summarize boots missing JWT, retries once on non-Gemini 401, and leaves token intact on Gemini 401', async () => {
++        // 1. Cold boot token missing -> calls ensureValidSession(), then hits non-Gemini 401 -> calls ensureValidSession(true) and succeeds
++        mockGetCachedToken.mockReturnValue(null as unknown as string)
++        mockEnsureValidSession
++            .mockResolvedValueOnce('initial-jwt')
++            .mockResolvedValueOnce('fresh-summary-jwt')
++        mockWasTransientFailure.mockReturnValue(false)
++        localStorage.setItem('tabiji_session_token', 'initial-jwt')
++
++        mockStreamChat.mockImplementation(async (_url, msg, _hist, _key, handlers) => {
++            handlers.onStart?.()
++            handlers.onText?.(`Reply to ${msg}`)
++            handlers.onDone?.({
++                model_used: 'gemini-3.5-flash-lite',
++                raw_parts: [{ text: `Reply to ${msg}` }],
++                sources: [],
++            })
++        })
++
++        const summarizeAuthHeaders: Array<string | null> = []
++        global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
++            const url = String(input)
++            const auth = new Headers(init?.headers).get('Authorization')
++            if (url.endsWith('/api/chat/summarize')) {
++                summarizeAuthHeaders.push(auth)
++                if (auth === 'Bearer initial-jwt') {
++                    return new Response(JSON.stringify({ detail: 'Invalid or expired token' }), { status: 401 })
++                }
++                return new Response(JSON.stringify({ summary: 'Tokyo itinerary memory summary' }), { status: 200 })
++            }
++            return new Response('{}', { status: 200 })
++        }) as unknown as typeof fetch
++
++        const view1 = renderOpenChatWidget()
++        const textarea1 = screen.getByRole('textbox')
++        // 1 greeting + 10 rounds * 2 = 21 messages; on 10th send messages.length is 19, wait -> 11th send has messages.length === 21 (>= PREHEAT_THRESHOLD 20)
++        for (let i = 1; i <= 11; i++) {
++            fireEvent.change(textarea1, { target: { value: `Turn ${i}` } })
++            fireEvent.keyDown(textarea1, { key: 'Enter', shiftKey: false })
++            await waitFor(() => {
++                expect(screen.getByText(`Reply to Turn ${i}`)).toBeInTheDocument()
++            })
++        }
++
++        await waitFor(() => {
++            expect(summarizeAuthHeaders).toEqual(['Bearer initial-jwt', 'Bearer fresh-summary-jwt'])
++        })
++        expect(mockEnsureValidSession).toHaveBeenCalledWith()
++        expect(mockEnsureValidSession).toHaveBeenCalledWith(true)
++        await waitFor(() => {
++            expect(mockToastSuccess).toHaveBeenCalled()
++        })
++        view1.unmount()
++
++        // 2. Gemini API Key 401 on /api/chat/summarize MUST NOT refresh session or wipe tabiji_session_token
++        vi.clearAllMocks()
++        mockGetCachedToken.mockReturnValue('valid-session-jwt')
++        localStorage.setItem('tabiji_session_token', 'valid-session-jwt')
++        const geminiAuthHeaders: Array<string | null> = []
++        global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
++            const url = String(input)
++            if (url.endsWith('/api/chat/summarize')) {
++                geminiAuthHeaders.push(new Headers(init?.headers).get('Authorization'))
++                return new Response(JSON.stringify({ detail: 'Your Google Gemini API Key is invalid' }), { status: 401 })
++            }
++            return new Response('{}', { status: 200 })
++        }) as unknown as typeof fetch
++
++        const view2 = renderOpenChatWidget()
++        const textarea2 = screen.getByRole('textbox')
++        for (let i = 1; i <= 11; i++) {
++            fireEvent.change(textarea2, { target: { value: `GeminiTurn ${i}` } })
++            fireEvent.keyDown(textarea2, { key: 'Enter', shiftKey: false })
++            await waitFor(() => {
++                expect(screen.getByText(`Reply to GeminiTurn ${i}`)).toBeInTheDocument()
++            })
++        }
++        await waitFor(() => {
++            expect(geminiAuthHeaders).toEqual(['Bearer valid-session-jwt'])
++        })
++        expect(mockEnsureValidSession).not.toHaveBeenCalled()
++        expect(localStorage.getItem('tabiji_session_token')).toBe('valid-session-jwt')
++        view2.unmount()
++    })
+ })
+diff --git a/frontend/app/api/cloudinary-test/route.ts b/frontend/app/api/cloudinary-test/route.ts
+index 1308054..8b1e644 100644
+--- a/frontend/app/api/cloudinary-test/route.ts
++++ b/frontend/app/api/cloudinary-test/route.ts
+@@ -2,9 +2,21 @@ import { v2 as cloudinary } from "cloudinary";
+ import { NextResponse } from "next/server";
+ 
+ export async function GET() {
++    // 🛡️ Fail-Closed: 嚴禁於生產環境暴露金鑰前綴與未授權簽章端點
++    if (
++        process.env.NODE_ENV === "production" ||
++        process.env.VERCEL_ENV === "production" ||
++        process.env.ENABLE_CLOUDINARY_TEST_ROUTE !== "true"
++    ) {
++        return NextResponse.json({ detail: "Not Found" }, { status: 404 });
++    }
++
+     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+     const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY;
+     const apiSecret = process.env.CLOUDINARY_API_SECRET;
++    if (!cloudName || !apiKey || !apiSecret) {
++        return NextResponse.json({ error: "Cloudinary credentials not configured" }, { status: 500 });
++    }
+ 
+     // Test signature generation
+     const timestamp = Math.round(Date.now() / 1000);
+@@ -16,16 +28,14 @@ export async function GET() {
+         api_secret: apiSecret,
+     });
+ 
+-    const signature = cloudinary.utils.api_sign_request(paramsToSign, apiSecret!);
++    const signature = cloudinary.utils.api_sign_request(paramsToSign, apiSecret);
+ 
+     return NextResponse.json({
+         cloudName,
+-        apiKey: apiKey ? apiKey.slice(0, 4) + "..." : null,
+-        apiSecretLength: apiSecret?.length,
+-        apiSecretFirst4: apiSecret?.slice(0, 4),
+-        apiSecretLast4: apiSecret?.slice(-4),
+-        testSignature: signature,
++        apiKeyConfigured: true,
++        apiSecretConfigured: true,
++        testSignatureGenerated: Boolean(signature),
+         paramsUsed: paramsToSign,
+-        message: "If you see this, the API route is working. Now verify these values match your Cloudinary dashboard."
++        message: "Cloudinary local dev diagnostic check passed."
+     });
+ }
+diff --git a/frontend/app/api/poi/[...path]/route.ts b/frontend/app/api/poi/[...path]/route.ts
+index 0e9c4de..8d06560 100644
+--- a/frontend/app/api/poi/[...path]/route.ts
++++ b/frontend/app/api/poi/[...path]/route.ts
+@@ -8,10 +8,21 @@ const BACKEND_BASE = (process.env.INTERNAL_BACKEND_URL || process.env.NEXT_PUBLI
+  * - POI 口袋庫端點 (all, import-link, add, :id, :id/*) ➔ 100% 直連 Cloudflare D1
+  * - POI AI 與搜尋端點 (categories, nearby, recommend, ai-enrich, enrich) ➔ 直連 FastAPI 後端
+  */
++const BACKEND_POI_SUBPATHS = new Set([
++    "nearby",
++    "categories",
++    "media-proxy",
++    "resolve-link",
++    "ai-enrich",
++    "enrich",
++    "recommend",
++]);
++
+ function isPoiPoolSubpath(subPath: string): boolean {
+     const actions = ["all", "import-link", "add", "batch-save"];
+     if (actions.includes(subPath)) return true;
+-    return /^([0-9a-fA-F-]+|poi_[^/]+)(\/(note|pin|category))?$/.test(subPath);
++    if (BACKEND_POI_SUBPATHS.has(subPath)) return false;
++    return /^([0-9a-fA-F-]{8,}|poi_[^/]+)(\/(note|pin|category))?$/.test(subPath);
+ }
+ 
+ async function proxyRequest(
+@@ -50,12 +61,6 @@ async function proxyRequest(
+             redirect: "manual",
+         });
+ 
+-        // 🛡️ 本地開發與測試環境優雅降級：若遠端 D1 判定為測試固定帳號或拒絕存取，
+-        // GET /api/poi/all 優雅回傳空陣列 []，防止本地 App Session Token 遭到非預期清除
+-        if (resp.status === 401 && isPool && subPath === "all" && method === "GET") {
+-            return NextResponse.json([]);
+-        }
+-
+         const respHeaders = new Headers(resp.headers);
+         respHeaders.delete("content-encoding"); // 避免代理雙重壓縮損壞
+ 
+@@ -65,9 +70,6 @@ async function proxyRequest(
+             headers: respHeaders,
+         });
+     } catch (err) {
+-        if (isPool && subPath === "all" && method === "GET") {
+-            return NextResponse.json([]);
+-        }
+         console.error(`[POI Proxy] Failed to reach ${isPool ? "Cloudflare D1" : "Backend"}:`, err);
+         return NextResponse.json(
+             { error: "POI_SERVICE_UNREACHABLE", detail: String(err) },
+diff --git a/frontend/app/api/sign-cloudinary/route.ts b/frontend/app/api/sign-cloudinary/route.ts
+index 5063e55..069449e 100644
+--- a/frontend/app/api/sign-cloudinary/route.ts
++++ b/frontend/app/api/sign-cloudinary/route.ts
+@@ -8,23 +8,61 @@ cloudinary.config({
+ });
+ 
+ export async function POST(request: Request) {
+-    const body = await request.json();
+-    const { paramsToSign } = body;
++    const body = await request.json().catch(() => null);
++    const paramsToSign = body?.paramsToSign;
++    if (!paramsToSign || typeof paramsToSign !== "object" || Array.isArray(paramsToSign)) {
++        return NextResponse.json({ error: "Invalid signing payload" }, { status: 400 });
++    }
++
++    const ALLOWED_PARAM_KEYS = new Set(["timestamp", "folder", "public_id"]);
++    for (const key of Object.keys(paramsToSign)) {
++        if (!ALLOWED_PARAM_KEYS.has(key)) {
++            return NextResponse.json({ error: `Unauthorized signing parameter: ${key}` }, { status: 400 });
++        }
++    }
+ 
+     const ALLOWED_FOLDERS = ["tabidachi_capsules", "ryan_travel", "trip_covers", "receipts"];
+-    const targetFolder = paramsToSign?.folder;
++    const targetFolder = paramsToSign.folder;
++    const isSafeFolderFormat =
++        typeof targetFolder === "string" &&
++        targetFolder.length > 0 &&
++        targetFolder.length <= 160 &&
++        /^[a-zA-Z0-9_-]+(\/[a-zA-Z0-9_-]+)*$/.test(targetFolder);
++    const isValidFolder =
++        isSafeFolderFormat &&
++        ALLOWED_FOLDERS.some((f) => targetFolder === f || targetFolder.startsWith(f + "/"));
+ 
+-    if (targetFolder && !ALLOWED_FOLDERS.some(f => targetFolder === f || targetFolder.startsWith(f + "/"))) {
++    if (!isValidFolder) {
+         return NextResponse.json({ error: "Unauthorized upload folder" }, { status: 400 });
+     }
+ 
++    const rawTimestamp = paramsToSign.timestamp;
++    const timestamp =
++        typeof rawTimestamp === "number" || (typeof rawTimestamp === "string" && /^\d+$/.test(rawTimestamp))
++            ? Number(rawTimestamp)
++            : NaN;
++    if (!Number.isInteger(timestamp) || timestamp <= 0) {
++        return NextResponse.json({ error: "Invalid timestamp" }, { status: 400 });
++    }
++
++    const sanitizedParams: Record<string, string | number> = {
++        timestamp,
++        folder: targetFolder,
++    };
++    if (paramsToSign.public_id !== undefined) {
++        if (typeof paramsToSign.public_id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(paramsToSign.public_id)) {
++            return NextResponse.json({ error: "Invalid public_id" }, { status: 400 });
++        }
++        sanitizedParams.public_id = paramsToSign.public_id;
++    }
++
+     const apiSecret = process.env.CLOUDINARY_API_SECRET;
+     if (!apiSecret) {
+         return NextResponse.json({ error: "CLOUDINARY_API_SECRET not configured" }, { status: 500 });
+     }
+ 
+     const signature = cloudinary.utils.api_sign_request(
+-        paramsToSign,
++        sanitizedParams,
+         apiSecret
+     );
+ 
+diff --git a/frontend/components/chat-widget.tsx b/frontend/components/chat-widget.tsx
+index fee311b..d959008 100644
+--- a/frontend/components/chat-widget.tsx
++++ b/frontend/components/chat-widget.tsx
+@@ -27,7 +27,7 @@ import { useWeatherStore } from "@/lib/stores/weatherStore"
+ import { debugLog } from "@/lib/debug"
+ import { useLanguage, type TranslationKey } from "@/lib/LanguageContext"
+ import { type ParsedItinerary, type ParsedItineraryItem } from "@/lib/itinerary-types"
+-import { getCachedToken, ensureValidSession } from "@/lib/auth-session"
++import * as authSession from "@/lib/auth-session"
+ 
+ // 🆕 Part 結構 (與 Gemini API 對應，支援駝峰與蛇形雙格式)
+ interface Part {
+@@ -548,38 +548,73 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
+ 
+             const toSummarize = messages.slice(0, messages.length - KEEP_RECENT)
+             const targetUserId = contextUserId || localStorage.getItem("user_uuid") || ""
+-            const token = getCachedToken()
+-            const headers: Record<string, string> = {
+-                "Content-Type": "application/json",
+-                "X-Gemini-API-Key": apiKey,
+-                "X-User-ID": targetUserId
+-            }
+-            if (token) {
+-                headers["Authorization"] = `Bearer ${token}`
+-            }
+-            fetch(`${API_HOST}/api/chat/summarize`, {
+-                method: "POST",
+-                headers,
+-                body: JSON.stringify({
+-                    history: toSummarize.map((m: Message) => ({
+-                        role: m.role,
+-                        displayContent: m.displayContent
+-                    })),
+-                    locale: lang
+-                })
+-            })
+-                .then(res => {
++            void (async () => {
++                try {
++                    let token = authSession.getCachedToken()
++                    if (!token && typeof window !== "undefined") {
++                        token = await authSession.ensureValidSession().catch(() => null)
++                    }
++                    const buildHeaders = (authToken: string | null): Record<string, string> => {
++                        const h: Record<string, string> = {
++                            "Content-Type": "application/json",
++                            "X-Gemini-API-Key": apiKey,
++                            "X-User-ID": targetUserId
++                        }
++                        if (authToken) {
++                            h["Authorization"] = `Bearer ${authToken}`
++                        }
++                        return h
++                    }
++                    const payload = JSON.stringify({
++                        history: toSummarize.map((m: Message) => ({
++                            role: m.role,
++                            displayContent: m.displayContent
++                        })),
++                        locale: lang
++                    })
++                    let res = await fetch(`${API_HOST}/api/chat/summarize`, {
++                        method: "POST",
++                        headers: buildHeaders(token),
++                        body: payload
++                    })
++                    if (res.status === 401 && typeof window !== "undefined") {
++                        let errDetail = ""
++                        try {
++                            const errJson = await res.clone().json()
++                            errDetail = String(errJson?.detail || errJson?.message || "")
++                        } catch {
++                            errDetail = await res.clone().text().catch(() => "")
++                        }
++                        const isGeminiKeyAuthError = /gemini|api[_ ]?key|金鑰|個人檔案|profile|google ai studio|已失效|無效或已過期/i.test(errDetail)
++                        const hasSessionToken = Boolean(token || localStorage.getItem("tabiji_session_token"))
++                        if (!isGeminiKeyAuthError && hasSessionToken) {
++                            const freshToken = await authSession.ensureValidSession(true).catch(() => null)
++                            if (freshToken) {
++                                res = await fetch(`${API_HOST}/api/chat/summarize`, {
++                                    method: "POST",
++                                    headers: buildHeaders(freshToken),
++                                    body: payload
++                                })
++                            } else {
++                                const isTransientFailure = typeof authSession.wasLastAuthExchangeTransientFailure === "function" && authSession.wasLastAuthExchangeTransientFailure()
++                                if (!isTransientFailure) {
++                                    localStorage.removeItem("tabiji_session_token")
++                                }
++                            }
++                        }
++                    }
+                     if (!res.ok) throw new Error(`HTTP ${res.status}`)
+-                    return res.json()
+-                })
+-                .then(data => {
++                    const data = await res.json()
+                     if (data.summary) {
+                         setMemorySummary(data.summary)
+                         toast.success(t('ai_summarized'))
+                     }
+-                })
+-                .catch(err => console.error(t('ai_summary_failed'), err))
+-                .finally(() => setIsSummarizing(false))
++                } catch (err) {
++                    console.error(t('ai_summary_failed'), err)
++                } finally {
++                    setIsSummarizing(false)
++                }
++            })()
+         }
+ 
+         // 準備 history
+@@ -1020,9 +1055,9 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
+         // 🔄 Fallback: 如果 streaming 失敗或有圖片，使用原有 API (401 金鑰無效或已渲染錯誤中斷部分結果時不重複發請求)
+         if (!streamingSuccess && !streamErroredWithPartial && !streamEmptyError && !streamingFatalAuthError && !abortControllerRef.current?.signal.aborted) {
+             try {
+-                let token = getCachedToken()
++                let token = authSession.getCachedToken()
+                 if (!token && typeof window !== "undefined") {
+-                    token = await ensureValidSession().catch(() => null)
++                    token = await authSession.ensureValidSession().catch(() => null)
+                 }
+                 const headers: Record<string, string> = {
+                     "Content-Type": "application/json",
+@@ -1057,9 +1092,12 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
+                     const isGeminiKeyAuthError = /gemini|api[_ ]?key|金鑰|個人檔案|profile|google ai studio|已失效|無效或已過期/i.test(errText)
+                     if (!isGeminiKeyAuthError && (token || localStorage.getItem("tabiji_session_token"))) {
+                         console.warn("⚠️ [Chat] Received 401 Unauthorized in fallback chat, refreshing session token...")
+-                        const freshToken = await ensureValidSession(true).catch(() => null)
++                        const freshToken = await authSession.ensureValidSession(true).catch(() => null)
+                         if (!freshToken) {
+-                            localStorage.removeItem("tabiji_session_token")
++                            const isTransientFailure = typeof authSession.wasLastAuthExchangeTransientFailure === "function" && authSession.wasLastAuthExchangeTransientFailure()
++                            if (!isTransientFailure) {
++                                localStorage.removeItem("tabiji_session_token")
++                            }
+                         }
+                         if (freshToken) {
+                             headers["Authorization"] = `Bearer ${freshToken}`
+diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
+index 3bce2ad..700deb2 100644
+--- a/frontend/lib/api.ts
++++ b/frontend/lib/api.ts
+@@ -21,7 +21,7 @@ if (typeof window === "undefined" || process.env.NODE_ENV === "development") {
+     console.log("🚀 [API] Connected to:", API_HOST || "(same-origin /api)");
+ }
+ 
+-import { getCachedToken, ensureValidSession, triggerReauthPrompt } from './auth-session';
++import { getCachedToken, ensureValidSession, getLastAuthExchangeError, triggerReauthPrompt, wasLastAuthExchangeTransientFailure } from './auth-session';
+ 
+ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+     const urlStr = typeof input === "string" ? input : (input instanceof URL ? input.toString() : (input as Request)?.url || "");
+@@ -58,7 +58,7 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
+     }
+     const res = await activeFetch(input, init);
+     // 🛡️ 401 自動換票與自癒重試防禦 (Self-Healing Recovery & 1-time Re-execution)
+-    if (res.status === 401 && typeof window !== "undefined" && !urlStr.includes("/api/poi/") && !urlStr.includes("/api/ai/test-key")) {
++    if (res.status === 401 && typeof window !== "undefined" && !urlStr.includes("/api/ai/test-key")) {
+         // 區分「Gemini API Key 無效 (401)」vs「Tabiji Session JWT 過期 (401)」，絕不因用戶端 AI 金鑰過期而誤刪 Session Token
+         const peekData = typeof res.clone === "function" ? await res.clone().json().catch(() => null) : null;
+         const detailText = String((peekData as { detail?: string } | null)?.detail || "").toLowerCase();
+@@ -88,10 +88,15 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
+                     _isRetry: true
+                 } as RequestInit & { _isRetry?: boolean };
+                 return activeFetch(input, retryInit);
+-            } else {
+-                // 🛡️ 換票失敗（代表憑證已徹底作廢或輪替）：主動喚起重認證視窗，絕不讓頁面靜默失敗！
+-                localStorage.removeItem("tabiji_session_token");
+-                triggerReauthPrompt("您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。");
++            } else if (!urlStr.includes("/api/poi/")) {
++                // 🛡️ 換票失敗：僅在後端明確拒收憑證 (非 5xx/離線等暫態錯誤) 時才清除 Token 並喚起重認證視窗
++                const isTransientFailure = typeof wasLastAuthExchangeTransientFailure === "function" && wasLastAuthExchangeTransientFailure();
++                if (!isTransientFailure) {
++                    localStorage.removeItem("tabiji_session_token");
++                    triggerReauthPrompt(
++                        getLastAuthExchangeError() || "您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。"
++                    );
++                }
+             }
+         }
+     }
+diff --git a/frontend/lib/auth-session.ts b/frontend/lib/auth-session.ts
+index e96fb70..ebffb2f 100644
+--- a/frontend/lib/auth-session.ts
++++ b/frontend/lib/auth-session.ts
+@@ -15,21 +15,58 @@ const POP_TOKEN_KEY = "tabiji_pop_token";
+ const RECOVERY_KEY = "user_uuid";
+ const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
+ 
+-let inFlightSessionPromise: Promise<string | null> | null = null;
++let inFlightSession: { id: number; fingerprint: string; promise: Promise<string | null> } | null = null;
++let sessionAttemptCounter = 0;
+ let isReauthBroadcasting = false;
+ let lastRestoredAt = 0;
+-let lastExchangeFailedAt = 0;
++let lastFailedExchangeFingerprint: string | null = null;
++let lastAuthExchangeError: string | null = null;
++let lastExchangeTransientFailure = false;
++
++function readEstablishedUuid(): string | null {
++    if (typeof window === "undefined") return null;
++    const rawCurrentUuid = localStorage.getItem(RECOVERY_KEY)?.trim() || null;
++    const isOfflineRecPlaceholder = Boolean(rawCurrentUuid && TBJ_REC_REGEX.test(rawCurrentUuid));
++    return (
++        rawCurrentUuid &&
++        rawCurrentUuid !== "null" &&
++        rawCurrentUuid !== "undefined" &&
++        !isOfflineRecPlaceholder
++    ) ? rawCurrentUuid : null;
++}
++
++function buildExchangeFingerprint(storedKey: string | null, establishedUuid: string | null, rawToken: string | null): string {
++    return JSON.stringify([storedKey || "", establishedUuid || "", rawToken || ""]);
++}
++
++export function getLastAuthExchangeError(): string | null {
++    return lastAuthExchangeError;
++}
++
++export function wasLastAuthExchangeTransientFailure(): boolean {
++    return lastExchangeTransientFailure;
++}
+ 
+ export function __resetExchangeFailedForTesting() {
+-    lastExchangeFailedAt = 0;
++    inFlightSession = null;
++    lastVaultSyncTime = 0;
++    lastFailedExchangeFingerprint = null;
++    lastAuthExchangeError = null;
++    lastExchangeTransientFailure = false;
++    lastDismissedAt = 0;
++    lastRestoredAt = 0;
++    isReauthBroadcasting = false;
++    isReauthDismissedInMemory = false;
+ }
+ 
+ export const UNIFORM_REAUTH_ERROR = "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。";
+ 
+ let lastDismissedAt = 0;
++let isReauthDismissedInMemory = false;
+ 
+ export function dismissReauthPrompt() {
+     lastDismissedAt = Date.now();
++    isReauthDismissedInMemory = true;
+ }
+ 
+ /**
+@@ -56,6 +93,8 @@ export function triggerReauthPrompt(reason?: string) {
+         console.warn("🛡️ [Auth] Suppressed triggerReauthPrompt: User is not logged in.");
+         return;
+     }
++    // 🛡️ 若使用者於當前頁內明確點擊「稍後驗證」，保持離線靜默至重新整理或成功驗證
++    if (isReauthDismissedInMemory) return;
+     // 🛡️ 重認證成功後 5 秒冷卻，或使用者點擊「稍後驗證」關閉後 5 秒輕量冷卻防震盪
+     if (Date.now() - lastRestoredAt < 5000) return;
+     if (Date.now() - lastDismissedAt < 5000) return;
+@@ -221,11 +260,39 @@ export async function getValidSessionToken(): Promise<string | null> {
+ export async function ensureValidSession(forceRefresh: boolean = false): Promise<string | null> {
+     if (typeof window === "undefined") return null;
+ 
++    if (!forceRefresh) {
++        const existingToken = getCachedToken();
++        if (existingToken) return existingToken;
++    }
++
++    const storedKey = getRecoveryKey();
++    const establishedUuid = readEstablishedUuid();
++    const currentToken = localStorage.getItem(TOKEN_KEY);
++    const currentPopToken = localStorage.getItem(POP_TOKEN_KEY);
++    const currentPopOrToken = currentToken || currentPopToken;
++    const exchangeFingerprint = buildExchangeFingerprint(storedKey, establishedUuid, currentPopOrToken);
++
++    // 🛡️ 失效憑證指紋熔斷保護：
++    // 1. 相同失效憑證指紋於本頁週期內鎖定，徹底消除 SWR 15s 輪詢重複轟炸 /api/auth/session 401
++    // 2. 憑證指紋變更時（例如跨分頁 localStorage 同步或更新引繼碼/Session Token）立即解鎖，避免舊失敗時間窗誤鎖新憑證
++    if (lastFailedExchangeFingerprint !== null && lastFailedExchangeFingerprint === exchangeFingerprint) {
++        lastExchangeTransientFailure = false;
++        return null;
++    }
++
++    // 🔒 單例防抖：僅對相同憑證指紋合併進行中的換票請求，避免指紋更新後誤匯流至舊請求並提前刪毀有效 Token
++    if (inFlightSession && inFlightSession.fingerprint === exchangeFingerprint) {
++        return inFlightSession.promise;
++    }
++
++    let backedUpValidToken: string | null = null;
+     if (forceRefresh) {
+         try {
+-            const staleToken = localStorage.getItem(TOKEN_KEY);
+-            if (staleToken && isJwtStructure(staleToken)) {
+-                localStorage.setItem(POP_TOKEN_KEY, staleToken);
++            if (currentToken && isJwtStructure(currentToken)) {
++                localStorage.setItem(POP_TOKEN_KEY, currentToken);
++                if (isTokenValid(currentToken)) {
++                    backedUpValidToken = currentToken;
++                }
+             }
+             localStorage.removeItem(TOKEN_KEY);
+         } catch {
+@@ -233,36 +300,40 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
+         }
+     }
+ 
+-    const existingToken = getCachedToken();
+-    if (existingToken) return existingToken;
++    lastExchangeTransientFailure = false;
+ 
+-    // 🛡️ 換票冷卻保護：若上次換票已確認 401 失敗，10 秒內阻斷重複轟炸後端
+-    if (Date.now() - lastExchangeFailedAt < 10000) {
+-        return null;
+-    }
++    const restoreBackedUpTokenOnTransientError = () => {
++        lastExchangeTransientFailure = true;
++        if (backedUpValidToken && !localStorage.getItem(TOKEN_KEY)) {
++            try {
++                localStorage.setItem(TOKEN_KEY, backedUpValidToken);
++            } catch {
++                // ignore storage errors
++            }
++        }
++    };
+ 
+     // 🧪 測試環境防護：單元測試環境下若無主動換票需求則直接返回現有狀態，防止 unhandled network fetch
+     if (process.env.NODE_ENV === "test" && !process.env.TEST_AUTH_EXCHANGE) {
+-        return existingToken;
++        return getCachedToken();
+     }
+ 
+     // 📴 離線防禦：離線時不發起請求，避免觸發網路錯誤阻斷開機
+     if (typeof navigator !== "undefined" && !navigator.onLine) {
+         console.warn("📴 [Auth] Offline mode detected. Operating locally without session exchange.");
++        restoreBackedUpTokenOnTransientError();
+         return null;
+     }
+ 
+-    // 🔒 單例防抖：避免多分頁或併發請求重複換票
+-    if (inFlightSessionPromise) {
+-        return inFlightSessionPromise;
+-    }
+-
+-    inFlightSessionPromise = (async () => {
++    const attemptId = ++sessionAttemptCounter;
++    const sessionPromise = (async (): Promise<string | null> => {
+         try {
+-            const storedKey = getRecoveryKey();
++            const latestKey = getRecoveryKey();
++            const latestEstablishedUuid = readEstablishedUuid();
+             const rawToken = typeof window !== "undefined"
+                 ? (localStorage.getItem(TOKEN_KEY) || localStorage.getItem(POP_TOKEN_KEY))
+                 : null;
++            const activeFingerprint = buildExchangeFingerprint(latestKey, latestEstablishedUuid, rawToken);
+             const headers: Record<string, string> = { "Content-Type": "application/json" };
+             if (rawToken) {
+                 headers["Authorization"] = `Bearer ${rawToken}`;
+@@ -271,16 +342,37 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
+             const res = await fetch("/api/auth/session", {
+                 method: "POST",
+                 headers,
+-                body: JSON.stringify({ recovery_key: storedKey || undefined })
++                body: JSON.stringify({
++                    recovery_key: latestKey || undefined,
++                    expected_user_id: latestEstablishedUuid || undefined,
++                })
+             });
+ 
++            const postFetchFingerprint = buildExchangeFingerprint(
++                getRecoveryKey(),
++                readEstablishedUuid(),
++                typeof window !== "undefined"
++                    ? (localStorage.getItem(TOKEN_KEY) || localStorage.getItem(POP_TOKEN_KEY))
++                    : null
++            );
++            const isCurrentAttempt = inFlightSession?.id === attemptId;
++            if (postFetchFingerprint !== activeFingerprint) {
++                const latestCached = getCachedToken();
++                if (isCurrentAttempt && !latestCached && !res.ok && res.status !== 401) {
++                    restoreBackedUpTokenOnTransientError();
++                }
++                return latestCached;
++            }
++
+             if (!res.ok) {
+                 console.warn(`⚠️ [Auth] Session exchange returned HTTP ${res.status}`);
+                 if (res.status === 401) {
+                     if (isUserLoggedIn()) {
+-                        lastExchangeFailedAt = Date.now();
++                        lastExchangeTransientFailure = false;
++                        lastFailedExchangeFingerprint = activeFingerprint;
+                         const err = await res.json().catch(() => ({}));
+                         const detail = typeof err.detail === "string" ? err.detail : undefined;
++                        lastAuthExchangeError = detail || null;
+                         // 🛡️ 凡換票收到 401，立即攜帶原因喚醒重認證彈窗，拒絕靜默假死
+                         triggerReauthPrompt(detail);
+                     } else {
+@@ -290,8 +382,13 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
+                         localStorage.removeItem(POP_TOKEN_KEY);
+                         localStorage.removeItem("user_recovery_key");
+                         localStorage.removeItem(RECOVERY_KEY);
+-                        lastExchangeFailedAt = 0; // 🔓 立即解開冷卻，保證使用者輸入暱稱時可秒開換票
++                        lastFailedExchangeFingerprint = null; // 🔓 立即解開指紋鎖定，保證使用者輸入暱稱時可秒開換票
++                        lastAuthExchangeError = null;
++                        lastExchangeTransientFailure = false;
++                        isReauthDismissedInMemory = false;
+                     }
++                } else {
++                    restoreBackedUpTokenOnTransientError();
+                 }
+                 return null;
+             }
+@@ -300,7 +397,7 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
+             if (data?.access_token) {
+                 const rawCurrentUuid = localStorage.getItem(RECOVERY_KEY)?.trim() || null;
+                 const isOfflineRecPlaceholder = Boolean(rawCurrentUuid && TBJ_REC_REGEX.test(rawCurrentUuid));
+-                const establishedUuid = (
++                const resolvedUuid = (
+                     rawCurrentUuid &&
+                     rawCurrentUuid !== "null" &&
+                     rawCurrentUuid !== "undefined" &&
+@@ -308,13 +405,17 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
+                 ) ? rawCurrentUuid : null;
+ 
+                 // 🛡️ 先驗證身分一致性再寫入任何憑證，防止異常回應污染本地 Token / 引繼碼
+-                if (storedKey && !data.upgraded && establishedUuid && data.user_id) {
+-                    if (data.user_id.toLowerCase() !== establishedUuid.toLowerCase()) {
++                if (latestKey && !data.upgraded && resolvedUuid && data.user_id) {
++                    if (data.user_id.toLowerCase() !== resolvedUuid.toLowerCase()) {
+                         console.error("🚨 [Auth] Security Sentinel Alert: Session response user_id differs from stored recovery key! Refusing to overwrite key.");
+                         throw new Error("Identity mismatch — refusing to overwrite recovery key");
+                     }
+                 }
+ 
++                lastFailedExchangeFingerprint = null;
++                lastAuthExchangeError = null;
++                lastExchangeTransientFailure = false;
++                isReauthDismissedInMemory = false;
+                 localStorage.setItem(TOKEN_KEY, data.access_token);
+                 localStorage.setItem(POP_TOKEN_KEY, data.access_token);
+                 // 🛡️ 雙軌固化：既有 UUID 與新版專屬引繼碼同步持久化
+@@ -347,13 +448,19 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
+             return null;
+         } catch (err) {
+             console.warn("⚠️ [Auth] Silent session exchange failed:", err);
++            if (inFlightSession?.id === attemptId) {
++                restoreBackedUpTokenOnTransientError();
++            }
+             return null;
+         } finally {
+-            inFlightSessionPromise = null;
++            if (inFlightSession?.id === attemptId) {
++                inFlightSession = null;
++            }
+         }
+     })();
+ 
+-    return inFlightSessionPromise;
++    inFlightSession = { id: attemptId, fingerprint: exchangeFingerprint, promise: sessionPromise };
++    return sessionPromise;
+ }
+ 
+ /**
+@@ -387,6 +494,12 @@ export async function restoreAccountWithKey(recoveryKey: string): Promise<Sessio
+         if (data.recovery_key) {
+             localStorage.setItem("user_recovery_key", data.recovery_key);
+         }
++        lastRestoredAt = Date.now();
++        inFlightSession = null;
++        lastFailedExchangeFingerprint = null;
++        lastAuthExchangeError = null;
++        lastExchangeTransientFailure = false;
++        isReauthDismissedInMemory = false;
+         return {
+             accessToken: data.access_token,
+             userId: data.user_id,
+@@ -424,6 +537,11 @@ export async function rotateAccountRecoveryKey(): Promise<string> {
+             localStorage.setItem(TOKEN_KEY, data.access_token);
+             localStorage.setItem(POP_TOKEN_KEY, data.access_token);
+         }
++        inFlightSession = null;
++        lastFailedExchangeFingerprint = null;
++        lastAuthExchangeError = null;
++        lastExchangeTransientFailure = false;
++        isReauthDismissedInMemory = false;
+         return data.recovery_key as string;
+     }
+ 
+@@ -493,7 +611,7 @@ export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<st
+         throw new Error(UNIFORM_REAUTH_ERROR);
+     }
+ 
+-    const currentUuid = typeof window !== "undefined" ? localStorage.getItem(RECOVERY_KEY) : null;
++    const currentUuid = readEstablishedUuid();
+     const res = await fetch("/api/auth/session", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+@@ -522,7 +640,11 @@ export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<st
+     localStorage.setItem("user_recovery_key", cleanKey);
+     localStorage.setItem(RECOVERY_KEY, data.user_id);
+     lastRestoredAt = Date.now();
+-    lastExchangeFailedAt = 0;
++    inFlightSession = null;
++    lastFailedExchangeFingerprint = null;
++    lastAuthExchangeError = null;
++    lastExchangeTransientFailure = false;
++    isReauthDismissedInMemory = false;
+ 
+     if (typeof window !== "undefined") {
+         window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", { detail: { recoveryKey: cleanKey, source: "local_reanchor" } }));
+@@ -543,7 +665,11 @@ export async function resetAndStartFreshSession(): Promise<SessionInfo | null> {
+     localStorage.removeItem(TOKEN_KEY);
+     localStorage.removeItem(POP_TOKEN_KEY);
+     localStorage.removeItem(RECOVERY_KEY);
+-    lastExchangeFailedAt = 0;
++    inFlightSession = null;
++    lastFailedExchangeFingerprint = null;
++    lastAuthExchangeError = null;
++    lastExchangeTransientFailure = false;
++    isReauthDismissedInMemory = false;
+ 
+     try {
+         const res = await fetch("/api/auth/session", {
+diff --git a/frontend/lib/hooks.ts b/frontend/lib/hooks.ts
+index 3773abf..6ea65d1 100644
+--- a/frontend/lib/hooks.ts
++++ b/frontend/lib/hooks.ts
+@@ -14,7 +14,7 @@ export class HttpError extends Error {
+     }
+ }
+ 
+-import { getCachedToken, ensureValidSession, triggerReauthPrompt } from './auth-session'
++import { getCachedToken, ensureValidSession, getLastAuthExchangeError, triggerReauthPrompt, wasLastAuthExchangeTransientFailure } from './auth-session'
+ 
+ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
+     let token = getCachedToken()
+@@ -47,9 +47,14 @@ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
+                 throw new HttpError(0, (retryErr as Error)?.message || "Network error", { offline: true })
+             }
+         } else {
+-            // 🛡️ 換票失敗（代表憑證已徹底作廢或輪替）：主動喚起重認證視窗，絕不讓頁面靜默失敗！
+-            localStorage.removeItem("tabiji_session_token")
+-            triggerReauthPrompt("您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。")
++            // 🛡️ 換票失敗：僅在非暫態錯誤 (5xx/離線) 時才清除 Token 並喚起重認證視窗，保留伺服器明確原因
++            const isTransientFailure = typeof wasLastAuthExchangeTransientFailure === "function" && wasLastAuthExchangeTransientFailure()
++            if (!isTransientFailure) {
++                localStorage.removeItem("tabiji_session_token")
++                triggerReauthPrompt(
++                    getLastAuthExchangeError() || "您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。"
++                )
++            }
+         }
+     }
+ 
+diff --git a/frontend/lib/sse-parser.ts b/frontend/lib/sse-parser.ts
+index 297bd2b..253e138 100644
+--- a/frontend/lib/sse-parser.ts
++++ b/frontend/lib/sse-parser.ts
+@@ -11,7 +11,7 @@ export interface SSEEvent {
+     data: string
+ }
+ 
+-import { getCachedToken, ensureValidSession } from './auth-session'
++import * as authSession from './auth-session'
+ 
+ export interface SSEHandlers {
+     onStart?: () => void
+@@ -180,9 +180,9 @@ export async function streamChat(
+     const defaultTime = clientTime || new Date().toISOString()
+     const defaultTz = clientTimezone || (typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "Asia/Taipei")
+ 
+-    let token = getCachedToken()
++    let token = authSession.getCachedToken()
+     if (!token && typeof window !== "undefined") {
+-        token = await ensureValidSession().catch(() => null)
++        token = await authSession.ensureValidSession().catch(() => null)
+     }
+ 
+     const headers: Record<string, string> = {
+@@ -232,9 +232,12 @@ export async function streamChat(
+ 
+         if (!isGeminiKeyAuthError && hasSessionToken) {
+             console.warn("⚠️ [SSE] Received 401 Unauthorized during stream handshake, refreshing session token...")
+-            const freshToken = await ensureValidSession(true).catch(() => null)
++            const freshToken = await authSession.ensureValidSession(true).catch(() => null)
+             if (!freshToken) {
+-                localStorage.removeItem("tabiji_session_token")
++                const isTransientFailure = typeof authSession.wasLastAuthExchangeTransientFailure === "function" && authSession.wasLastAuthExchangeTransientFailure()
++                if (!isTransientFailure) {
++                    localStorage.removeItem("tabiji_session_token")
++                }
+             }
+             if (freshToken && !signal?.aborted) {
+                 headers["Authorization"] = `Bearer ${freshToken}`
+diff --git a/frontend/lib/sync-hooks.ts b/frontend/lib/sync-hooks.ts
+index 9686ad7..f524296 100644
+--- a/frontend/lib/sync-hooks.ts
++++ b/frontend/lib/sync-hooks.ts
+@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
+ import { SyncQueue, MAX_RETRIES, SyncRequest, SyncEngineControl } from './sync-engine';
+ import { toast } from "sonner";
+ import { useSyncStatusStore } from './stores/syncStatusStore';
+-import { getCachedToken, ensureValidSession, triggerReauthPrompt } from './auth-session';
++import { getCachedToken, ensureValidSession, getLastAuthExchangeError, triggerReauthPrompt, wasLastAuthExchangeTransientFailure } from './auth-session';
+ 
+ /**
+  * 🛠️ React Hook: useOfflineMutation
+@@ -130,11 +130,14 @@ export function useBackgroundSync() {
+                                 }
+                             }
+ 
+-                            // 🛡️ [Sentinel Patch] 若二次嘗試仍為 401，代表金鑰已輪替或身分撤銷：物理凍結 Outbox 並跳出重新認證，絕對不計入 retryCount、絕對不丟棄資料！
++                            // 🛡️ [Sentinel Patch] 若二次嘗試仍為 401，僅在非暫態錯誤時凍結 Outbox 與彈窗；暫態錯誤仍不 dequeue 保護離線突變
+                             if (res.status === 401 && typeof window !== 'undefined') {
+-                                console.error('[SyncEngine] 🚨 401 encountered during replay. Freezing outbox to preserve unsynced data.');
+-                                SyncEngineControl.pause();
+-                                triggerReauthPrompt();
++                                const isTransientFailure = typeof wasLastAuthExchangeTransientFailure === "function" && wasLastAuthExchangeTransientFailure();
++                                if (!isTransientFailure) {
++                                    console.error('[SyncEngine] 🚨 401 encountered during replay. Freezing outbox to preserve unsynced data.');
++                                    SyncEngineControl.pause();
++                                    triggerReauthPrompt(getLastAuthExchangeError() || undefined);
++                                }
+                                 break; // ❌ 絕對不 incrementRetry，絕對不 dequeue！保護離線突變
+                             }
+ 

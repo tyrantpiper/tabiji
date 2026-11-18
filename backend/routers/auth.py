@@ -128,6 +128,79 @@ def decrypt_recovery_key(encrypted_payload: Optional[str], vault_key: bytes) -> 
         return None
 
 
+def get_legacy_session_secrets(current_secret: Optional[str] = None) -> list[str]:
+    """
+    🔄 金鑰輪替過渡期歷史 Session 簽章密鑰列表
+    僅供 auth.py PoP 升級橋與 90 天寬限端點驗簽舊裝置憑證，絕不開放一般業務依賴直接使用，
+    藉此強制舊 JWT 透過 /api/auth/session 靜默遷移至最新密鑰簽發的憑證。
+    """
+    candidates: list[str] = []
+    for env_name in ("LEGACY_SESSION_SECRET_KEY", "PREVIOUS_SESSION_SECRET_KEY"):
+        raw = os.getenv(env_name, "")
+        for part in raw.split(","):
+            s = part.strip()
+            if s and len(s) >= 16 and s != current_secret and s not in candidates:
+                candidates.append(s)
+    return candidates
+
+
+def decrypt_recovery_key_with_fallback(encrypted_payload: Optional[str], current_secret: str) -> Optional[str]:
+    """Decrypts vault payload with primary key first, then bounded legacy vault/session transition secrets."""
+    if not encrypted_payload:
+        return None
+    primary_vault_key = derive_vault_key(current_secret)
+    decrypted = decrypt_recovery_key(encrypted_payload, primary_vault_key)
+    if decrypted is not None:
+        return decrypted
+
+    for env_name in ("LEGACY_VAULT_MASTER_KEY", "PREVIOUS_VAULT_MASTER_KEY"):
+        raw = os.getenv(env_name, "")
+        for part in raw.split(","):
+            v_sec = part.strip()
+            if v_sec and len(v_sec) >= 16:
+                alt_key = hashlib.sha256(f"tabiji-recovery-vault-salt-{v_sec}".encode()).digest()
+                decrypted = decrypt_recovery_key(encrypted_payload, alt_key)
+                if decrypted is not None:
+                    return decrypted
+
+    for leg_sec in get_legacy_session_secrets(current_secret):
+        alt_master = hashlib.sha256(f"tabiji-dedicated-vault-salt-{leg_sec}".encode()).hexdigest()
+        alt_key = hashlib.sha256(f"tabiji-recovery-vault-salt-{alt_master}".encode()).digest()
+        decrypted = decrypt_recovery_key(encrypted_payload, alt_key)
+        if decrypted is not None:
+            return decrypted
+
+    return None
+
+
+def decode_device_session_jwt(
+    token: str,
+    current_secret: str,
+    verify_exp: bool = True,
+) -> Optional[dict]:
+    """
+    🔐 多密鑰安全驗簽 (先驗當前密鑰，再依序驗舊版過渡密鑰)
+    必須嚴格符合 HS256 / iss=tabiji-core / type=device_session / UUID v4 sub。
+    """
+    secrets_to_try = [current_secret] + get_legacy_session_secrets(current_secret)
+    required_claims = ["sub", "iss", "iat", "exp", "type"] if verify_exp else ["sub", "iss", "iat", "type"]
+    for cand_secret in secrets_to_try:
+        try:
+            payload = jwt.decode(
+                token,
+                cand_secret,
+                algorithms=["HS256"],
+                issuer="tabiji-core",
+                options={"verify_exp": verify_exp, "require": required_claims},
+            )
+            sub = str(payload.get("sub") or "").strip()
+            if payload.get("type") == "device_session" and UUID_V4_REGEX.match(sub):
+                return payload
+        except jwt.PyJWTError:
+            continue
+    return None
+
+
 def verify_recovery_key(full_key: str, stored_hash: Optional[str]) -> bool:
     if not stored_hash or not is_valid_tbj_rec(full_key):
         return False
@@ -277,25 +350,16 @@ async def create_or_exchange_session(
             token_ver = 1
             if auth_header and auth_header.startswith("Bearer "):
                 cand_token = auth_header.split(" ")[1].strip()
-                try:
-                    payload = jwt.decode(
-                        cand_token,
-                        secret,
-                        algorithms=["HS256"],
-                        issuer="tabiji-core",
-                        options={"verify_exp": False, "require": ["sub", "iss", "iat", "type"]}
-                    )
-                    now = int(time.time())
-                    sub = str(payload.get("sub") or "").strip()
-                    if (
-                        payload.get("type") == "device_session"
-                        and sub.lower() == clean_uid
-                        and (now - payload.get("iat", 0) <= 90 * 86400)
-                    ):
-                        token_ver = int(payload.get("ver") or 1)
-                        is_authenticated = True
-                except Exception:
-                    pass
+                payload = decode_device_session_jwt(cand_token, secret, verify_exp=False)
+                if payload is not None:
+                    try:
+                        now = int(time.time())
+                        sub = str(payload.get("sub") or "").strip()
+                        if sub.lower() == clean_uid and (now - payload.get("iat", 0) <= 90 * 86400):
+                            token_ver = int(payload.get("ver") or 1)
+                            is_authenticated = True
+                    except Exception:
+                        pass
 
             if not is_authenticated:
                 raise HTTPException(
@@ -313,8 +377,7 @@ async def create_or_exchange_session(
                 )
 
             # 🛡️ 驗證通過之合法舊設備：解密保險庫下發最新金鑰與新 Session，消除死結
-            vault_key = derive_vault_key(secret)
-            decrypted_key = decrypt_recovery_key(user_rec.get("recovery_key_encrypted"), vault_key)
+            decrypted_key = decrypt_recovery_key_with_fallback(user_rec.get("recovery_key_encrypted"), secret)
             token = create_session_jwt(clean_uid, secret, db_ver)
             return SessionResponse(
                 access_token=token,
@@ -486,46 +549,31 @@ async def get_verified_session_with_grace(
 
     token = auth_header.split(" ")[1].strip()
 
-    # 1. 優先標準解碼校驗 (未過期)
-    try:
-        payload = jwt.decode(
-            token, 
-            secret, 
-            algorithms=["HS256"],
-            issuer="tabiji-core",
-            options={"require": ["sub", "iss", "iat", "exp", "type"]}
-        )
-        sub = str(payload.get("sub") or "").strip()
-        if payload.get("type") == "device_session" and UUID_V4_REGEX.match(sub):
+    # 1. 優先標準解碼校驗 (未過期，含過渡期歷史密鑰)
+    payload = decode_device_session_jwt(token, secret, verify_exp=True)
+    if payload is not None:
+        try:
+            sub = str(payload.get("sub") or "").strip()
             return VerifiedSession(
                 user_id=sub,
                 token_version=int(payload.get("ver") or 1)
             )
-    except jwt.ExpiredSignatureError:
-        # 2. 🛡️ 寬限期驗簽 (過期 <= 90 天之合法伺服器簽署歷史憑證)
+        except Exception:
+            pass
+
+    # 2. 🛡️ 寬限期驗簽 (過期 <= 90 天之合法伺服器簽署歷史憑證，含過渡期歷史密鑰)
+    payload = decode_device_session_jwt(token, secret, verify_exp=False)
+    if payload is not None:
         try:
-            payload = jwt.decode(
-                token,
-                secret,
-                algorithms=["HS256"],
-                issuer="tabiji-core",
-                options={"verify_exp": False, "require": ["sub", "iss", "iat", "type"]}
-            )
             now = int(time.time())
             sub = str(payload.get("sub") or "").strip()
-            if (
-                payload.get("type") == "device_session" 
-                and UUID_V4_REGEX.match(sub)
-                and (now - payload.get("iat", 0) <= 90 * 86400)
-            ):
+            if now - payload.get("iat", 0) <= 90 * 86400:
                 return VerifiedSession(
                     user_id=sub,
                     token_version=int(payload.get("ver") or 1)
                 )
         except Exception:
             pass
-    except Exception:
-        pass
 
     raise HTTPException(status_code=401, detail="Invalid or expired token")
 
@@ -626,8 +674,7 @@ async def get_user_recovery_credential(
             )
 
         enc_payload = user_row.get("recovery_key_encrypted")
-        vault_key = derive_vault_key(secret)
-        decrypted_key = decrypt_recovery_key(enc_payload, vault_key) if enc_payload else None
+        decrypted_key = decrypt_recovery_key_with_fallback(enc_payload, secret) if enc_payload else None
 
         return CredentialResponse(
             recovery_key=decrypted_key,

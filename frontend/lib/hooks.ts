@@ -14,7 +14,7 @@ export class HttpError extends Error {
     }
 }
 
-import { getCachedToken, ensureValidSession, triggerReauthPrompt } from './auth-session'
+import { getCachedToken, ensureValidSession, getLastAuthExchangeError, triggerReauthPrompt, wasLastAuthExchangeTransientFailure } from './auth-session'
 
 export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
     let token = getCachedToken()
@@ -47,9 +47,14 @@ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
                 throw new HttpError(0, (retryErr as Error)?.message || "Network error", { offline: true })
             }
         } else {
-            // 🛡️ 換票失敗（代表憑證已徹底作廢或輪替）：主動喚起重認證視窗，絕不讓頁面靜默失敗！
-            localStorage.removeItem("tabiji_session_token")
-            triggerReauthPrompt("您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。")
+            // 🛡️ 換票失敗：僅在非暫態錯誤 (5xx/離線) 時才清除 Token 並喚起重認證視窗，保留伺服器明確原因
+            const isTransientFailure = typeof wasLastAuthExchangeTransientFailure === "function" && wasLastAuthExchangeTransientFailure()
+            if (!isTransientFailure) {
+                localStorage.removeItem("tabiji_session_token")
+                triggerReauthPrompt(
+                    getLastAuthExchangeError() || "您的憑證已失效或已在其他裝置輪替更新，請輸入最新引繼碼。"
+                )
+            }
         }
     }
 

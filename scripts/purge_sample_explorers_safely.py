@@ -53,10 +53,15 @@ CHUNK_SIZE = 50
 
 
 def get_supabase_client() -> Client:
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+    url = (os.environ.get("SUPABASE_URL") or "").strip()
+    key = (
+        os.environ.get("SUPABASE_SECRET_KEY")
+        or os.environ.get("SUPABASE_KEY")
+        or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        or ""
+    ).strip()
     if not url or not key:
-        print("❌ [FATAL] SUPABASE_URL and SUPABASE_KEY/SERVICE_ROLE_KEY must be set in backend/.env")
+        print("❌ [FATAL] SUPABASE_URL and SUPABASE_SECRET_KEY / SUPABASE_KEY must be set in backend/.env")
         sys.exit(1)
     return create_client(url, key)
 

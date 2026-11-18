@@ -1,0 +1,47 @@
+[
+  {
+    "id": "frontend/app/api/poi/[...path]/route.ts:poi_401_swallow_bypass",
+    "file_path": "frontend/app/api/poi/[...path]/route.ts",
+    "start_line": 45,
+    "end_line": 68,
+    "attack_vector": "silent_401_swallow_and_indexeddb_wipe",
+    "hypothesis": "Verify whether the Next.js /api/poi/[...path] proxy propagates upstream HTTP 401/502 statuses faithfully instead of rewriting 401 or upstream failure into HTTP 200 [], which would both suppress apiFetch silent JWT refresh and cause usePoiPool to overwrite local IndexedDB POI records with an empty array.",
+    "severity": "high"
+  },
+  {
+    "id": "frontend/app/api/sign-cloudinary/route.ts:mandatory_folder_and_param_whitelist",
+    "file_path": "frontend/app/api/sign-cloudinary/route.ts",
+    "start_line": 10,
+    "end_line": 64,
+    "attack_vector": "arbitrary_folder_and_parameter_signing_injection",
+    "hypothesis": "Verify whether POST /api/sign-cloudinary rejects requests missing a whitelisted folder, rejects path traversal (.. or backslash), rejects unauthorized parameter keys outside timestamp/folder/public_id, and validates timestamp and public_id before signing.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:transient_error_token_loss_and_stale_race",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 259,
+    "end_line": 395,
+    "attack_vector": "transient_5xx_token_deletion_and_stale_reanchor_race",
+    "hypothesis": "Verify whether transient 5xx/offline failures during forceRefresh preserve backed-up tokens without prompting reauth or wiping localStorage in downstream callers, and whether an in-flight 401 exchange discards stale failure/latch side effects if credential fingerprints changed mid-flight via reanchorSessionWithKey.",
+    "severity": "medium"
+  },
+  {
+    "id": "cloudflare/edge-shield/wrangler.jsonc:workers_dev_ingress_isolation",
+    "file_path": "cloudflare/edge-shield/wrangler.jsonc",
+    "start_line": 1,
+    "end_line": 18,
+    "attack_vector": "unrestricted_workers_dev_exposure",
+    "hypothesis": "Verify whether edge-shield explicitly sets workers_dev: false and preview_urls: false to prevent unintended default *.workers.dev public ingress exposure.",
+    "severity": "low"
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js:jwt_exp_zero_and_missing_exp_check",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "start_line": 6,
+    "end_line": 38,
+    "attack_vector": "jwt_falsy_exp_zero_and_missing_claim_bypass",
+    "hypothesis": "Verify whether verifyJwtSub strictly rejects missing, non-finite, non-numeric, or exp === 0 claims instead of allowing falsy exp values to bypass expiration verification.",
+    "severity": "medium"
+  }
+]

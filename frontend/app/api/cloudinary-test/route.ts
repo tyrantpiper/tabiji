@@ -2,9 +2,21 @@ import { v2 as cloudinary } from "cloudinary";
 import { NextResponse } from "next/server";
 
 export async function GET() {
+    // 🛡️ Fail-Closed: 嚴禁於生產環境暴露金鑰前綴與未授權簽章端點
+    if (
+        process.env.NODE_ENV === "production" ||
+        process.env.VERCEL_ENV === "production" ||
+        process.env.ENABLE_CLOUDINARY_TEST_ROUTE !== "true"
+    ) {
+        return NextResponse.json({ detail: "Not Found" }, { status: 404 });
+    }
+
     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
     const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    if (!cloudName || !apiKey || !apiSecret) {
+        return NextResponse.json({ error: "Cloudinary credentials not configured" }, { status: 500 });
+    }
 
     // Test signature generation
     const timestamp = Math.round(Date.now() / 1000);
@@ -16,16 +28,14 @@ export async function GET() {
         api_secret: apiSecret,
     });
 
-    const signature = cloudinary.utils.api_sign_request(paramsToSign, apiSecret!);
+    const signature = cloudinary.utils.api_sign_request(paramsToSign, apiSecret);
 
     return NextResponse.json({
         cloudName,
-        apiKey: apiKey ? apiKey.slice(0, 4) + "..." : null,
-        apiSecretLength: apiSecret?.length,
-        apiSecretFirst4: apiSecret?.slice(0, 4),
-        apiSecretLast4: apiSecret?.slice(-4),
-        testSignature: signature,
+        apiKeyConfigured: true,
+        apiSecretConfigured: true,
+        testSignatureGenerated: Boolean(signature),
         paramsUsed: paramsToSign,
-        message: "If you see this, the API route is working. Now verify these values match your Cloudinary dashboard."
+        message: "Cloudinary local dev diagnostic check passed."
     });
 }

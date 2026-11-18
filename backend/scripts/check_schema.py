@@ -12,8 +12,13 @@ if sys.stdout and hasattr(sys.stdout, 'buffer'):
 from supabase import create_client
 
 # Environment Setup
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").strip()
+SUPABASE_KEY = (
+    os.environ.get("SUPABASE_SECRET_KEY")
+    or os.environ.get("SUPABASE_KEY")
+    or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    or ""
+).strip()
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("❌ Missing Supabase Credentials")

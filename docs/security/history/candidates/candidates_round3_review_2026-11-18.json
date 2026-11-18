@@ -1,0 +1,38 @@
+[
+  {
+    "id": "frontend/lib/auth-session.ts:concurrent_inflight_fingerprint_and_forcerefresh_race",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 260,
+    "end_line": 465,
+    "attack_vector": "concurrent_inflight_coalescing_token_loss_and_stale_promise_lockout",
+    "hypothesis": "Verify whether ensureValidSession tracks in-flight exchanges by both attemptId and exchangeFingerprint, checks fast-path getCachedToken and failed-fingerprint latches before mutating TOKEN_KEY, guards post-fetch transient fallback and catch/finally state resets by attemptId ownership, and invalidates inFlightSession during reanchorSessionWithKey/restoreAccountWithKey/rotateAccountRecoveryKey/resetAndStartFreshSession.",
+    "severity": "medium"
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js:backend_poi_route_hijack_and_sub_validation",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "start_line": 5,
+    "end_line": 72,
+    "attack_vector": "edge_route_classification_mismatch_and_jwt_sub_format",
+    "hypothesis": "Verify whether Edge Shield forwards backend POI endpoints (/api/poi/nearby, /api/poi/categories, /api/poi/media-proxy, /api/poi/resolve-link, /api/poi/ai-enrich, /api/poi/enrich, /api/poi/recommend) cleanly to Cloud Run without triggering POI_SERVICE JWT checks or 404s, restricts dynamic D1 POI routes to PATCH/DELETE/OPTIONS, and validates JWT sub claims against UUID_V4_REGEX.",
+    "severity": "high"
+  },
+  {
+    "id": "frontend/app/api/poi/[...path]/route.ts:poi_proxy_subpath_boundary",
+    "file_path": "frontend/app/api/poi/[...path]/route.ts",
+    "start_line": 11,
+    "end_line": 27,
+    "attack_vector": "proxy_subpath_routing_collision",
+    "hypothesis": "Verify whether isPoiPoolSubpath excludes backend POI subpaths explicitly and requires UUID/hex>=8 or poi_* prefix for dynamic POI pool operations while transparently forwarding upstream responses.",
+    "severity": "low"
+  },
+  {
+    "id": "frontend/app/api/sign-cloudinary/route.ts:cloudinary_integer_timestamp_and_folder_delimiter_guard",
+    "file_path": "frontend/app/api/sign-cloudinary/route.ts",
+    "start_line": 24,
+    "end_line": 47,
+    "attack_vector": "parameter_type_confusion_and_folder_delimiter_smuggling",
+    "hypothesis": "Verify whether POST /api/sign-cloudinary rejects boolean/fractional timestamps and non-alphanumeric delimiter characters in folder names while permitting valid whitelisted folders and receipt UUID subpaths.",
+    "severity": "medium"
+  }
+]

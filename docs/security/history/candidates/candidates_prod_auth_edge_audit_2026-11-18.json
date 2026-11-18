@@ -1,0 +1,74 @@
+[
+  {
+    "id": "backend/routers/auth.py:session_secret_rotation_pop_lockout",
+    "file_path": "backend/routers/auth.py",
+    "start_line": 274,
+    "end_line": 326,
+    "attack_vector": "legacy_session_cutover_and_revocation_contract",
+    "hypothesis": "Verify whether create_or_exchange_session allows legitimate non-rotated (db_ver == 1) upgraded devices holding valid Proof-of-Possession JWTs signed by LEGACY_SESSION_SECRET_KEY / PREVIOUS_SESSION_SECRET_KEY to silently migrate to a current-secret JWT while strictly rejecting rotated sessions (db_ver > 1 and token_ver < db_ver) and never allowing unauthenticated expected_user_id == clean_uid claims to bypass PoP.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/auth.py:grace_session_legacy_secret_continuity",
+    "file_path": "backend/routers/auth.py",
+    "start_line": 474,
+    "end_line": 531,
+    "attack_vector": "grace_verification_secret_cutover",
+    "hypothesis": "Verify whether get_verified_session_with_grace supports optional LEGACY_SESSION_SECRET_KEY / PREVIOUS_SESSION_SECRET_KEY decoding alongside current SESSION_SECRET_KEY within the 90-day grace window for /api/auth/credential and /api/auth/rotate, while preserving strict iss/type/UUID validation and downstream credential_version revocation checks.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/app/api/cloudinary-test/route.ts:production_cloudinary_secret_prefix_oracle",
+    "file_path": "frontend/app/api/cloudinary-test/route.ts",
+    "start_line": 1,
+    "end_line": 31,
+    "attack_vector": "diagnostic_endpoint_secret_metadata_disclosure",
+    "hypothesis": "Verify whether GET /api/cloudinary-test gates execution in production environments and avoids returning apiSecretLength, apiSecretFirst4, apiSecretLast4, and unauthenticated testSignature generation when deployed on public production hosts.",
+    "severity": "high"
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:swr_polling_401_storm_and_dismiss_relapse",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 18,
+    "end_line": 75,
+    "attack_vector": "client_session_exchange_storm_and_modal_relapse",
+    "hypothesis": "Verify whether lastExchangeFailedAt (10s window) and lastDismissedAt (5s window) allow 15-second SWR polling or concurrent API retries to trigger repeated POST /api/auth/session 401 failures and re-open SessionReauthModal seconds after a user clicks dismiss, instead of latching failed credential fingerprints and preserving in-memory modal dismissal until reload or explicit re-anchor.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/lib/auth-session.ts:session_exchange_anchor_and_detail_preservation",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 236,
+    "end_line": 298,
+    "attack_vector": "missing_expected_user_id_and_error_detail_loss",
+    "hypothesis": "Verify whether ensureValidSession sends expected_user_id when an established UUID exists, latches exact failed exchange credential fingerprints on 401 (not 5xx/network failures), resets failure/dismiss latches on visitor purge or reanchor/reset, and retains server 401 detail via getLastAuthExchangeError() so callers do not overwrite specific errors.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/lib/api.ts:poi_401_refresh_and_error_isolation",
+    "file_path": "frontend/lib/api.ts",
+    "start_line": 59,
+    "end_line": 99,
+    "attack_vector": "poi_route_refresh_skip_and_generic_prompt_overwrite",
+    "hypothesis": "Verify whether apiFetch allows 1-time silent session refresh on 401 for /api/poi/* endpoints without purging local tokens or popping SessionReauthModal when remote D1 rejects a non-prod session, and preserves getLastAuthExchangeError() detail on non-POI reauth prompts.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/lib/hooks.ts:swr_fetcher_401_error_detail_preservation",
+    "file_path": "frontend/lib/hooks.ts",
+    "start_line": 38,
+    "end_line": 55,
+    "attack_vector": "generic_prompt_overwrite_on_swr_401",
+    "hypothesis": "Verify whether fetcherWithUserId preserves getLastAuthExchangeError() detail when triggering triggerReauthPrompt after a failed 401 re-exchange rather than overwriting specific server details with a static fallback string.",
+    "severity": "low"
+  },
+  {
+    "id": "frontend/components/chat-widget.tsx:chat_summarize_401_retry_and_jwt_boot",
+    "file_path": "frontend/components/chat-widget.tsx",
+    "start_line": 544,
+    "end_line": 584,
+    "attack_vector": "background_summarization_stale_token_failure",
+    "hypothesis": "Verify whether background /api/chat/summarize requests obtain a valid session token via ensureValidSession() when getCachedToken() is null and perform a 1-time non-Gemini 401 refresh and retry matching sse-parser.ts.",
+    "severity": "low"
+  }
+]

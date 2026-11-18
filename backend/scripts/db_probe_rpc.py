@@ -2,15 +2,26 @@ import os
 import sys
 from supabase import create_client
 
-# Environment Setup
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+except ImportError:
+    pass
 
-if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+# Environment Setup
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").strip()
+SUPABASE_KEY = (
+    os.environ.get("SUPABASE_SECRET_KEY")
+    or os.environ.get("SUPABASE_KEY")
+    or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    or ""
+).strip()
+
+if not SUPABASE_URL or not SUPABASE_KEY:
     print("❌ ERROR: Missing Supabase environment variables.")
     sys.exit(1)
 
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def probe_rpc():
     print("🔍 [PROBE] Checking for 'update_trip_credit_cards' RPC...")

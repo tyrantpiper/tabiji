@@ -15,21 +15,58 @@ const POP_TOKEN_KEY = "tabiji_pop_token";
 const RECOVERY_KEY = "user_uuid";
 const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
 
-let inFlightSessionPromise: Promise<string | null> | null = null;
+let inFlightSession: { id: number; fingerprint: string; promise: Promise<string | null> } | null = null;
+let sessionAttemptCounter = 0;
 let isReauthBroadcasting = false;
 let lastRestoredAt = 0;
-let lastExchangeFailedAt = 0;
+let lastFailedExchangeFingerprint: string | null = null;
+let lastAuthExchangeError: string | null = null;
+let lastExchangeTransientFailure = false;
+
+function readEstablishedUuid(): string | null {
+    if (typeof window === "undefined") return null;
+    const rawCurrentUuid = localStorage.getItem(RECOVERY_KEY)?.trim() || null;
+    const isOfflineRecPlaceholder = Boolean(rawCurrentUuid && TBJ_REC_REGEX.test(rawCurrentUuid));
+    return (
+        rawCurrentUuid &&
+        rawCurrentUuid !== "null" &&
+        rawCurrentUuid !== "undefined" &&
+        !isOfflineRecPlaceholder
+    ) ? rawCurrentUuid : null;
+}
+
+function buildExchangeFingerprint(storedKey: string | null, establishedUuid: string | null, rawToken: string | null): string {
+    return JSON.stringify([storedKey || "", establishedUuid || "", rawToken || ""]);
+}
+
+export function getLastAuthExchangeError(): string | null {
+    return lastAuthExchangeError;
+}
+
+export function wasLastAuthExchangeTransientFailure(): boolean {
+    return lastExchangeTransientFailure;
+}
 
 export function __resetExchangeFailedForTesting() {
-    lastExchangeFailedAt = 0;
+    inFlightSession = null;
+    lastVaultSyncTime = 0;
+    lastFailedExchangeFingerprint = null;
+    lastAuthExchangeError = null;
+    lastExchangeTransientFailure = false;
+    lastDismissedAt = 0;
+    lastRestoredAt = 0;
+    isReauthBroadcasting = false;
+    isReauthDismissedInMemory = false;
 }
 
 export const UNIFORM_REAUTH_ERROR = "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。";
 
 let lastDismissedAt = 0;
+let isReauthDismissedInMemory = false;
 
 export function dismissReauthPrompt() {
     lastDismissedAt = Date.now();
+    isReauthDismissedInMemory = true;
 }
 
 /**
@@ -56,6 +93,8 @@ export function triggerReauthPrompt(reason?: string) {
         console.warn("🛡️ [Auth] Suppressed triggerReauthPrompt: User is not logged in.");
         return;
     }
+    // 🛡️ 若使用者於當前頁內明確點擊「稍後驗證」，保持離線靜默至重新整理或成功驗證
+    if (isReauthDismissedInMemory) return;
     // 🛡️ 重認證成功後 5 秒冷卻，或使用者點擊「稍後驗證」關閉後 5 秒輕量冷卻防震盪
     if (Date.now() - lastRestoredAt < 5000) return;
     if (Date.now() - lastDismissedAt < 5000) return;
@@ -221,11 +260,39 @@ export async function getValidSessionToken(): Promise<string | null> {
 export async function ensureValidSession(forceRefresh: boolean = false): Promise<string | null> {
     if (typeof window === "undefined") return null;
 
+    if (!forceRefresh) {
+        const existingToken = getCachedToken();
+        if (existingToken) return existingToken;
+    }
+
+    const storedKey = getRecoveryKey();
+    const establishedUuid = readEstablishedUuid();
+    const currentToken = localStorage.getItem(TOKEN_KEY);
+    const currentPopToken = localStorage.getItem(POP_TOKEN_KEY);
+    const currentPopOrToken = currentToken || currentPopToken;
+    const exchangeFingerprint = buildExchangeFingerprint(storedKey, establishedUuid, currentPopOrToken);
+
+    // 🛡️ 失效憑證指紋熔斷保護：
+    // 1. 相同失效憑證指紋於本頁週期內鎖定，徹底消除 SWR 15s 輪詢重複轟炸 /api/auth/session 401
+    // 2. 憑證指紋變更時（例如跨分頁 localStorage 同步或更新引繼碼/Session Token）立即解鎖，避免舊失敗時間窗誤鎖新憑證
+    if (lastFailedExchangeFingerprint !== null && lastFailedExchangeFingerprint === exchangeFingerprint) {
+        lastExchangeTransientFailure = false;
+        return null;
+    }
+
+    // 🔒 單例防抖：僅對相同憑證指紋合併進行中的換票請求，避免指紋更新後誤匯流至舊請求並提前刪毀有效 Token
+    if (inFlightSession && inFlightSession.fingerprint === exchangeFingerprint) {
+        return inFlightSession.promise;
+    }
+
+    let backedUpValidToken: string | null = null;
     if (forceRefresh) {
         try {
-            const staleToken = localStorage.getItem(TOKEN_KEY);
-            if (staleToken && isJwtStructure(staleToken)) {
-                localStorage.setItem(POP_TOKEN_KEY, staleToken);
+            if (currentToken && isJwtStructure(currentToken)) {
+                localStorage.setItem(POP_TOKEN_KEY, currentToken);
+                if (isTokenValid(currentToken)) {
+                    backedUpValidToken = currentToken;
+                }
             }
             localStorage.removeItem(TOKEN_KEY);
         } catch {
@@ -233,36 +300,40 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
         }
     }
 
-    const existingToken = getCachedToken();
-    if (existingToken) return existingToken;
+    lastExchangeTransientFailure = false;
 
-    // 🛡️ 換票冷卻保護：若上次換票已確認 401 失敗，10 秒內阻斷重複轟炸後端
-    if (Date.now() - lastExchangeFailedAt < 10000) {
-        return null;
-    }
+    const restoreBackedUpTokenOnTransientError = () => {
+        lastExchangeTransientFailure = true;
+        if (backedUpValidToken && !localStorage.getItem(TOKEN_KEY)) {
+            try {
+                localStorage.setItem(TOKEN_KEY, backedUpValidToken);
+            } catch {
+                // ignore storage errors
+            }
+        }
+    };
 
     // 🧪 測試環境防護：單元測試環境下若無主動換票需求則直接返回現有狀態，防止 unhandled network fetch
     if (process.env.NODE_ENV === "test" && !process.env.TEST_AUTH_EXCHANGE) {
-        return existingToken;
+        return getCachedToken();
     }
 
     // 📴 離線防禦：離線時不發起請求，避免觸發網路錯誤阻斷開機
     if (typeof navigator !== "undefined" && !navigator.onLine) {
         console.warn("📴 [Auth] Offline mode detected. Operating locally without session exchange.");
+        restoreBackedUpTokenOnTransientError();
         return null;
     }
 
-    // 🔒 單例防抖：避免多分頁或併發請求重複換票
-    if (inFlightSessionPromise) {
-        return inFlightSessionPromise;
-    }
-
-    inFlightSessionPromise = (async () => {
+    const attemptId = ++sessionAttemptCounter;
+    const sessionPromise = (async (): Promise<string | null> => {
         try {
-            const storedKey = getRecoveryKey();
+            const latestKey = getRecoveryKey();
+            const latestEstablishedUuid = readEstablishedUuid();
             const rawToken = typeof window !== "undefined"
                 ? (localStorage.getItem(TOKEN_KEY) || localStorage.getItem(POP_TOKEN_KEY))
                 : null;
+            const activeFingerprint = buildExchangeFingerprint(latestKey, latestEstablishedUuid, rawToken);
             const headers: Record<string, string> = { "Content-Type": "application/json" };
             if (rawToken) {
                 headers["Authorization"] = `Bearer ${rawToken}`;
@@ -271,16 +342,37 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
             const res = await fetch("/api/auth/session", {
                 method: "POST",
                 headers,
-                body: JSON.stringify({ recovery_key: storedKey || undefined })
+                body: JSON.stringify({
+                    recovery_key: latestKey || undefined,
+                    expected_user_id: latestEstablishedUuid || undefined,
+                })
             });
+
+            const postFetchFingerprint = buildExchangeFingerprint(
+                getRecoveryKey(),
+                readEstablishedUuid(),
+                typeof window !== "undefined"
+                    ? (localStorage.getItem(TOKEN_KEY) || localStorage.getItem(POP_TOKEN_KEY))
+                    : null
+            );
+            const isCurrentAttempt = inFlightSession?.id === attemptId;
+            if (postFetchFingerprint !== activeFingerprint) {
+                const latestCached = getCachedToken();
+                if (isCurrentAttempt && !latestCached && !res.ok && res.status !== 401) {
+                    restoreBackedUpTokenOnTransientError();
+                }
+                return latestCached;
+            }
 
             if (!res.ok) {
                 console.warn(`⚠️ [Auth] Session exchange returned HTTP ${res.status}`);
                 if (res.status === 401) {
                     if (isUserLoggedIn()) {
-                        lastExchangeFailedAt = Date.now();
+                        lastExchangeTransientFailure = false;
+                        lastFailedExchangeFingerprint = activeFingerprint;
                         const err = await res.json().catch(() => ({}));
                         const detail = typeof err.detail === "string" ? err.detail : undefined;
+                        lastAuthExchangeError = detail || null;
                         // 🛡️ 凡換票收到 401，立即攜帶原因喚醒重認證彈窗，拒絕靜默假死
                         triggerReauthPrompt(detail);
                     } else {
@@ -290,8 +382,13 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
                         localStorage.removeItem(POP_TOKEN_KEY);
                         localStorage.removeItem("user_recovery_key");
                         localStorage.removeItem(RECOVERY_KEY);
-                        lastExchangeFailedAt = 0; // 🔓 立即解開冷卻，保證使用者輸入暱稱時可秒開換票
+                        lastFailedExchangeFingerprint = null; // 🔓 立即解開指紋鎖定，保證使用者輸入暱稱時可秒開換票
+                        lastAuthExchangeError = null;
+                        lastExchangeTransientFailure = false;
+                        isReauthDismissedInMemory = false;
                     }
+                } else {
+                    restoreBackedUpTokenOnTransientError();
                 }
                 return null;
             }
@@ -300,7 +397,7 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
             if (data?.access_token) {
                 const rawCurrentUuid = localStorage.getItem(RECOVERY_KEY)?.trim() || null;
                 const isOfflineRecPlaceholder = Boolean(rawCurrentUuid && TBJ_REC_REGEX.test(rawCurrentUuid));
-                const establishedUuid = (
+                const resolvedUuid = (
                     rawCurrentUuid &&
                     rawCurrentUuid !== "null" &&
                     rawCurrentUuid !== "undefined" &&
@@ -308,13 +405,17 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
                 ) ? rawCurrentUuid : null;
 
                 // 🛡️ 先驗證身分一致性再寫入任何憑證，防止異常回應污染本地 Token / 引繼碼
-                if (storedKey && !data.upgraded && establishedUuid && data.user_id) {
-                    if (data.user_id.toLowerCase() !== establishedUuid.toLowerCase()) {
+                if (latestKey && !data.upgraded && resolvedUuid && data.user_id) {
+                    if (data.user_id.toLowerCase() !== resolvedUuid.toLowerCase()) {
                         console.error("🚨 [Auth] Security Sentinel Alert: Session response user_id differs from stored recovery key! Refusing to overwrite key.");
                         throw new Error("Identity mismatch — refusing to overwrite recovery key");
                     }
                 }
 
+                lastFailedExchangeFingerprint = null;
+                lastAuthExchangeError = null;
+                lastExchangeTransientFailure = false;
+                isReauthDismissedInMemory = false;
                 localStorage.setItem(TOKEN_KEY, data.access_token);
                 localStorage.setItem(POP_TOKEN_KEY, data.access_token);
                 // 🛡️ 雙軌固化：既有 UUID 與新版專屬引繼碼同步持久化
@@ -347,13 +448,19 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
             return null;
         } catch (err) {
             console.warn("⚠️ [Auth] Silent session exchange failed:", err);
+            if (inFlightSession?.id === attemptId) {
+                restoreBackedUpTokenOnTransientError();
+            }
             return null;
         } finally {
-            inFlightSessionPromise = null;
+            if (inFlightSession?.id === attemptId) {
+                inFlightSession = null;
+            }
         }
     })();
 
-    return inFlightSessionPromise;
+    inFlightSession = { id: attemptId, fingerprint: exchangeFingerprint, promise: sessionPromise };
+    return sessionPromise;
 }
 
 /**
@@ -387,6 +494,12 @@ export async function restoreAccountWithKey(recoveryKey: string): Promise<Sessio
         if (data.recovery_key) {
             localStorage.setItem("user_recovery_key", data.recovery_key);
         }
+        lastRestoredAt = Date.now();
+        inFlightSession = null;
+        lastFailedExchangeFingerprint = null;
+        lastAuthExchangeError = null;
+        lastExchangeTransientFailure = false;
+        isReauthDismissedInMemory = false;
         return {
             accessToken: data.access_token,
             userId: data.user_id,
@@ -424,6 +537,11 @@ export async function rotateAccountRecoveryKey(): Promise<string> {
             localStorage.setItem(TOKEN_KEY, data.access_token);
             localStorage.setItem(POP_TOKEN_KEY, data.access_token);
         }
+        inFlightSession = null;
+        lastFailedExchangeFingerprint = null;
+        lastAuthExchangeError = null;
+        lastExchangeTransientFailure = false;
+        isReauthDismissedInMemory = false;
         return data.recovery_key as string;
     }
 
@@ -493,7 +611,7 @@ export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<st
         throw new Error(UNIFORM_REAUTH_ERROR);
     }
 
-    const currentUuid = typeof window !== "undefined" ? localStorage.getItem(RECOVERY_KEY) : null;
+    const currentUuid = readEstablishedUuid();
     const res = await fetch("/api/auth/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -522,7 +640,11 @@ export async function reanchorSessionWithKey(newRecoveryKey: string): Promise<st
     localStorage.setItem("user_recovery_key", cleanKey);
     localStorage.setItem(RECOVERY_KEY, data.user_id);
     lastRestoredAt = Date.now();
-    lastExchangeFailedAt = 0;
+    inFlightSession = null;
+    lastFailedExchangeFingerprint = null;
+    lastAuthExchangeError = null;
+    lastExchangeTransientFailure = false;
+    isReauthDismissedInMemory = false;
 
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("tabiji:recovery_key_updated", { detail: { recoveryKey: cleanKey, source: "local_reanchor" } }));
@@ -543,7 +665,11 @@ export async function resetAndStartFreshSession(): Promise<SessionInfo | null> {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(POP_TOKEN_KEY);
     localStorage.removeItem(RECOVERY_KEY);
-    lastExchangeFailedAt = 0;
+    inFlightSession = null;
+    lastFailedExchangeFingerprint = null;
+    lastAuthExchangeError = null;
+    lastExchangeTransientFailure = false;
+    isReauthDismissedInMemory = false;
 
     try {
         const res = await fetch("/api/auth/session", {

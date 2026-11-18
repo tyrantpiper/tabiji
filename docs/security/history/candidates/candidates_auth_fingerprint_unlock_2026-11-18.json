@@ -1,0 +1,11 @@
+[
+  {
+    "id": "frontend/lib/auth-session.ts:fingerprint_change_cooldown_unlock_and_transient_restore",
+    "file_path": "frontend/lib/auth-session.ts",
+    "start_line": 255,
+    "end_line": 388,
+    "attack_vector": "stale_cooldown_lockout_and_backed_up_token_loss",
+    "hypothesis": "Verify whether ensureValidSession suppresses repeated exchanges strictly for unchanged failed credential fingerprints (lastFailedExchangeFingerprint === exchangeFingerprint) while unlocking immediately when a different credential fingerprint appears within 10 seconds, and whether transient non-401 failures (including mid-flight fingerprint changes during non-401 responses) invoke restoreBackedUpTokenOnTransientError() to preserve backedUpValidToken without false reauth prompts.",
+    "severity": "medium"
+  }
+]

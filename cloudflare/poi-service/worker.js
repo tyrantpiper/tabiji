@@ -21,23 +21,51 @@ function jsonResponse(data, status = 200) {
 
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function extractUserId(request) {
+async function verifyJwtSub(authHeader, secret) {
+  if (!authHeader || !authHeader.startsWith("Bearer ") || !secret) {
+    return null;
+  }
+  const token = authHeader.substring(7).trim();
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+
+  const [headerB64, payloadB64, signatureB64] = parts;
+  try {
+    const signatureBin = Uint8Array.from(atob(signatureB64.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+    const enc = new TextEncoder();
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"]
+    );
+    const data = enc.encode(`${headerB64}.${payloadB64}`);
+    const isValid = await crypto.subtle.verify("HMAC", cryptoKey, signatureBin, data);
+    if (!isValid) return null;
+
+    const payload = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp) || payload.exp < now) {
+      return null;
+    }
+    const sub = payload?.sub ? String(payload.sub).trim() : "";
+    return UUID_V4_REGEX.test(sub) ? sub : null;
+  } catch {
+    return null;
+  }
+}
+
+async function extractUserId(request, env) {
+  // 🛡️ 若下游已綁定 SESSION_SECRET，必須密碼學驗簽 HS256 JWT，嚴禁信任未驗簽標頭或 atob()  payload
+  if (env?.SESSION_SECRET) {
+    return await verifyJwtSub(request.headers.get("Authorization") || "", env.SESSION_SECRET);
+  }
+
+  // 🛡️ 僅於透過 Edge Shield Service Binding 內部呼叫時採信上游邊緣已清洗之 X-User-ID
   const xUser = request.headers.get("X-User-ID");
   if (xUser && UUID_V4_REGEX.test(xUser.trim())) {
     return xUser.trim();
-  }
-
-  const auth = request.headers.get("Authorization");
-  if (auth && auth.startsWith("Bearer ")) {
-    try {
-      const parts = auth.split(" ")[1].split(".");
-      if (parts.length === 3) {
-        const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-        if (payload && payload.sub && UUID_V4_REGEX.test(String(payload.sub).trim())) {
-          return String(payload.sub).trim();
-        }
-      }
-    } catch {}
   }
 
   return null;
@@ -278,8 +306,12 @@ export default {
     }
 
     const url = new URL(request.url);
+    if (url.hostname.endsWith(".workers.dev")) {
+      return jsonResponse({ error: "Forbidden: Direct workers.dev ingress disabled" }, 403);
+    }
+
     const pathname = url.pathname;
-    const userId = extractUserId(request);
+    const userId = await extractUserId(request, env);
     if (!userId) {
       return jsonResponse({ error: "Unauthorized: Invalid or missing X-User-ID (RFC 4122 UUIDv4 required)" }, 401);
     }

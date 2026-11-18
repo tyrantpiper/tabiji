@@ -32,8 +32,13 @@ UUID_V4_REGEX = re.compile(
 )
 
 def run_backfill():
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+    url = (os.getenv("SUPABASE_URL") or "").strip()
+    key = (
+        os.getenv("SUPABASE_SECRET_KEY")
+        or os.getenv("SUPABASE_KEY")
+        or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or ""
+    ).strip()
     if not url or not key:
         print("[ERROR] Missing Supabase credentials in backend/.env")
         sys.exit(1)

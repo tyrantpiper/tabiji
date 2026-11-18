@@ -15,18 +15,19 @@ try:
 except ImportError:
     pass
 
-SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_URL = (os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or "").strip()
+SUPABASE_KEY = (
+    os.environ.get("SUPABASE_SECRET_KEY")
+    or os.environ.get("SUPABASE_KEY")
+    or os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
+    or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    or ""
+).strip()
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    # Try looking in a local file just in case
-    print("⚠️ Missing Env Vars in process, checking common file locations...")
-    # This is a bit hacky but for a probe script it works
-    # (Omitted complex loading logic for brevity, relying on user environment usually working for this agent)
-    # If this fails, I'll ask user for vars, but usually they are set in the session? 
-    # Actually Agent environment might not have them.
-    # I saw 'python main.py' running... so the env is likely set in the backend folder context?
-    pass
+    print("❌ Missing SUPABASE_URL or Supabase API key in environment / backend/.env")
+    sys.exit(1)
 
 # We'll try to connect. If it fails, I'll report it.
 try:

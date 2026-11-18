@@ -27,7 +27,7 @@ import { useWeatherStore } from "@/lib/stores/weatherStore"
 import { debugLog } from "@/lib/debug"
 import { useLanguage, type TranslationKey } from "@/lib/LanguageContext"
 import { type ParsedItinerary, type ParsedItineraryItem } from "@/lib/itinerary-types"
-import { getCachedToken, ensureValidSession } from "@/lib/auth-session"
+import * as authSession from "@/lib/auth-session"
 
 // 🆕 Part 結構 (與 Gemini API 對應，支援駝峰與蛇形雙格式)
 interface Part {
@@ -548,38 +548,73 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
 
             const toSummarize = messages.slice(0, messages.length - KEEP_RECENT)
             const targetUserId = contextUserId || localStorage.getItem("user_uuid") || ""
-            const token = getCachedToken()
-            const headers: Record<string, string> = {
-                "Content-Type": "application/json",
-                "X-Gemini-API-Key": apiKey,
-                "X-User-ID": targetUserId
-            }
-            if (token) {
-                headers["Authorization"] = `Bearer ${token}`
-            }
-            fetch(`${API_HOST}/api/chat/summarize`, {
-                method: "POST",
-                headers,
-                body: JSON.stringify({
-                    history: toSummarize.map((m: Message) => ({
-                        role: m.role,
-                        displayContent: m.displayContent
-                    })),
-                    locale: lang
-                })
-            })
-                .then(res => {
+            void (async () => {
+                try {
+                    let token = authSession.getCachedToken()
+                    if (!token && typeof window !== "undefined") {
+                        token = await authSession.ensureValidSession().catch(() => null)
+                    }
+                    const buildHeaders = (authToken: string | null): Record<string, string> => {
+                        const h: Record<string, string> = {
+                            "Content-Type": "application/json",
+                            "X-Gemini-API-Key": apiKey,
+                            "X-User-ID": targetUserId
+                        }
+                        if (authToken) {
+                            h["Authorization"] = `Bearer ${authToken}`
+                        }
+                        return h
+                    }
+                    const payload = JSON.stringify({
+                        history: toSummarize.map((m: Message) => ({
+                            role: m.role,
+                            displayContent: m.displayContent
+                        })),
+                        locale: lang
+                    })
+                    let res = await fetch(`${API_HOST}/api/chat/summarize`, {
+                        method: "POST",
+                        headers: buildHeaders(token),
+                        body: payload
+                    })
+                    if (res.status === 401 && typeof window !== "undefined") {
+                        let errDetail = ""
+                        try {
+                            const errJson = await res.clone().json()
+                            errDetail = String(errJson?.detail || errJson?.message || "")
+                        } catch {
+                            errDetail = await res.clone().text().catch(() => "")
+                        }
+                        const isGeminiKeyAuthError = /gemini|api[_ ]?key|金鑰|個人檔案|profile|google ai studio|已失效|無效或已過期/i.test(errDetail)
+                        const hasSessionToken = Boolean(token || localStorage.getItem("tabiji_session_token"))
+                        if (!isGeminiKeyAuthError && hasSessionToken) {
+                            const freshToken = await authSession.ensureValidSession(true).catch(() => null)
+                            if (freshToken) {
+                                res = await fetch(`${API_HOST}/api/chat/summarize`, {
+                                    method: "POST",
+                                    headers: buildHeaders(freshToken),
+                                    body: payload
+                                })
+                            } else {
+                                const isTransientFailure = typeof authSession.wasLastAuthExchangeTransientFailure === "function" && authSession.wasLastAuthExchangeTransientFailure()
+                                if (!isTransientFailure) {
+                                    localStorage.removeItem("tabiji_session_token")
+                                }
+                            }
+                        }
+                    }
                     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-                    return res.json()
-                })
-                .then(data => {
+                    const data = await res.json()
                     if (data.summary) {
                         setMemorySummary(data.summary)
                         toast.success(t('ai_summarized'))
                     }
-                })
-                .catch(err => console.error(t('ai_summary_failed'), err))
-                .finally(() => setIsSummarizing(false))
+                } catch (err) {
+                    console.error(t('ai_summary_failed'), err)
+                } finally {
+                    setIsSummarizing(false)
+                }
+            })()
         }
 
         // 準備 history
@@ -1020,9 +1055,9 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
         // 🔄 Fallback: 如果 streaming 失敗或有圖片，使用原有 API (401 金鑰無效或已渲染錯誤中斷部分結果時不重複發請求)
         if (!streamingSuccess && !streamErroredWithPartial && !streamEmptyError && !streamingFatalAuthError && !abortControllerRef.current?.signal.aborted) {
             try {
-                let token = getCachedToken()
+                let token = authSession.getCachedToken()
                 if (!token && typeof window !== "undefined") {
-                    token = await ensureValidSession().catch(() => null)
+                    token = await authSession.ensureValidSession().catch(() => null)
                 }
                 const headers: Record<string, string> = {
                     "Content-Type": "application/json",
@@ -1057,9 +1092,12 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                     const isGeminiKeyAuthError = /gemini|api[_ ]?key|金鑰|個人檔案|profile|google ai studio|已失效|無效或已過期/i.test(errText)
                     if (!isGeminiKeyAuthError && (token || localStorage.getItem("tabiji_session_token"))) {
                         console.warn("⚠️ [Chat] Received 401 Unauthorized in fallback chat, refreshing session token...")
-                        const freshToken = await ensureValidSession(true).catch(() => null)
+                        const freshToken = await authSession.ensureValidSession(true).catch(() => null)
                         if (!freshToken) {
-                            localStorage.removeItem("tabiji_session_token")
+                            const isTransientFailure = typeof authSession.wasLastAuthExchangeTransientFailure === "function" && authSession.wasLastAuthExchangeTransientFailure()
+                            if (!isTransientFailure) {
+                                localStorage.removeItem("tabiji_session_token")
+                            }
                         }
                         if (freshToken) {
                             headers["Authorization"] = `Bearer ${freshToken}`

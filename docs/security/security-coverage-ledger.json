@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-17T07:05:00Z",
+  "last_audit_date": "2026-11-18T16:05:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 383,
-    "audited_targets": 383,
-    "verified_vulnerabilities": 55,
-    "remediated_vulnerabilities": 156,
-    "dismissed_hypotheses": 172
+    "total_targets": 402,
+    "audited_targets": 402,
+    "verified_vulnerabilities": 53,
+    "remediated_vulnerabilities": 175,
+    "dismissed_hypotheses": 174
   },
   "targets": [
     {
@@ -1572,10 +1572,11 @@
       "vectors_checked": [
         "arbitrary_folder_injection"
       ],
-      "status": "VULNERABLE",
-      "patch_status": "PATCH_CANDIDATE_READY",
-      "report_ref": "docs/security/reports/2026-10/security_sentinel_report_2026-10-14_trip_capsules.md",
-      "validator_details": "Sign API lacks folder whitelist; Mantis patch candidate prepared to enforce whitelist."
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Live probe confirmed unpatched Vercel/Cloud Run route signed payloads lacking folder parameter; remediated with mandatory ALLOWED_FOLDERS whitelist (rejecting missing/traversal folders), ALLOWED_PARAM_KEYS strict whitelist, finite positive timestamp check, and strict public_id regex. Verified by Vitest F9 and Sentinel adaptive validator; awaits Vercel deploy.",
+      "remediated_at": "2026-11-18T15:19:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
     },
     {
       "id": "backend/routers/capsules.py",
@@ -4927,11 +4928,258 @@
       "vectors_checked": [
         "gateway_header_normalization_consistency"
       ],
-      "status": "CONFIRMED_PENDING_DEV",
+      "status": "REMEDIATED",
       "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-17_ai_decision1_hydrogen.md",
-      "validator_details": "Confirmed via Sentinel validator + pytest_in_memory PoC + read-only `wrangler secret list` returning `[]` on live tabijiapp-edge-shield: fallback branch when env.SESSION_SECRET is unset strips X-User-ID but forwards unverified Authorization header to env.POI_SERVICE. Held behind Human Gate pending SESSION_SECRET provisioning.",
+      "validator_details": "Confirmed via live Wrangler CLI secret list + deployment timestamp 2026-11-18T12:31:04Z + forged-JWT 401 probe that env.SESSION_SECRET IS provisioned on live tabijiapp-edge-shield. Fallback else-branch defense-in-depth patch (headers.delete(Authorization)) applied locally and verified via Vitest F6 VM worker execution; awaits Cloudflare Worker redeploy.",
+      "remediated_at": "2026-11-18T14:43:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "backend/routers/auth.py:session_secret_rotation_pop_lockout",
+      "target_type": "backend_auth_endpoint",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "legacy_session_cutover_and_revocation_contract"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Sentinel adaptive validator DISMISSED unauthenticated expected_user_id bypass and live HTTP probe on www.tabijiapp.com & travel-pwa-five.vercel.app confirmed 401 defense holds. Optional LEGACY_SESSION_SECRET_KEY PoP bridge was additionally added in test_prod_auth_cutover_sentinel.py while strictly preserving ADR-009 db_ver > 1 and token_ver < db_ver revocation.",
       "remediated_at": null,
-      "resolution": "docs/security/history/patches/patch_candidate_ai_decision1_hydrogen_2026-11-17.diff"
+      "resolution": "Verified safe (unauthenticated UUID takeover blocked); optional LEGACY_SESSION_SECRET_KEY cutover bridge added cleanly."
+    },
+    {
+      "id": "backend/routers/auth.py:grace_session_legacy_secret_continuity",
+      "target_type": "backend_auth_dependency",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "grace_verification_secret_cutover"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Confirmed via Sentinel validator and live Cloud Run revision antigravity-backend-00199-d2w telemetry (LEGACY_SESSION_SECRET_KEY unmounted): get_verified_session_with_grace & PoP upgrade bridge only decoded against single secret. Remediated via decode_device_session_jwt() & decrypt_recovery_key_with_fallback() in auth.py while keeping deps.get_verified_user strict.",
+      "remediated_at": "2026-11-18T14:43:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/app/api/cloudinary-test/route.ts:production_cloudinary_secret_prefix_oracle",
+      "target_type": "nextjs_route_handler",
+      "trust_boundary": "public_to_server_env",
+      "vectors_checked": [
+        "diagnostic_endpoint_secret_metadata_disclosure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Live HTTP probe to https://travel-pwa-five.vercel.app/api/cloudinary-test returned HTTP 200 exposing apiSecretLength (27), apiSecretFirst4, apiSecretLast4, and arbitrary testSignature (overriding local mock adaptive DISMISSED). Remediated to fail closed HTTP 404 in production and remove secret prefix/suffix/length fields; verified in Vitest F5; awaits Vercel deploy.",
+      "remediated_at": "2026-11-18T14:43:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:swr_polling_401_storm_and_dismiss_relapse",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "client_session_exchange_storm_and_modal_relapse"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Confirmed via Sentinel validator and live Cloud Run 401 logs (user 3f7abf22-... until 14:04:03Z): 10s exchange cooldown & 5s dismiss window caused infinite 15s SWR 401 polling storms and modal relapse. Remediated via lastFailedExchangeFingerprint latch and isReauthDismissedInMemory; verified in Vitest F1 & F2.",
+      "remediated_at": "2026-11-18T14:43:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:session_exchange_anchor_and_detail_preservation",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "missing_expected_user_id_and_error_detail_loss"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Confirmed via Sentinel validator: ensureValidSession omitted expected_user_id, failed to preserve server 401 detail across callers, and dropped valid cached JWT during transient 5xx/offline forceRefresh. Remediated with expected_user_id binding, getLastAuthExchangeError(), and non-401 token backup restoration (Vitest F3 & F4).",
+      "remediated_at": "2026-11-18T14:43:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/lib/api.ts:poi_401_refresh_and_error_isolation",
+      "target_type": "frontend_api_interceptor",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "poi_route_refresh_skip_and_generic_prompt_overwrite"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Confirmed via Sentinel validator: apiFetch skipped /api/poi/* 401 silent refresh and overwrote server 401 detail with static fallback. Remediated to allow 1-time /api/poi/* refresh while isolating token/modal on POI refresh failure, and preserving getLastAuthExchangeError() (Vitest F4).",
+      "remediated_at": "2026-11-18T14:43:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/lib/hooks.ts:swr_fetcher_401_error_detail_preservation",
+      "target_type": "frontend_hook",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "generic_prompt_overwrite_on_swr_401"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Confirmed via Sentinel validator: fetcherWithUserId discarded server 401 detail in favor of static string fallback. Remediated via getLastAuthExchangeError() preference in hooks.ts and sync-hooks.ts (Vitest F3).",
+      "remediated_at": "2026-11-18T14:43:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/components/chat-widget.tsx:chat_summarize_401_retry_and_jwt_boot",
+      "target_type": "frontend_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "background_summarization_stale_token_failure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Confirmed via Sentinel validator: /api/chat/summarize only read synchronous getCachedToken() without async exchange or non-Gemini 401 retry. Remediated with async ensureValidSession() bootstrap and 1-time non-Gemini 401 refresh matching sse-parser.ts; verified via tsc/eslint.",
+      "remediated_at": "2026-11-18T14:43:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "cloudflare/poi-service/wrangler.jsonc:workers_dev_ingress_isolation",
+      "target_type": "cloudflare_wrangler_config",
+      "trust_boundary": "public_to_internal_service_binding",
+      "vectors_checked": [
+        "service_binding_routing_completeness"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Confirmed via Sentinel validator + live Cloudflare API (subdomain enabled: True, previews_enabled: True) + live HTTP probe returning 200 [] on https://tabijiapp-poi-service.ryanpig228.workers.dev/api/poi/all bypassing Edge Shield. Patched locally with workers_dev=false and preview_urls=false (wrangler dry-run=0, Vitest F6); awaits Cloudflare deploy.",
+      "remediated_at": "2026-11-18T14:43:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "cloudflare/poi-service/worker.js:workers_dev_host_and_token_validation_boundary",
+      "target_type": "cloudflare_edge_worker",
+      "trust_boundary": "public_to_internal_service_binding",
+      "vectors_checked": [
+        "downstream_header_and_host_contract"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Adaptive LLM validator returned INCONCLUSIVE due to safety filter on JWT snippet; however, live HTTP probe proved workers.dev BOLA bypass (200 []) and local Vitest VM suite F6 proved unverified atob() + workers.dev ingress. Remediated with .workers.dev 403 block, removal of unverified atob(), strict finite exp validation, and WebCrypto HS256 verification when env.SESSION_SECRET exists; awaits Cloudflare deploy.",
+      "remediated_at": "2026-11-18T15:19:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/app/api/poi/[...path]/route.ts:poi_401_swallow_bypass",
+      "target_type": "nextjs_route_handler",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "silent_401_swallow_and_indexeddb_wipe"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Previous proxy swallowed upstream HTTP 401 and transport catch errors into HTTP 200 [], suppressing apiFetch silent JWT refresh and wiping usePoiPool IndexedDB state. Remediated to propagate upstream 401 faithfully and return HTTP 502 on transport errors; verified via Vitest F8 and Sentinel runner; awaits Vercel deploy.",
+      "remediated_at": "2026-11-18T15:19:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:transient_error_token_loss_and_stale_race",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "transient_5xx_token_deletion_and_stale_reanchor_race"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Callers (api.ts, hooks.ts, sse-parser.ts, sync-hooks.ts, chat-widget.tsx) deleted cached tokens or popped SessionReauthModal on transient 503/offline failures, and stale concurrent 401 exchange responses raced against reanchorSessionWithKey. Remediated via wasLastAuthExchangeTransientFailure() gating and postFetchFingerprint stale-exchange discard; verified via Vitest F7/F10, chat-widget-remediation RTL, and Sentinel runner.",
+      "remediated_at": "2026-11-18T15:19:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "cloudflare/edge-shield/wrangler.jsonc:workers_dev_ingress_isolation",
+      "target_type": "cloudflare_wrangler_config",
+      "trust_boundary": "public_to_edge_worker",
+      "vectors_checked": [
+        "unrestricted_workers_dev_exposure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Explicitly enforced workers_dev: false and preview_urls: false in edge-shield/wrangler.jsonc; validated via wrangler deploy --dry-run and Sentinel runner; awaits Cloudflare deploy.",
+      "remediated_at": "2026-11-18T15:19:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "cloudflare/edge-shield/worker.js:jwt_exp_zero_and_missing_exp_check",
+      "target_type": "cloudflare_edge_worker",
+      "trust_boundary": "public_to_edge_worker",
+      "vectors_checked": [
+        "jwt_falsy_exp_zero_and_missing_claim_bypass"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Replaced truthy payload.exp guard with strict typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || payload.exp < now in verifyJwtSub across edge-shield and poi-service; verified via Vitest VM F6 and Sentinel runner; awaits Cloudflare deploy.",
+      "remediated_at": "2026-11-18T15:19:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:fingerprint_change_cooldown_unlock_and_transient_restore",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "stale_cooldown_lockout_and_backed_up_token_loss"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Fixed residual Date.now() - lastExchangeFailedAt < 10000 lockout in ensureValidSession that blocked newly synced cross-tab credentials within 10s, dropped backedUpValidToken on forceRefresh, left lastExchangeTransientFailure false, and popped false SessionReauthModal. Remediated via pure fingerprint-scoped latch (lastFailedExchangeFingerprint === exchangeFingerprint), JSON-serialized collision-free fingerprint, and mid-flight non-401 transient restore; proved RED->GREEN in sandbox worktree via Vitest F11, passed full suites, and verified DISMISSED by Sentinel runner (findings_auth_fingerprint_unlock_2026-11-18.json).",
+      "remediated_at": "2026-11-18T15:45:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/lib/auth-session.ts:concurrent_inflight_fingerprint_and_forcerefresh_race",
+      "target_type": "frontend_session_manager",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "concurrent_inflight_coalescing_token_loss_and_stale_promise_lockout"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Sandbox Red->Green verified (Vitest F13) & Sentinel runner DISMISSED post-fix (findings_round3_review_2026-11-18.json): ensureValidSession previously mutated TOKEN_KEY before checking inFlightSessionPromise and coalesced differing fingerprints onto stale in-flight promises, causing deadlock/token wipe and false modal pops during concurrent reanchor/cross-tab refresh. Fixed via attemptId+fingerprint scoped inFlightSession, early fast-path/latch check, reanchor/restore/rotate/reset invalidation, and readEstablishedUuid() in reanchorSessionWithKey.",
+      "remediated_at": "2026-11-18T16:05:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "cloudflare/edge-shield/worker.js:backend_poi_route_hijack_and_sub_validation",
+      "target_type": "cloudflare_edge_worker",
+      "trust_boundary": "public_to_edge_worker",
+      "vectors_checked": [
+        "edge_route_classification_mismatch_and_jwt_sub_format"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Confirmed on live https://www.tabijiapp.com/api/poi/categories & /nearby returning 401 (hijacked into POI_SERVICE instead of Cloud Run) and proved RED->GREEN in sandbox Vitest F12 + Sentinel runner (findings_round3_review_2026-11-18.json). Remediated by excluding BACKEND_POI_ENDPOINTS, restricting dynamic D1 routes to PATCH/DELETE/OPTIONS, and enforcing UUID_V4_REGEX on verified JWT sub; awaits Cloudflare deploy.",
+      "remediated_at": "2026-11-18T16:05:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/app/api/poi/[...path]/route.ts:poi_proxy_subpath_boundary",
+      "target_type": "nextjs_route_handler",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "proxy_subpath_routing_collision"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Hardened with explicit BACKEND_POI_SUBPATHS exclusion and >=8 char hex/UUID/poi_* boundary in isPoiPoolSubpath; verified DISMISSED by Sentinel runner (findings_round3_review_2026-11-18.json).",
+      "remediated_at": null,
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "frontend/app/api/sign-cloudinary/route.ts:cloudinary_integer_timestamp_and_folder_delimiter_guard",
+      "target_type": "nextjs_route_handler",
+      "trust_boundary": "public_to_server_env",
+      "vectors_checked": [
+        "parameter_type_confusion_and_folder_delimiter_smuggling"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-18_prod_auth_edge_audit.md",
+      "validator_details": "Proved RED->GREEN in sandbox Vitest F14: boolean/fractional timestamps and folder delimiter smuggling (&/?) bypassed prior validation. Remediated via strict integer timestamp check and /^[a-zA-Z0-9_-]+(\\/[a-zA-Z0-9_-]+)*$/ folder format guard; verified DISMISSED post-fix by Sentinel runner (findings_round3_review_2026-11-18.json); awaits Vercel deploy.",
+      "remediated_at": "2026-11-18T16:05:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
     }
   ],
   "known_design_intents": {
