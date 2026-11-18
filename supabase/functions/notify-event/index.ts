@@ -7,6 +7,35 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+function isUsableServiceKey(val: unknown): val is string {
+  if (typeof val !== 'string') return false;
+  const trimmed = val.trim();
+  return Boolean(trimmed) && !trimmed.startsWith('sb_publishable_');
+}
+
+function resolveServiceSecretKey(): string {
+  try {
+    const parsed = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      if (isUsableServiceKey((parsed as Record<string, unknown>).default)) {
+        return (parsed as Record<string, string>).default.trim();
+      }
+      for (const val of Object.values(parsed)) {
+        if (isUsableServiceKey(val)) {
+          return val.trim();
+        }
+      }
+    }
+  } catch {
+    // ignore malformed SUPABASE_SECRET_KEYS JSON
+  }
+  const singular = Deno.env.get('SUPABASE_SECRET_KEY');
+  if (isUsableServiceKey(singular)) return singular.trim();
+  const legacy = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (isUsableServiceKey(legacy)) return legacy.trim();
+  return '';
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -24,7 +53,7 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      resolveServiceSecretKey()
     );
 
     type NotifRecord = {

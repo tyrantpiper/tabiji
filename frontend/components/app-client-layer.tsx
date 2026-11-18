@@ -26,6 +26,26 @@ function OfficialRouteGuardedChatWidget() {
     return <ChatWidget />
 }
 
+function readActiveUserUuid(): string | null {
+    if (typeof window === "undefined") return null;
+    try {
+        const raw = localStorage.getItem("user_uuid");
+        if (!raw) return null;
+        const trimmed = raw.trim();
+        if (
+            !trimmed ||
+            trimmed === "null" ||
+            trimmed === "undefined" ||
+            trimmed.toLowerCase().startsWith("tbj_rec_")
+        ) {
+            return null;
+        }
+        return trimmed;
+    } catch {
+        return null;
+    }
+}
+
 export function AppClientLayer() {
     const { lang } = useLanguage()
     const zh = lang === "zh"
@@ -34,23 +54,53 @@ export function AppClientLayer() {
         const cleanupSession = initSessionLifecycleListener();
 
         // 📡 全域跨裝置金鑰輪替即時廣播監聽 (Global Multi-Device Credential Sync)
+        // 支援未登入訪客於 LandingPage 登入/引繼換帳號後動態綁定與清理舊頻道，無需整頁重載
+        let activeUuid: string | null = null;
         let channelCleanup = () => {};
-        if (typeof window !== "undefined") {
-            const currentUuid = localStorage.getItem("user_uuid");
-            if (currentUuid) {
-                const client = getSupabaseClient();
-                if (client) {
-                    const channel = client.channel(`user-sync:${currentUuid}`);
-                    channel.on("broadcast", { event: "CREDENTIAL_ROTATED" }, () => {
-                        fetchLatestRecoveryKey().catch(() => {});
-                    }).subscribe();
-                    channelCleanup = () => {
-                        client.removeChannel(channel);
-                    };
-                }
-            }
-        }
 
+        const syncUserChannel = () => {
+            if (typeof window === "undefined") return;
+            const currentUuid = readActiveUserUuid();
+            if (currentUuid === activeUuid) return;
+
+            channelCleanup();
+            channelCleanup = () => {};
+            activeUuid = null;
+
+            if (!currentUuid) return;
+
+            const client = getSupabaseClient();
+            if (client) {
+                const channel = client.channel(`user-sync:${currentUuid}`);
+                channel.on("broadcast", { event: "CREDENTIAL_ROTATED" }, () => {
+                    fetchLatestRecoveryKey().catch(() => {});
+                }).subscribe();
+                activeUuid = currentUuid;
+                channelCleanup = () => {
+                    void Promise.resolve(client.removeChannel(channel)).catch(() => {});
+                };
+            }
+        };
+
+        const handleStorage = (e: StorageEvent) => {
+            if (!e.key || e.key === "user_uuid") {
+                syncUserChannel();
+            }
+        };
+
+        syncUserChannel();
+        window.addEventListener("user-login-state-changed", syncUserChannel);
+        window.addEventListener("storage", handleStorage);
+
+        return () => {
+            window.removeEventListener("user-login-state-changed", syncUserChannel);
+            window.removeEventListener("storage", handleStorage);
+            channelCleanup();
+            cleanupSession();
+        };
+    }, []);
+
+    useEffect(() => {
         // 🔔 監聽金鑰本機更新事件並彈出輕量通知
         const handleKeyUpdated = (e: Event) => {
             const customEvent = e as CustomEvent<{ recoveryKey?: string; source?: string }>;
@@ -61,8 +111,6 @@ export function AppClientLayer() {
         window.addEventListener("tabiji:recovery_key_updated", handleKeyUpdated);
 
         return () => {
-            cleanupSession();
-            channelCleanup();
             window.removeEventListener("tabiji:recovery_key_updated", handleKeyUpdated);
         };
     }, [zh]);

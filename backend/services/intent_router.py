@@ -5,10 +5,13 @@ Stage 1: 0ms 確定性正則快篩 (問候、記帳、新增行程、移除行�
 Stage 2: 31B 工作馬極速語意前置分類 (1.0s 超時平滑降級)
 """
 
+from collections.abc import Mapping
+import inspect
+import os
 import re
 import json
 import asyncio
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict, Any
 from google.genai import types
 
 from services.model_manager import (
@@ -21,6 +24,8 @@ from services.model_manager import (
     call_extraction_server,
     call_timeout_scope,
     detect_diagnosis_intent,
+    get_cached_client,
+    _MODEL_API_ERRORS,
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -60,12 +65,14 @@ ITINERARY_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# 🌐 2026 即時聯網搜尋與網址解析快篩正則 (涵蓋中英主動搜尋動作詞、即時資訊、旅遊推薦與美食探索需求)
+# 🌐 2026 即時聯網搜尋與網址解析快篩正則 (混合漏斗：確定性搜尋與複合探索保留 0ms 快篩，寬鬆追問/詞彙交由 gemini-decision-1 仲裁)
 SEARCH_PATTERN = re.compile(
     r"(\b(search|google|look\s*up|find|check|opening\s*hours?|ticket\s*price|weather)\b|"
     r"搜索|搜尋|上網查|查一下|幫我查|查看看|查詢|找一下|找找|谷歌|聯網|網路搜索|網路搜尋|"
-    r"最新|即時|新聞|今天|明天|這週|這週末|天氣|降雨|幾點開|幾點關|營業時間|公休|休館|門票|票價|官網|預約|排隊|交通|怎麼去|轉乘|https?://|"
-    r"推薦|私房|隱藏版|必吃|必去|必買|必訪|必看|老饕|小吃|美食|在地人|當地人|在地美食|外國旅客|背包客|好不好吃|好玩嗎|好吃|好玩|好逛|熱門|評價|評分|看法|攻略|指南|夜市|伴手禮|名產|特產|拉麵|燒肉|壽司|居酒屋|咖啡廳|早午餐)",
+    r"幾點開|幾點關|營業時間|公休|休館|門票|票價|官網|預約|降雨|怎麼去|轉乘|評分|https?://|"
+    r"推薦.{0,120}(?:景點|餐廳|美食|小吃|拉麵|燒肉|壽司|居酒屋|咖啡廳|早午餐|私房|隱藏版|在地人|當地人|必吃|必去|必買)|"
+    r"(?:有什麼|哪裡有).{0,80}(?:好吃|好玩|好逛|推薦|美食|早午餐|咖啡廳|景點)|"
+    r"(?:外國旅客|在地人|當地人).{0,80}(?:評分|評價|推薦))",
     re.IGNORECASE
 )
 
@@ -232,8 +239,116 @@ def _fast_path_classify(message: str) -> Optional[str]:
     return None
 
 
+async def _decision_classify(
+    message: str,
+    api_key: Optional[str] = None,
+    genai_client: Any = None,
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Stage 2a: gemini-decision-1 零輸出 Token 意圖分類 + 搜尋詞改寫判斷 (v1beta)"""
+    eval_text = _extract_clean_user_text(message, max_len=500)
+    if not eval_text:
+        return "CHAT", {"source": "decision_empty", "needs_query_rewrite": False}
+
+    effective_key = api_key or (os.getenv("GEMINI_API_KEY") or "").strip()
+    if not effective_key and genai_client is None:
+        return None, {"source": "no_key", "needs_query_rewrite": False}
+
+    try:
+        client = genai_client if genai_client is not None else get_cached_client(effective_key)
+        decisions_res = getattr(getattr(client, "aio", None), "decisions", None)
+        create_fn = getattr(decisions_res, "create", None)
+        if not callable(create_fn):
+            return None, {"source": "unsupported_client", "needs_query_rewrite": False}
+
+        # 關閉 Speakeasy 預設 4 次退避重試 (最長 30s)，確保分類快速切換備援
+        sdk_cfg = getattr(decisions_res, "sdk_configuration", None)
+        rc = getattr(sdk_cfg, "retry_config", None)
+        if rc is not None and type(rc).__name__ == "RetryConfig":
+            rc.strategy = "none"
+            rc.max_retries = 0
+            rc.retry_connection_errors = False
+
+        questions = {
+            "intent": {
+                "type": "choice",
+                "instructions": "Classify the user's message intent inside a travel companion assistant.",
+                "criteria": {
+                    "chat": "Casual chitchat, emotional remark, greeting, praise, thanks, or general cultural trivia not needing live web search or tools",
+                    "search": "Asking for live opening hours, latest news/updates, weather, prices/costs, restaurant/spot recommendations, or follow-up asking for more/latest info",
+                    "itinerary": "Explicitly asking to add or schedule a specific place into the itinerary",
+                    "remove_itinerary": "Asking to remove, delete, or cancel an itinerary activity",
+                    "expense": "Explicitly asking to log or record a spent expense amount (excluding price inquiries)",
+                    "composite": "Explicitly asking both to schedule an itinerary item and log an expense",
+                    "diagnosis": "Asking to evaluate or diagnose itinerary route pacing or feasibility",
+                    "other": "Ambiguous or does not clearly fit any category above",
+                },
+            },
+            "needs_query_rewrite": {
+                "type": "noul",
+                "instructions": "True if the message is a follow-up, omits the place/city subject, or uses pronouns like this/that/latest info requiring conversation history to form a web search query.",
+            },
+        }
+
+        maybe_coro = create_fn(
+            model="gemini-decision-1",
+            input=eval_text,
+            questions=questions,
+            api_version="v1beta",
+            timeout=1.8,
+        )
+        if not inspect.isawaitable(maybe_coro):
+            return None, {"source": "sync_mock_client", "needs_query_rewrite": False}
+
+        resp = await asyncio.wait_for(maybe_coro, timeout=2.2)
+        answers = getattr(resp, "answers", None)
+        if not isinstance(answers, Mapping):
+            return None, {"source": "invalid_decision_response", "needs_query_rewrite": False}
+        intent_ans = answers.get("intent")
+        rewrite_ans = answers.get("needs_query_rewrite")
+
+        choice = str(getattr(intent_ans, "choice", "") or "").strip().lower()
+        conf = float(getattr(intent_ans, "confidence", 0.0) or 0.0)
+        rewrite_prob = float(getattr(rewrite_ans, "noul", 0.0) or 0.0)
+        needs_query_rewrite = rewrite_prob >= 0.55
+
+        intent_map = {
+            "chat": "CHAT",
+            "itinerary": "ITINERARY",
+            "remove_itinerary": "REMOVE_ITINERARY",
+            "expense": "EXPENSE",
+            "composite": "COMPOSITE",
+            "diagnosis": "DIAGNOSIS",
+            "search": "SEARCH",
+        }
+        if choice == "other" or conf < 0.55 or choice not in intent_map:
+            resolved = "SEARCH"
+        else:
+            resolved = intent_map[choice]
+
+        meta = {
+            "source": "gemini-decision-1",
+            "choice": choice,
+            "confidence": round(conf, 4),
+            "needs_query_rewrite": needs_query_rewrite,
+            "rewrite_prob": round(rewrite_prob, 4),
+        }
+        print(
+            f"🧭 [IntentRouter] gemini-decision-1 命中: {resolved} "
+            f"(choice={choice}, conf={conf:.3f}, needs_rewrite={needs_query_rewrite}/{rewrite_prob:.3f})"
+        )
+        return resolved, meta
+    except asyncio.TimeoutError:
+        print("⏱️ [IntentRouter] gemini-decision-1 逾時 (>2.2s)，切換 Stage 2b 備援分類")
+    except _MODEL_API_ERRORS as e:
+        print(f"⚠️ [IntentRouter] gemini-decision-1 API 異常 ({type(e).__name__})，切換 Stage 2b 備援分類")
+    except Exception as e:
+        print(f"⚠️ [IntentRouter] gemini-decision-1 未預期異常 ({type(e).__name__}: {e})，切換 Stage 2b 備援分類")
+
+    return None, {"source": "decision_fallback", "needs_query_rewrite": False}
+
+
 async def _workhorse_classify(message: str, api_key: Optional[str] = None) -> str:
-    """Stage 2: 31B 工作馬極速語意前置分類 (帶隱形字元清洗、單次 1.2s 與總預算 3.5s 超時保護)"""
+    """Stage 2b: Flash-Lite 工作馬語意前置分類 (帶隱形字元清洗、單次 1.2s 與總預算 3.5s 超時保護)"""
     eval_text = _extract_clean_user_text(message, max_len=200)
     prompt = CHAT_INTENT_PROMPT.format(message=eval_text)
     try:
@@ -268,21 +383,30 @@ async def _workhorse_classify(message: str, api_key: Optional[str] = None) -> st
     return "SEARCH"
 
 
-async def classify_chat_intent(
+async def classify_chat_intent_with_meta(
     message: str,
-    api_key: Optional[str] = None
-) -> Tuple[str, List[types.Tool]]:
+    api_key: Optional[str] = None,
+    genai_client: Any = None,
+) -> Tuple[str, List[types.Tool], Dict[str, Any]]:
     """
-    統一意圖分流進入點
+    統一意圖分流進入點（含 Decision 1 中繼訊號）
     Returns:
-        (intent_type, tools_to_mount)
+        (intent_type, tools_to_mount, meta)
     """
     # Stage 1: 0ms 正則快線
     intent = _fast_path_classify(message)
+    meta: Dict[str, Any] = {"source": "fast_path", "needs_query_rewrite": False}
 
-    # Stage 2: 模糊語意啟動 31B 工作馬
+    # Stage 2a: 模糊語意優先啟動 gemini-decision-1
     if not intent:
-        intent = await _workhorse_classify(message, api_key=api_key)
+        dec_intent, dec_meta = await _decision_classify(message, api_key=api_key, genai_client=genai_client)
+        if dec_intent:
+            intent = dec_intent
+            meta = dec_meta
+        else:
+            # Stage 2b: Decision 1 不可用/逾時時平滑降級 Flash-Lite 工作馬
+            intent = await _workhorse_classify(message, api_key=api_key)
+            meta = {"source": "workhorse", "needs_query_rewrite": False}
 
     # 動態工具綁定映射表 (保持原有單元測試契約相容)
     tool_map = {
@@ -297,7 +421,20 @@ async def classify_chat_intent(
 
     selected_tools = tool_map.get(intent, [])
     try:
-        print(f"🧭 [IntentRouter] 命中意圖: {intent} (掛載工具數: {len(selected_tools)})")
+        print(f"🧭 [IntentRouter] 命中意圖: {intent} (來源={meta.get('source')}, 掛載工具數: {len(selected_tools)})")
     except Exception:
         pass
+    return intent, selected_tools, meta
+
+
+async def classify_chat_intent(
+    message: str,
+    api_key: Optional[str] = None
+) -> Tuple[str, List[types.Tool]]:
+    """
+    統一意圖分流進入點（向後相容雙元組簽名）
+    Returns:
+        (intent_type, tools_to_mount)
+    """
+    intent, selected_tools, _ = await classify_chat_intent_with_meta(message, api_key=api_key)
     return intent, selected_tools

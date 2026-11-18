@@ -225,7 +225,7 @@ async def create_or_exchange_session(
             is_new=False,
         )
 
-    # 2. 舊版 UUID 靜默平滑升級路徑 (Zero-Breakage Legacy Migration)
+    # 2. 舊版 UUID 靜默平滑升級路徑 (Zero-Breakage Legacy Migration & Orphan Self-Healing)
     if is_valid_uuid(raw_key):
         clean_uid = raw_key.lower()
         # 🛡️ 舊版 UUID 遷移路徑同樣受 expected_user_id 伺服器端防衛
@@ -234,10 +234,42 @@ async def create_or_exchange_session(
                 raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
 
         exists = await run_in_threadpool(legacy_identity_exists, supabase, clean_uid)
-        if not exists:
-            raise HTTPException(status_code=401, detail=UNIFORM_AUTH_ERROR)
+        user_rec = await run_in_threadpool(get_user_record_by_id, supabase, clean_uid) if exists else None
 
-        user_rec = await run_in_threadpool(get_user_record_by_id, supabase, clean_uid)
+        # 🛠️ Bug Hunter 修復：有效 UUID v4 且通過 expected_user_id 檢查之離線/已清理孤兒身分，原地靜默補登並核發 tbj_rec_*
+        if not exists or not user_rec:
+            full_key, key_id, secret_hash = generate_prefixed_recovery_key()
+            vault_key = derive_vault_key(secret)
+            encrypted_key = encrypt_recovery_key(full_key, vault_key)
+            persisted = False
+            try:
+                await run_in_threadpool(
+                    lambda: supabase.table("users").insert({
+                        "id": clean_uid,
+                        "name": "Traveler",
+                        "recovery_key_id": key_id,
+                        "recovery_secret_hash": secret_hash,
+                        "recovery_key_encrypted": encrypted_key,
+                        "credential_version": 1,
+                    }).execute()
+                )
+                persisted = True
+            except Exception as e:
+                # 併發競爭保護：若另一請求剛完成建檔，回查既有 user_rec 並交由下方雙軌分支處理
+                user_rec = await run_in_threadpool(get_user_record_by_id, supabase, clean_uid)
+                if not user_rec:
+                    print(f"⚠️ [Auth] Warning: Could not bootstrap orphan uuid {clean_uid}: {e}")
+                    raise HTTPException(status_code=503, detail="Account bootstrap temporarily unavailable")
+
+            if persisted:
+                token = create_session_jwt(clean_uid, secret, 1)
+                return SessionResponse(
+                    access_token=token,
+                    user_id=clean_uid,
+                    recovery_key=full_key,
+                    upgraded=True,
+                    is_new=False,
+                )
         
         # 🛡️ 雙軌平滑升級：若帳號已升級，校驗合法持有證明 (Proof-of-Possession)
         if user_rec and user_rec.get("recovery_key_id"):

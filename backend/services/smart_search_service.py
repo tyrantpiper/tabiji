@@ -21,7 +21,7 @@ from google import genai
 from google.genai import types
 
 from services.model_manager import call_extraction, call_timeout_scope
-from utils.ai_config import DAILY_ROUTING
+from utils.ai_config import DAILY_ROUTING, QUERY_REWRITE_ROUTING
 from services.poi_service import search_poi_combined
 from services.geocode_service import geocode_place
 
@@ -115,8 +115,10 @@ async def parse_intent(
         with call_timeout_scope(1.2):
             raw_text = await asyncio.wait_for(
                 call_extraction(
-                    api_key, prompt,
+                    api_key,
+                    prompt,
                     intent_type="INTENT_PARSE",
+                    routing_strategy=QUERY_REWRITE_ROUTING,
                 ),
                 timeout=3.5,
             )

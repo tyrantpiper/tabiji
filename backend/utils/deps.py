@@ -79,6 +79,21 @@ def get_session_secret() -> str:
     return hashlib.sha256(b"tabiji-dev-deterministic-salt-2026").hexdigest()
 
 
+def build_supabase_rest_headers(supabase_key: str, extra: Optional[dict] = None) -> dict:
+    """
+    Build PostgREST / Supabase REST headers compatible with both legacy JWT keys (eyJ...)
+    and new-format keys (sb_secret_... / sb_publishable_...).
+    New-format keys are opaque strings (not JWTs) and must only be sent via `apikey`.
+    """
+    clean_key = (supabase_key or "").strip()
+    headers = {"apikey": clean_key}
+    if clean_key and not clean_key.startswith("sb_"):
+        headers["Authorization"] = f"Bearer {clean_key}"
+    if extra:
+        headers.update(extra)
+    return headers
+
+
 def get_supabase(request: Request = None) -> Client:
     """從 app.state 獲取全域 Supabase 客戶端 (使用 Service Role Key)"""
     if request is not None and hasattr(request, "app") and hasattr(request.app.state, "supabase"):
@@ -152,6 +167,19 @@ async def get_verified_user(
         pass
 
     # 2. Supabase 官方 Token 相容校驗 (若未來串接 OAuth)
+    # 若為本系統自簽 Session JWT (iss == "tabiji-core") 且上方驗簽/效期已失敗，直接快速失敗避免衝擊 Supabase Auth
+    try:
+        unverified_payload = jwt.decode(
+            token,
+            options={"verify_signature": False, "verify_exp": False}
+        )
+        if isinstance(unverified_payload, dict) and unverified_payload.get("iss") == "tabiji-core":
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except HTTPException:
+        raise
+    except jwt.PyJWTError:
+        pass
+
     try:
         supabase: Optional[Client] = get_supabase(request)
         if supabase:

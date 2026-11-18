@@ -1,0 +1,60 @@
+[
+  {
+    "id": "backend/services/intent_router.py:decision1_boundary_and_retry_guard",
+    "file_path": "backend/services/intent_router.py",
+    "start_line": 242,
+    "end_line": 350,
+    "attack_vector": "prompt_boundary_and_backoff_latency",
+    "hypothesis": "Verify whether _decision_classify properly sanitizes invisible characters and outer <user_input_*> envelopes before sending input to gemini-decision-1, validates Mapping response structure, disables Speakeasy built-in multi-attempt exponential backoff, and avoids unhandled exceptions or circuit-breaker pollution on 429 or timeout."
+  },
+  {
+    "id": "backend/services/destination_taxonomy.py:lite_query_rewrite_xml_delimiter_and_circuit",
+    "file_path": "backend/services/destination_taxonomy.py",
+    "start_line": 402,
+    "end_line": 635,
+    "attack_vector": "xml_delimiter_escaping_and_circuit_isolation",
+    "hypothesis": "Verify whether extract_search_queries_with_lite escapes XML delimiter tags (<user_query>, <conversation_history>, <trip_destination>) after stripping invisible format characters across both user input and history turns, bounds timeout within 3.2s, avoids recording model errors on empty mock responses, and rejects off-topic Wikipedia entries via distilled search_query matching."
+  },
+  {
+    "id": "backend/services/destination_taxonomy.py:citation_pruner_cjk_overlap_guard",
+    "file_path": "backend/services/destination_taxonomy.py",
+    "start_line": 704,
+    "end_line": 785,
+    "attack_vector": "citation_alignment_and_offtopic_suppression",
+    "hypothesis": "Verify whether prune_and_align_citations enforces strict 1-to-1 citation alignment when [i] markers exist, prevents generic CJK/English filler stopwords and standalone year digits from matching unrelated sources when markers are absent, while matching genuine CJK entity phrases."
+  },
+  {
+    "id": "backend/services/model_manager.py:gemini4_hydrogen_capability_and_budget_guard",
+    "file_path": "backend/services/model_manager.py",
+    "start_line": 1200,
+    "end_line": 1445,
+    "attack_vector": "model_config_compatibility_and_budget_floor",
+    "hypothesis": "Verify whether sanitize_config_for_model strips sampling parameters (temperature, top_p, top_k) and thinking_budget for gemini-3* and gemini-4-* models, clamps unsupported xhigh on gemini-3* and minimal on gemini-4*, and maintains safe max_output_tokens floors (>=16384 or >=32768 for PLANNING/PARSE_MD)."
+  },
+  {
+    "id": "backend/main.py:uncited_source_resurrection_elimination",
+    "file_path": "backend/main.py",
+    "start_line": 2120,
+    "end_line": 2150,
+    "attack_vector": "ungrounded_source_disclosure",
+    "hypothesis": "Verify whether stream_chat_generator strictly emits final_sources from prune_and_align_citations without re-injecting uncited candidate_sources[:2] when prune_and_align_citations returns an empty list."
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js:poi_service_auth_header_forwarding_gap",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "start_line": 67,
+    "end_line": 96,
+    "attack_vector": "gateway_header_normalization_consistency",
+    "hypothesis": "Verify whether the fallback path when env.SESSION_SECRET is unset strips both X-User-ID and raw Authorization headers before calling env.POI_SERVICE, rather than forwarding an unverified Authorization header that downstream poi-service parses without signature verification.",
+    "severity": "medium"
+  },
+  {
+    "id": "cloudflare/poi-service/worker.js:unverified_jwt_sub_fallback_and_workers_dev",
+    "file_path": "cloudflare/poi-service/worker.js",
+    "start_line": 24,
+    "end_line": 45,
+    "attack_vector": "downstream_identity_validation_boundary",
+    "hypothesis": "Verify whether extractUserId performs cryptographic signature validation when reading Bearer tokens via atob() or relies solely on upstream gateway header sanitization, and whether external routing exposure exists when workers_dev is not explicitly set to false.",
+    "severity": "medium"
+  }
+]

@@ -25,6 +25,7 @@ DAILY_ROUTING: List[str] = [
     "gemini-3.5-flash-lite",          # 🆕 首選實測最穩定 (0.7s, 500 RPD Map Grounding)
     "gemini-3.6-flash",               # 🚀 次選穩定旗艦，具備 Grounding (取代已棄用別名 gemini-3.5-flash)
     "gemini-3.1-flash-lite",          # 500 RPD, GA — 極速、支援思考/結構化
+    "gemini-4-hydrogen",              # 🚀 次世代旗艦備援（低 RPM 保護，Flash-Lite 優先後接入）
     "gemini-3.8-flash",               # 🚀 1M tokens 超長上下文 / 64K 輸出 SOTA 推論旗艦 (取代別名 gemini-3.7-flash)
     "gemini-3-flash-preview",         # 20 RPD, 全能型
 ]
@@ -33,8 +34,24 @@ HEAVY_ROUTING: List[str] = [
     "gemini-3.5-flash-lite",          # 🆕 3.5 Lite: 快速低延遲首選 (0.7s)
     "gemini-3.6-flash",               # 3.6 穩定次選 (取代已棄用別名 gemini-3.5-flash)
     "gemini-3.1-flash-lite",          # 500 RPD, 高額度優先
+    "gemini-4-hydrogen",              # 🚀 次世代旗艦推論備援（避免 Free Tier 同步阻塞）
     "gemini-3.8-flash",               # 🚀 3.8: 1M Tokens 超長上下文 / 64K 輸出 (取代別名 gemini-3.7-flash)
     "gemini-3-flash-preview",         # 20 RPD
+]
+
+PLANNING_ROUTING: List[str] = [
+    "gemini-3.5-flash-lite",          # 🆕 500 RPD 穩定首選（保護免費 Key 與同步代理不逾時）
+    "gemini-3.1-flash-lite",          # 500 RPD 極速次選
+    "gemini-4-hydrogen",              # 🚀 次世代旗艦規劃引擎（Flash-Lite 受限時優先接手）
+    "gemini-3.6-flash",               # 3.6 穩定旗艦
+    "gemini-3.8-flash",               # 🚀 3.8: 1M Tokens / 64K 輸出旗艦
+    "gemini-3-flash-preview",         # 20 RPD
+]
+
+QUERY_REWRITE_ROUTING: List[str] = [
+    "gemini-3.1-flash-lite",          # 500 RPD, GA — 搜尋詞提煉與槽位萃取專用 (thinking=minimal)
+    "gemini-3.5-flash-lite",          # 500 RPD 快速備援
+    "gemini-3.6-flash",               # 次級備援
 ]
 
 # 🧾 收據解析與 OCR 專屬極速視覺路由 (優先 500 RPD Flash-Lite，杜絕 1M Context 逾時)

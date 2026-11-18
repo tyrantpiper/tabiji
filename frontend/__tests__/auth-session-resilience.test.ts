@@ -122,8 +122,9 @@ describe('Auth Session Resilience & Token Life-Cycle Tests', () => {
         delete process.env.TEST_AUTH_EXCHANGE
     })
 
-    it('TC-9: ensureValidSession refuses to overwrite existing user_uuid on identity mismatch', async () => {
-        const { ensureValidSession } = await import('@/lib/auth-session')
+    it('TC-9: ensureValidSession refuses to overwrite existing user_uuid or tokens on identity mismatch', async () => {
+        const { ensureValidSession, __resetExchangeFailedForTesting } = await import('@/lib/auth-session')
+        __resetExchangeFailedForTesting()
         process.env.TEST_AUTH_EXCHANGE = 'true'
         mockStorage['user_uuid'] = 'permanent-owner-key'
         const futureExp = Math.floor(Date.now() / 1000) + 3600
@@ -135,6 +136,7 @@ describe('Auth Session Resilience & Token Life-Cycle Tests', () => {
             json: async () => ({
                 access_token: freshJwt,
                 user_id: 'alien-user-789',
+                recovery_key: 'tbj_rec_alien000_0123456789abcdef0123456789abcdef',
                 is_new: true
             })
         } as unknown as Response)
@@ -142,6 +144,9 @@ describe('Auth Session Resilience & Token Life-Cycle Tests', () => {
         const token = await ensureValidSession()
         expect(token).toBeNull()
         expect(mockStorage['user_uuid']).toBe('permanent-owner-key')
+        expect(mockStorage['tabiji_session_token']).toBeUndefined()
+        expect(mockStorage['tabiji_pop_token']).toBeUndefined()
+        expect(mockStorage['user_recovery_key']).toBeUndefined()
         delete process.env.TEST_AUTH_EXCHANGE
     })
 
@@ -180,5 +185,124 @@ describe('Auth Session Resilience & Token Life-Cycle Tests', () => {
         expect(token).toBeNull()
         expect(fetchSpy).not.toHaveBeenCalled()
         delete process.env.TEST_AUTH_EXCHANGE
+    })
+
+    it('TC-12: ensureValidSession(true) backs up unexpired stale JWT to tabiji_pop_token and exchanges for fresh JWT', async () => {
+        const { ensureValidSession, __resetExchangeFailedForTesting } = await import('@/lib/auth-session')
+        __resetExchangeFailedForTesting()
+        process.env.TEST_AUTH_EXCHANGE = 'true'
+
+        const futureExp = Math.floor(Date.now() / 1000) + 86400
+        const staleJwt = createMockJwt({ sub: 'user-rot-1', exp: futureExp })
+        const freshJwt = createMockJwt({ sub: 'user-rot-1', exp: futureExp + 3600 })
+
+        mockStorage['tabiji_session_token'] = staleJwt
+        mockStorage['user_recovery_key'] = 'tbj_rec_12345678_0123456789abcdef0123456789abcdef'
+        mockStorage['user_uuid'] = 'user-rot-1'
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                access_token: freshJwt,
+                user_id: 'user-rot-1',
+                is_new: false,
+            })
+        } as unknown as Response)
+
+        const token = await ensureValidSession(true)
+        expect(token).toBe(freshJwt)
+        expect(mockStorage['tabiji_session_token']).toBe(freshJwt)
+        expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+        // Verify PoP header sent during exchange contained staleJwt before refresh completed
+        const [, fetchInit] = fetchSpy.mock.calls[0]
+        const sentHeaders = fetchInit?.headers as Record<string, string>
+        expect(sentHeaders['Authorization']).toBe(`Bearer ${staleJwt}`)
+        delete process.env.TEST_AUTH_EXCHANGE
+    })
+
+    it('TC-13: ensureValidSession(true) purges non-JWT garbage without overwriting valid tabiji_pop_token', async () => {
+        const { ensureValidSession, __resetExchangeFailedForTesting } = await import('@/lib/auth-session')
+        __resetExchangeFailedForTesting()
+        process.env.TEST_AUTH_EXCHANGE = 'true'
+
+        const futureExp = Math.floor(Date.now() / 1000) + 86400
+        const previousValidPop = createMockJwt({ sub: 'user-rot-2', exp: futureExp })
+        const freshJwt = createMockJwt({ sub: 'user-rot-2', exp: futureExp + 3600 })
+
+        mockStorage['tabiji_pop_token'] = previousValidPop
+        mockStorage['tabiji_session_token'] = 'corrupted-not-a-jwt'
+        mockStorage['user_uuid'] = 'user-rot-2'
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                access_token: freshJwt,
+                user_id: 'user-rot-2',
+                is_new: false,
+            })
+        } as unknown as Response)
+
+        const token = await ensureValidSession(true)
+        expect(token).toBe(freshJwt)
+        const [, fetchInit] = fetchSpy.mock.calls[0]
+        expect((fetchInit?.headers as Record<string, string>)['Authorization']).toBe(`Bearer ${previousValidPop}`)
+        delete process.env.TEST_AUTH_EXCHANGE
+    })
+
+    it('TC-14: ensureValidSession reconciles offline tbj_rec_* placeholder in user_uuid to server user_id and notifies listeners', async () => {
+        const { ensureValidSession, __resetExchangeFailedForTesting } = await import('@/lib/auth-session')
+        __resetExchangeFailedForTesting()
+        process.env.TEST_AUTH_EXCHANGE = 'true'
+
+        const recKey = 'tbj_rec_12345678_0123456789abcdef0123456789abcdef'
+        const realUuid = '77777777-7777-4777-8777-777777777777'
+        const futureExp = Math.floor(Date.now() / 1000) + 86400
+        const freshJwt = createMockJwt({ sub: realUuid, exp: futureExp })
+
+        mockStorage['user_recovery_key'] = recKey
+        mockStorage['user_uuid'] = recKey
+        mockStorage['user_nickname'] = 'OfflineTraveler'
+
+        let loginStateChangedFired = false
+        const onStateChange = () => { loginStateChangedFired = true }
+        window.addEventListener('user-login-state-changed', onStateChange)
+
+        try {
+            vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    access_token: freshJwt,
+                    user_id: realUuid,
+                    recovery_key: recKey,
+                    is_new: false,
+                })
+            } as unknown as Response)
+
+            const token = await ensureValidSession()
+            expect(token).toBe(freshJwt)
+            expect(mockStorage['user_uuid']).toBe(realUuid)
+            expect(mockStorage['tabiji_session_token']).toBe(freshJwt)
+            expect(loginStateChangedFired).toBe(true)
+        } finally {
+            window.removeEventListener('user-login-state-changed', onStateChange)
+            delete process.env.TEST_AUTH_EXCHANGE
+        }
+    })
+
+    it('TC-15: isUserLoggedIn rejects "null" and "undefined" sentinel strings', async () => {
+        const { isUserLoggedIn } = await import('@/lib/auth-session')
+        mockStorage['user_nickname'] = 'Visitor'
+        mockStorage['user_uuid'] = 'null'
+        expect(isUserLoggedIn()).toBe(false)
+
+        mockStorage['user_uuid'] = 'undefined'
+        expect(isUserLoggedIn()).toBe(false)
+
+        mockStorage['user_recovery_key'] = 'null'
+        expect(isUserLoggedIn()).toBe(false)
     })
 })

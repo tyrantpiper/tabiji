@@ -67,6 +67,7 @@ vi.mock('sonner', () => ({
 import ChatWidget from '@/components/chat-widget'
 import { ActuaryDialogCard } from '@/components/ActuaryDialogCard'
 import { LanguageProvider } from '@/lib/LanguageContext'
+import { ensureValidSession } from '@/lib/auth-session'
 
 describe('ChatWidget & ActuaryDialogCard Remediation RTL Tests', () => {
     const originalFetch = global.fetch
@@ -288,5 +289,68 @@ describe('ChatWidget & ActuaryDialogCard Remediation RTL Tests', () => {
         await waitFor(() => {
             expect(screen.getByText(/Gemini API Key 無效或已過期，請更新金鑰/)).toBeInTheDocument()
         })
+    })
+
+    it('fallback /api/chat calls ensureValidSession(true) on non-Gemini 401, retries with fresh token, and skips refresh on Gemini 401', async () => {
+        localStorage.setItem('tabiji_session_token', 'mock-session-jwt')
+        mockStreamChat.mockRejectedValueOnce(new Error('stream unavailable'))
+        vi.mocked(ensureValidSession).mockResolvedValueOnce('fresh-rotated-jwt')
+
+        const chatAuthHeaders: Array<string | null> = []
+        global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input)
+            const hdrs = new Headers(init?.headers)
+            if (url.endsWith('/api/chat')) {
+                const auth = hdrs.get('Authorization')
+                chatAuthHeaders.push(auth)
+                if (auth === 'Bearer mock-session-jwt') {
+                    return new Response(
+                        JSON.stringify({ detail: 'Invalid or expired token' }),
+                        { status: 401, headers: { 'Content-Type': 'application/json' } }
+                    )
+                }
+                return new Response(
+                    JSON.stringify({
+                        response: 'Recovered via forceRefresh fallback',
+                        raw_parts: [{ text: 'Recovered via forceRefresh fallback' }],
+                    }),
+                    { status: 200, headers: { 'Content-Type': 'application/json' } }
+                )
+            }
+            return new Response('{}', { status: 200 })
+        }) as unknown as typeof fetch
+
+        const view1 = renderOpenChatWidget()
+        const textarea1 = screen.getByRole('textbox')
+        fireEvent.change(textarea1, { target: { value: 'Fallback retry test' } })
+        fireEvent.keyDown(textarea1, { key: 'Enter', shiftKey: false })
+
+        await waitFor(() => {
+            expect(screen.getByText(/Recovered via forceRefresh fallback/)).toBeInTheDocument()
+        })
+        expect(ensureValidSession).toHaveBeenCalledWith(true)
+        expect(chatAuthHeaders).toEqual(['Bearer mock-session-jwt', 'Bearer fresh-rotated-jwt'])
+        view1.unmount()
+
+        // Case B: Gemini API Key 401 in fallback must NOT call ensureValidSession(true) or clear tabiji_session_token
+        vi.clearAllMocks()
+        localStorage.setItem('tabiji_session_token', 'mock-session-jwt')
+        mockStreamChat.mockRejectedValueOnce(new Error('stream unavailable'))
+        global.fetch = vi.fn(async () => new Response(
+            JSON.stringify({ detail: 'Your Google Gemini API Key is invalid' }),
+            { status: 401, headers: { 'Content-Type': 'application/json' } }
+        )) as unknown as typeof fetch
+
+        const view2 = renderOpenChatWidget()
+        const textarea2 = screen.getByRole('textbox')
+        fireEvent.change(textarea2, { target: { value: 'Fallback gemini 401 test' } })
+        fireEvent.keyDown(textarea2, { key: 'Enter', shiftKey: false })
+
+        await waitFor(() => {
+            expect(screen.getByText(/連線中斷|Connection lost/)).toBeInTheDocument()
+        })
+        expect(ensureValidSession).not.toHaveBeenCalled()
+        expect(localStorage.getItem('tabiji_session_token')).toBe('mock-session-jwt')
+        view2.unmount()
     })
 })

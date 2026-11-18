@@ -22,26 +22,17 @@ interface TripState {
     initializeFromStorage: () => void
 }
 
-import { generateSecureUUID } from '@/lib/security'
-import { ensureValidSession } from '@/lib/auth-session'
-
 /**
- * 🔧 FIX: Sync initialize userId from localStorage to fix race condition
- * This ensures userId is available immediately on first render
- * 🛡️ Security Hardened: Uses Web Crypto API for UUID generation
+ * 🔧 FIX: Sync initialize userId from localStorage without generating unregistered orphan UUIDs
+ * Unauthenticated visitors stay null until explicit login/recovery in LandingPage.
  */
 const getInitialUserId = (): string | null => {
     if (typeof window !== 'undefined') {
-        let uuid = localStorage.getItem('user_uuid')
-        if (!uuid) {
-            // 🛡️ Auto-generate cryptographically secure UUID
-            uuid = generateSecureUUID()
-            localStorage.setItem('user_uuid', uuid)
-            console.log('🆕 Auto-generated secure user_uuid:', uuid)
-        }
-        // 🛡️ 啟動自動換票/領票 (非阻塞，離線安全)
-        ensureValidSession().catch(() => {});
-        return uuid
+        const raw = localStorage.getItem('user_uuid')
+        if (!raw) return null
+        const trimmed = raw.trim()
+        if (!trimmed || trimmed === 'null' || trimmed === 'undefined') return null
+        return trimmed
     }
     return null
 }

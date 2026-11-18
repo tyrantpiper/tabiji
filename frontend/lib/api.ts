@@ -71,7 +71,7 @@ const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
         const isBodyConsumed = typeof Request !== "undefined" && input instanceof Request && input.bodyUsed;
         if (!isAuthEndpoint && !isRetry && !isBodyConsumed) {
             // 注意：保留現有 Token 作為持有證明 (PoP) 供 ensureValidSession 驗簽
-            const freshToken = await ensureValidSession().catch(() => null);
+            const freshToken = await ensureValidSession(true).catch(() => null);
             if (freshToken) {
                 let nextHeaders: Headers;
                 if (init?.headers instanceof Headers) {

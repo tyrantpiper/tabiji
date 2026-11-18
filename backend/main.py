@@ -30,6 +30,9 @@ from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks, Re
 # from prometheus_client import generate_latest, CONTENT_TYPE_LATEST (MODIFIED: Lazy below)
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
+
+os.environ.setdefault("GOOGLE_GENAI_API_VERSION", "v1beta")
+
 from google import genai
 from google.genai import types, errors
 from slowapi import _rate_limit_exceeded_handler
@@ -71,27 +74,36 @@ from services.model_manager import (
     ADD_ITINERARY_DECL, ADD_ITINERARY_FLAT_DECL, REMOVE_ITINERARY_DECL, get_tools_for_model,
     MODEL_CAPS, NonRetryableAuthError, NonRetryableRequestError, AllModelsFailedError,
     build_degraded_config_on_400, map_ai_exception_to_http_status, summarize_response_diagnostics,
-    _get_call_timeout, parse_429_metadata,
+    _get_call_timeout, parse_429_metadata, _MODEL_API_ERRORS, _get_api_error_code,
 )
 from services.poi_service import (
     detect_poi_query, search_poi_combined, format_pois_for_ai, 
     enrich_poi_complete, format_enriched_poi_for_ai, get_source_urls
 )
 from services.memory_service import MemoryService
-from services.intent_router import classify_chat_intent, GREETING_PATTERN, PRAISE_PATTERN
+from services.intent_router import (
+    classify_chat_intent,
+    classify_chat_intent_with_meta,
+    GREETING_PATTERN,
+    PRAISE_PATTERN,
+)
 from services.stream_sanitizer import StreamLookaheadSanitizer
 from services.web_search_engine import execute_web_search, fetch_jina_reader
 from services.destination_taxonomy import (
     generate_dual_queries,
+    extract_search_queries_with_lite,
+    is_vague_search_query,
+    _extract_real_history_lines,
     classify_and_filter_results,
-    prune_and_align_citations
+    prune_and_align_citations,
 )
-from utils.deps import get_gemini_key, get_verified_user, get_supabase
+from utils.deps import get_gemini_key, get_verified_user, get_supabase, build_supabase_rest_headers
 from utils.ai_config import DAILY_ROUTING, WORKHORSE_MODEL
 from google.genai import errors as genai_errors
 
 # Preserve original genai.Client reference so production reuses cached async pools while tests patching main.genai.Client stay isolated
 _ORIGINAL_GENAI_CLIENT = genai.Client
+_ORIGINAL_CLASSIFY_CHAT_INTENT = classify_chat_intent
 
 
 def _get_main_genai_client(api_key: str):
@@ -109,7 +121,7 @@ async def _periodic_supabase_keepalive():
             supabase_url = os.getenv("SUPABASE_URL", "").strip()
             supabase_key = os.getenv("SUPABASE_KEY", "").strip()
             if supabase_url and supabase_key:
-                headers = {"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
+                headers = build_supabase_rest_headers(supabase_key)
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     await client.get(f"{supabase_url}/rest/v1/itineraries?select=id&limit=1", headers=headers)
         except asyncio.CancelledError:
@@ -401,10 +413,7 @@ async def health_check_deep(request: Request):
                 _deep_health_cache["payload"] = err_payload
                 return JSONResponse(status_code=503, content={**err_payload, "cached": False})
                 
-            headers = {
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}"
-            }
+            headers = build_supabase_rest_headers(supabase_key)
             client = getattr(request.app.state, "client", None)
             if client:
                 res = await client.get(f"{supabase_url}/rest/v1/itineraries?select=id&limit=1", headers=headers, timeout=2.5)
@@ -1396,7 +1405,8 @@ async def stream_chat_generator(
     thought_signatures: Optional[List[dict]] = None,
     sources: Optional[List[dict]] = None,  # [NEW] v3.7.1: 來源 URLs
     system_instruction: Optional[str] = None,
-    locale: str = "zh"
+    locale: str = "zh",
+    trip_context_hint: Optional[str] = None,
 ):
     """
     SSE Generator for streaming AI responses
@@ -1443,9 +1453,17 @@ async def stream_chat_generator(
             sources = []
         candidate_sources: List[Dict[str, Any]] = []
         
-        # 1.1 執行兩階段意圖分流
+        # 1.1 執行兩階段意圖分流 (0ms Fast-Path -> gemini-decision-1 -> Flash-Lite Fallback)
         eval_message = raw_user_message or message
-        detected_intent, resolved_tools = await classify_chat_intent(eval_message, api_key=api_key)
+        if classify_chat_intent is not _ORIGINAL_CLASSIFY_CHAT_INTENT:
+            detected_intent, resolved_tools = await classify_chat_intent(eval_message, api_key=api_key)
+            intent_meta: Dict[str, Any] = {"source": "mock", "needs_query_rewrite": False}
+        else:
+            detected_intent, resolved_tools, intent_meta = await classify_chat_intent_with_meta(
+                eval_message,
+                api_key=api_key,
+                genai_client=client,
+            )
         
         # 🛡️ 核心工具調度矩陣：
         # - 短問候/讚美 (<= 30字) 或 Stage 2 明確分類為 CHAT (tools=[])：完全卸載工具，防止幻覺卡片
@@ -1554,19 +1572,61 @@ async def stream_chat_generator(
         executed_geo_anchor = ""
         if detected_intent == "SEARCH" and active_tools and not fetched_urls:
             executed_world_time: Dict[str, Any] = {}
-            # 雙軌目的地識別與關鍵字生成 (本地關鍵字提取，消除 50% API 消耗以徹底杜絕 15 RPM 429)
-            local_q, global_q, dest_meta = generate_dual_queries(eval_message, history=history, locale=locale)
+            # 雙軌目的地識別與關鍵字提煉 (gemini-3.1-flash-lite 上下文消解 + 本地雙軌保底)
+            local_q, global_q, dest_meta = generate_dual_queries(
+                eval_message,
+                history=history,
+                locale=locale,
+                trip_destination=trip_context_hint,
+            )
+            clean_q = str(dest_meta.get("clean_query") or "").strip()
+            real_hist = _extract_real_history_lines(history, max_turns=2)
+            needs_lite_rewrite = (
+                bool(intent_meta.get("needs_query_rewrite"))
+                or is_vague_search_query(clean_q)
+                or bool(real_hist)
+                or bool(trip_context_hint)
+                or len(clean_q) >= 12
+            )
+            skip_web_search = False
+            if needs_lite_rewrite and (api_key or client is not None):
+                lite_res = await extract_search_queries_with_lite(
+                    eval_message,
+                    history=history,
+                    trip_destination=trip_context_hint,
+                    locale=locale,
+                    api_key=api_key,
+                    genai_client=client,
+                )
+                if lite_res.get("source") != "deterministic_fallback":
+                    print(
+                        f"🔎 [QueryRewrite] {lite_res.get('source')} -> "
+                        f"should_search={lite_res.get('should_search')} local={lite_res.get('local_query')!r}"
+                    )
+                if lite_res.get("should_search") is False and lite_res.get("source") != "deterministic_fallback":
+                    skip_web_search = True
+                else:
+                    local_q = lite_res.get("local_query") or local_q
+                    global_q = lite_res.get("global_query") or global_q
+                    dest_meta = lite_res.get("metadata") or dest_meta
+                    search_query = lite_res.get("search_query") or local_q
+            else:
+                search_query = (
+                    local_q
+                    if (is_vague_search_query(clean_q) and dest_meta.get("destination_code", "GLOBAL") != "GLOBAL")
+                    else (clean_q or eval_message)
+                )
+
             dest_code = dest_meta.get("destination_code", "GLOBAL")
             dest_name = dest_meta.get("matched_destination", "Local" if is_en_stream else "當地")
             local_reg = dest_meta.get("local_region", "tw-tzh")
             global_reg = dest_meta.get("global_region", "us-en")
             trip_city = dest_name if dest_name and dest_name not in ("當地", "Local", "全球", "Global") else None
-            search_query = dest_meta.get("clean_query") or eval_message
 
             # 🌐 本地世界時間意圖解析 (Zero API Cost)
             eval_lower = eval_message.lower()
             time_keywords = ["幾點", "現在時間", "當地時間", "時區", "what time", "current time", "timezone"]
-            if any(k in eval_lower for k in time_keywords):
+            if not skip_web_search and any(k in eval_lower for k in time_keywords):
                 from services.temporal_service import query_world_time
                 target_loc = trip_city or dest_name
                 if not target_loc or target_loc in ("當地", "Local", "全球", "Global"):
@@ -1585,38 +1645,44 @@ async def stream_chat_generator(
                     time_data = query_world_time(target_loc, locale=locale)
                     executed_world_time[target_loc] = time_data
 
-            # 執行搜尋策略 (優先使用提煉後之 search_query)
+            # 執行搜尋策略 (優先使用提煉後之 search_query；若 3.1-flash-lite 明確判定無須搜網則跳過)
             raw_search_results = []
-            yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": search_query})}\n\n'
-            await asyncio.sleep(0)
-            try:
-                raw_search_results = await asyncio.wait_for(
-                    execute_web_search(search_query, region=local_reg),
-                    timeout=8.0,
-                )
-            except Exception:
-                raw_search_results = []
-
-            if not raw_search_results and (local_q != search_query or global_q != search_query):
+            if not skip_web_search:
+                yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": search_query})}\n\n'
+                await asyncio.sleep(0)
                 try:
-                    local_results = await asyncio.wait_for(
-                        execute_web_search(local_q, region=local_reg, max_results=3),
+                    raw_search_results = await asyncio.wait_for(
+                        execute_web_search(search_query, region=local_reg),
                         timeout=8.0,
                     )
                 except Exception:
-                    local_results = []
-                await asyncio.sleep(0.15)
-                try:
-                    global_results = await asyncio.wait_for(
-                        execute_web_search(global_q, region=global_reg, max_results=3),
-                        timeout=8.0,
-                    )
-                except Exception:
-                    global_results = []
-                raw_search_results = local_results + global_results
+                    raw_search_results = []
 
-            # 🛡️ AC-2: 雜訊黑名單過濾 (剔除政治/警察/研討會) 與網域分類
-            cleaned_search_data = classify_and_filter_results(raw_search_results, eval_message, dest_code=dest_code)
+                if not raw_search_results and (local_q != search_query or global_q != search_query):
+                    try:
+                        local_results = await asyncio.wait_for(
+                            execute_web_search(local_q, region=local_reg, max_results=3),
+                            timeout=8.0,
+                        )
+                    except Exception:
+                        local_results = []
+                    await asyncio.sleep(0.15)
+                    try:
+                        global_results = await asyncio.wait_for(
+                            execute_web_search(global_q, region=global_reg, max_results=3),
+                            timeout=8.0,
+                        )
+                    except Exception:
+                        global_results = []
+                    raw_search_results = local_results + global_results
+
+            # 🛡️ AC-2: 雜訊黑名單過濾 (剔除政治/警察/研討會/電玩雜訊) 與網域分類
+            cleaned_search_data = classify_and_filter_results(
+                raw_search_results,
+                eval_message,
+                dest_code=dest_code,
+                search_query=search_query if not skip_web_search else None,
+            )
             candidate_sources = cleaned_search_data[:5]
 
             for idx, s_item in enumerate(candidate_sources, 1):
@@ -1629,13 +1695,13 @@ async def stream_chat_generator(
                     "badge": s_item.get("badge")
                 })
 
-            # 🟢 空間意圖雙軌補全：若使用者提問涉及具體設施/美食/周邊，啟動後台地理韌性檢索
+            # 🟢 空間意圖雙軌補全：若使用者提問涉及具體設施/美食/周邊且未判定免搜網，啟動後台地理韌性檢索
             eval_lower = eval_message.lower()
             spatial_keywords = [
                 "附近", "周邊", "周圍", "拉麵", "美食", "必吃", "藥妝", "超商", "便利店", "咖啡", "景點", "小吃", "餐廳", "逛街",
                 "nearby", "around", "ramen", "food", "restaurant", "cafe", "coffee", "pharmacy", "drugstore", "convenience", "attraction", "spot", "eat", "snack"
             ]
-            if not executed_geo_results and any(kw in eval_lower for kw in spatial_keywords):
+            if not skip_web_search and not executed_geo_results and any(kw in eval_lower for kw in spatial_keywords):
                 inferred_anchor = (
                     dest_name
                     if dest_name and dest_name not in ("當地", "Local", "全球", "Global")
@@ -1888,9 +1954,9 @@ Live geographic coordinates have been verified above. When recommending nearby r
                                     emitted_any_output = True
                                     yield f'event: tool\ndata: {json.dumps({"function_call": fc_payload})}\n\n'
                         break
-                    except genai_errors.APIError as api_err:
+                    except _MODEL_API_ERRORS as api_err:
                         if not emitted_any_output and not full_text and not collected_function_calls:
-                            err_code = getattr(api_err, "code", None)
+                            err_code = _get_api_error_code(api_err)
                             err_kind = classify_api_error(api_err)
                             if err_kind == "config_unsupported" and not retried_config:
                                 retried_config = True
@@ -1961,10 +2027,10 @@ Live geographic coordinates have been verified above. When recommending nearby r
                 stream_success = True
                 break  # 成功，跳出降級迴圈
                 
-            except (genai_errors.APIError, asyncio.TimeoutError, Exception) as gen_error:
+            except (*_MODEL_API_ERRORS, asyncio.TimeoutError, Exception) as gen_error:
                 print(f"⚠️ {candidate_model} 串流失敗: {gen_error}")
                 # 🛡️ 2026 金鑰與壞請求安全防護：401/403 Auth 失敗與非 Config 400 Bad Request 立即中止並回傳明確代碼
-                if isinstance(gen_error, genai_errors.APIError):
+                if isinstance(gen_error, _MODEL_API_ERRORS):
                     err_kind = classify_api_error(gen_error)
                     if err_kind == "auth_fail":
                         auth_detail = (
@@ -1984,10 +2050,8 @@ Live geographic coordinates have been verified above. When recommending nearby r
                         return
 
                 # 🛡️ 429 速率限制平滑降級與多租戶熔斷記錄
-                if isinstance(gen_error, genai_errors.APIError):
-                    gen_code = getattr(gen_error, "code", None)
-                    if gen_code is None:
-                        gen_code = getattr(gen_error, "status_code", None)
+                if isinstance(gen_error, _MODEL_API_ERRORS):
+                    gen_code = _get_api_error_code(gen_error)
                     is_429 = (gen_code == 429)
                     if classify_api_error(gen_error) not in ("auth_fail", "bad_request", "config_unsupported"):
                         record_model_error(candidate_model, api_key=api_key, is_rate_limit=is_429)
@@ -2055,17 +2119,8 @@ Live geographic coordinates have been verified above. When recommending nearby r
         # 發送完成事件（含引文來源，確保格式統一為 {title, uri, citation_index, category, badge}）
         final_sources = []
         if candidate_sources:
-            # 🛡️ AC-4: 嚴格 1對1 引文對齊與索引錨定
+            # 🛡️ AC-4: 嚴格 1對1 引文對齊與索引錨定（禁止強行復活未引用之離題來源）
             final_sources = prune_and_align_citations(full_text, candidate_sources)
-            if not final_sources:
-                for s in candidate_sources[:2]:
-                    final_sources.append({
-                        "citation_index": s.get("citation_index", 1),
-                        "title": s.get("title", "Source"),
-                        "uri": s.get("url") or s.get("uri", ""),
-                        "category": s.get("category"),
-                        "badge": s.get("badge")
-                    })
         else:
             raw_collection = citations or sources or []
             for s in raw_collection:
@@ -2192,7 +2247,7 @@ async def test_gemini_api_key(request: Request, api_key: str = Depends(get_gemin
                 timeout=10.0,
             )
             return {"status": "ok", "message": "API Key 有效且已連線"}
-        except genai_errors.APIError as e:
+        except _MODEL_API_ERRORS as e:
             kind = classify_api_error(e)
             if kind == "config_unsupported":
                 degraded_cfg = build_degraded_config_on_400(safe_cfg, e)
@@ -2208,18 +2263,20 @@ async def test_gemini_api_key(request: Request, api_key: str = Depends(get_gemin
             raise
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Gemini API 測試連線逾時，請稍後重試")
-    except genai_errors.APIError as e:
+    except _MODEL_API_ERRORS as e:
         kind = classify_api_error(e)
+        err_code = _get_api_error_code(e)
+        err_msg = getattr(e, "message", None) or str(e)
         if kind == "auth_fail":
             raise HTTPException(
                 status_code=401, 
                 detail="API Key 無效、已過期或被 Google 封鎖。請至 Google AI Studio 重新生成 Auth Key。"
             )
-        if kind == "rate_limit" or getattr(e, "code", None) == 429:
-            raise HTTPException(status_code=429, detail=f"API 請求頻率超過配額限制 (429): {e.message}")
-        if kind == "retryable" or getattr(e, "code", None) in (500, 502, 503, 504):
-            raise HTTPException(status_code=503, detail=f"Gemini 服務暫時忙碌 ({getattr(e, 'code', 503)})，請稍後重試")
-        raise HTTPException(status_code=400, detail=f"API 測試失敗: {e.message}")
+        if err_code == 429:
+            raise HTTPException(status_code=429, detail=f"API 請求頻率超過配額限制 (429): {err_msg}")
+        if kind == "retryable" or err_code in (500, 502, 503, 504):
+            raise HTTPException(status_code=503, detail=f"Gemini 服務暫時忙碌 ({err_code or 503})，請稍後重試")
+        raise HTTPException(status_code=400, detail=f"API 測試失敗: {err_msg}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"金鑰測試伺服器錯誤: {str(e)}")
 
@@ -2426,6 +2483,15 @@ Answer the user's question based on the reference material above while maintaini
         salt=salt
     )
     
+    trip_context_hint = None
+    if isinstance(body.current_itinerary, dict):
+        hint_parts = [
+            str(body.current_itinerary.get("destination") or "").strip(),
+            str(body.current_itinerary.get("title") or "").strip(),
+        ]
+        joined_hint = " / ".join(p for p in hint_parts if p)
+        trip_context_hint = joined_hint[:120] if joined_hint else None
+
     return StreamingResponse(
         stream_chat_generator(
             api_key=api_key,
@@ -2435,7 +2501,8 @@ Answer the user's question based on the reference material above while maintaini
             thought_signatures=body.thought_signatures,
             sources=poi_sources,  # 🆕 v3.7.1: 傳遞來源
             system_instruction=system_instruction_payload,
-            locale=locale_val
+            locale=locale_val,
+            trip_context_hint=trip_context_hint,
         ),
         media_type="text/event-stream",
         headers={

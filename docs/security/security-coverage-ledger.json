@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-11",
+  "last_audit_date": "2026-11-17T07:05:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 377,
-    "audited_targets": 377,
-    "verified_vulnerabilities": 54,
+    "total_targets": 383,
+    "audited_targets": 383,
+    "verified_vulnerabilities": 55,
     "remediated_vulnerabilities": 156,
-    "dismissed_hypotheses": 167
+    "dismissed_hypotheses": 172
   },
   "targets": [
     {
@@ -4854,6 +4854,84 @@
       "validator_details": "Remediated & Sandbox-Verified per AD-151 4-layer hygiene defense: added /.agents/teamwork/ to .gitignore, added [Teamwork Scratch Gate] to .agents/skills/push/SKILL.md, and added assertions in test_root_hygiene_sentinel.py & root-hygiene-sentinel.test.ts.",
       "remediated_at": "2026-11-10T19:12:24Z",
       "resolution": "Remediated in docs/security/history/patches/patch_candidate_sw_teamwork_hygiene_2026-11-11.diff and verified by test_root_hygiene_sentinel.py & root-hygiene-sentinel.test.ts"
+    },
+    {
+      "id": "backend/services/intent_router.py:decision1_boundary_and_retry_guard",
+      "target_type": "backend_intent_routing",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "prompt_boundary_and_backoff_latency"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-17_ai_decision1_hydrogen.md",
+      "validator_details": "Security Sentinel adaptive validation DISMISSED defect hypothesis: _extract_clean_user_text(max_len=500) sanitizes envelopes, retry_config disables Speakeasy 4-attempt backoff (strategy='none', max_retries=0), timeout=(1.8, 2.2) falls back to Stage 2b without circuit-breaker pollution.",
+      "remediated_at": null,
+      "resolution": "Hardened in commit worktree and verified safe via 44 new tests and Sentinel validator."
+    },
+    {
+      "id": "backend/services/destination_taxonomy.py:lite_query_rewrite_xml_delimiter_and_circuit",
+      "target_type": "backend_ai_orchestrator",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "xml_delimiter_escaping_and_circuit_isolation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-17_ai_decision1_hydrogen.md",
+      "validator_details": "Security Sentinel adaptive validation DISMISSED defect hypothesis: _sanitize_xml_boundary_text strips invisible chars and escapes < > tags across user query, history turns, and trip destination; 3.2s outer timeout enforced (2.5s per model); empty/mock function-call outputs avoid circuit pollution; Wikipedia off-topic entries without query overlap are rejected in classify_and_filter_results.",
+      "remediated_at": null,
+      "resolution": "Verified safe via Sentinel validator and test_decision1_query_rewrite_hydrogen.py."
+    },
+    {
+      "id": "backend/services/destination_taxonomy.py:citation_pruner_cjk_overlap_guard",
+      "target_type": "backend_citation_filter",
+      "trust_boundary": "external_to_internal",
+      "vectors_checked": [
+        "citation_alignment_and_offtopic_suppression"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-17_ai_decision1_hydrogen.md",
+      "validator_details": "Security Sentinel adaptive validation DISMISSED defect hypothesis: prune_and_align_citations enforces 1-to-1 [i] alignment when markers exist and suppresses generic English/CJK filler and gaming noise via _CITATION_GENERIC_NOISE_RE and _CJK_CITATION_STOPGRAMS when markers are absent.",
+      "remediated_at": null,
+      "resolution": "Verified safe via Sentinel validator and full backend regression suite (688 passed)."
+    },
+    {
+      "id": "backend/services/model_manager.py:gemini4_hydrogen_capability_and_budget_guard",
+      "target_type": "backend_ai_orchestrator",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "model_config_compatibility_and_budget_floor"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-17_ai_decision1_hydrogen.md",
+      "validator_details": "Security Sentinel adaptive validation DISMISSED defect hypothesis: sanitize_config_for_model strips temperature/top_p/top_k/thinking_budget on gemini-3* and gemini-4*, forbids 'minimal' thinking level for gemini-4 (maps to 'low'), and enforces 16384/32768 max_output_tokens floors.",
+      "remediated_at": null,
+      "resolution": "Verified safe via Sentinel validator and test_model_manager / test_decision1_query_rewrite_hydrogen."
+    },
+    {
+      "id": "backend/main.py:uncited_source_resurrection_elimination",
+      "target_type": "backend_sse_stream",
+      "trust_boundary": "external_to_browser",
+      "vectors_checked": [
+        "ungrounded_source_disclosure"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-17_ai_decision1_hydrogen.md",
+      "validator_details": "Security Sentinel adaptive validation DISMISSED defect hypothesis: stream_chat_generator assigns final_sources directly from prune_and_align_citations without resurrecting uncited candidate_sources[:2].",
+      "remediated_at": null,
+      "resolution": "Verified safe via Sentinel validator and stream citation alignment tests."
+    },
+    {
+      "id": "cloudflare/edge-shield/worker.js:poi_service_auth_header_forwarding_gap",
+      "target_type": "cloudflare_edge_worker",
+      "trust_boundary": "public_to_internal_service_binding",
+      "vectors_checked": [
+        "gateway_header_normalization_consistency"
+      ],
+      "status": "CONFIRMED_PENDING_DEV",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-17_ai_decision1_hydrogen.md",
+      "validator_details": "Confirmed via Sentinel validator + pytest_in_memory PoC + read-only `wrangler secret list` returning `[]` on live tabijiapp-edge-shield: fallback branch when env.SESSION_SECRET is unset strips X-User-ID but forwards unverified Authorization header to env.POI_SERVICE. Held behind Human Gate pending SESSION_SECRET provisioning.",
+      "remediated_at": null,
+      "resolution": "docs/security/history/patches/patch_candidate_ai_decision1_hydrogen_2026-11-17.diff"
     }
   ],
   "known_design_intents": {

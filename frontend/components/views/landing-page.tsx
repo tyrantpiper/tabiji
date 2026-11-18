@@ -70,7 +70,7 @@ import { usersApi } from "@/lib/api"
 import { restoreAccountWithKey, ensureValidSession } from "@/lib/auth-session"
 import { debugLog, debugWarn } from "@/lib/debug"
 
-import { generateSecureUUID, isValidRecoveryKey } from "@/lib/security"
+import { generateSecureUUID, isValidRecoveryKey, TBJ_REC_REGEX } from "@/lib/security"
 
 function generateUUID() {
     return generateSecureUUID();
@@ -93,6 +93,25 @@ function clearActiveSelection(inputEl: HTMLInputElement | null) {
     }
     if (typeof window !== "undefined" && typeof window.getSelection === "function") {
         window.getSelection()?.removeAllRanges()
+    }
+}
+
+function clearPersistedTripSelection() {
+    for (const storageKey of ["trip-storage", "tabidachi-trip-storage"]) {
+        try {
+            const rawTripStorage = localStorage.getItem(storageKey)
+            if (rawTripStorage) {
+                const parsed = JSON.parse(rawTripStorage)
+                if (parsed && parsed.state) {
+                    parsed.state.activeTripId = null
+                    parsed.state.activeTripTitle = null
+                    parsed.state.userId = null
+                    localStorage.setItem(storageKey, JSON.stringify(parsed))
+                }
+            }
+        } catch {
+            // Ignore json parse error
+        }
     }
 }
 
@@ -146,7 +165,7 @@ export function LandingPage() {
 
         const storedName = localStorage.getItem("user_nickname")
         const storedId = localStorage.getItem("user_uuid")
-        if (storedName && storedId) {
+        if (storedName && storedId && storedId !== "null" && storedId !== "undefined") {
             setNickname(storedName)
             setIsLoggedIn(true)
         }
@@ -162,14 +181,18 @@ export function LandingPage() {
         setIsLoggingIn(true)
 
         try {
-            localStorage.setItem("user_nickname", nickname)
-
             // 1. 若連線正常，優先透過 ensureValidSession 讓伺服器正規派發合法憑證與使用者 ID (若本機已有則複用)
-            let uuid = localStorage.getItem("user_uuid")
+            let uuid = localStorage.getItem("user_uuid")?.trim() || null
+            if (uuid === "null" || uuid === "undefined") {
+                uuid = null
+            }
             if (!uuid && navigator.onLine) {
-                await ensureValidSession().catch(() => null)
+                await Promise.resolve(ensureValidSession()).catch(() => null)
                 if (!isMountedRef.current) return
-                uuid = localStorage.getItem("user_uuid")
+                uuid = localStorage.getItem("user_uuid")?.trim() || null
+                if (uuid === "null" || uuid === "undefined") {
+                    uuid = null
+                }
             }
 
             // 2. 📴 離線防衛降級路徑：完全斷網時本機安全派發離線 UUID，保證 100% 正常進入 AppShell
@@ -177,6 +200,8 @@ export function LandingPage() {
                 uuid = generateUUID()
                 localStorage.setItem("user_uuid", uuid)
             }
+
+            localStorage.setItem("user_nickname", nickname)
 
             // 🆕 Sync nickname to backend database (Nickname <-> RecoveryKey Binding)
             if (navigator.onLine) {
@@ -265,19 +290,7 @@ export function LandingPage() {
             // 🛡️ 物理四清：引繼換帳號時立即抹除前一階段匿名或殘留的行程狀態 (含 Zustand 持久化快取)
             localStorage.removeItem("active_trip_id")
             localStorage.removeItem("active_trip_title")
-            try {
-                const rawTripStorage = localStorage.getItem("tabidachi-trip-storage")
-                if (rawTripStorage) {
-                    const parsed = JSON.parse(rawTripStorage)
-                    if (parsed && parsed.state) {
-                        parsed.state.activeTripId = null
-                        parsed.state.activeTripTitle = null
-                        localStorage.setItem("tabidachi-trip-storage", JSON.stringify(parsed))
-                    }
-                }
-            } catch {
-                // Ignore json parse error
-            }
+            clearPersistedTripSelection()
 
             // 🔒 設置 5 秒引繼過渡時間鎖，杜絕跨帳號異步加載時之誤判 Toast 警報
             if (typeof window !== "undefined") {
@@ -308,23 +321,22 @@ export function LandingPage() {
             if (isOffline) {
                 try {
                     // Allow offline recovery for local-first cached operations
-                    localStorage.setItem("user_uuid", cleanCode)
+                    localStorage.removeItem("tabiji_session_token")
+                    localStorage.removeItem("tabiji_pop_token")
+                    if (TBJ_REC_REGEX.test(cleanCode)) {
+                        localStorage.setItem("user_recovery_key", cleanCode)
+                        localStorage.setItem("user_uuid", cleanCode)
+                    } else {
+                        localStorage.removeItem("user_recovery_key")
+                        localStorage.setItem("user_uuid", cleanCode.toLowerCase())
+                    }
                     localStorage.setItem("user_nickname", nickname || "Traveler")
                     localStorage.removeItem("active_trip_id")
                     localStorage.removeItem("active_trip_title")
-                    try {
-                        const rawTripStorage = localStorage.getItem("tabidachi-trip-storage")
-                        if (rawTripStorage) {
-                            const parsed = JSON.parse(rawTripStorage)
-                            if (parsed && parsed.state) {
-                                parsed.state.activeTripId = null
-                                parsed.state.activeTripTitle = null
-                                localStorage.setItem("tabidachi-trip-storage", JSON.stringify(parsed))
-                            }
-                        }
-                    } catch {}
+                    clearPersistedTripSelection()
                     if (typeof window !== "undefined") {
                         sessionStorage.setItem("tabiji_identity_transition_lock", Date.now().toString())
+                        window.dispatchEvent(new CustomEvent('user-login-state-changed'))
                     }
                     toast.success("Account recovered (Offline Mode)")
                     recoverTimerRef.current = setTimeout(() => {

@@ -37,14 +37,14 @@ export function getSupabaseClient(): SupabaseClient | null {
         return globalForSupabase.supabaseClient
     }
 
-    // 檢查環境變數
+    // 檢查環境變數 (優先讀取新制 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY，向後相容 ANON_KEY)
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
     if (!supabaseUrl || !supabaseKey) {
         // 不 crash，只 log 警告
         if (process.env.NODE_ENV === 'development') {
-            console.warn('[Supabase] NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY not set')
+            console.warn('[Supabase] NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY / NEXT_PUBLIC_SUPABASE_ANON_KEY not set')
         }
         return null
     }
@@ -54,8 +54,9 @@ export function getSupabaseClient(): SupabaseClient | null {
         global: {
             fetch: (url, options = {}) => {
                 const headers = new Headers(options.headers)
-                const uid = typeof window !== 'undefined' ? localStorage.getItem("user_uuid") : null
-                if (uid) {
+                const rawUid = typeof window !== 'undefined' ? localStorage.getItem("user_uuid") : null
+                const uid = rawUid?.trim()
+                if (uid && uid !== "null" && uid !== "undefined" && !uid.toLowerCase().startsWith("tbj_rec_")) {
                     headers.set("x-user-id", uid)
                 }
                 return fetch(url, { ...options, headers })

@@ -136,12 +136,13 @@ function resolveSupabaseInternalApiKeys(): string[] {
   const pushUnique = (val: unknown) => {
     if (typeof val !== "string") return;
     const trimmed = val.trim();
-    if (trimmed && !candidates.includes(trimmed)) {
+    if (trimmed && !trimmed.startsWith("sb_publishable_") && !candidates.includes(trimmed)) {
       candidates.push(trimmed);
     }
   };
 
   pushUnique(getEnv("SUPABASE_SERVICE_ROLE_KEY"));
+  pushUnique(getEnv("SUPABASE_SECRET_KEY"));
   const secretKeysJson = getEnv("SUPABASE_SECRET_KEYS").trim();
   if (secretKeysJson) {
     try {
@@ -194,7 +195,7 @@ async function verifyWebhookSignatureViaRpc(
         "Content-Type": "application/json",
         apikey: key,
       };
-      if (!key.startsWith("sb_secret_")) {
+      if (!key.startsWith("sb_")) {
         headers.Authorization = `Bearer ${key}`;
       }
       const resp = await fetch(`${baseUrl}/rest/v1/rpc/verify_cleanup_webhook_signature`, {
@@ -425,18 +426,20 @@ export async function handleCleanupRequest(req: Request): Promise<Response> {
     });
   }
 
-  const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY").trim();
+  const internalApiKeys = resolveSupabaseInternalApiKeys();
   const webhookSecret = getEnv("CLEANUP_WEBHOOK_SECRET").trim();
   const supabaseUrl = getEnv("SUPABASE_URL").trim();
   const authHeader = req.headers.get("authorization") || "";
   const bearerMatch = authHeader.trim().match(/^bearer\s+(.+)$/i);
   const token = bearerMatch ? bearerMatch[1].trim() : "";
+  const apiKeyHeader = (req.headers.get("apikey") || "").trim();
   const reqWebhookSecret = (req.headers.get("x-webhook-secret") || "").trim();
   const webhookTsHeader = (req.headers.get("x-webhook-timestamp") || "").trim();
   const webhookSigHeader = (req.headers.get("x-webhook-signature") || "").trim();
 
   let authorized =
-    Boolean(serviceRoleKey && token && timingSafeEqual(token, serviceRoleKey)) ||
+    (Boolean(token) && internalApiKeys.some((key) => timingSafeEqual(token, key))) ||
+    (Boolean(apiKeyHeader) && internalApiKeys.some((key) => timingSafeEqual(apiKeyHeader, key))) ||
     Boolean(webhookSecret && reqWebhookSecret && timingSafeEqual(reqWebhookSecret, webhookSecret));
 
   if (!authorized && token) {

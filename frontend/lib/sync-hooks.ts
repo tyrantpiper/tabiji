@@ -119,7 +119,7 @@ export function useBackgroundSync() {
                             // 🛡️ 若仍收到 401，嘗試強制刷新一次憑證自癒
                             if (res.status === 401 && typeof window !== 'undefined') {
                                 console.warn('[SyncEngine] 🔄 401 detected during replay, refreshing session...');
-                                const freshToken = await ensureValidSession().catch(() => null);
+                                const freshToken = await ensureValidSession(true).catch(() => null);
                                 if (freshToken) {
                                     headers['Authorization'] = `Bearer ${freshToken}`;
                                     res = await fetch(req.url, {

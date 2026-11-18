@@ -118,9 +118,10 @@ export default function ChatWidget() {
     useEffect(() => {
         // 初始檢查
         const checkLogin = () => {
-            const userId = localStorage.getItem("user_uuid")
-            const userName = localStorage.getItem("user_nickname")
-            setIsLoggedIn(!!(userId && userName))
+            const rawUserId = localStorage.getItem("user_uuid")?.trim()
+            const userName = localStorage.getItem("user_nickname")?.trim()
+            const hasValidId = Boolean(rawUserId && rawUserId !== "null" && rawUserId !== "undefined")
+            setIsLoggedIn(Boolean(hasValidId && userName))
         }
         checkLogin()
 
@@ -1054,10 +1055,12 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                 if (res.status === 401 && typeof window !== "undefined") {
                     const errText = await res.clone().text().catch(() => "")
                     const isGeminiKeyAuthError = /gemini|api[_ ]?key|金鑰|個人檔案|profile|google ai studio|已失效|無效或已過期/i.test(errText)
-                    if (!isGeminiKeyAuthError && localStorage.getItem("tabiji_session_token")) {
+                    if (!isGeminiKeyAuthError && (token || localStorage.getItem("tabiji_session_token"))) {
                         console.warn("⚠️ [Chat] Received 401 Unauthorized in fallback chat, refreshing session token...")
-                        localStorage.removeItem("tabiji_session_token")
-                        const freshToken = await ensureValidSession().catch(() => null)
+                        const freshToken = await ensureValidSession(true).catch(() => null)
+                        if (!freshToken) {
+                            localStorage.removeItem("tabiji_session_token")
+                        }
                         if (freshToken) {
                             headers["Authorization"] = `Bearer ${freshToken}`
                             res = await fetch(`${API_HOST}/api/chat`, {

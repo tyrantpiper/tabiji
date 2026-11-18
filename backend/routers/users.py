@@ -15,7 +15,7 @@ import time
 from urllib.parse import quote, unquote, urlparse
 import httpx
 import orjson
-from utils.deps import get_supabase, get_verified_user
+from utils.deps import get_supabase, get_verified_user, build_supabase_rest_headers
 from models.base import UpdateProfileRequest
 import os
 from services.geocode_service import HTTPX_CLIENT
@@ -345,12 +345,13 @@ async def update_user_profile(
             print("❌ Missing Supabase credentials in .env")
             raise HTTPException(status_code=500, detail="Server configuration error: Missing Supabase credentials")
 
-        headers = {
-            "apikey": supabase_key,
-            "Authorization": f"Bearer {supabase_key}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
-        }
+        headers = build_supabase_rest_headers(
+            supabase_key,
+            {
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            },
+        )
         
         # Step 1: Check if user exists
         select_cols = "id,avatar_url" if request.avatar_url is not None else "id"

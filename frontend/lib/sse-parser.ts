@@ -228,12 +228,14 @@ export async function streamChat(
             errDetail = await response.clone().text().catch(() => "")
         }
         const isGeminiKeyAuthError = /gemini|api[_ ]?key|金鑰|個人檔案|profile|google ai studio|已失效|無效或已過期/i.test(errDetail)
-        const hasSessionToken = Boolean(localStorage.getItem("tabiji_session_token"))
+        const hasSessionToken = Boolean(token || localStorage.getItem("tabiji_session_token"))
 
         if (!isGeminiKeyAuthError && hasSessionToken) {
             console.warn("⚠️ [SSE] Received 401 Unauthorized during stream handshake, refreshing session token...")
-            localStorage.removeItem("tabiji_session_token")
-            const freshToken = await ensureValidSession().catch(() => null)
+            const freshToken = await ensureValidSession(true).catch(() => null)
+            if (!freshToken) {
+                localStorage.removeItem("tabiji_session_token")
+            }
             if (freshToken && !signal?.aborted) {
                 headers["Authorization"] = `Bearer ${freshToken}`
                 response = await fetch(`${apiUrl}/api/chat/stream`, {

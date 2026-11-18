@@ -13,6 +13,7 @@ import { SyncEngineControl } from "./sync-engine";
 const TOKEN_KEY = "tabiji_session_token";
 const POP_TOKEN_KEY = "tabiji_pop_token";
 const RECOVERY_KEY = "user_uuid";
+const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
 
 let inFlightSessionPromise: Promise<string | null> | null = null;
 let isReauthBroadcasting = false;
@@ -37,8 +38,12 @@ export function dismissReauthPrompt() {
 export function isUserLoggedIn(): boolean {
     if (typeof window === "undefined") return false;
     try {
-        const hasNicknameAndId = Boolean(localStorage.getItem("user_nickname") && localStorage.getItem(RECOVERY_KEY));
-        const hasModernRecoveryKey = Boolean(localStorage.getItem("user_recovery_key"));
+        const uid = localStorage.getItem(RECOVERY_KEY)?.trim();
+        const nick = localStorage.getItem("user_nickname")?.trim();
+        const hasValidUid = Boolean(uid && uid !== "null" && uid !== "undefined");
+        const hasNicknameAndId = Boolean(nick && hasValidUid);
+        const recKey = localStorage.getItem("user_recovery_key")?.trim();
+        const hasModernRecoveryKey = Boolean(recKey && recKey !== "null" && recKey !== "undefined");
         return hasNicknameAndId || hasModernRecoveryKey;
     } catch {
         return false;
@@ -213,8 +218,20 @@ export async function getValidSessionToken(): Promise<string | null> {
  * - 若離線狀態：靜默回傳 null，保障 PWA 離線自癒不中斷
  * - 若聯網狀態：背景向後端換票/領票 (攜帶現有 Token 作為持有證明 Proof-of-Possession 以支援舊裝置升級)
  */
-export async function ensureValidSession(): Promise<string | null> {
+export async function ensureValidSession(forceRefresh: boolean = false): Promise<string | null> {
     if (typeof window === "undefined") return null;
+
+    if (forceRefresh) {
+        try {
+            const staleToken = localStorage.getItem(TOKEN_KEY);
+            if (staleToken && isJwtStructure(staleToken)) {
+                localStorage.setItem(POP_TOKEN_KEY, staleToken);
+            }
+            localStorage.removeItem(TOKEN_KEY);
+        } catch {
+            // ignore storage errors
+        }
+    }
 
     const existingToken = getCachedToken();
     if (existingToken) return existingToken;
@@ -281,6 +298,23 @@ export async function ensureValidSession(): Promise<string | null> {
 
             const data = await res.json();
             if (data?.access_token) {
+                const rawCurrentUuid = localStorage.getItem(RECOVERY_KEY)?.trim() || null;
+                const isOfflineRecPlaceholder = Boolean(rawCurrentUuid && TBJ_REC_REGEX.test(rawCurrentUuid));
+                const establishedUuid = (
+                    rawCurrentUuid &&
+                    rawCurrentUuid !== "null" &&
+                    rawCurrentUuid !== "undefined" &&
+                    !isOfflineRecPlaceholder
+                ) ? rawCurrentUuid : null;
+
+                // 🛡️ 先驗證身分一致性再寫入任何憑證，防止異常回應污染本地 Token / 引繼碼
+                if (storedKey && !data.upgraded && establishedUuid && data.user_id) {
+                    if (data.user_id.toLowerCase() !== establishedUuid.toLowerCase()) {
+                        console.error("🚨 [Auth] Security Sentinel Alert: Session response user_id differs from stored recovery key! Refusing to overwrite key.");
+                        throw new Error("Identity mismatch — refusing to overwrite recovery key");
+                    }
+                }
+
                 localStorage.setItem(TOKEN_KEY, data.access_token);
                 localStorage.setItem(POP_TOKEN_KEY, data.access_token);
                 // 🛡️ 雙軌固化：既有 UUID 與新版專屬引繼碼同步持久化
@@ -298,14 +332,15 @@ export async function ensureValidSession(): Promise<string | null> {
                         }
                     }
                 }
-                if (storedKey && !data.upgraded) {
-                    const currentUuid = localStorage.getItem(RECOVERY_KEY);
-                    if (currentUuid && data.user_id && data.user_id !== currentUuid) {
-                        console.error("🚨 [Auth] Security Sentinel Alert: Session response user_id differs from stored recovery key! Refusing to overwrite key.");
-                        throw new Error("Identity mismatch — refusing to overwrite recovery key");
-                    }
-                } else if (data.user_id) {
+                if (data.user_id && (!establishedUuid || data.upgraded)) {
                     localStorage.setItem(RECOVERY_KEY, data.user_id);
+                    if (
+                        typeof window !== "undefined" &&
+                        rawCurrentUuid !== data.user_id &&
+                        (isOfflineRecPlaceholder || Boolean(localStorage.getItem("user_nickname")))
+                    ) {
+                        window.dispatchEvent(new CustomEvent("user-login-state-changed"));
+                    }
                 }
                 return data.access_token as string;
             }
@@ -439,8 +474,6 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
     }
     return null;
 }
-
-const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
 
 /**
  * 🛡️ [Sentinel Local-First Patch] 原地重錨定會話憑證 (In-Place Session Re-anchoring)

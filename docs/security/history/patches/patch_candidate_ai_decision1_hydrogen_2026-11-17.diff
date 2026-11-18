@@ -1,0 +1,14 @@
+# Security Sentinel Candidate Patch (HUMAN GATE REQUIRED BEFORE DEPLOY / APPLY)
+# Audit Topic: AI Decision-1 + Query Rewrite + Gemini 4 Hydrogen + Cloud Edge Shield
+# Target: cloudflare/edge-shield/worker.js:poi_service_auth_header_forwarding_gap
+# Pre-condition before applying: Verify `env.SESSION_SECRET` is provisioned in Cloudflare Workers secrets for `tabiji-edge-shield` so legitimate authenticated requests go through HMAC/JWT verification first rather than losing Authorization headers in the unconfigured fallback branch.
+
+--- a/cloudflare/edge-shield/worker.js
++++ b/cloudflare/edge-shield/worker.js
+@@ -82,7 +82,8 @@
+       } else {
+-        // 後備防禦：未配置密鑰前，無條件剝除外部偽造標頭
++        // 後備防禦：未配置密鑰前，無條件剝除外部偽造標頭與未驗證憑證
+         headers.delete("X-User-ID");
++        headers.delete("Authorization");
+       }

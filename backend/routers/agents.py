@@ -7,7 +7,9 @@ optimization, and live booking/pricing data mesh using Google's
 Interactions API with automated Gemini 3.7 Flash fallback defense.
 """
 
+import copy
 import os
+import re
 import time
 import uuid
 import logging
@@ -16,15 +18,24 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import httpx
+
+os.environ.setdefault("GOOGLE_GENAI_API_VERSION", "v1beta")
+
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
+_agent_err_types = [genai_errors.APIError]
 try:
     from google.genai._gaos.lib import compat_errors as _compat_errors
-    _INTERACTION_API_ERRORS = (genai_errors.APIError, _compat_errors.APIError)
+    _agent_err_types.append(_compat_errors.APIError)
 except ImportError:  # pragma: no cover
     _compat_errors = None
-    _INTERACTION_API_ERRORS = (genai_errors.APIError,)
+try:
+    from google.genai._gaos import errors as _gaos_errors
+    _agent_err_types.append(_gaos_errors.GenAiError)
+except ImportError:  # pragma: no cover
+    _gaos_errors = None
+_INTERACTION_API_ERRORS = tuple(_agent_err_types)
 
 ANTIGRAVITY_AGENT_ID = os.getenv("ANTIGRAVITY_AGENT_ID", "antigravity-preview-09-2026")
 
@@ -33,6 +44,9 @@ def _get_api_error_status(err: Exception) -> Optional[int]:
     code = getattr(err, "code", None)
     if code is None:
         code = getattr(err, "status_code", None)
+    if code is None:
+        raw_resp = getattr(err, "raw_response", None)
+        code = getattr(raw_resp, "status_code", None)
     return code
 
 
@@ -98,6 +112,8 @@ async def _fetch_live_pricing_context(origin: str, destination: str, locale: str
         is_en = bool(locale and str(locale).strip().lower().startswith("en"))
         dest_clean = destination.strip().upper()[:3]
         orig_clean = origin.strip().upper()[:3]
+        if not re.fullmatch(r"[A-Z]{3}", dest_clean) or not re.fullmatch(r"[A-Z]{3}", orig_clean):
+            return ""
         async with httpx.AsyncClient(timeout=6.0) as client:
             resp = await client.get(
                 f"{TP_BASE}/aviasales/v3/prices_for_dates",
@@ -161,7 +177,9 @@ async def _execute_flash_fallback_task(task_id: str, prompt: str, api_key: str, 
             thinking_config=types.ThinkingConfig(thinking_level="low", include_thoughts=False),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
-        preferred_routing = ["gemini-3.8-flash"] + [m for m in DAILY_ROUTING if m != "gemini-3.8-flash"]
+        preferred_routing = ["gemini-4-hydrogen", "gemini-3.8-flash"] + [
+            m for m in DAILY_ROUTING if m not in ("gemini-4-hydrogen", "gemini-3.8-flash")
+        ]
         effective_routing = build_effective_routing("SEARCH", preferred_routing, api_key=api_key)
         last_error: Optional[Exception] = None
 
@@ -215,6 +233,52 @@ async def _execute_flash_fallback_task(task_id: str, prompt: str, api_key: str, 
                     getattr(t, "google_search", None) is not None
                     for t in (getattr(safe_config, "tools", None) or [])
                 )
+                # Free Tier GoogleSearch() Grounding 429：立即嘗試剝離 Search Grounding 重試該模型一次（不污染熔斷器）
+                if err_code == 429 and has_search_grounding:
+                    try:
+                        ungrounded_cfg = copy.deepcopy(safe_config)
+                        ungrounded_cfg.tools = None
+                        ungrounded_resp = await _execute_with_transient_retry(
+                            lambda cfg: client.aio.models.generate_content(
+                                model=candidate_model,
+                                contents=prompt,
+                                config=cfg,
+                            ),
+                            model_name=candidate_model,
+                            config=ungrounded_cfg,
+                            timeout_sec=timeout_sec,
+                            tag="AgentFallbackUngrounded",
+                        )
+                        ungrounded_text = extract_clean_response_text(ungrounded_resp)
+                        if ungrounded_text and ungrounded_text.strip():
+                            _FALLBACK_TASKS[task_id] = {
+                                "status": "completed",
+                                "output_text": ungrounded_text,
+                                "engine": candidate_model if candidate_model not in ("gemini-3.7-flash", "gemini-3.8-flash") else "gemini-3.7-flash-fallback",
+                                "completed_at": time.time(),
+                            }
+                            return
+                    except _INTERACTION_API_ERRORS as e2:
+                        kind2 = classify_api_error(e2)
+                        if kind2 == "auth_fail":
+                            _FALLBACK_TASKS[task_id] = {
+                                "status": "failed",
+                                "error": "API Key 無效或已失效，請更新 Gemini API Key。" if not is_en else "Invalid or revoked Gemini API Key.",
+                                "code": 401,
+                                "engine": "gemini-3.7-flash-fallback",
+                            }
+                            return
+                        err2_code = _get_api_error_status(e2)
+                        err2_msg = (_get_api_error_message(e2) or "").lower()
+                        if kind2 not in ("bad_request", "config_unsupported") and not (
+                            err2_code == 429 and ("grounding" in err2_msg or "search" in err2_msg)
+                        ):
+                            record_model_error(candidate_model, api_key=api_key, is_rate_limit=(err2_code == 429))
+                        last_error = e2
+                        continue
+                    except Exception as e2:
+                        last_error = e2
+                        continue
                 # Free Tier GoogleSearch() Grounding 429 不污染全域熔斷器，避免連帶封鎖無須聯網的常規端點
                 if kind not in ("bad_request", "config_unsupported") and not (err_code == 429 and has_search_grounding):
                     record_model_error(candidate_model, api_key=api_key, is_rate_limit=(err_code == 429))
@@ -373,6 +437,19 @@ async def get_interaction_status(
             getattr(interaction, "text", None) or
             getattr(interaction, "output", None)
         )
+        if not out_text:
+            steps = getattr(interaction, "steps", None)
+            if isinstance(steps, list):
+                step_texts = []
+                for step in steps:
+                    if getattr(step, "type", None) == "model_output":
+                        content = getattr(step, "content", None)
+                        if isinstance(content, list):
+                            for item in content:
+                                if getattr(item, "type", None) == "text" and isinstance(getattr(item, "text", None), str):
+                                    step_texts.append(item.text)
+                if step_texts:
+                    out_text = "".join(step_texts)
         return {
             "id": interaction.id,
             "status": normalized_status,

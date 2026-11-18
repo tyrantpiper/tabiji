@@ -12,6 +12,7 @@ Intelligent multi-tier routing with:
 """
 
 import copy
+import inspect
 import time
 import os
 import asyncio
@@ -25,20 +26,33 @@ import weakref
 from collections import OrderedDict
 from contextvars import ContextVar
 from dataclasses import dataclass
+
+# google-genai>=3.0.0 預設為 v1，但 gemini-decision-1、interactions 與 preview 模型必須走 v1beta
+os.environ.setdefault("GOOGLE_GENAI_API_VERSION", "v1beta")
+
 from google import genai
 from google.genai import types, errors
+_ORIGINAL_GENAI_CLIENT = genai.Client
+_api_err_types = [errors.APIError]
 try:
     from google.genai._gaos.lib import compat_errors as _compat_errors
-    _MODEL_API_ERRORS = (errors.APIError, _compat_errors.APIError)
+    _api_err_types.append(_compat_errors.APIError)
 except ImportError:  # pragma: no cover
     _compat_errors = None
-    _MODEL_API_ERRORS = (errors.APIError,)
+try:
+    from google.genai._gaos import errors as _gaos_errors
+    _api_err_types.append(_gaos_errors.GenAiError)
+except ImportError:  # pragma: no cover
+    _gaos_errors = None
+_MODEL_API_ERRORS = tuple(_api_err_types)
 from typing import Optional, List, Dict, Any, Union, Tuple, Iterator
 
 # --- 路由策略 (從 ai_config 導入) ---
 from utils.ai_config import (
     DAILY_ROUTING,
     HEAVY_ROUTING,
+    PLANNING_ROUTING,
+    QUERY_REWRITE_ROUTING,
     EXTRACTION_ROUTING,
     GEOCODE_ROUTING,
     WORKHORSE_MODEL,
@@ -66,6 +80,17 @@ class ModelCaps:
 
 
 MODEL_CAPS: Dict[str, ModelCaps] = {
+    "gemini-4-hydrogen": ModelCaps(
+        supports_schema=True,
+        supports_tools=True,       # 🟢 旗艦工具調用與多輪推論
+        supports_media_resolution=True,
+        supports_thinking=True,    # 🚀 支援 low/medium/high/xhigh（嚴禁 minimal）
+        supports_grounding=True,   # 🚀 支援 Search/Maps（Free Tier 維持 explicit_grounding=False 防 429）
+        requires_property_ordering=False,
+        allow_extraction_fallback=True,
+        family="gemini",
+        supported_thinking_levels=("low", "medium", "high", "xhigh"),
+    ),
     "gemini-3.8-flash": ModelCaps(
         supports_schema=True,
         supports_tools=True,       # 🟢 啟用頂級神經連結能力
@@ -464,11 +489,11 @@ SEARCH_CHAT_TOOLS = [
 ]
 
 # 意圖分群
-INTENTS_REQUIRING_JSON = {"EXTRACTION", "PLANNING", "PARSE_MD", "POI_ENRICH", "MEMORY_EXTRACT"}
+INTENTS_REQUIRING_JSON = {"EXTRACTION", "PLANNING", "PARSE_MD", "POI_ENRICH", "MEMORY_EXTRACT", "QUERY_REWRITE"}
 TOOL_REQUIRED_INTENTS = {"ITINERARY", "REMOVE_ITINERARY", "EXPENSE", "COMPOSITE"}
 LOW_THINKING_SUPPRESSED_INTENTS = {
     "GEOCODE", "INTENT_PARSE", "SUMMARIZE", "POI_ENRICH", "POI_RECOMMEND",
-    "MEMORY_EXTRACT", "VERIFY", "EXTRACTION", "PARSE_MD"
+    "MEMORY_EXTRACT", "VERIFY", "EXTRACTION", "PARSE_MD", "QUERY_REWRITE"
 }
 INTENTS_ALLOW_GEMMA_LAST_RESORT = {
     "PLANNING", "PARSE_MD", "SUMMARIZE", "POI_ENRICH", "POI_RECOMMEND",
@@ -528,6 +553,7 @@ def get_tools_for_model(model_name: str, intent_type: str = "CHAT") -> Optional[
 MAX_CLIENT_CACHE_SIZE = 32
 MODEL_CALL_TIMEOUT = 45.0
 GEMMA_CALL_TIMEOUT = 35.0
+HYDROGEN_CALL_TIMEOUT = 25.0
 PLANNING_CALL_TIMEOUT = 90.0
 PLANNING_SSE_TIMEOUT = 120.0
 RETIRED_CLIENT_CLOSE_DELAY = 150.0
@@ -568,6 +594,8 @@ def _get_call_timeout(intent_type: str, model_name: Optional[str] = None) -> flo
         base_timeout = MODEL_CALL_TIMEOUT
 
     if model_name:
+        if model_name.startswith("gemini-4"):
+            return min(base_timeout, HYDROGEN_CALL_TIMEOUT)
         caps = MODEL_CAPS.get(model_name)
         if caps and caps.family == "gemma":
             return min(base_timeout, GEMMA_CALL_TIMEOUT)
@@ -638,7 +666,10 @@ def get_cached_client(api_key: str) -> genai.Client:
     if client is not None:
         target_cache.move_to_end(api_key)
     else:
-        client = genai.Client(api_key=api_key)
+        if genai.Client is _ORIGINAL_GENAI_CLIENT:
+            client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
+        else:
+            client = genai.Client(api_key=api_key)
         target_cache[api_key] = client
         while len(target_cache) > MAX_CLIENT_CACHE_SIZE:
             _, evicted = target_cache.popitem(last=False)
@@ -901,6 +932,17 @@ def build_json_schema_for_intent(intent_type: str) -> Optional[Dict[str, Any]]:
             },
             "required": ["preferences"],
         }
+    if intent_type == "QUERY_REWRITE":
+        return {
+            "type": "object",
+            "properties": {
+                "should_search": {"type": "boolean"},
+                "destination": {"type": "string"},
+                "local_query": {"type": "string"},
+                "global_query": {"type": "string"},
+            },
+            "required": ["should_search", "local_query", "global_query"],
+        }
     if intent_type == "PLANNING":
         # 🆕 v28.7 Nested Per-Day Architecture (Hard Enforcement)
         return {
@@ -1069,6 +1111,13 @@ def get_generation_config(intent_type: str) -> types.GenerateContentConfig:
             thinking_config=_make_thinking_config("minimal", include_thoughts=False),
             automatic_function_calling=afc_off,
         ),
+        "QUERY_REWRITE": types.GenerateContentConfig(
+            temperature=0,
+            max_output_tokens=512,
+            thinking_config=_make_thinking_config("minimal", include_thoughts=False),
+            response_mime_type="application/json",
+            automatic_function_calling=afc_off,
+        ),
         "ITINERARY": types.GenerateContentConfig(
             temperature=1.0,
             max_output_tokens=4096,
@@ -1180,7 +1229,7 @@ def _normalize_thinking_config_for_caps(
         return None
 
     is_gemini3_or_gemma4 = (
-        (caps.family == "gemini" and model_name.startswith("gemini-3"))
+        (caps.family == "gemini" and model_name.startswith(("gemini-3", "gemini-4")))
         or model_name.startswith("gemma-4")
     )
 
@@ -1199,11 +1248,14 @@ def _normalize_thinking_config_for_caps(
 
     if is_low_suppressed:
         include_thoughts = False
-        if not requested_level or requested_level in ("medium", "high"):
+        if not requested_level or requested_level in ("medium", "high", "xhigh"):
             requested_level = "minimal"
 
     if not requested_level:
         requested_level = "minimal" if caps.family == "gemma" else "low"
+
+    if caps.family == "gemini" and model_name.startswith("gemini-3") and requested_level == "xhigh":
+        requested_level = "high"
 
     allowed = caps.supported_thinking_levels
     if allowed:
@@ -1219,7 +1271,9 @@ def _normalize_thinking_config_for_caps(
             else:
                 requested_level = "high"
         elif requested_level not in allowed_lower:
-            if "minimal" in allowed_lower:
+            if requested_level == "xhigh" and "high" in allowed_lower:
+                requested_level = "high"
+            elif "minimal" in allowed_lower:
                 requested_level = "minimal"
             elif "low" in allowed_lower:
                 requested_level = "low"
@@ -1253,14 +1307,17 @@ def sanitize_config_for_model(
     if not caps:
         lower_name = (model_name or "").lower()
         tc = getattr(safe, "thinking_config", None)
-        if lower_name.startswith(("gemini-3", "gemma-4")):
+        if lower_name.startswith(("gemini-3", "gemini-4", "gemma-4")):
+            is_g4 = lower_name.startswith("gemini-4")
             if tc is not None:
                 lvl = _extract_thinking_level_str(getattr(tc, "thinking_level", None))
                 inc = False if intent_type in LOW_THINKING_SUPPRESSED_INTENTS else bool(getattr(tc, "include_thoughts", False))
-                if intent_type in LOW_THINKING_SUPPRESSED_INTENTS and (not lvl or lvl in ("medium", "high")):
-                    lvl = "minimal"
-                elif not lvl:
+                if intent_type in LOW_THINKING_SUPPRESSED_INTENTS and (not lvl or lvl in ("medium", "high", "xhigh")):
+                    lvl = "low" if is_g4 else "minimal"
+                elif not lvl or (is_g4 and lvl == "minimal"):
                     lvl = "minimal" if lower_name.startswith("gemma-4") else "low"
+                elif lower_name.startswith("gemini-3") and lvl == "xhigh":
+                    lvl = "high"
                 safe.thinking_config = types.ThinkingConfig(
                     include_thoughts=inc,
                     thinking_level=lvl,
@@ -1269,15 +1326,20 @@ def sanitize_config_for_model(
             elif lower_name.startswith("gemma-4") or intent_type in LOW_THINKING_SUPPRESSED_INTENTS:
                 safe.thinking_config = types.ThinkingConfig(
                     include_thoughts=False,
-                    thinking_level="minimal",
+                    thinking_level="low" if is_g4 else "minimal",
                 )
-            if lower_name.startswith("gemini-3"):
+            if lower_name.startswith(("gemini-3", "gemini-4")):
                 if hasattr(safe, "temperature"):
                     safe.temperature = None
                 if hasattr(safe, "top_p"):
                     safe.top_p = None
                 if hasattr(safe, "top_k"):
                     safe.top_k = None
+            if is_g4:
+                cur_max = getattr(safe, "max_output_tokens", None)
+                min_floor = 32768 if intent_type in ("PLANNING", "PARSE_MD") else 16384
+                if not isinstance(cur_max, int) or cur_max < min_floor:
+                    safe.max_output_tokens = min_floor
         elif lower_name.startswith("gemini-2.5"):
             if tc is not None:
                 budget = getattr(tc, "thinking_budget", None)
@@ -1353,14 +1415,19 @@ def sanitize_config_for_model(
         caps,
     )
 
-    # 4b. Gemini 3.x 取樣參數完全移除 (2026 官方最佳實踐)
-    if caps.family == "gemini" and model_name.startswith("gemini-3"):
+    # 4b. Gemini 3.x / 4.x 取樣參數完全移除與 Gemini 4 輸出預算保護
+    if caps.family == "gemini" and model_name.startswith(("gemini-3", "gemini-4")):
         if hasattr(safe, 'temperature'):
             safe.temperature = None
         if hasattr(safe, 'top_p'):
             safe.top_p = None
         if hasattr(safe, 'top_k'):
             safe.top_k = None
+        if model_name.startswith("gemini-4"):
+            cur_max = getattr(safe, "max_output_tokens", None)
+            min_floor = 32768 if intent_type in ("PLANNING", "PARSE_MD") else 16384
+            if not isinstance(cur_max, int) or cur_max < min_floor:
+                safe.max_output_tokens = min_floor
 
     # 5. Schema 降級與隱式修正 (關鍵核心)
     require_json = intent_type in INTENTS_REQUIRING_JSON
@@ -1599,6 +1666,9 @@ def _get_api_error_code(err: Any) -> Optional[int]:
     code = getattr(err, "code", None)
     if code is None:
         code = getattr(err, "status_code", None)
+    if code is None:
+        raw_resp = getattr(err, "raw_response", None)
+        code = getattr(raw_resp, "status_code", None)
     return code
 
 
@@ -1647,6 +1717,10 @@ def build_effective_routing(
         base_routing = list(DAILY_ROUTING)
     elif intent_type in ("GEOCODE", "SUMMARIZE", "INTENT_PARSE"):
         base_routing = list(WORKHORSE_ROUTING)
+    elif intent_type == "QUERY_REWRITE":
+        base_routing = list(QUERY_REWRITE_ROUTING)
+    elif intent_type == "PLANNING":
+        base_routing = list(PLANNING_ROUTING)
     elif intent_type == "EXTRACTION":
         base_routing = list(EXTRACTION_ROUTING)
     else:

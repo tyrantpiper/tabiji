@@ -38,7 +38,7 @@ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
     // 🛡️ 401 憑證自癒重試機制 (Self-Healing 1-Time Re-exchange & Retry)
     if (r.status === 401 && typeof window !== "undefined") {
         console.warn("⚠️ [Fetcher] Received 401 Unauthorized. Attempting 1-time re-exchange...")
-        const freshToken = await ensureValidSession().catch(() => null)
+        const freshToken = await ensureValidSession(true).catch(() => null)
         if (freshToken) {
             const retryHeaders = { ...headers, "Authorization": `Bearer ${freshToken}` }
             try {
