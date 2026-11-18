@@ -214,6 +214,25 @@ describe('Cross-Origin Reauth Restoration, SWR 401 Guards & Resilient POISearch'
 
         expect(screen.queryByText('Stale Slow Store')).not.toBeInTheDocument()
         expect(screen.getByText('Fast Pharmacy')).toBeInTheDocument()
+
+        // 4. All 20 POIs render inside a native overflow-y-auto scrollable container (no 10-item truncation or Radix ScrollArea max-h trap)
+        const twentyPois = Array.from({ length: 20 }, (_, i) => ({
+            id: `poi_20_${i + 1}`,
+            name: `Spot Item ${i + 1}`,
+            category: 'supermarket',
+            lat: 25.055 + i * 0.0001,
+            lng: 121.508,
+            distance: (i + 1) * 25,
+        }))
+        mockPoiNearby.mockResolvedValueOnce({ count: 20, pois: twentyPois })
+        fireEvent.click(screen.getByRole('button', { name: /超市/ }))
+
+        expect(await screen.findByText('Spot Item 20')).toBeInTheDocument()
+        expect(screen.getByText('共 20 個結果')).toBeInTheDocument()
+        const scrollBox = screen.getByTestId('poi-results-scroll-container')
+        expect(scrollBox.className).toContain('overflow-y-auto')
+        expect(scrollBox.className).toContain('overscroll-y-contain')
+        expect(scrollBox.className).toContain('max-h-[300px]')
     })
 
     it('useExpenses and useTripCapsules stop retrying on 401 and useTripDetail deduplicates multi-mount requests', async () => {

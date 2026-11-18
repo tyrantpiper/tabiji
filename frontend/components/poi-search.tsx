@@ -4,7 +4,6 @@ import { useRef, useState } from "react"
 import { MapPin, Plus, Sparkles, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { poiApi } from "@/lib/api"
 import { useLanguage } from "@/lib/LanguageContext"
 import { getSecureApiKey } from "@/lib/security"
@@ -219,10 +218,14 @@ export function POISearch({ centerLat, centerLng, onSelectPOI, className }: POIS
                                 </Card>
                             )}
 
-                            {/* POI 列表 */}
-                            <ScrollArea className="max-h-[300px]">
+                            {/* POI 列表 (支援 20 筆結果獨立垂直滾動) */}
+                            <div
+                                data-testid="poi-results-scroll-container"
+                                className="max-h-[300px] overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain pr-1"
+                                style={{ touchAction: "pan-y" }}
+                            >
                                 <div className="space-y-2">
-                                    {pois.slice(0, 10).map((poi) => (
+                                    {pois.map((poi) => (
                                         <div
                                             key={poi.id}
                                             className="p-3 bg-card rounded-lg border border-border hover:border-amber-300 hover:shadow-sm transition-all cursor-pointer"
@@ -266,7 +269,7 @@ export function POISearch({ centerLat, centerLng, onSelectPOI, className }: POIS
                                         </div>
                                     ))}
                                 </div>
-                            </ScrollArea>
+                            </div>
                         </>
                     )}
                 </div>
