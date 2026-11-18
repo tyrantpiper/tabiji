@@ -305,4 +305,43 @@ describe('Auth Session Resilience & Token Life-Cycle Tests', () => {
         mockStorage['user_recovery_key'] = 'null'
         expect(isUserLoggedIn()).toBe(false)
     })
+
+    it('TC-16: fetchLatestRecoveryKey 401 preserves concurrently refreshed session token and PoP token', async () => {
+        const { fetchLatestRecoveryKey } = await import('@/lib/auth-session')
+        const futureExp = Math.floor(Date.now() / 1000) + 86400
+        const staleJwt = createMockJwt({ sub: 'user-race-1', exp: futureExp })
+        const freshJwt = createMockJwt({ sub: 'user-race-1', exp: futureExp + 3600 })
+
+        mockStorage['tabiji_session_token'] = staleJwt
+        mockStorage['tabiji_pop_token'] = staleJwt
+
+        // Simulate concurrent ensureValidSession(true) writing freshJwt while /api/auth/credential is in flight
+        vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async () => {
+            mockStorage['tabiji_session_token'] = freshJwt
+            mockStorage['tabiji_pop_token'] = freshJwt
+            return {
+                ok: false,
+                status: 401,
+                json: async () => ({ detail: 'Invalid or expired token' }),
+            } as unknown as Response
+        })
+
+        const result = await fetchLatestRecoveryKey()
+        expect(result).toBeNull()
+        expect(mockStorage['tabiji_session_token']).toBe(freshJwt)
+        expect(mockStorage['tabiji_pop_token']).toBe(freshJwt)
+
+        // When TOKEN_KEY still equals the rejected staleJwt, 401 backs it up to POP_TOKEN_KEY and clears only TOKEN_KEY
+        mockStorage['tabiji_session_token'] = staleJwt
+        mockStorage['tabiji_pop_token'] = staleJwt
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+            ok: false,
+            status: 401,
+            json: async () => ({ detail: 'Invalid or expired token' }),
+        } as unknown as Response)
+
+        await fetchLatestRecoveryKey()
+        expect(mockStorage['tabiji_session_token']).toBeUndefined()
+        expect(mockStorage['tabiji_pop_token']).toBe(staleJwt)
+    })
 })

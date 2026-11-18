@@ -448,8 +448,12 @@ export async function fetchLatestRecoveryKey(): Promise<string | null> {
         });
         if (!res.ok) {
             if (res.status === 401 && typeof window !== "undefined") {
-                localStorage.removeItem(TOKEN_KEY);
-                localStorage.removeItem(POP_TOKEN_KEY);
+                if (localStorage.getItem(TOKEN_KEY) === token) {
+                    if (isJwtStructure(token)) {
+                        localStorage.setItem(POP_TOKEN_KEY, token);
+                    }
+                    localStorage.removeItem(TOKEN_KEY);
+                }
             }
             return null;
         }
