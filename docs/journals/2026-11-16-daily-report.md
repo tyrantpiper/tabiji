@@ -111,6 +111,17 @@
 
 ---
 
+## 6. 第四階段增量交付：README 文件雙語結構收斂 (`3eb55cd`, `9f3a954`)
+
+> **時間戳記**: `2026-11-16 14:53 ~ 15:03` (UTC+8)
+> **對應提交**: `3eb55cd` (`docs(readme): remove marketing fluff and split into en and zh-TW`), `9f3a954` (`docs(readme): add in-page zh-TW toggle via native details`)
+
+### 🟢 Features & Fixes
+- 移除 [README.md](file:///d:/Project/tabiji/travel-pwa/README.md) 行銷渲染文字並拆分為英文主頁與繁體中文版本（`3eb55cd`: `2 files, +463 / -273`）。
+- 進一步使用原生 `<details>` 折疊切換將繁體中文文件整合回 [README.md](file:///d:/Project/tabiji/travel-pwa/README.md) 頁內展開，並移除獨立的 `README.zh-TW.md`（`9f3a954`: `2 files, +225 / -298`）。
+
+---
+
 ## 🧬 Machine-Executable Invariant Rules
 
 ```json

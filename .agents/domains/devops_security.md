@@ -96,6 +96,10 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **雙層缺陷遮蔽效應與雙網域 Edge Shield 暴露假象陷阱 (FP-099)**: 主網域邊緣閘道（Edge Shield）轉發錯誤或覆寫路徑（例如 www 回傳 404 或 401）常完全掩蓋下層應用漏洞：包含原生網域 (.vercel.app) /api/cloudinary-test 回傳 200 暴露資訊、或外部圖資未接備援之單點故障，及內部 Cloudflare Service Binding Worker 未明確設置 workers_dev: false / preview_urls: false 留下的 BOLA 公網後門。安全驗證必須穿透所有對外網域（含 .vercel.app 與 *.workers.dev）逐層實測，且 Edge Geocode Cache v2 須隔離 locale/座標並繞過帶 AI Key 請求。
+
+- **Supabase 舊制 JWT 前 110 碼相同誤貼與公開公式派生總管密鑰陷阱 (FP-094)**: Supabase Legacy anon (208 chars) 與 service_role (219 chars) 前 110 個字元完全相同，人工複製極易將 service_role 誤貼入 Vercel NEXT_PUBLIC_SUPABASE_ANON_KEY 並經 Next.js 前端 JS bundle 公開暴露；若 Cloud Run 同時未設獨立 SESSION_SECRET_KEY / VAULT_MASTER_KEY / RECOVERY_PEPPER 與 ENV=production，公開倉庫內的預設字串與派生公式會使外洩的 SUPABASE_KEY 連環推算出 JWT 印章與保險庫密鑰。生產環境必須強制獨立注入三把隨機母鑰並採用 sb_publishable_/sb_secret_ 格式。
+
 - **Vitest RTL API Stub 驗證後接同步 getByText 導致 CI 競態失敗陷阱 (FP-068)**: 非同步元件在 useEffect 觸發 API 期間常先切換 loading/isThinking 狀態再 await 回應；若測試僅以 waitFor(() => expect(api).toHaveBeenCalled()) 等待送出請求後即呼叫同步 screen.getByText(...)，在本地高速環境恰好於 state commit 後執行而假性通過，在負載較重之 GitHub CI Runner 上則因仍停留在 Calculating... 狀態觸發 TestingLibraryElementError。驗證非同步回傳渲染的 DOM 節點必須改用 await screen.findBy* 或將 DOM 斷言置於 waitFor() 內。
 
 - **未盤點線上五端拓撲即執行全面靜態加固造成過度工程回滾**: 未先查證 Vercel 線上 Commit、Cloud Run 路由與環境變數、Cloudflare Worker WAF 規則（如 Python urllib UA 觸發 1010）及 Supabase 即時 schema_migrations / pg_net 日誌前，依靜態假設發起多輪全面修改會產生脫離真實部署環境的 70+ 過度工程檔案並被迫全數還原。另使用 Supabase CLI db push 前須確認 8 碼檔名與線上 14 碼版本號對齊。

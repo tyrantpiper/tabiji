@@ -44,6 +44,8 @@
 - **Framer Motion 一次性動畫遞增 key 重播**: 鈴鐺動畫以 key={ringCount} 重播，取代布林狀態重設，消除快速連點卡死。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Radix ScrollArea 僅設 max-h 無固定 height 導致捲動截斷與 JSX 數值 0 渲染陷阱 (FP-100, FP-103)**: Radix UI ScrollArea 在外層僅設 max-h-[...] 而無明確固定 height 時，內層 Viewport height:100% 會退化成 auto，導致無捲動軸且超出部分被外層 overflow-hidden 截斷（實測 20 筆僅剩 4 筆）。動態高度上限清單應改用原生 div 配合 max-h-[...] 與四重軸向鎖定。另 JSX 條件渲染評分數值嚴禁寫 {rating && ...}（0 會印出字元 '0'），須顯式判別 (rating ?? 0) > 0。
+
 - **Button SVG 預設 size-4 覆寫與 disabled 指標穿透文字反白陷阱**: button.tsx 宣告 [&_svg:not([class*='size-'])]:size-4（權重 0,2,1），會將僅設定 w-5 h-5 的 Loader2 圖示縮小至 16px，必須顯式傳入 size-5 才能保持 20px；此外 button/input 之 disabled:pointer-events-none 會使鎖定期間的觸控長按穿透至父層容器，必須同步於送出前執行 clearActiveSelection() 收合選區並 blur()，且在鎖定狀態對表單外層容器掛載未分層 .select-none（!important）覆蓋 input 預設 user-select: text。
 
 - **SVG 羅盤指針 transform-origin 使用像素單位導致響應式縮放位移刺穿卡片**: 在 SVG 向量動效中，transform-origin: 100px 在不同螢幕 DPI 縮放時會被視為絕對像素偏移。旋轉中心必須使用 transformBox: 'view-box' 配合百分比或 viewBox 原生座標，外層容器必須添加 overflow-hidden。

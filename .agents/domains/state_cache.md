@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **認證失敗指紋鎖與永久彈窗靜默取代短時間冷卻法 (AD-228)**: 當 SWR refreshInterval (15s) 大於冷卻時間時，10s/5s 時間冷卻會演變為無限 401 風暴。ensureValidSession 必須改採 JSON 防碰撞憑證指紋鎖 (lastFailedExchangeFingerprint)：相同憑證指紋於本頁內永久阻斷重試，憑證一更新立即解鎖；dismissReauthPrompt 以 isReauthDismissedInMemory 在當前頁面維持離線靜默（僅保留 lastRestoredAt < 5000ms 吸收恢復前在途請求）；useExpenses/useTripCapsules/usePoiPool 一律停試 401/403/404。
+
 - **TripDialogs Daily Locations Clearing on Existing Trip Merge**: In TripDialogs.tsx, when merging AI/Markdown parsed results into an existing trip (saveTarget === 'existing'), tripsApi.importToTrip must pass daily_locations: {} to prevent stale destination anchors from a prior parse from poisoning the target existing trip's spatial anchor.
 
 - **isUserLoggedIn() Operator Precedence & In-Place Reauth Boundary**: In frontend/lib/auth-session.ts, isUserLoggedIn() MUST maintain backward compatibility for orphan recovery keys (where user_recovery_key exists without nickname) so that 401 triggers in-place re-auth modal (auth-session-resilience TC-10/TC-11). Do NOT conflate visitor mount suppression with isUserLoggedIn definition.
@@ -11,13 +13,13 @@
 
 - **Temporal Lifecycle Non-Inhibition Invariant**: Temporal service lifecycle status (BEFORE_TRIP, IN_TRIP, AFTER_TRIP) must never inhibit mutation tool calling. The prompt must explicitly state that users have full simulation and planning permissions regardless of dates.
 
-- **Unauthenticated Visitor Reauth Suppression & Identity Self-Healing**: triggerReauthPrompt and SessionReauthModal must strictly verify isUserLoggedIn() (checking user_nickname && user_uuid || user_recovery_key) before broadcasting or opening. In ensureValidSession, 401 for unauthenticated visitors purges orphan UUIDs and resets lastExchangeFailedAt = 0, unlocking login. LandingPage handleLogin must implement dual-track bootstrap (online: ensureValidSession server registration, offline: generateUUID fallback).
+- **Unauthenticated Visitor Reauth Suppression & Identity Self-Healing**: triggerReauthPrompt and SessionReauthModal must strictly verify isUserLoggedIn() (checking user_nickname && user_uuid || user_recovery_key) before broadcasting or opening. In ensureValidSession, 401 for unauthenticated visitors purges orphan UUIDs and resets lastFailedExchangeFingerprint = null, unlocking login. LandingPage handleLogin must implement dual-track bootstrap (online: ensureValidSession server registration, offline: generateUUID fallback).
 
 - **Non-Blocking Preferences Graceful Degradation & Debounced Revalidation Loop**: usersApi.getPreferences must catch 401/403/404 and network errors, gracefully returning empty array [] without throwing unhandled exceptions to console. ProfileView must listen to 'tabiji:recovery_key_updated' with a 300ms debounce to auto-revalidate preferences and profile data upon in-place re-anchoring.
 
 - **401 Self-Healing Token Retention & In-Place Modal Prompt**: In api.ts and hooks.ts, existing session tokens must be preserved across 401 as proof-of-possession for ensureValidSession exchange; upon exchange failure, token is purged and triggerReauthPrompt is fired to wake SessionReauthModal in-place without manual logout.
 
-- **Stale Token Purge on Background Credential 401 & 10s Exchange Cooldown**: When background vault synchronization (/api/auth/credential) returns 401 Unauthorized, client must immediately purge stale TOKEN_KEY from localStorage. In ensureValidSession, a 10000ms cooldown (lastExchangeFailedAt) must be enforced upon 401 to prevent SWR storm hammering.
+- **Stale Token CAS Purge & Credential Fingerprint Lock (Superseded 10s Cooldown in be7a32c/bdf1d8a)**: When background vault synchronization (/api/auth/credential) returns 401 Unauthorized, client must apply Compare-And-Swap cleanup (only remove TOKEN_KEY if localStorage still holds the same rejected token). In ensureValidSession, replace fixed 10000ms timers (which clash with 15s SWR polling) with JSON fingerprint locking (lastFailedExchangeFingerprint): identical credentials stay locked until changed, while transient network/5xx errors remain retryable.
 
 - **Post-Restoration Grace Window Against Modal Thrashing**: Client-side triggerReauthPrompt must enforce a 5000ms grace cooldown based on lastRestoredAt timestamp to absorb in-flight stale 401 responses fired before re-anchoring, preventing modal reopening thrashing.
 
@@ -59,6 +61,14 @@
 - **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **SSE 註解心跳行誤殺整段資料區塊與 Stream Mock 契約破壞陷阱 (FP-104)**: frontend/lib/api.ts 解析 SSE \n\n 區塊時，嚴禁只判斷 trimmed.startsWith(':') 就 continue 整段區塊（會把同區塊內的 event:/data: 一併吞掉），必須先以 line => !line.startsWith(':') 逐行剔除註解行。後端將核心端點重構為 call_extraction_stream 時，必須加入 _is_mocked 相容檢查，否則既有用例 mock 舊 call_extraction 將被靜默繞過。
+
+- **Supabase RLS 靜默回空與 REST Broadcast 重複加 realtime: 前綴失聯陷阱 (FP-101, FP-102)**: 未跑 Supabase Auth 僅用 Publishable Key 時，RLS 綁定 auth.uid() 會使查詢靜默回傳 [] 且 postgres_changes 靜默丟棄事件；實作即時同步應全數改為不透明 Broadcast 訊號搭配認證後端 API 拉取。透過 Supabase Realtime REST API 發送廣播時，topic 嚴禁手動加上 'realtime:' 前綴（客戶端 SDK 已自動附加），否則雙邊主題永遠無法匹配。
+
+- **fetchLatestRecoveryKey 遲到 401 盲刪剛刷新 Session JWT 之競態陷阱 (FP-097)**: 並發請求中若其他路徑已透過 ensureValidSession(true) 換發並寫入新 tabiji_session_token，較慢返回之背景 /api/auth/credential 401 回應在清除或搬移 TOKEN_KEY 前必須嚴格執行 Compare-And-Swap Check (if (localStorage.getItem(TOKEN_KEY) === token))，禁止無條件刪除已更新之最新憑證。
+
+- **模組載入期自生未註冊 UUID 與提前寫入 user_nickname 引發 401 鎖死陷阱 (FP-095)**: tripStore.ts 嚴禁在模組 import 期生成本地 UUID 寫入 localStorage 並隨即呼叫 ensureValidSession()；LandingPage handleLogin 嚴禁在後端註冊完成前先行寫入 user_nickname 並必須過濾 'null'/'undefined' 字串。否則未入庫的孤兒 UUID 會使 isUserLoggedIn() 回傳 true，開機即吃 /api/auth/session 401 陷入無解的引繼碼重驗證死結。
+
 - **過期 JWT 預先清除導致 90 天寬限期 PoP 驗證失效**: getCachedToken() 若在 ensureValidSession()、rotateAccountRecoveryKey() 或 fetchLatestRecoveryKey() 讀取前直接移除過期 tabiji_session_token，會導致後端 auth.py 90 天寬限期 PoP 驗證失敗。必須在清除前將語法有效的過期 JWT 備份至 tabiji_pop_token（僅於登出、重設或 visitor 401 時清除），且 profile-view handleClearCache() 必須完整保留 user_uuid、user_recovery_key、tabiji_session_token、tabiji_pop_token、user_nickname 與 user_avatar 六項鍵值。
 
 - **子路由 layout 宣告 head 導致 React 19 與 Next.js 16 渲染層水合錯誤**: 在 Next.js App Router 架構下，只有根路由 app/layout.tsx 允許渲染 html, body, head。子路由（如 app/official/layout.tsx）若重複宣告 head，會觸發 In HTML, head cannot be a child of body 水合失敗。資源預載應透過 Image priority 或 route metadata 宣告。

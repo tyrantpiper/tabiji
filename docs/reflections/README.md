@@ -30,3 +30,7 @@
   *《預言機消解與傳輸層零洩漏：從使用者直覺到 Local-First 認證防線的深度病理學解剖》*  
   由一句「這相當於告訴別人這是別人的啊」引爆出「身分枚舉預言機」與「網路傳輸層 JWT 提前外洩」雙重深層漏洞。完整解構服務端先驗阻斷（`expected_user_id`）、常數錯誤防禦、Outbox 物理凍結與 5 秒冷卻窗口的四重防衛閉環。
 
+- [`2026-11-19-five-cloud-silent-masking-and-key-separation.md`](file:///d:/Project/tabiji/travel-pwa/docs/reflections/2026-11-19-five-cloud-silent-masking-and-key-separation.md)  
+  *《雙層遮蔽效應與五雲密鑰分離：一次跨越三日的全棧病理剖析》*  
+  剖析 Edge Shield 遮蔽原生網域漏洞與雙層故障遮蔽病理、RLS `...v2` 靜默斷流與 Broadcast 不透明訊號、`15s SWR > 10s` 指紋鎖收斂、三總管密鑰與 `sb_*` 分離遷移，以及後續營運日曆與技術債總覽。
+

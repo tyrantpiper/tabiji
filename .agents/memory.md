@@ -36,4 +36,7 @@
 - **Opaque Realtime Signal**: WebSocket 廣播僅傳遞無狀態失效訊號（timestamp），敏感資料一律強制透過鑑權 HTTPS 拉取。
 - **Transit Corridor K-Partitioning**: 跨區高鐵/離島長途移動以物理跳躍與局部密度支撐動態切分多時序空間子群，杜絕中位數坍塌誤殺。
 - **Stateless Authorization Code Fallback**: OAuth 2.1 授權伺服器以記憶體字典 + HMAC-SHA256 Token 雙軌備援，杜絕 Cloud Run 多容器自動擴展時狀態遺失。
+- **Credential Fingerprint Lock**: `auth-session.ts` 以 JSON 序列化憑證指紋鎖（`lastFailedExchangeFingerprint`）＋ `isReauthDismissedInMemory` 取代短時間冷卻，消滅 SWR 15s 輪詢大於 10s 冷卻觸發的無限 401 風暴。
+- **Two-Layer & Edge Bug Masking**: 外層邊緣錯誤（如 Edge Shield 誤攔 `/api/poi/nearby` 或 `www` 404 遮蔽 `.vercel.app` 原生端點暴露）會長期掩蓋下層缺陷，稽核必須雙網域穿透實測。
+- **Three-Master-Key Decoupling**: Cloud Run `SESSION_SECRET_KEY` (JWT 門票)、`VAULT_MASTER_KEY` (AES-GCM 保險庫)、`RECOVERY_PEPPER` (HMAC 指紋) 三權嚴格獨立於 `SUPABASE_KEY`（`sb_*` 僅置於 `apikey` 標頭）。
 

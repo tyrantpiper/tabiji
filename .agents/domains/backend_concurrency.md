@@ -3,6 +3,12 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **膠囊二階段正數位移、無 Key Wiki 保底與單索引街景引用計數契約 (AD-232, AD-233)**: 對具 (itinerary_id, day_number) 唯一鍵之時光膠囊平移天數，必須經 Postgres 原子 RPC (+10000 臨時偏移再寫目標值) 且限定 day_number > 0 保護 Day 0。webhook_cleanup_cloudinary 必須於單一表達式索引 idx_itinerary_items_mly_ref_id 下執行 to_jsonb(OLD) #- '{preview_metadata,mapillary_thumb}' 跨表引用計數（嚴禁 LIKE '%...' Seq Scan）。/api/poi/ai-enrich 無 API Key 時回傳 200 PARTIAL_SUCCESS（禁用快取寫入），且 agents Fallback 表須經 RLS + SHA-256 key_hash + conftest.py 測試隔離。
+
+- **Supabase sb_* 非 JWT 金鑰標頭分離與禁止轉發瀏覽器 UA 法則 (AD-227)**: Supabase sb_publishable_* 與 sb_secret_* 非 JWT 格式，所有直連 PostgREST (/rest/v1/*) 與 Edge Functions 之 HTTP 請求必須透過 build_supabase_rest_headers() 僅置入 apikey 標頭並嚴禁放入 Authorization: Bearer（Authorization 僅保留給使用者 JWT）；且後端不得對 Supabase API Gateway 轉發使用者瀏覽器 User-Agent，避免觸發 Gateway 401 封鎖。
+
+- **分層目的地推斷與動態年份檢索詞提煉契約 (AD-224)**: detect_destination() 嚴禁將查詢、對話歷史與行程標題縫合成單一字串後按字典序掃描（會使『台北出發・東京5天4夜』誤鎖 TW），必須嚴格依「當前查詢 -> 近期對話歷史 -> 行程目的地」階層優先解析；gemini-3.1-flash-lite 檢索詞提煉必須經 _sanitize_xml_boundary_text() 剝除控制字元與跳脫 XML 標籤並注入動態 {current_year}，主對話同時禁止無引註時強制復活 candidate_sources[:2]。
+
 - **社群登入牆攔截與 OpenGraph 單次嘗試契約 (INV-BE-SOCIAL-LOGINWALL-01)**: fetch_opengraph_metadata() 與 fetch_jina_reader() 必須透過 _is_social_login_wall() 攔截社群登入牆，OpenGraph 命中時回傳 None、Jina HTTP 200 命中時回傳 error_code='LOGIN_WALL' 且維持 markdown=''，負向控制必須驗證含 Instagram 字樣之一般部落格不被誤判；同時因 main.py 對 fetch_jina_reader 設有 4.0s asyncio.wait_for 上限，Tier 1 已嘗試過 OpenGraph 之社群網址在 Tier 2 Jina 失敗時必須以 og_attempted 阻斷重複發送第二次相同 OpenGraph 請求，非社群網址保留 _og_fallback_or_error() 備援。
 
 - **DB-to-Edge Webhook Vault HMAC 與純 Deno WebCrypto 清理雙軌契約**: 凡由 Postgres Trigger 經 pg_net 呼叫 Supabase Edge Function 之非同步清理流程，強制使用 Vault 密鑰 + HMAC-SHA256 防重放驗簽 (300s) 與純 Deno WebCrypto 簽名外部請求；禁止依賴 app.settings.* 或在 Edge Function 引入 npm:cloudinary，並須透過 net._http_response 實測 HTTP 200 回執率。
@@ -97,6 +103,10 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Secret Manager 尾端換行空白導致派生主密鑰分裂與 Vault 解密失敗陷阱 (FP-096)**: 以未經 .strip() 的原始密鑰位元組作為 PBKDF2/SHA-256 派生輸入時，GCP Secret Manager 版本若含尾端換行 (\r\n) 或空白會分裂產生多個 H1/H2 衍生金鑰版本（實測曾致 10/120 保險庫密文解不開）。密鑰派生與遷移驗證必須顯式考量 raw/strip 候選並原地統一重封裝單一乾淨主鑰。
+
+- **google-genai 3.4+ v1 預設偏移與 Speakeasy 退避卡死陷阱 (FP-092)**: google-genai>=3.4.0 將預設 API 版本由 v1beta 變更為 v1 並切換至 httpx2。呼叫 gemini-decision-1 (client.aio.decisions.create) 必須顯式指定 api_version='v1beta' 且停用 SDK 內建 Speakeasy 4 次指數退避 (retry_config={'strategy':'none','max_retries':0})；呼叫 gemini-4-hydrogen 必須過濾 minimal 思考等級（改用 low/medium/high/xhigh）並清空 temperature/top_p/top_k/thinking_budget，且因 Free Tier 尾延遲達 12s–44s，同步路由維持 Flash-Lite 優先。
+
 - **社群爬蟲 HTTP 200 登入牆偽陽性與無 Mock 外網測試陷阱 (FP-067)**: Instagram/Facebook 對雲端機房 IP（如 GitHub Actions Azure 或 Cloud Run）常回傳 HTTP 200 通用登入頁（登入 • Instagram / Login • Instagram / 歡迎回到 Instagram）而非 401/403。fetch_opengraph_metadata() 若未比對登入牆特徵會回傳 status='success' 污染 AI grounding_context_text；且 pytest 若直連外網社群網址將呈現本機通過、CI 紅燈。
 
 - **Supabase Trigger 讀取 app.settings 靜默 NULL 造成 401 與套件欄位誤判**: Supabase 代管 Postgres 未預設 app.settings.service_role_key，Trigger 取值為 NULL 會引發 Webhook 連續 HTTP 401（實測曾累積 338 筆失敗）；同時 Deno Edge Runtime 無法運行含 vm2 的 npm:cloudinary，且 itineraries.public_id 為 pub_* 分享代碼而非 Cloudinary Asset ID。應改用 Vault cleanup_webhook_secret 搭配 SECURITY DEFINER + extensions.hmac(..., 'sha256') 與 verify_cleanup_webhook_signature RPC (300s 視窗)，Edge Function 使用純 Deno WebCrypto SHA-1，並以 DB 三表觸發器 (expenses/itineraries/itinerary_items) 搭配後端清理 users.avatar_url 與 trip_capsule_entries.photo_url。
