@@ -8,14 +8,17 @@ Interactions API with automated Gemini 3.7 Flash fallback defense.
 """
 
 import copy
+import hashlib
+import hmac
 import os
 import re
 import time
 import uuid
 import logging
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 import httpx
 
@@ -53,7 +56,7 @@ def _get_api_error_status(err: Exception) -> Optional[int]:
 def _get_api_error_message(err: Exception) -> str:
     return getattr(err, "message", None) or str(err)
 
-from utils.deps import get_gemini_key
+from utils.deps import get_gemini_key, get_supabase
 from utils.limiter import limiter
 from utils.ai_config import DAILY_ROUTING
 from services.model_manager import (
@@ -80,12 +83,127 @@ def _get_agents_genai_client(api_key: str):
     return get_cached_client(api_key)
 
 
-# In-memory store for fallback tasks
+# In-memory store for fallback tasks (paired with DB persistence in agent_fallback_tasks)
 _FALLBACK_TASKS: Dict[str, Dict[str, Any]] = {}
 
 
 def __reset_fallback_tasks_for_testing() -> None:
     _FALLBACK_TASKS.clear()
+
+
+def _hash_api_key(api_key: str) -> str:
+    return hashlib.sha256((api_key or "").encode("utf-8")).hexdigest()
+
+
+def _resolve_supabase(request: Optional[Request] = None):
+    if request is not None:
+        overrides = getattr(getattr(request, "app", None), "dependency_overrides", None)
+        if isinstance(overrides, dict):
+            override = overrides.get(get_supabase)
+            if callable(override):
+                return override()
+        try:
+            return get_supabase(request)
+        except Exception:
+            return None
+    try:
+        return get_supabase()
+    except Exception:
+        return None
+
+
+def _cleanup_expired_fallback_tasks(supabase) -> None:
+    if supabase is None:
+        return
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        supabase.table("agent_fallback_tasks").delete().lt("expires_at", now_iso).execute()
+    except Exception:
+        pass
+
+
+def _persist_fallback_task(
+    supabase,
+    task_id: str,
+    status: str,
+    key_hash: str,
+    engine: str = "gemini-3.7-flash-fallback",
+    output_text: Optional[str] = None,
+    error_message: Optional[str] = None,
+    code: Optional[int] = None,
+) -> None:
+    now_dt = datetime.now(timezone.utc)
+    now_iso = now_dt.isoformat()
+    existing = _FALLBACK_TASKS.get(task_id) or {}
+    mem_record: Dict[str, Any] = {
+        **existing,
+        "id": task_id,
+        "status": status,
+        "output_text": output_text,
+        "error": error_message,
+        "code": code,
+        "engine": engine,
+        "key_hash": key_hash,
+        "started_at": existing.get("started_at") or time.time(),
+    }
+    if status == "completed":
+        mem_record["completed_at"] = time.time()
+    _FALLBACK_TASKS[task_id] = mem_record
+
+    if supabase is None:
+        return
+    try:
+        db_row = {
+            "id": task_id,
+            "status": status,
+            "output_text": output_text,
+            "error_message": error_message,
+            "engine": engine,
+            "key_hash": key_hash,
+            "updated_at": now_iso,
+        }
+        if status == "running" and "started_at" not in existing:
+            db_row["started_at"] = now_iso
+            db_row["expires_at"] = (now_dt + timedelta(hours=24)).isoformat()
+        supabase.table("agent_fallback_tasks").upsert(db_row, on_conflict="id").execute()
+    except Exception as db_err:
+        logger.warning(f"[Agents] Persist fallback task skipped ({task_id}): {db_err}")
+
+
+def _is_fallback_task_cancelled(supabase, task_id: str) -> bool:
+    mem = _FALLBACK_TASKS.get(task_id)
+    if mem and mem.get("status") == "cancelled":
+        return True
+    if supabase is not None:
+        try:
+            res = supabase.table("agent_fallback_tasks").select("status").eq("id", task_id).limit(1).execute()
+            rows = getattr(res, "data", None)
+            if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+                return rows[0].get("status") == "cancelled"
+        except Exception:
+            pass
+    return False
+
+
+def _load_fallback_task(supabase, task_id: str) -> Optional[Dict[str, Any]]:
+    if supabase is not None:
+        try:
+            res = supabase.table("agent_fallback_tasks").select("*").eq("id", task_id).limit(1).execute()
+            rows = getattr(res, "data", None)
+            if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+                row = rows[0]
+                expires_raw = row.get("expires_at")
+                if isinstance(expires_raw, str) and expires_raw.strip():
+                    try:
+                        exp_dt = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+                        if exp_dt < datetime.now(timezone.utc):
+                            return None
+                    except Exception:
+                        pass
+                return row
+        except Exception as db_err:
+            logger.warning(f"[Agents] Load fallback task DB warning ({task_id}): {db_err}")
+    return _FALLBACK_TASKS.get(task_id)
 
 TP_BASE = "https://api.travelpayouts.com"
 TP_TOKEN = os.getenv("TP_API_TOKEN", "").strip()
@@ -152,10 +270,18 @@ async def _fetch_live_pricing_context(origin: str, destination: str, locale: str
     return ""
 
 
-async def _execute_flash_fallback_task(task_id: str, prompt: str, api_key: str, locale: str = "zh"):
+async def _execute_flash_fallback_task(
+    task_id: str,
+    prompt: str,
+    api_key: str,
+    locale: str = "zh",
+    supabase=None,
+    key_hash: str = "",
+):
     """
     沙盒排隊/不可用時的 Flash 多模型自動熔斷降級處理器
     """
+    key_hash = key_hash or _hash_api_key(api_key)
     try:
         is_en = bool(locale and str(locale).strip().lower().startswith("en"))
         sys_inst = (
@@ -211,22 +337,28 @@ async def _execute_flash_fallback_task(task_id: str, prompt: str, api_key: str, 
                     record_model_error(candidate_model, api_key=api_key, is_rate_limit=False)
                     last_error = ValueError(f"{candidate_model} empty output ({diag})")
                     continue
-                _FALLBACK_TASKS[task_id] = {
-                    "status": "completed",
-                    "output_text": clean_text,
-                    "engine": candidate_model if candidate_model not in ("gemini-3.7-flash", "gemini-3.8-flash") else "gemini-3.7-flash-fallback",
-                    "completed_at": time.time(),
-                }
+                if _is_fallback_task_cancelled(supabase, task_id):
+                    return
+                _persist_fallback_task(
+                    supabase,
+                    task_id,
+                    status="completed",
+                    key_hash=key_hash,
+                    engine=candidate_model if candidate_model not in ("gemini-3.7-flash", "gemini-3.8-flash") else "gemini-3.7-flash-fallback",
+                    output_text=clean_text,
+                )
                 return
             except _INTERACTION_API_ERRORS as e:
                 kind = classify_api_error(e)
                 if kind == "auth_fail":
-                    _FALLBACK_TASKS[task_id] = {
-                        "status": "failed",
-                        "error": "API Key 無效或已失效，請更新 Gemini API Key。" if not is_en else "Invalid or revoked Gemini API Key.",
-                        "code": 401,
-                        "engine": "gemini-3.7-flash-fallback",
-                    }
+                    _persist_fallback_task(
+                        supabase,
+                        task_id,
+                        status="failed",
+                        key_hash=key_hash,
+                        error_message="API Key 無效或已失效，請更新 Gemini API Key。" if not is_en else "Invalid or revoked Gemini API Key.",
+                        code=401,
+                    )
                     return
                 err_code = _get_api_error_status(e)
                 has_search_grounding = any(
@@ -251,22 +383,28 @@ async def _execute_flash_fallback_task(task_id: str, prompt: str, api_key: str, 
                         )
                         ungrounded_text = extract_clean_response_text(ungrounded_resp)
                         if ungrounded_text and ungrounded_text.strip():
-                            _FALLBACK_TASKS[task_id] = {
-                                "status": "completed",
-                                "output_text": ungrounded_text,
-                                "engine": candidate_model if candidate_model not in ("gemini-3.7-flash", "gemini-3.8-flash") else "gemini-3.7-flash-fallback",
-                                "completed_at": time.time(),
-                            }
+                            if _is_fallback_task_cancelled(supabase, task_id):
+                                return
+                            _persist_fallback_task(
+                                supabase,
+                                task_id,
+                                status="completed",
+                                key_hash=key_hash,
+                                engine=candidate_model if candidate_model not in ("gemini-3.7-flash", "gemini-3.8-flash") else "gemini-3.7-flash-fallback",
+                                output_text=ungrounded_text,
+                            )
                             return
                     except _INTERACTION_API_ERRORS as e2:
                         kind2 = classify_api_error(e2)
                         if kind2 == "auth_fail":
-                            _FALLBACK_TASKS[task_id] = {
-                                "status": "failed",
-                                "error": "API Key 無效或已失效，請更新 Gemini API Key。" if not is_en else "Invalid or revoked Gemini API Key.",
-                                "code": 401,
-                                "engine": "gemini-3.7-flash-fallback",
-                            }
+                            _persist_fallback_task(
+                                supabase,
+                                task_id,
+                                status="failed",
+                                key_hash=key_hash,
+                                error_message="API Key 無效或已失效，請更新 Gemini API Key。" if not is_en else "Invalid or revoked Gemini API Key.",
+                                code=401,
+                            )
                             return
                         err2_code = _get_api_error_status(e2)
                         err2_msg = (_get_api_error_message(e2) or "").lower()
@@ -289,25 +427,30 @@ async def _execute_flash_fallback_task(task_id: str, prompt: str, api_key: str, 
                 logger.warning(f"[Agents] Candidate {candidate_model} fallback error: {e}")
                 continue
 
-        _FALLBACK_TASKS[task_id] = {
-            "status": "failed",
-            "error": str(last_error or "All fallback models failed"),
-            "code": 503,
-            "engine": "gemini-3.7-flash-fallback",
-        }
+        _persist_fallback_task(
+            supabase,
+            task_id,
+            status="failed",
+            key_hash=key_hash,
+            error_message=str(last_error or "All fallback models failed"),
+            code=503,
+        )
     except Exception as e:
         logger.error(f"[Agents] Flash fallback execution error: {e}")
-        _FALLBACK_TASKS[task_id] = {
-            "status": "failed",
-            "error": str(e),
-            "code": 500,
-            "engine": "gemini-3.7-flash-fallback"
-        }
+        _persist_fallback_task(
+            supabase,
+            task_id,
+            status="failed",
+            key_hash=key_hash,
+            error_message=str(e),
+            code=500,
+        )
 
 
 @router.post("/research")
 async def start_deep_research(
     body: AgentResearchRequest,
+    request: Request = None,
     api_key: str = Depends(get_gemini_key)
 ):
     """
@@ -375,15 +518,28 @@ async def start_deep_research(
     except Exception as e:
         logger.warning(f"[Agents] Antigravity interactions.create failed ({e}). Falling back to Gemini 3.8 Flash...")
 
-    # 🛡️ 關鍵 0.5 分自動熔斷降級：建立背景 Flash 任務
+    # 🛡️ 關鍵 0.5 分自動熔斷降級：建立背景 Flash 任務 (雙寫記憶體 + DB 並綁定 key_hash 雜湊)
+    supabase = _resolve_supabase(request)
+    _cleanup_expired_fallback_tasks(supabase)
     task_id = f"fallback_{uuid.uuid4().hex[:12]}"
-    _FALLBACK_TASKS[task_id] = {
-        "status": "running",
-        "output_text": None,
-        "engine": "gemini-3.7-flash-fallback",
-        "started_at": time.time()
-    }
-    asyncio.create_task(_execute_flash_fallback_task(task_id, enhanced_prompt, api_key, locale=locale_val))
+    key_hash = _hash_api_key(api_key)
+    _persist_fallback_task(
+        supabase,
+        task_id,
+        status="running",
+        key_hash=key_hash,
+        engine="gemini-3.7-flash-fallback",
+    )
+    asyncio.create_task(
+        _execute_flash_fallback_task(
+            task_id,
+            enhanced_prompt,
+            api_key,
+            locale=locale_val,
+            supabase=supabase,
+            key_hash=key_hash,
+        )
+    )
     return {
         "status": "started",
         "interaction_id": task_id,
@@ -399,6 +555,7 @@ async def start_deep_research(
 @router.get("/interactions/{interaction_id}")
 async def get_interaction_status(
     interaction_id: str,
+    request: Request = None,
     api_key: str = Depends(get_gemini_key)
 ):
     """
@@ -406,14 +563,20 @@ async def get_interaction_status(
     """
     # 檢查是否為降級任務
     if interaction_id.startswith("fallback_"):
-        task = _FALLBACK_TASKS.get(interaction_id)
+        supabase = _resolve_supabase(request)
+        task = _load_fallback_task(supabase, interaction_id)
         if not task:
             raise HTTPException(status_code=404, detail="Fallback 任務不存在")
+        stored_hash = task.get("key_hash")
+        if stored_hash:
+            caller_hash = _hash_api_key(api_key)
+            if not hmac.compare_digest(str(stored_hash), caller_hash):
+                raise HTTPException(status_code=403, detail="無權存取此深度研究任務")
         return {
             "id": interaction_id,
             "status": task.get("status", "unknown"),
             "output_text": task.get("output_text"),
-            "error": task.get("error"),
+            "error": task.get("error") or task.get("error_message"),
             "code": task.get("code"),
             "engine": task.get("engine", "gemini-3.7-flash-fallback")
         }
@@ -478,16 +641,37 @@ async def get_interaction_status(
 @router.post("/interactions/{interaction_id}/cancel")
 async def cancel_interaction(
     interaction_id: str,
+    request: Request = None,
     api_key: str = Depends(get_gemini_key)
 ):
     """
     🛑 主動取消正在執行的 Antigravity 沙盒任務以節省 Token
     """
     if interaction_id.startswith("fallback_"):
+        supabase = _resolve_supabase(request)
+        task = _load_fallback_task(supabase, interaction_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="任務不存在")
+        stored_hash = task.get("key_hash")
+        caller_hash = _hash_api_key(api_key)
+        if stored_hash and not hmac.compare_digest(str(stored_hash), caller_hash):
+            raise HTTPException(status_code=403, detail="無權取消此深度研究任務")
         if interaction_id in _FALLBACK_TASKS:
             _FALLBACK_TASKS[interaction_id]["status"] = "cancelled"
-            return {"status": "cancelled", "id": interaction_id}
-        raise HTTPException(status_code=404, detail="任務不存在")
+        if supabase is not None:
+            try:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                query = (
+                    supabase.table("agent_fallback_tasks")
+                    .update({"status": "cancelled", "updated_at": now_iso})
+                    .eq("id", interaction_id)
+                )
+                if stored_hash:
+                    query = query.eq("key_hash", caller_hash)
+                query.execute()
+            except Exception as db_err:
+                logger.warning(f"[Agents] Cancel DB update skipped ({interaction_id}): {db_err}")
+        return {"status": "cancelled", "id": interaction_id}
 
     try:
         client = _get_agents_genai_client(api_key)

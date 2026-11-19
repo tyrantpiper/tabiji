@@ -179,6 +179,7 @@ export interface CreateItemParams {
     image_urls?: string[]
     memo?: string
     link_url?: string
+    website_link?: string
     reservation_code?: string
     cost?: number | null
     sub_items?: SubItem[]
@@ -382,16 +383,18 @@ export async function consumeTripStream(
 
         for (const block of parts) {
             const trimmed = block.trim()
-            if (!trimmed || trimmed.startsWith(":")) continue // 略過連線探針與心跳註解
+            if (!trimmed) continue
 
             let eventType = "message"
             let dataStr = ""
 
             for (const line of trimmed.split("\n")) {
-                if (line.startsWith("event:")) {
-                    eventType = line.slice(6).trim()
-                } else if (line.startsWith("data:")) {
-                    dataStr = line.slice(5).trim()
+                const trimmedLine = line.trim()
+                if (!trimmedLine || trimmedLine.startsWith(":")) continue // 略過逐行連線探針與心跳註解
+                if (trimmedLine.startsWith("event:")) {
+                    eventType = trimmedLine.slice(6).trim()
+                } else if (trimmedLine.startsWith("data:")) {
+                    dataStr = trimmedLine.slice(5).trim()
                 }
             }
 
@@ -417,15 +420,17 @@ export async function consumeTripStream(
         }
     }
 
-    // 🛡️ 尾端保護：若串流結束且未帶尾端 \n\n，嘗試解析剩餘殘留區塊
-    if (!finalResult && buffer.trim() && !buffer.trim().startsWith(":")) {
+    // 🛡️ 尾端保護：若串流結束且未帶尾端 \n\n，嘗試解析剩餘殘留區塊（逐行過濾註解）
+    if (!finalResult && buffer.trim()) {
         let eventType = "message"
         let dataStr = ""
         for (const line of buffer.trim().split("\n")) {
-            if (line.startsWith("event:")) {
-                eventType = line.slice(6).trim()
-            } else if (line.startsWith("data:")) {
-                dataStr = line.slice(5).trim()
+            const trimmedLine = line.trim()
+            if (!trimmedLine || trimmedLine.startsWith(":")) continue
+            if (trimmedLine.startsWith("event:")) {
+                eventType = trimmedLine.slice(6).trim()
+            } else if (trimmedLine.startsWith("data:")) {
+                dataStr = trimmedLine.slice(5).trim()
             }
         }
         if (dataStr) {
@@ -1120,6 +1125,7 @@ export const itemsApi = {
             memo: params.memo,
             sub_items: params.sub_items,
             link_url: params.link_url,
+            website_link: params.website_link,
             reservation_code: params.reservation_code,
             cost_amount: params.cost,
             hide_navigation: params.hide_navigation,
@@ -1822,5 +1828,83 @@ export const poiPoolApi = {
         return res.json()
     }
 }
+
+export interface NotificationItemDto {
+    id: string
+    user_id: string
+    type: "trip_invite" | "new_expense" | "trip_countdown" | "system_announcement"
+    title: string
+    body: string
+    link: string | null
+    metadata: Record<string, unknown>
+    is_read: boolean
+    created_at: string
+}
+
+export const notificationsApi = {
+    list: async (limit = 30, offset = 0): Promise<{ items: NotificationItemDto[]; unread_count: number }> => {
+        const res = await fetch(`${API_HOST}/api/notifications?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`)
+        if (!res.ok) throw new Error(`Failed to load notifications: ${res.status}`)
+        return res.json()
+    },
+
+    markRead: async (id: string): Promise<{ status: string }> => {
+        const res = await fetch(`${API_HOST}/api/notifications/${encodeURIComponent(id)}/read`, {
+            method: "PATCH",
+        })
+        if (!res.ok) throw new Error(`Failed to mark notification read: ${res.status}`)
+        return res.json()
+    },
+
+    markAllRead: async (): Promise<{ status: string }> => {
+        const res = await fetch(`${API_HOST}/api/notifications/read-all`, {
+            method: "PATCH",
+        })
+        if (!res.ok) throw new Error(`Failed to mark all notifications read: ${res.status}`)
+        return res.json()
+    },
+
+    delete: async (id: string): Promise<{ status: string }> => {
+        const res = await fetch(`${API_HOST}/api/notifications/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+        })
+        if (!res.ok) throw new Error(`Failed to delete notification: ${res.status}`)
+        return res.json()
+    },
+
+    clearAll: async (): Promise<{ status: string }> => {
+        const res = await fetch(`${API_HOST}/api/notifications`, {
+            method: "DELETE",
+        })
+        if (!res.ok) throw new Error(`Failed to clear notifications: ${res.status}`)
+        return res.json()
+    },
+}
+
+export const pushApi = {
+    subscribe: async (payload: {
+        endpoint: string
+        p256dh: string
+        auth: string
+        user_agent?: string
+    }): Promise<boolean> => {
+        const res = await fetch(`${API_HOST}/api/push/subscribe`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        })
+        return res.ok
+    },
+
+    unsubscribe: async (endpoint: string): Promise<boolean> => {
+        const res = await fetch(`${API_HOST}/api/push/subscribe`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint }),
+        })
+        return res.ok
+    },
+}
+
 
 

@@ -205,6 +205,7 @@ export function ItineraryView() {
             user_id: userId || "",
         }
         await itemsApi.create(activityData)
+        void broadcastTripEvent(targetTripId, "item:mutate", { action: "create" })
         if (targetTripId === activeTripId) {
             await reloadTripDetail()
         }
@@ -219,6 +220,8 @@ export function ItineraryView() {
     const [scrollerEl, setScrollerEl] = useState<HTMLElement | null>(null)
 
     const originalUrlRef = useRef<string>("")
+    const activeTripIdRef = useRef<string | undefined>(activeTripId)
+    activeTripIdRef.current = activeTripId
 
     // 🆕 Calendar Range Picker States
     const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
@@ -231,6 +234,9 @@ export function ItineraryView() {
         undoManagerRef.current = new UndoDeleteManager<Activity>(
             async (id: string) => {
                 await itemsApi.delete(id, userId || "")
+                if (activeTripIdRef.current) {
+                    void broadcastTripEvent(activeTripIdRef.current, "item:mutate", { id, action: "delete" })
+                }
             },
             5000
         )
@@ -273,6 +279,7 @@ export function ItineraryView() {
             })
 
             toast.success(t('iv_added_to_trip'))
+            void broadcastTripEvent(activeTripId, "item:mutate", { action: "create" })
             // 立即重整
             await reloadTripDetail()
         } catch (error) {
@@ -1293,6 +1300,12 @@ export function ItineraryView() {
                 // 🔒 Fix: Pass userId as 3rd argument for auth header
                 await itemsApi.update(editItem.id, activityData, userId || "")
             }
+            if (currentTrip?.id) {
+                void broadcastTripEvent(currentTrip.id, "item:mutate", {
+                    id: editItem?.id,
+                    action: isAddMode ? "create" : "update"
+                })
+            }
             haptic.success()
             toast.success(t('iv_saved'))
             setIsEditOpen(false)
@@ -1327,6 +1340,9 @@ export function ItineraryView() {
             await itemsApi.update(id, updates, userId || "")
             // Finish by revalidating with server data (triggers useTripDetail.onSuccess -> saveTripSnapshot)
             if (!skipRevalidation) {
+                if (currentTrip?.id) {
+                    void broadcastTripEvent(currentTrip.id, "item:mutate", { id, action: "update" })
+                }
                 await reloadTripDetail()
             }
             return true
@@ -1419,6 +1435,7 @@ export function ItineraryView() {
             id: item.id,
             time: item.time || item.time_slot || "00:00",
             place: item.place || item.place_name || "",
+            address: item.address || "",
             category: item.category || "sightseeing",
             desc: item.desc || item.notes || "",
             lat: item.lat,
@@ -1866,8 +1883,9 @@ export function ItineraryView() {
                                 if (capsuleSummary?.is_unlocked) {
                                     setIsCapsuleCeremonyOpen(true)
                                     if (activeTripId) {
+                                        const capsuleDay = day >= 0 ? day : 1
                                         broadcastTripEvent(activeTripId, "capsule:unveil", {
-                                            day_number: day > 0 ? day : 1,
+                                            day_number: capsuleDay,
                                             author_id: userId,
                                         }).catch(() => {})
                                     }
@@ -2114,9 +2132,9 @@ export function ItineraryView() {
                 isOpen={isCapsuleModalOpen}
                 onOpenChange={setIsCapsuleModalOpen}
                 tripId={activeTripId || ""}
-                day={day > 0 ? day : 1}
+                day={day >= 0 ? day : 1}
                 userId={userId || undefined}
-                existingEntry={capsules.find((c) => (c.author_id === userId || c.user_id === userId) && (c.day_number === (day > 0 ? day : 1) || c.day_number === 0))}
+                existingEntry={capsules.find((c) => (c.author_id === userId || c.user_id === userId) && c.day_number === (day >= 0 ? day : 1))}
                 onSuccess={async () => {
                     await reloadCapsules()
                 }}
@@ -2128,7 +2146,7 @@ export function ItineraryView() {
                 onClose={() => setIsCapsuleCeremonyOpen(false)}
                 entries={capsuleSummary?.revealed_entries?.length ? capsuleSummary.revealed_entries : capsules}
                 totalDays={totalDays}
-                initialDay={day > 0 ? day : 1}
+                initialDay={day >= 0 ? day : 1}
                 tripTitle={currentTrip?.title || ""}
             />
 

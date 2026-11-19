@@ -44,6 +44,7 @@ export const ItineraryItemSchema = z.object({
     sub_items: z.array(SubItemSchema).nullable().default([]).transform(v => v ?? []),
     link_url: z.string().optional().nullable(),
     website_link: z.string().optional().nullable(),   // 🆕 官網連結
+    address: z.string().optional().nullable(),        // 🆕 實體地址
     preview_metadata: z.any().optional().nullable(),   // 🆕 預覽元數據
     reservation_code: z.string().optional().nullable(),
     cost_amount: z.number().nullable().default(0).transform(v => v ?? 0),

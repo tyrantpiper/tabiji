@@ -55,7 +55,7 @@ export const TimelineCard = memo(function TimelineCard({
     const { t } = useLanguage()
     const [showDetail, setShowDetail] = useState(false)
     const [showPhotoPreview, setShowPhotoPreview] = useState(false)  // 🆕 圖片預覽狀態
-    const [imageError, setImageError] = useState(false) // 🆕 圖片載入失敗狀態
+    const [failedImageUrls, setFailedImageUrls] = useState<string[]>([]) // 🆕 單圖失敗清單 (支援容錯降級至下一張)
     const [menuOpen, setMenuOpen] = useState(false) // 📱 三點選單手勢消歧義受控狀態
     const isTouchInteraction = useRef(false)
     const startCoords = useRef<{ x: number; y: number } | null>(null)
@@ -105,11 +105,16 @@ export const TimelineCard = memo(function TimelineCard({
         // 桌面端滑鼠/鍵盤點擊：交由 Radix 原生閉環處理
     }
 
-    const firstImageUrl = activity?.image_urls?.[0] || activity?.image_url || activity?.preview_metadata?.mapillary_thumb || activity?.preview_metadata?.map_image || activity?.preview_metadata?.og_image;
+    const firstImageUrl =
+        activity?.image_urls?.[0] ||
+        activity?.image_url ||
+        activity?.preview_metadata?.mapillary_thumb ||
+        activity?.preview_metadata?.map_image ||
+        activity?.preview_metadata?.og_image;
     const [lastImageUrl, setLastImageUrl] = useState(firstImageUrl)
 
     if (firstImageUrl !== lastImageUrl) {
-        setImageError(false)
+        setFailedImageUrls([])
         setLastImageUrl(firstImageUrl)
     }
 
@@ -155,9 +160,13 @@ export const TimelineCard = memo(function TimelineCard({
             ? activity.image_urls
             : (activity.image_url ? [activity.image_url] : [])
 
-        const previewImage = activity.preview_metadata?.mapillary_thumb
-            || activity.preview_metadata?.map_image
-            || activity.preview_metadata?.og_image
+        const previewCandidates = [
+            activity.preview_metadata?.mapillary_thumb,
+            activity.preview_metadata?.map_image,
+            activity.preview_metadata?.og_image,
+        ].filter((u): u is string => Boolean(u))
+
+        const previewImage = previewCandidates.find((u) => !failedImageUrls.includes(u))
 
         // 合併陣列：上傳圖片優先，最後補上系統預覽圖
         const images = [...uploadedImages]
@@ -165,7 +174,9 @@ export const TimelineCard = memo(function TimelineCard({
             images.push(previewImage)
         }
 
-        const hasImage = images.length > 0 && !imageError
+        const availableImages = images.filter((url) => !failedImageUrls.includes(url))
+        const displayImageUrl = availableImages[0]
+        const hasImage = Boolean(displayImageUrl)
 
         return (
             <div className="w-full">
@@ -371,19 +382,23 @@ export const TimelineCard = memo(function TimelineCard({
                             }}
                         >
                             <Image
-                                src={getOptimizedImageUrl(images[0], 320)}
+                                src={getOptimizedImageUrl(displayImageUrl, 320)}
                                 alt={activity.place || "Thumbnail"}
                                 fill
                                 className="object-cover"
                                 unoptimized
-                                onError={() => setImageError(true)}
+                                onError={() => {
+                                    if (displayImageUrl) {
+                                        setFailedImageUrls((prev) => (prev.includes(displayImageUrl) ? prev : [...prev, displayImageUrl]))
+                                    }
+                                }}
                             />
-                            {images.length > 1 && (
+                            {availableImages.length > 1 && (
                                 <div className="absolute bottom-1 right-1 bg-black/65 backdrop-blur-xs text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full ring-1 ring-white/20">
-                                    +{images.length - 1}
+                                    +{availableImages.length - 1}
                                 </div>
                             )}
-                            {images[0] === activity.preview_metadata?.mapillary_thumb && (
+                            {displayImageUrl === activity.preview_metadata?.mapillary_thumb && (
                                 <div className="absolute top-1 left-1 bg-emerald-600/90 text-white text-[8px] font-bold px-1 py-0.2 rounded">
                                     360°
                                 </div>
@@ -862,9 +877,14 @@ function PhotoGalleryPreview({ activity, onClose }: PhotoGalleryPreviewProps) {
         ? activity.image_urls
         : (activity.image_url ? [activity.image_url] : [])
 
-    const previewImage = activity.preview_metadata?.mapillary_thumb
-        || activity.preview_metadata?.map_image
-        || activity.preview_metadata?.og_image
+    const previewCandidates = [
+        activity.preview_metadata?.mapillary_thumb,
+        activity.preview_metadata?.map_image,
+        activity.preview_metadata?.og_image,
+    ].filter((u): u is string => Boolean(u))
+
+    const [failedUrls, setFailedUrls] = useState<string[]>([])
+    const previewImage = previewCandidates.find((u) => !failedUrls.includes(u))
 
     // 合併陣列：上傳圖片優先，最後補上系統預覽圖 (如果還不在清單中的話)
     const images = [...uploadedImages]
@@ -872,28 +892,48 @@ function PhotoGalleryPreview({ activity, onClose }: PhotoGalleryPreviewProps) {
         images.push(previewImage)
     }
 
+    const visibleImages = images.filter((url) => !failedUrls.includes(url))
     const [currentIndex, setCurrentIndex] = useState(0)
 
     if (images.length === 0) return null
+    if (visibleImages.length === 0) {
+        return (
+            <div className="relative w-full h-[50vh] flex flex-col items-center justify-center gap-3 text-slate-300">
+                <Camera className="w-10 h-10 opacity-40" />
+                <p className="text-sm opacity-75">Image unavailable</p>
+                <Button variant="secondary" size="sm" onClick={onClose}>
+                    Close
+                </Button>
+            </div>
+        )
+    }
+
+    const safeIndex = Math.min(currentIndex, visibleImages.length - 1)
+    const activeImage = visibleImages[safeIndex]
 
     return (
         <div className="relative w-full h-[80vh] flex flex-col justify-center">
             <ZoomableImage
-                src={getOptimizedImageUrl(images[currentIndex], 1024)}
+                src={getOptimizedImageUrl(activeImage, 1024)}
                 alt={activity.place || "Preview"}
                 onClose={onClose}
+                onError={() => {
+                    if (activeImage) {
+                        setFailedUrls((prev) => (prev.includes(activeImage) ? prev : [...prev, activeImage]))
+                    }
+                }}
             />
 
             {/* 🆕 圖片導航指示器 (Dots) */}
-            {images.length > 1 && (
+            {visibleImages.length > 1 && (
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 flex gap-1.5 z-50">
-                    {images.map((_, i) => (
+                    {visibleImages.map((_, i) => (
                         <button
                             key={i}
                             onClick={(e) => { e.stopPropagation(); setCurrentIndex(i); }}
                             className={cn(
                                 "w-2 h-2 rounded-full transition-all duration-300",
-                                i === currentIndex
+                                i === safeIndex
                                     ? "bg-white scale-125 shadow-[0_0_8px_rgba(255,255,255,0.8)]"
                                     : "bg-white/30 hover:bg-white/50"
                             )}
@@ -903,16 +943,16 @@ function PhotoGalleryPreview({ activity, onClose }: PhotoGalleryPreviewProps) {
             )}
 
             {/* 🆕 左右切換按鈕 (中心側邊) */}
-            {images.length > 1 && (
+            {visibleImages.length > 1 && (
                 <>
                     <button
-                        onClick={(e) => { e.stopPropagation(); setCurrentIndex((prev) => (prev - 1 + images.length) % images.length); }}
+                        onClick={(e) => { e.stopPropagation(); setCurrentIndex((prev) => (prev - 1 + visibleImages.length) % visibleImages.length); }}
                         className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-sm transition-all z-50"
                     >
                         <span className="text-xl">←</span>
                     </button>
                     <button
-                        onClick={(e) => { e.stopPropagation(); setCurrentIndex((prev) => (prev + 1) % images.length); }}
+                        onClick={(e) => { e.stopPropagation(); setCurrentIndex((prev) => (prev + 1) % visibleImages.length); }}
                         className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-sm transition-all z-50"
                     >
                         <span className="text-xl">→</span>
@@ -921,9 +961,9 @@ function PhotoGalleryPreview({ activity, onClose }: PhotoGalleryPreviewProps) {
             )}
 
             {/* 🆕 頁碼顯示 */}
-            {images.length > 1 && (
+            {visibleImages.length > 1 && (
                 <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/50 text-white text-xs px-3 py-1.5 rounded-full backdrop-blur-sm z-50">
-                    {currentIndex + 1} / {images.length}
+                    {safeIndex + 1} / {visibleImages.length}
                 </div>
             )}
         </div>

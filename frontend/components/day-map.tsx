@@ -364,6 +364,7 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
         }
 
         const currentQuery = query  // 🆕 快照防止競態
+        let localMapped: typeof results = []
 
         // 🏕️ L1: 本地即時搜尋 (毫秒級)
         if (localDataLoaded) {
@@ -380,7 +381,8 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                         source: 'local' as const
                     }))
                 if (mapped.length > 0) {
-                    setResults(mapped)
+                    localMapped = mapped
+                    setResults(localMapped)
                     setIsTyping(false)
                     debugLog(`🏕️ L1 本地秒回: ${mapped.length} 筆結果`)
                     // 🆕 不再 return，讓 L2 仍可補充結果
@@ -392,7 +394,7 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
         const timer = setTimeout(async () => {
             setIsTyping(false)    // debounce 結束
             setIsSearching(true)
-            setResults([])  // Anti-flicker: clear old results before new search
+            setResults(localMapped)  // 保留 L1 本地結果，僅清空舊的過期雲端結果
             try {
                 const center = mapRef.current?.getCenter()
                 const bounds = mapRef.current?.getBounds?.()
@@ -451,7 +453,7 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                 }
             } catch {
                 if (currentQuery === query) {
-                    setResults([])
+                    setResults(localMapped)
                 }
             } finally {
                 setIsSearching(false)

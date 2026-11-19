@@ -57,7 +57,9 @@ export const poiTranslations = {
         poi_reset_time: "Reset to Unscheduled",
         poi_step_2_of_2: "Step 2 / 2",
         poi_fit_all: "View All",
-        poi_loading_map: "Loading map..."
+        poi_loading_map: "Loading map...",
+        poi_wiki_only_title: "Wikipedia Reference Mode",
+        poi_wiki_only_hint: "Showing free encyclopedia info. Configure a Gemini API Key in Profile for personalized AI highlights."
     },
     zh: {
         poi_saved_places: "景點口袋清單",
@@ -114,6 +116,8 @@ export const poiTranslations = {
         poi_reset_time: "重設為未定",
         poi_step_2_of_2: "步驟 2 / 2",
         poi_fit_all: "全覽",
-        poi_loading_map: "載入地圖中..."
+        poi_loading_map: "載入地圖中...",
+        poi_wiki_only_title: "免費百科資料模式",
+        poi_wiki_only_hint: "目前顯示免費維基百科介紹；若想獲得個人化 AI 必吃與深度攻略，請於個人檔案設定 Gemini API Key。"
     }
 } as const

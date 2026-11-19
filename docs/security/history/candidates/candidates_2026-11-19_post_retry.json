@@ -1,0 +1,20 @@
+[
+  {
+    "id": "backend/routers/notifications.py:jwt_scoped_notifications_and_https_push_validation",
+    "file_path": "backend/routers/notifications.py",
+    "start_line": 1,
+    "end_line": 195,
+    "attack_vector": "cross_user_notification_access_and_non_https_push_url",
+    "hypothesis": "Verify whether /api/notifications* and /api/push/subscribe strictly enforce get_verified_user ownership filtering, UUID validation, and https-only non-loopback endpoint validation on subscription upserts and deletes.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/agents.py:fallback_task_db_persistence_and_key_hash_verification",
+    "file_path": "backend/routers/agents.py",
+    "start_line": 500,
+    "end_line": 685,
+    "attack_vector": "cross_caller_task_status_access_and_ttl_expiry",
+    "hypothesis": "Verify whether fallback research polling and cancellation endpoints load tasks via agent_fallback_tasks persistence, enforce SHA-256 key_hash ownership via hmac.compare_digest, and reject mismatched callers with HTTP 403.",
+    "severity": "high"
+  }
+]

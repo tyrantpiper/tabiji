@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from "react"
 import { Bell, CheckCheck, Users, DollarSign, Plane, Megaphone, X, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getSupabaseClient } from "@/lib/supabase"
+import { notificationsApi, type NotificationItemDto } from "@/lib/api"
+import { isUserLoggedIn } from "@/lib/auth-session"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useTheme } from "@/lib/ThemeContext"
 import { motion, AnimatePresence } from "framer-motion"
@@ -11,16 +13,19 @@ import { useRouter } from "next/navigation"
 import { dispatchDeepLink } from "@/lib/hooks/useDeepLinkRouter"
 import { useHaptic } from "@/lib/hooks"
 
-interface Notification {
-    id: string
-    user_id: string
-    type: "trip_invite" | "new_expense" | "trip_countdown" | "system_announcement"
-    title: string
-    body: string
-    link: string | null
-    metadata: Record<string, unknown>
-    is_read: boolean
-    created_at: string
+type Notification = NotificationItemDto
+
+function readEstablishedBellUserId(): string | null {
+    if (typeof window === "undefined" || !isUserLoggedIn()) return null
+    try {
+        const raw = localStorage.getItem("user_uuid")?.trim() || ""
+        if (!raw || raw === "null" || raw === "undefined" || /^tbj_rec_/i.test(raw)) {
+            return null
+        }
+        return raw
+    } catch {
+        return null
+    }
 }
 
 const TYPE_ICONS: Record<string, typeof Users> = {
@@ -94,138 +99,171 @@ export function NotificationBell() {
     }
 
     const fetchNotifications = useCallback(async () => {
-        const userId = localStorage.getItem("user_uuid")
-        const supabase = getSupabaseClient()
-        if (!supabase || !userId) return
+        const userId = readEstablishedBellUserId()
+        if (!userId) return
 
-        const { data, error } = await supabase
-            .from("notifications")
-            .select("*")
-            .eq("user_id", userId)
-            .order("created_at", { ascending: false })
-            .limit(30)
-
-        if (!error && data) {
-            setNotifications(data as Notification[])
-            setUnreadCount(data.filter((n: Notification) => !n.is_read).length)
+        try {
+            const data = await notificationsApi.list(30, 0)
+            const items = Array.isArray(data?.items) ? data.items : []
+            setNotifications(items)
+            setUnreadCount(
+                typeof data?.unread_count === "number"
+                    ? data.unread_count
+                    : items.filter((n) => !n.is_read).length
+            )
+        } catch {
+            // Silently preserve current notifications during offline/transient failures
         }
     }, [])
 
     useEffect(() => {
-        const userId = localStorage.getItem("user_uuid")
+        if (typeof window === "undefined") return
+
         const supabase = getSupabaseClient()
+        let activeUserId: string | null = null
+        let userChannel: ReturnType<NonNullable<ReturnType<typeof getSupabaseClient>>["channel"]> | null = null
+        let globalChannel: ReturnType<NonNullable<ReturnType<typeof getSupabaseClient>>["channel"]> | null = null
 
-        // 非同步排程初始載入
-        const initialFetch = setTimeout(fetchNotifications, 0)
-
-        // Supabase Realtime 訂閱：監聽該使用者的新通知
-        let channel: ReturnType<NonNullable<ReturnType<typeof getSupabaseClient>>["channel"]> | null = null
-
-        if (supabase && userId) {
-            channel = supabase
-                .channel("notifications-realtime")
-                .on(
-                    "postgres_changes" as const,
-                    {
-                        event: "*",
-                        schema: "public",
-                        table: "notifications",
-                        filter: `user_id=eq.${userId}`,
-                    },
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    (payload: any) => {
-                        if (payload.eventType === "INSERT") {
-                            // 新通知即時推入列表頂部
-                            setNotifications((prev) => [payload.new as Notification, ...prev].slice(0, 30))
-                            setUnreadCount((prev) => prev + 1)
-                        } else if (payload.eventType === "DELETE" && payload.old?.id) {
-                            // 即時移除被刪除的通知
-                            setNotifications((prev) => {
-                                const removed = prev.find((n) => n.id === payload.old.id)
-                                if (removed && !removed.is_read) {
-                                    setUnreadCount((c) => Math.max(0, c - 1))
-                                }
-                                return prev.filter((n) => n.id !== payload.old.id)
-                            })
-                        }
-                    }
-                )
-                .subscribe()
+        const cleanupChannels = () => {
+            if (supabase) {
+                if (userChannel) supabase.removeChannel(userChannel)
+                if (globalChannel) supabase.removeChannel(globalChannel)
+            }
+            userChannel = null
+            globalChannel = null
+            activeUserId = null
         }
+
+        const syncNotificationsAndRealtime = () => {
+            const currentUserId = readEstablishedBellUserId()
+            if (!currentUserId) {
+                cleanupChannels()
+                setNotifications([])
+                setUnreadCount(0)
+                return
+            }
+
+            void fetchNotifications()
+
+            if (supabase && currentUserId !== activeUserId) {
+                cleanupChannels()
+                activeUserId = currentUserId
+
+                userChannel = supabase
+                    .channel(`user-notif:${currentUserId}`)
+                    .on("broadcast", { event: "notif:refresh" }, () => {
+                        void fetchNotifications()
+                    })
+                    .subscribe()
+
+                globalChannel = supabase
+                    .channel("user-notif:broadcast")
+                    .on("broadcast", { event: "notif:refresh" }, () => {
+                        void fetchNotifications()
+                    })
+                    .subscribe()
+            }
+        }
+
+        const initialFetch = setTimeout(syncNotificationsAndRealtime, 0)
+
+        const handleLoginChange = () => syncNotificationsAndRealtime()
+        const handleStorage = (e: StorageEvent) => {
+            if (!e.key || e.key === "user_uuid" || e.key === "user_nickname" || e.key === "user_recovery_key") {
+                syncNotificationsAndRealtime()
+            }
+        }
+        const handleVisibility = () => {
+            if (document.visibilityState === "visible" && readEstablishedBellUserId()) {
+                void fetchNotifications()
+            }
+        }
+
+        window.addEventListener("user-login-state-changed", handleLoginChange)
+        window.addEventListener("storage", handleStorage)
+        document.addEventListener("visibilitychange", handleVisibility)
 
         return () => {
             clearTimeout(initialFetch)
-            if (channel) {
-                supabase?.removeChannel(channel)
-            }
+            window.removeEventListener("user-login-state-changed", handleLoginChange)
+            window.removeEventListener("storage", handleStorage)
+            document.removeEventListener("visibilitychange", handleVisibility)
+            cleanupChannels()
         }
     }, [fetchNotifications])
 
     const markAsRead = async (id: string) => {
-        const supabase = getSupabaseClient()
-        if (!supabase) return
-
-        await supabase
-            .from("notifications")
-            .update({ is_read: true })
-            .eq("id", id)
+        if (!readEstablishedBellUserId()) return
+        const prevNotifications = notifications
+        const prevUnread = unreadCount
 
         setNotifications((prev) =>
             prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
         )
         setUnreadCount((prev) => Math.max(0, prev - 1))
+
+        try {
+            await notificationsApi.markRead(id)
+        } catch {
+            setNotifications(prevNotifications)
+            setUnreadCount(prevUnread)
+        }
     }
 
     const markAllRead = async () => {
-        const userId = localStorage.getItem("user_uuid")
-        const supabase = getSupabaseClient()
-        if (!supabase || !userId) return
-
-        await supabase
-            .from("notifications")
-            .update({ is_read: true })
-            .eq("user_id", userId)
-            .eq("is_read", false)
+        if (!readEstablishedBellUserId()) return
+        const prevNotifications = notifications
+        const prevUnread = unreadCount
 
         setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
         setUnreadCount(0)
+
+        try {
+            await notificationsApi.markAllRead()
+        } catch {
+            setNotifications(prevNotifications)
+            setUnreadCount(prevUnread)
+        }
     }
 
     // 刪除單筆通知
     const deleteNotification = async (id: string, e: React.MouseEvent) => {
         e.stopPropagation() // 防止觸發 handleNotificationClick
-        const supabase = getSupabaseClient()
-        if (!supabase) return
+        if (!readEstablishedBellUserId()) return
+        const prevNotifications = notifications
+        const prevUnread = unreadCount
 
         // 先從 UI 移除（樂觀更新）
-        setNotifications((prev) => {
-            const target = prev.find((n) => n.id === id)
-            if (target && !target.is_read) {
-                setUnreadCount((c) => Math.max(0, c - 1))
-            }
-            return prev.filter((n) => n.id !== id)
-        })
+        const target = prevNotifications.find((n) => n.id === id)
+        setNotifications((prev) => prev.filter((n) => n.id !== id))
+        if (target && !target.is_read) {
+            setUnreadCount((c) => Math.max(0, c - 1))
+        }
 
-        await supabase
-            .from("notifications")
-            .delete()
-            .eq("id", id)
+        try {
+            await notificationsApi.delete(id)
+        } catch {
+            setNotifications(prevNotifications)
+            setUnreadCount(prevUnread)
+        }
     }
 
     // 清除全部通知
     const clearAllNotifications = async () => {
-        const userId = localStorage.getItem("user_uuid")
-        const supabase = getSupabaseClient()
-        if (!supabase || !userId) return
+        if (!readEstablishedBellUserId()) return
+        const prevNotifications = notifications
+        const prevUnread = unreadCount
 
         // 樂觀更新
         setNotifications([])
         setUnreadCount(0)
 
-        await supabase
-            .from("notifications")
-            .delete()
-            .eq("user_id", userId)
+        try {
+            await notificationsApi.clearAll()
+        } catch {
+            setNotifications(prevNotifications)
+            setUnreadCount(prevUnread)
+        }
     }
 
     const handleNotificationClick = (notif: Notification) => {

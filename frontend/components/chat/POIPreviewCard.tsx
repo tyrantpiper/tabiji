@@ -7,6 +7,7 @@ import { cn, openExternalLink } from "@/lib/utils"
 import { toast } from "sonner"
 import { useTripContext } from "@/lib/trip-context"
 import { itemsApi, poiApi } from "@/lib/api"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { debugLog } from "@/lib/debug"
 import { useLanguage } from "@/lib/LanguageContext"
 import { getSecureApiKey } from "@/lib/security"
@@ -177,6 +178,7 @@ export default function POIPreviewCard({
 
             // 成功
             setIsAdded(true)
+            void broadcastTripEvent(activeTripId, "item:mutate", { action: "create" })
             toast.success(zh ? `✅ 已加入：${poiData.place_name}` : `✅ Added: ${poiData.place_name}`)
 
             // 刷新行程列表
@@ -244,10 +246,10 @@ export default function POIPreviewCard({
                             )}>
                                 {categoryLabel}
                             </span>
-                            {poiData.rating && (
+                            {Boolean(poiData.rating && poiData.rating > 0) && (
                                 <span className="text-[10px] text-amber-600 flex items-center gap-0.5">
                                     <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                                    {poiData.rating.toFixed(1)}
+                                    {poiData.rating!.toFixed(1)}
                                 </span>
                             )}
                         </div>

@@ -171,14 +171,14 @@ async def ai_enrich_poi(fastapi_req: Request, request: POIAIEnrichRequest):
             print(f"⚡ [Cache Hit] {cache_key}")
             return POI_ENRICH_CACHE[cache_key]
 
-        api_key = request.api_key
-        if not api_key:
-            raise HTTPException(status_code=400, detail="API Key required" if is_en else "需要 API Key")
-        
-        print(f"🔍 [POI Enrich] 開始抓取與摘要: {request.name} (Wiki + AI, locale={locale})...")
-        
-        lang_label = "English summary" if is_en else "Traditional Chinese summary"
-        prompt = f"""
+        api_key = (request.api_key or "").strip()
+        has_api_key = bool(api_key)
+
+        print(f"🔍 [POI Enrich] 開始抓取與摘要: {request.name} (Wiki + {'AI' if has_api_key else 'Wiki-Only Fallback'}, locale={locale})...")
+
+        if has_api_key:
+            lang_label = "English summary" if is_en else "Traditional Chinese summary"
+            prompt = f"""
 You are a travel guide assistant. Search the web for reviews and vibes for:
 - Name: {request.name}
 - Type: {request.type}
@@ -192,28 +192,33 @@ Output in this EXACT JSON format ({lang_label}):
     "business_status": "OPERATIONAL"
 }}
 """
-        # 🚀 並行執行 AI 摘要與 Wiki 豐富 (使用 DAILY_ROUTING 進行極速低延遲解析)
-        ai_task = call_extraction(
-            api_key,
-            prompt,
-            intent_type="POI_ENRICH",
-            routing_strategy=DAILY_ROUTING
-        )
+            # 🚀 並行執行 AI 摘要與 Wiki 豐富 (使用 DAILY_ROUTING 進行極速低延遲解析)
+            ai_task = call_extraction(
+                api_key,
+                prompt,
+                intent_type="POI_ENRICH",
+                routing_strategy=DAILY_ROUTING
+            )
+        else:
+            ai_task = asyncio.sleep(0, result=None)
+
         wiki_task = enrich_poi_complete({
             "name": request.name,
             "wikidata_id": request.wikidata_id or "",
             "lat": request.lat,
             "lng": request.lng
         }, getattr(fastapi_req.app.state, "client", None), lang="en" if is_en else "zh")
-        
+
         ai_result, wiki_result = await asyncio.gather(ai_task, wiki_task, return_exceptions=True)
-        
+
         # 1. 處理 AI 摘要結果
         ai_data = {}
         ai_warning: Optional[str] = None
-        if isinstance(ai_result, NonRetryableAuthError):
+        if not has_api_key:
+            ai_warning = "NO_API_KEY"
+        elif isinstance(ai_result, NonRetryableAuthError):
             raise ai_result
-        if isinstance(ai_result, Exception):
+        elif isinstance(ai_result, Exception):
             print(f"⚠️ [POI Enrich] AI 調用失敗 ({request.name}): {type(ai_result).__name__}: {ai_result}")
             ai_warning = "AI_UNAVAILABLE"
         elif isinstance(ai_result, str) and ai_result.strip():
@@ -229,7 +234,7 @@ Output in this EXACT JSON format ({lang_label}):
         else:
             print(f"⚠️ [POI Enrich] AI 回傳空內容 ({request.name})")
             ai_warning = "AI_EMPTY_OUTPUT"
-        
+
         # 2. 處理 Wiki 結果
         if isinstance(wiki_result, Exception):
             wiki_result = {
@@ -238,12 +243,12 @@ Output in this EXACT JSON format ({lang_label}):
                 "cultural_desc": None,
                 "travel_tips": None
             }
-        
-        # 🆕 Phase 5.2: AI Translation Fallback (雙語對齊)
+
+        # 🆕 Phase 5.2: AI Translation Fallback (雙語對齊 — 僅在持有有效 API Key 時執行)
         resolved_lang = wiki_result.get("resolved_language", "zh-TW")
         cultural_desc = wiki_result.get("cultural_desc")
-        
-        if is_en:
+
+        if has_api_key and is_en:
             if cultural_desc and not str(resolved_lang).lower().startswith("en"):
                 print(f"🌐 [AI Translate] Translating {resolved_lang} to en...")
                 translation_prompt = f"Translate the following Wikipedia description into natural, fluent English with a professional travel guide tone:\n\n{cultural_desc}"
@@ -258,7 +263,7 @@ Output in this EXACT JSON format ({lang_label}):
                         wiki_result["resolved_language"] = f"en (translated from {resolved_lang})"
                 except Exception as te:
                     print(f"⚠️ Translation failed: {te}")
-        else:
+        elif has_api_key:
             if cultural_desc and resolved_lang != "zh-TW" and not str(resolved_lang).startswith("zh"):
                 print(f"🌐 [AI Translate] Translating {resolved_lang} to zh-TW...")
                 translation_prompt = f"請將以下維基百科描述翻譯為繁體中文（zh-TW），保持旅遊指南的專業語氣：\n\n{cultural_desc}"
@@ -277,17 +282,17 @@ Output in this EXACT JSON format ({lang_label}):
         # 3. 數據合流與保底鏈 (Summary Fallback Chain)
         default_summary = f"{request.name} is a notable local point of interest." if is_en else f"{request.name} 是位於當地的地點。"
         final_summary = ai_data.get("summary") or wiki_result.get("cultural_desc") or default_summary
-        
+
         # 4. 狀態判定
         ai_success = bool(ai_data.get("summary"))
         wiki_status = wiki_result.get("status", "FAILED")
-        
+
         final_status = "SUCCESS"
         if not ai_success or wiki_status != "SUCCESS":
             final_status = "PARTIAL_SUCCESS"
         if not ai_success and wiki_status == "FAILED":
             final_status = "FAILED"
-            
+
         merged_warnings = list(wiki_result.get("warnings") or [])
         if ai_warning and ai_warning not in merged_warnings:
             merged_warnings.append(ai_warning)
@@ -303,11 +308,12 @@ Output in this EXACT JSON format ({lang_label}):
             "image_url": wiki_result.get("image_url"), # 🆕 Phase 5.4: Expose image
             "status": final_status,
             "warnings": merged_warnings,
-            "official_url": wiki_result.get("official_url")
+            "official_url": wiki_result.get("official_url"),
+            "ai_key_missing": not has_api_key,
         }
 
-        # 🆕 Step 3: 快取存儲 (僅在完全成功 SUCCESS 時存儲，不快取帶有警告的 PARTIAL 狀態)
-        if final_status == "SUCCESS":
+        # 🆕 Step 3: 快取存儲 (僅在完全成功 SUCCESS 且有 Key 時存儲，不快取缺 Key 或 PARTIAL 狀態)
+        if final_status == "SUCCESS" and has_api_key:
             POI_ENRICH_CACHE[cache_key] = result_payload
             
         print(f"✅ [POI Enrich] 完成: {request.name} (Status: {final_status})")

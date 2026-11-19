@@ -42,6 +42,16 @@ export function CapsuleUnveilingCeremony({
     const [activeDay, setActiveDay] = useState<number>(normalizedInitialDay)
     const [currentTravelerIdx, setCurrentTravelerIdx] = useState<number>(0)
     const [flippedMap, setFlippedMap] = useState<Record<string, boolean>>({})
+    const [prevSyncKey, setPrevSyncKey] = useState<string>(`${isOpen}:${normalizedInitialDay}`)
+
+    const currentSyncKey = `${isOpen}:${normalizedInitialDay}`
+    if (currentSyncKey !== prevSyncKey) {
+        setPrevSyncKey(currentSyncKey)
+        if (isOpen) {
+            setActiveDay(normalizedInitialDay)
+            setCurrentTravelerIdx(0)
+        }
+    }
 
     // 🛡️ Body Scroll Lock & ESC 鍵安全退出守衛
     useEffect(() => {

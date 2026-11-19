@@ -39,6 +39,47 @@ function resolveServiceSecretKey(): string {
   return '';
 }
 
+async function emitGlobalBroadcastRefresh(
+  supabaseUrl: string,
+  serviceKey: string
+): Promise<void> {
+  const baseUrl = (supabaseUrl || '').trim().replace(/\/+$/, '');
+  const key = (serviceKey || '').trim();
+  if (!baseUrl || !key) return;
+
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 2000) : null;
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      apikey: key,
+    };
+    if (!key.startsWith('sb_')) {
+      headers.Authorization = `Bearer ${key}`;
+    }
+
+    const resp = await fetch(`${baseUrl}/realtime/v1/api/broadcast`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        messages: [
+          {
+            topic: 'realtime:user-notif:broadcast',
+            event: 'notif:refresh',
+            payload: { ts: Date.now() },
+          },
+        ],
+      }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    await resp.body?.cancel().catch(() => {});
+  } catch (err) {
+    console.warn('notify-broadcast realtime refresh skipped:', err);
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -139,6 +180,11 @@ Deno.serve(async (req: Request) => {
 
     if (insertErr) {
       console.error('Failed to insert broadcast notifications:', insertErr);
+    } else if (notifications.length > 0) {
+      await emitGlobalBroadcastRefresh(
+        Deno.env.get('SUPABASE_URL') || '',
+        resolveServiceSecretKey()
+      );
     }
 
     // === Web Push ===

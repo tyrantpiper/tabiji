@@ -170,6 +170,7 @@ async def get_public_trip_by_public_id(
                     "tags": item.get("tags", []),
                     "link_url": item.get("link_url"),
                     "website_link": item.get("website_link"),
+                    "address": item.get("address"),
                     "preview_metadata": item.get("preview_metadata"),
                     # 🛡️ 機密防衛：公開端點絕不洩漏 reservation_code
                     "hide_navigation": item.get("hide_navigation", False),
@@ -377,6 +378,7 @@ async def get_trip_by_id(
                     "tags": item.get("tags", []),
                     "link_url": item.get("link_url"), 
                     "website_link": item.get("website_link"),
+                    "address": item.get("address"),
                     "preview_metadata": item.get("preview_metadata") or {},
                     "sub_items": item.get("sub_items") or [],
                     "image_url": item.get("image_url"),
@@ -550,9 +552,15 @@ async def delete_trip(
         except Exception as fk_err:
             print(f"⚠️ FK Cleanup Warning (expenses): {fk_err}")
         
-        # 3. 刪除所有細項
+        # 3. 刪除所有細項與膠囊紀錄 (觸發 Cloudinary 圖片清理後再刪主表)
         supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).execute()
         print("   ✅ 細項已刪除")
+
+        try:
+            supabase.table("trip_capsule_entries").delete().eq("trip_id", trip_id).execute()
+            print("   ✅ 時光膠囊紀錄已清理")
+        except Exception as cap_err:
+            print(f"⚠️ FK Cleanup Warning (trip_capsule_entries): {cap_err}")
         
         # 4. 刪除所有成員關係
         supabase.table("trip_members").delete().eq("itinerary_id", trip_id).execute()
@@ -829,6 +837,8 @@ async def get_latest_itinerary(
                     "reservation_code": item.get("reservation_code"),
                     "tags": item.get("tags", []),
                     "link_url": item.get("link_url"), 
+                    "website_link": item.get("website_link"),
+                    "address": item.get("address"),
                     "sub_items": item.get("sub_items") or [],
                     "image_url": item.get("image_url"),
                     "image_urls": item.get("image_urls") or ([item.get("image_url")] if item.get("image_url") else []),
@@ -1024,6 +1034,7 @@ async def save_itinerary(
                 "sub_items": item.sub_items,
                 "link_url": item.link_url,
                 "website_link": item.website_link,
+                "address": item.address,
                 "memo": item.memo,
                 "image_url": item.image_url,
                 "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
@@ -1228,6 +1239,7 @@ async def import_to_trip(
                     "sub_items": item.sub_items,
                     "link_url": item.link_url,
                     "website_link": item.website_link,
+                    "address": item.address,
                     "memo": item.memo,
                     "image_url": item.image_url,
                     "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
@@ -1620,6 +1632,19 @@ async def update_trip_dates(
                                 if k.isdigit() and int(k) > new_days:
                                     del content[field][k]
 
+                # 🛡️ T5/T9: 同步裁剪或合併時光膠囊天數 (Day 0 終局膠囊嚴格保留，避免 uq_trip_day_author 23505)
+                try:
+                    supabase.rpc(
+                        "shift_trip_capsules",
+                        {
+                            "p_trip_id": trip_id,
+                            "p_op": "truncate_merge" if request.on_shorten == "merge" else "truncate_delete",
+                            "p_pivot_day": new_days,
+                        },
+                    ).execute()
+                except Exception as cap_err:
+                    print(f"⚠️ Capsule Truncate/Merge Warning: {cap_err}")
+
             # 5. 更新 itineraries 表 (原子寫入)
             updates = {
                 "start_date": request.start_date,
@@ -1717,6 +1742,7 @@ async def create_item(
             "sub_items": request.sub_items,
             "link_url": request.link_url,
             "website_link": request.website_link,
+            "address": request.address,
             "reservation_code": request.reservation_code,
             "cost_amount": request.cost_amount,
             "preview_metadata": request.preview_metadata,
@@ -1897,6 +1923,7 @@ async def update_item(
         # 🆕 新增：處理預約資訊
         if request.link_url is not None: data["link_url"] = request.link_url
         if request.website_link is not None: data["website_link"] = request.website_link
+        if request.address is not None: data["address"] = request.address
         if request.reservation_code is not None: data["reservation_code"] = request.reservation_code
         # 👇 新增：處理 sub_items (連結列表)
         if request.sub_items is not None: data["sub_items"] = request.sub_items
@@ -2028,6 +2055,19 @@ async def delete_day(
                         .update({"day_number": target_day})\
                         .in_("id", batch)\
                         .execute()
+
+            # 🛡️ T5/T9: 原子位移後續天數時光膠囊並刪除當日膠囊 (嚴格保留 Day 0)
+            try:
+                supabase.rpc(
+                    "shift_trip_capsules",
+                    {
+                        "p_trip_id": trip_id,
+                        "p_op": "delete_shift",
+                        "p_pivot_day": day_number,
+                    },
+                ).execute()
+            except Exception as cap_err:
+                print(f"⚠️ Capsule Delete-Shift Warning: {cap_err}")
 
             # 4. 🧠 Deep Content Shift (處理 content 內的 Map 結構)
             # 用來防止「幽靈資料」：刪除的天數資料必須清空，後面的資料必須往前補
@@ -2164,6 +2204,19 @@ async def add_day(
                             .update({"day_number": target_day})\
                             .in_("id", batch)\
                             .execute()
+
+                # 🛡️ T5/T9: 原子後移插隊日後時光膠囊 (嚴格保留 Day 0)
+                try:
+                    supabase.rpc(
+                        "shift_trip_capsules",
+                        {
+                            "p_trip_id": trip_id,
+                            "p_op": "insert_shift",
+                            "p_pivot_day": insert_before,
+                        },
+                    ).execute()
+                except Exception as cap_err:
+                    print(f"⚠️ Capsule Insert-Shift Warning: {cap_err}")
                 
                 # B. 🧠 Deep Content Shift (Reverse Order)
                 # 這裡必須使用 shift_limit_day，確保連同幽靈資料一起往後移，避免資料損失

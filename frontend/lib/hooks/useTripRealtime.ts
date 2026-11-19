@@ -124,57 +124,7 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
         const channel = supabase.channel(channelName)
         RealtimeChannelCoordinator.get().attach(tripId, channel)
 
-        // 1. 監聽行程詳情異動 (封面、天數、每日重點提醒)
-        channel.on(
-            "postgres_changes",
-            {
-                event: "*",
-                schema: "public",
-                table: "itineraries",
-                filter: `id=eq.${tripId}`,
-            },
-            (payload) => {
-                console.log("🔄 [Realtime] Itinerary updated remotely:", payload.eventType)
-                mutate((key: unknown) => {
-                    if (Array.isArray(key) && key[0] === `/api/trips/${tripId}`) return true
-                    if (Array.isArray(key) && key[0] === "/api/trips") return true
-                    return false
-                }, undefined, { revalidate: true })
-
-                const now = Date.now()
-                if (now - lastToastTimeRef.current > 3000) {
-                    lastToastTimeRef.current = now
-                    toast.info("🔄 旅伴已更新行程內容", { duration: 2500 })
-                }
-            }
-        )
-
-        // 2. 🛡️ 補齊盲區：監聽行程細項異動 (景點新增、刪除、拖曳排序、時間調整)
-        channel.on(
-            "postgres_changes",
-            {
-                event: "*",
-                schema: "public",
-                table: "itinerary_items",
-                filter: `itinerary_id=eq.${tripId}`,
-            },
-            (payload) => {
-                console.log("🔄 [Realtime] Itinerary item updated remotely:", payload.eventType)
-                mutate((key: unknown) => {
-                    if (Array.isArray(key) && key[0] === `/api/trips/${tripId}`) return true
-                    if (Array.isArray(key) && key[0] === "/api/trips") return true
-                    return false
-                }, undefined, { revalidate: true })
-
-                const now = Date.now()
-                if (now - lastToastTimeRef.current > 3000) {
-                    lastToastTimeRef.current = now
-                    toast.info("📍 旅伴已更新景點清單", { duration: 2500 })
-                }
-            }
-        )
-
-        // 3. ⚡ 監聽高頻 Broadcast 記憶體協同事件 (<10ms 鏡像同步)
+        // ⚡ Broadcast 記憶體協同事件 (<10ms 鏡像同步；不再依賴會被匿名 RLS 靜默攔截的 postgres_changes)
         channel.on(
             "broadcast",
             { event: "collab:event" },
@@ -189,12 +139,20 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                 }
 
                 // 鏡像更新 SWR 快取 (針對細項異動與拖曳)
-                // ⚡ 核心解耦：tip:update 與 checklist:update 禁止立即打 GET，由 DOM 事件記憶體鏡像先行，待資料庫落盤後由 postgres_changes 權威核實
                 if (payload.event === "item:reorder" || payload.event === "item:mutate") {
                     mutate((key: unknown) => {
                         if (Array.isArray(key) && key[0] === `/api/trips/${tripId}`) return true
+                        if (Array.isArray(key) && key[0] === "/api/trips") return true
                         return false
-                    })
+                    }, undefined, { revalidate: true })
+
+                    if (payload.event === "item:mutate") {
+                        const now = Date.now()
+                        if (now - lastToastTimeRef.current > 3000) {
+                            lastToastTimeRef.current = now
+                            toast.info("📍 旅伴已更新景點清單", { duration: 2500 })
+                        }
+                    }
                 }
 
                 // 💰 記帳廣播事件處理
@@ -202,8 +160,15 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                     mutate((key: unknown) => {
                         if (Array.isArray(key) && typeof key[0] === "string" && key[0].startsWith(`/api/trips/${tripId}/expenses`)) return true
                         if (typeof key === "string" && key.includes(`/api/trips/${tripId}/expenses`)) return true
+                        if (typeof key === "string" && (key.includes("/api/ledger/expenses") || key.includes("/api/ledger/summary"))) return true
                         return false
                     }, undefined, { revalidate: true })
+
+                    const now = Date.now()
+                    if (now - lastToastTimeRef.current > 3000) {
+                        lastToastTimeRef.current = now
+                        toast.info("💰 旅伴已更新記帳資料", { duration: 2500 })
+                    }
                 }
 
                 // 📮 時光膠囊廣播事件處理 (進度刷新與破印盛典同步)
@@ -221,33 +186,6 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                             toast.info("💌 旅伴已封存時光膠囊", { duration: 2500 })
                         }
                     }
-                }
-            }
-        )
-
-        // 4. 💰 補齊公帳盲區：監聽分帳支出異動 (新增、修改、刪除費用)
-        channel.on(
-            "postgres_changes",
-            {
-                event: "*",
-                schema: "public",
-                table: "expenses",
-                filter: `itinerary_id=eq.${tripId}`,
-            },
-            (payload) => {
-                console.log("🔄 [Realtime] Expense updated remotely:", payload.eventType)
-                // 🛡️ 關鍵加固：SWR key 為 Tuple [`/api/trips/${tripId}/expenses`, userId]，採 Predicate 精準刷新
-                mutate((key: unknown) => {
-                    if (Array.isArray(key) && typeof key[0] === "string" && key[0].startsWith(`/api/trips/${tripId}/expenses`)) return true
-                    if (typeof key === "string" && key.includes(`/api/trips/${tripId}/expenses`)) return true
-                    if (typeof key === "string" && (key.includes("/api/ledger/expenses") || key.includes("/api/ledger/summary"))) return true
-                    return false
-                }, undefined, { revalidate: true })
-
-                const now = Date.now()
-                if (now - lastToastTimeRef.current > 3000) {
-                    lastToastTimeRef.current = now
-                    toast.info("💰 旅伴已更新記帳資料", { duration: 2500 })
                 }
             }
         )

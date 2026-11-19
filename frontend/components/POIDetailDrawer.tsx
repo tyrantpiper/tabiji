@@ -67,6 +67,7 @@ export interface POIEnrichData {
     image_url?: string;           // 🆕 Phase 5: Wikipedia/Wikidata image
     status: "SUCCESS" | "PARTIAL_SUCCESS" | "FAILED";
     warnings?: string[];
+    ai_key_missing?: boolean;
 }
 
 interface POIDetailDrawerProps {
@@ -709,19 +710,28 @@ export default function POIDetailDrawer({
                                             animate={{ opacity: 1, y: 0 }}
                                             className="space-y-4"
                                         >
-                                            {/* Layer 1: AI / Core Summary */}
+                                            {/* Layer 1: AI / Core Summary (or Free Wiki Reference Notice when key is absent) */}
                                             <div className="bg-linear-to-br from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 rounded-xl p-4 space-y-3">
                                                 <div className="flex items-center gap-2">
-                                                    <Sparkles className="w-4 h-4 text-purple-500" />
+                                                    {aiData.ai_key_missing ? (
+                                                        <BookOpen className="w-4 h-4 text-indigo-500" />
+                                                    ) : (
+                                                        <Sparkles className="w-4 h-4 text-purple-500" />
+                                                    )}
                                                     <span className="text-sm font-semibold text-purple-700 dark:text-purple-300">
-                                                        {t('poi_ai_suggestion')}
+                                                        {aiData.ai_key_missing ? t('poi_wiki_only_title') : t('poi_ai_suggestion')}
                                                     </span>
-                                                    {aiData.rating && (
+                                                    {Boolean(aiData.rating && aiData.rating > 0) && (
                                                         <span className="ml-auto text-sm font-bold text-amber-600">
                                                             ⭐ {aiData.rating.toFixed(1)}
                                                         </span>
                                                     )}
                                                 </div>
+                                                {aiData.ai_key_missing && (
+                                                    <p className="text-xs text-indigo-700/90 dark:text-indigo-300/90 bg-white/70 dark:bg-slate-900/40 rounded-lg px-2.5 py-1.5 border border-indigo-200/60 dark:border-indigo-800/40">
+                                                        {t('poi_wiki_only_hint')}
+                                                    </p>
+                                                )}
                                                 <p className="text-sm text-slate-700 dark:text-slate-300">
                                                     {aiData.summary}
                                                 </p>

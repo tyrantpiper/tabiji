@@ -1,0 +1,56 @@
+[
+  {
+    "id": "backend/routers/notifications.py:jwt_scoped_notifications_and_https_push_ssrf",
+    "file_path": "backend/routers/notifications.py",
+    "start_line": 1,
+    "end_line": 195,
+    "attack_vector": "cross_user_notification_bola_and_push_endpoint_ssrf",
+    "hypothesis": "Verify whether /api/notifications* and /api/push/subscribe strictly enforce get_verified_user ownership, UUID validation, and https-only non-loopback endpoint validation against SSRF and cross-user tampering.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/agents.py:fallback_task_db_persistence_and_key_hash_bola",
+    "file_path": "backend/routers/agents.py",
+    "start_line": 90,
+    "end_line": 680,
+    "attack_vector": "unauthenticated_task_snooping_and_stale_cancelled_overwrite",
+    "hypothesis": "Verify whether fallback research tasks persist to agent_fallback_tasks with SHA-256 key_hash verified via hmac.compare_digest on polling and cancellation, honor 24h expires_at expiry, and prevent background completion from overwriting cancelled status.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/poi.py:missing_key_free_wiki_degradation_and_cache_poisoning",
+    "file_path": "backend/routers/poi.py",
+    "start_line": 170,
+    "end_line": 325,
+    "attack_vector": "incomplete_no_key_cache_poisoning_or_keyless_ai_call",
+    "hypothesis": "Verify whether /api/poi/ai-enrich skips AI extraction and AI translation cleanly when api_key is absent, returns PARTIAL_SUCCESS with ai_key_missing=true, and never writes NO_API_KEY responses into POI_ENRICH_CACHE.",
+    "severity": "medium"
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js:geocode_v2_cache_bypass_and_isolation",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "start_line": 130,
+    "end_line": 238,
+    "attack_vector": "edge_cache_key_poisoning_across_locale_coords_or_gemini_key",
+    "hypothesis": "Verify whether Edge Shield bypasses caches.default whenever X-Gemini-Key or X-Gemini-API-Key is present (X-Edge-Cache: BYPASS) and builds deterministic v=2 cache keys incorporating q, bbox, 2-decimal lat/lng, country, region, truncated trip, locale, and limit without noisy zoom.",
+    "severity": "high"
+  },
+  {
+    "id": "frontend/lib/api.ts:consume_trip_stream_line_comment_filtering",
+    "file_path": "frontend/lib/api.ts",
+    "start_line": 360,
+    "end_line": 460,
+    "attack_vector": "sse_comment_block_event_drop",
+    "hypothesis": "Verify whether consumeTripStream skips SSE comment lines starting with colon line-by-line (both in chunked body and trailing buffer) without dropping adjacent progress, complete, or error events.",
+    "severity": "medium"
+  },
+  {
+    "id": "supabase/migrations/20261119_bug_hunter_remediation_schema.sql:ddl_grants_day0_23505_and_mly_refcount",
+    "file_path": "supabase/migrations/20261119_bug_hunter_remediation_schema.sql",
+    "start_line": 1,
+    "end_line": 225,
+    "attack_vector": "anon_table_exposure_unique_23505_shift_collision_and_shared_asset_loss",
+    "hypothesis": "Verify whether agent_fallback_tasks and shift_trip_capsules revoke all privileges from PUBLIC/anon/authenticated, whether shift_trip_capsules uses +10000 temp offsets and preserves day_number=0, and whether webhook_cleanup_cloudinary preserves shared mapillary images via indexed EXISTS inside EXCEPTION guard.",
+    "severity": "high"
+  }
+]

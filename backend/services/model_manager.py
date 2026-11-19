@@ -45,7 +45,7 @@ try:
 except ImportError:  # pragma: no cover
     _gaos_errors = None
 _MODEL_API_ERRORS = tuple(_api_err_types)
-from typing import Optional, List, Dict, Any, Union, Tuple, Iterator
+from typing import Optional, List, Dict, Any, Union, Tuple, Iterator, Callable, Awaitable
 
 # --- 路由策略 (從 ai_config 導入) ---
 from utils.ai_config import (
@@ -2190,6 +2190,181 @@ async def call_extraction(
             print(f"⚠️ [Extraction Error] {model_name} (intent={intent_type}) {type(e).__name__}: {e}")
             attempts.append({"model": model_name, "decision": "exception", "msg": str(e)})
             continue
+
+    raise AllModelsFailedError(attempts)
+
+
+async def call_extraction_stream(
+    api_key: str,
+    prompt: Union[str, List[Any]],
+    intent_type: str = "CHAT",
+    routing_strategy: Optional[List[str]] = None,
+    system_instruction: Optional[str] = None,
+    on_thought: Optional[Callable[[int], Union[Awaitable[None], None]]] = None,
+    on_chunk: Optional[Callable[[int], Union[Awaitable[None], None]]] = None,
+) -> str:
+    """
+    串流版統一 AI 提取/生成函數：即時回傳思考與輸出字元進度，具備 Multi-Model Fallback、
+    asyncio.timeout 防護、thought-only 拒絕與 JSON 完整性驗證。
+    """
+    client = get_cached_client(api_key)
+    base_config = get_generation_config(intent_type)
+    routing = build_effective_routing(intent_type, routing_strategy, api_key=api_key)
+    require_json = intent_type in INTENTS_REQUIRING_JSON
+
+    async def _emit(cb: Optional[Callable[[int], Union[Awaitable[None], None]]], value: int) -> None:
+        if cb is None:
+            return
+        res = cb(value)
+        if inspect.isawaitable(res):
+            await res
+
+    attempts: List[Dict[str, Any]] = []
+
+    for i, model_name in enumerate(routing):
+        caps = MODEL_CAPS.get(model_name)
+        if not caps:
+            continue
+
+        if require_json and not caps.supports_schema:
+            attempts.append({"model": model_name, "decision": "skip_no_schema"})
+            continue
+
+        if caps.family == "gemma":
+            if intent_type == "EXTRACTION" and not caps.allow_extraction_fallback:
+                attempts.append({"model": model_name, "decision": "skip_strict_extraction_prevention"})
+                continue
+            if intent_type not in INTENTS_ALLOW_GEMMA_LAST_RESORT:
+                attempts.append({"model": model_name, "decision": "skip_intent_not_allowed_for_gemma"})
+                continue
+
+        timeout_sec = _get_call_timeout(intent_type, model_name=model_name)
+        config = sanitize_config_for_model(base_config, model_name, intent_type, explicit_grounding=False)
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        label = "Primary" if i == 0 else f"Fallback#{i}"
+        print(f"[{label}-Stream] {model_name} (intent={intent_type}, timeout={timeout_sec}s)...")
+
+        for retry_idx in range(2):
+            chunks: List[str] = []
+            thought_steps = 0
+            output_chars = 0
+            last_chunk = None
+
+            try:
+                async with asyncio.timeout(timeout_sec):
+                    if hasattr(client.aio.models, "generate_content_stream"):
+                        stream_obj = client.aio.models.generate_content_stream(
+                            model=model_name,
+                            contents=prompt,
+                            config=config,
+                        )
+                        if inspect.isawaitable(stream_obj):
+                            stream_obj = await stream_obj
+
+                        async for chunk in stream_obj:
+                            last_chunk = chunk
+                            extracted_from_parts = False
+                            candidates = getattr(chunk, "candidates", None)
+                            if candidates and len(candidates) > 0:
+                                content = getattr(candidates[0], "content", None)
+                                parts = getattr(content, "parts", None) or []
+                                if parts:
+                                    extracted_from_parts = True
+                                    for part in parts:
+                                        if getattr(part, "thought", False):
+                                            thought_steps += 1
+                                            await _emit(on_thought, thought_steps)
+                                        else:
+                                            part_text = getattr(part, "text", None)
+                                            if isinstance(part_text, str) and part_text:
+                                                chunks.append(part_text)
+                                                output_chars += len(part_text)
+                                                await _emit(on_chunk, output_chars)
+
+                            if not extracted_from_parts:
+                                fallback_text = extract_clean_response_text(chunk)
+                                if fallback_text:
+                                    chunks.append(fallback_text)
+                                    output_chars += len(fallback_text)
+                                    await _emit(on_chunk, output_chars)
+                    else:
+                        # Fallback cleanly if SDK client only provides non-streaming generate_content
+                        async def _non_stream(cfg):
+                            return await client.aio.models.generate_content(
+                                model=model_name,
+                                contents=prompt,
+                                config=cfg,
+                            )
+
+                        last_chunk = await _execute_with_transient_retry(
+                            _non_stream, model_name, config, timeout_sec, "ExtractionStreamFallback"
+                        )
+                        fallback_text = extract_clean_response_text(last_chunk)
+                        if fallback_text:
+                            chunks.append(fallback_text)
+                            output_chars += len(fallback_text)
+                            await _emit(on_chunk, output_chars)
+
+                text = "".join(chunks)
+                if not text or not text.strip():
+                    diag = summarize_response_diagnostics(last_chunk)
+                    print(
+                        f"⚠️ [ExtractionStream Empty Output] {model_name} (intent={intent_type}) "
+                        f"returned empty visible text (finish_reason={diag['finish_reason']}, parts={diag['parts']}); triggering fallback"
+                    )
+                    record_model_error(model_name, api_key=api_key, is_rate_limit=False)
+                    attempts.append({"model": model_name, "decision": "empty_response", **diag})
+                    break
+
+                if require_json:
+                    text = _clean_json_text(text)
+                    json.loads(text)
+
+                print(f"✅ {model_name} 串流生成完成 ({len(text)} chars)")
+                return text
+
+            except asyncio.TimeoutError:
+                print(f"⏱️ [ExtractionStream Timeout] {model_name} (intent={intent_type}) exceeded {timeout_sec}s; switching fallback")
+                attempts.append({"model": model_name, "decision": "timeout", "timeout": timeout_sec})
+                break
+            except _MODEL_API_ERRORS as e:
+                kind = classify_api_error(e)
+                err_code = _get_api_error_code(e)
+                err_msg = getattr(e, "message", None) or str(e)
+                if kind == "auth_fail":
+                    raise NonRetryableAuthError(f"Auth Failed: {err_msg}")
+                if kind == "bad_request":
+                    raise NonRetryableRequestError(f"Bad Request: {err_msg}")
+                if kind == "config_unsupported" and retry_idx == 0 and output_chars == 0:
+                    config = copy.deepcopy(config)
+                    if getattr(config, "response_schema", None) is not None:
+                        config.response_schema = None
+                    elif getattr(config, "thinking_config", None) is not None:
+                        config.thinking_config = None
+                    continue
+                if output_chars == 0 and retry_idx == 0 and err_code in (429, 500, 502, 503, 504):
+                    await asyncio.sleep(0.15 + random.uniform(0.01, 0.05))
+                    continue
+                record_model_error(model_name, api_key=api_key, is_rate_limit=(err_code == 429))
+                attempts.append({"model": model_name, "decision": kind, "code": err_code})
+                if err_code == 429:
+                    await asyncio.sleep(0.15 + random.uniform(0.01, 0.05))
+                break
+            except json.JSONDecodeError as e:
+                diag = summarize_response_diagnostics(last_chunk)
+                snippet = ("".join(chunks))[:160].replace("\n", "\\n")
+                print(
+                    f"⚠️ [ExtractionStream JSONDecodeError] {model_name} (intent={intent_type}, len={len(''.join(chunks))}, "
+                    f"finish_reason={diag['finish_reason']}): {e} | snippet={snippet!r}"
+                )
+                attempts.append({"model": model_name, "decision": "json_parse_fail", "finish_reason": diag["finish_reason"]})
+                break
+            except Exception as e:
+                print(f"⚠️ [ExtractionStream Error] {model_name} (intent={intent_type}) {type(e).__name__}: {e}")
+                attempts.append({"model": model_name, "decision": "exception", "msg": str(e)})
+                break
 
     raise AllModelsFailedError(attempts)
 

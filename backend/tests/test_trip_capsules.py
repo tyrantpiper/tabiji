@@ -60,6 +60,20 @@ def create_mock_supabase(trip_data: dict, capsule_entries: list):
             mock_table.upsert.return_value = mock_upsert_exec
             return mock_table
 
+        elif name == "trip_members":
+            member_ids = list(trip_data.get("members") or []) if trip_data else []
+            owner_uid = (trip_data.get("created_by") or trip_data.get("user_id")) if trip_data else None
+            if owner_uid and owner_uid not in member_ids:
+                member_ids = [owner_uid] + member_ids
+            mock_select = MagicMock()
+            mock_eq = MagicMock()
+            mock_eq.execute.return_value = MagicMock(
+                data=[{"user_id": uid} for uid in member_ids]
+            )
+            mock_select.eq.return_value = mock_eq
+            mock_table.select.return_value = mock_select
+            return mock_table
+
         return mock_table
 
     mock_sb.table.side_effect = table_side_effect

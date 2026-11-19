@@ -1,0 +1,11 @@
+[
+  {
+    "id": "backend/routers/agents.py:fallback_task_db_persistence_and_key_hash_verification",
+    "file_path": "backend/routers/agents.py",
+    "start_line": 535,
+    "end_line": 680,
+    "attack_vector": "cross_caller_task_status_access_and_ttl_expiry",
+    "hypothesis": "Verify whether get_interaction_status and cancel_interaction verify caller API key hash via hmac.compare_digest and reject mismatched callers with 403.",
+    "severity": "high"
+  }
+]

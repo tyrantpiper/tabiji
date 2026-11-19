@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useTripContext } from "@/lib/trip-context"
 import { itemsApi } from "@/lib/api"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useSWRConfig } from "swr"
 import { useHaptic } from "@/lib/hooks"
@@ -84,6 +85,7 @@ export default function BatchPOIPreviewCard({
                 prev.map((it, i) => (i === index ? { ...it, isAdded: true } : it))
             )
             toast.success(zh ? `已加入：${target.place_name}` : `Added: ${target.place_name}`)
+            void broadcastTripEvent(activeTripId, "item:mutate", { action: "create" })
 
             mutate()
             if (userId) {
@@ -140,6 +142,7 @@ export default function BatchPOIPreviewCard({
 
         if (successCount > 0) {
             toast.success(zh ? `🎉 成功加入 ${successCount} 個行程項目！` : `Added ${successCount} places!`)
+            void broadcastTripEvent(activeTripId, "item:mutate", { action: "create" })
             mutate()
             if (userId) {
                 globalMutate([`/api/trips/${activeTripId}`, userId])

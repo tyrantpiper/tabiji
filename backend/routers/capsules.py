@@ -227,9 +227,29 @@ async def get_trip_capsules(
         except Exception as err:
             print(f"⚠️ Failed to batch-query trip_members: {err}")
 
-    # 5. Compute members & progress
-    members = list(set([trip.get("user_id")] + (trip.get("members") or [])))
-    total_members = max(1, len(members))
+    # 5. Compute members & progress from trip_members + created_by (excluding SYSTEM)
+    member_ids = set()
+    try:
+        members_res = (
+            supabase.table("trip_members")
+            .select("user_id")
+            .eq("itinerary_id", trip_id)
+            .execute()
+        )
+        for row in (getattr(members_res, "data", None) or []):
+            if isinstance(row, dict):
+                uid = str(row.get("user_id") or "").strip()
+                if uid and uid.upper() != "SYSTEM":
+                    member_ids.add(uid)
+    except Exception:
+        pass
+
+    for fallback_uid in (trip.get("created_by"), trip.get("user_id")):
+        uid = str(fallback_uid or "").strip()
+        if uid and uid.upper() != "SYSTEM":
+            member_ids.add(uid)
+
+    total_members = max(1, len(member_ids))
     
     # Submissions in target scope
     submitted_user_ids = set(str(e["author_id"]) for e in raw_entries if (day is None or e.get("day_number") == day))

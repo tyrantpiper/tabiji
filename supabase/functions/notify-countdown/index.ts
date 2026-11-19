@@ -45,6 +45,48 @@ function resolveServiceSecretKey(): string {
   return '';
 }
 
+async function emitCountdownRefreshBroadcast(
+  supabaseUrl: string,
+  serviceKey: string,
+  userIds: string[]
+): Promise<void> {
+  const baseUrl = (supabaseUrl || '').trim().replace(/\/+$/, '');
+  const key = (serviceKey || '').trim();
+  const uniqueIds = Array.from(new Set(userIds.map((id) => (id || '').trim()).filter(Boolean)));
+  if (!baseUrl || !key || uniqueIds.length === 0) return;
+
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), 2000) : null;
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      apikey: key,
+    };
+    if (!key.startsWith('sb_')) {
+      headers.Authorization = `Bearer ${key}`;
+    }
+
+    const ts = Date.now();
+    const messages = uniqueIds.map((uid) => ({
+      topic: `realtime:user-notif:${uid}`,
+      event: 'notif:refresh',
+      payload: { ts },
+    }));
+
+    const resp = await fetch(`${baseUrl}/realtime/v1/api/broadcast`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ messages }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    await resp.body?.cancel().catch(() => {});
+  } catch (err) {
+    console.warn('notify-countdown broadcast refresh skipped:', err);
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -155,6 +197,14 @@ Deno.serve(async (req: Request) => {
           }
         }
       }
+    }
+
+    if (results.length > 0) {
+      await emitCountdownRefreshBroadcast(
+        Deno.env.get('SUPABASE_URL') || '',
+        resolveServiceSecretKey(),
+        results.map((r) => String(r.user || ''))
+      );
     }
 
     return new Response(

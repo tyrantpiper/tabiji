@@ -132,7 +132,11 @@ export default {
       try {
         const clonedReq = request.clone();
         const bodyJson = await clonedReq.json().catch(() => ({}));
-        const query = (bodyJson.query || '').trim().toLowerCase();
+        const hasGeminiKey = Boolean(
+          (request.headers.get('X-Gemini-Key') || request.headers.get('X-Gemini-API-Key') || '').trim()
+        );
+
+        const query = (typeof bodyJson.query === 'string' ? bodyJson.query : '').trim().toLowerCase();
         const rawBbox = bodyJson.bbox || '';
 
         let quantizedBbox = '';
@@ -143,30 +147,56 @@ export default {
           }
         }
 
-        const country = (bodyJson.country || '').trim().toUpperCase();
+        const country = (typeof bodyJson.country === 'string' ? bodyJson.country : '').trim().toUpperCase();
+        const region = (typeof bodyJson.region === 'string' ? bodyJson.region : '').trim().toLowerCase().slice(0, 64);
+        const trip = (typeof bodyJson.tripTitle === 'string' ? bodyJson.tripTitle : (typeof bodyJson.trip === 'string' ? bodyJson.trip : '')).trim().toLowerCase().slice(0, 64);
+        const locale = (typeof bodyJson.locale === 'string' ? bodyJson.locale : '').trim().toLowerCase().slice(0, 16);
 
-        // 構造專屬虛擬 GET Cache Key (100% 符合 Cloudflare 官方 Cache API 限制)
+        const rawLat = bodyJson.lat;
+        const rawLng = bodyJson.lng;
+        const hasCoords = (
+          rawLat !== null && rawLat !== undefined && rawLat !== '' && Number.isFinite(Number(rawLat)) &&
+          rawLng !== null && rawLng !== undefined && rawLng !== '' && Number.isFinite(Number(rawLng))
+        );
+
+        const rawLimit = bodyJson.limit;
+        const hasLimit = rawLimit !== null && rawLimit !== undefined && rawLimit !== '' && Number.isFinite(Number(rawLimit));
+
+        // 構造專屬虛擬 GET Cache Key v2 (排除高噪 zoom，防禦 AI Key 個人化與語系/座標跨區快取污染)
         const cacheKeyUrl = new URL(`https://cache.tabijiapp.com/api/geocode/search`);
+        cacheKeyUrl.searchParams.set('v', '2');
         cacheKeyUrl.searchParams.set('q', query);
         if (quantizedBbox) cacheKeyUrl.searchParams.set('bbox', quantizedBbox);
+        if (hasCoords) {
+          cacheKeyUrl.searchParams.set('lat', Number(rawLat).toFixed(2));
+          cacheKeyUrl.searchParams.set('lng', Number(rawLng).toFixed(2));
+        }
         if (country) cacheKeyUrl.searchParams.set('country', country);
+        if (region) cacheKeyUrl.searchParams.set('region', region);
+        if (trip) cacheKeyUrl.searchParams.set('trip', trip);
+        if (locale) cacheKeyUrl.searchParams.set('locale', locale);
+        if (hasLimit) {
+          cacheKeyUrl.searchParams.set('limit', String(Math.max(1, Math.min(50, Math.round(Number(rawLimit))))));
+        }
 
         const cache = caches.default;
         const cacheKey = cacheKeyUrl.toString();
 
-        // 嘗試讀取邊緣快取 (0ms 跨洲直出)
-        const cachedResp = await cache.match(cacheKey);
-        if (cachedResp) {
-          const hitHeaders = new Headers(cachedResp.headers);
-          hitHeaders.set('X-Edge-Cache', 'HIT');
-          hitHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
-          return new Response(cachedResp.body, {
-            status: cachedResp.status,
-            headers: hitHeaders,
-          });
+        // 若攜帶使用者 Gemini Key（觸發個人化 AI 搜尋融合），強制繞過邊緣共享快取
+        if (!hasGeminiKey) {
+          const cachedResp = await cache.match(cacheKey);
+          if (cachedResp) {
+            const hitHeaders = new Headers(cachedResp.headers);
+            hitHeaders.set('X-Edge-Cache', 'HIT');
+            hitHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
+            return new Response(cachedResp.body, {
+              status: cachedResp.status,
+              headers: hitHeaders,
+            });
+          }
         }
 
-        // 未命中：帶入邊緣地理標頭並安全轉發（使用 JSON.stringify 避免消耗原始 Stream）
+        // 未命中或 BYPASS：帶入邊緣地理標頭並安全轉發（使用 JSON.stringify 避免消耗原始 Stream）
         const originHeaders = new Headers(request.headers);
         originHeaders.set('Host', TARGET_HOST);
         originHeaders.set('X-Forwarded-Host', url.hostname);
@@ -183,8 +213,8 @@ export default {
           body: JSON.stringify(bodyJson),
         });
 
-        // 僅對成功且具有內容的結果寫入 7 天邊緣快取
-        if (backendResp.ok) {
+        // 僅對無 Gemini Key 且成功具有內容的公共結果寫入 7 天邊緣快取
+        if (!hasGeminiKey && backendResp.ok) {
           const cloneResp = backendResp.clone();
           const data = await cloneResp.json().catch(() => null);
           if (data && Array.isArray(data.results) && data.results.length > 0) {
@@ -199,7 +229,7 @@ export default {
         }
 
         const outHeaders = new Headers(backendResp.headers);
-        outHeaders.set('X-Edge-Cache', 'MISS');
+        outHeaders.set('X-Edge-Cache', hasGeminiKey ? 'BYPASS' : 'MISS');
         outHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
         return new Response(backendResp.body, {
           status: backendResp.status,

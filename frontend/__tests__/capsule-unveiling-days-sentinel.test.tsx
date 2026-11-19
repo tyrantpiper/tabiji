@@ -38,8 +38,9 @@ describe("Trip Capsule Unveiling Days & Multi-Traveler Sentinel Suite", () => {
     }
 
     const clampInitialDay = (initialDay: number, totalDays: number): number => {
-        if (initialDay < 1) return 1
-        if (initialDay > totalDays) return totalDays
+        if (initialDay === 0) return 0
+        if (initialDay < 0) return totalDays > 0 ? 1 : 0
+        if (initialDay > totalDays) return totalDays > 0 ? 1 : 0
         return initialDay
     }
 
@@ -189,14 +190,14 @@ describe("Trip Capsule Unveiling Days & Multi-Traveler Sentinel Suite", () => {
     })
 
     describe("TC-4: Initial Day Clamp & Boundary Resilience", () => {
-        it("Clamps negative or out-of-range initialDay safely within 1..totalDays", () => {
+        it("Preserves Day 0 finale capsule and clamps negative or out-of-range initialDay safely", () => {
             const totalDays = 5
 
             expect(clampInitialDay(3, totalDays)).toBe(3)
-            expect(clampInitialDay(0, totalDays)).toBe(1)
+            expect(clampInitialDay(0, totalDays)).toBe(0)
             expect(clampInitialDay(-5, totalDays)).toBe(1)
-            expect(clampInitialDay(10, totalDays)).toBe(5)
-            expect(clampInitialDay(999, totalDays)).toBe(5)
+            expect(clampInitialDay(10, totalDays)).toBe(1)
+            expect(clampInitialDay(999, totalDays)).toBe(1)
         })
     })
 })

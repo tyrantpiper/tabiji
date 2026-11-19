@@ -29,6 +29,7 @@ interface ZoomableImageProps {
     minScale?: number
     maxScale?: number
     onClose?: () => void
+    onError?: () => void
 }
 
 // 縮放控制按鈕元件
@@ -82,7 +83,8 @@ export function ZoomableImage({
     showControls = true,
     minScale = 1,
     maxScale = 5,
-    onClose
+    onClose,
+    onError
 }: ZoomableImageProps) {
     return (
         <div className={cn("relative w-full h-full", containerClassName)}>
@@ -121,6 +123,7 @@ export function ZoomableImage({
                         className={cn("object-contain", className)}
                         unoptimized
                         draggable={false}
+                        onError={onError}
                         style={{
                             touchAction: "none",  // 防止觸控滾動衝突
                             userSelect: "none"    // 防止選取

@@ -94,8 +94,10 @@ export interface TripPDFData {
     hotels?: Array<{
         name: string
         address: string
-        checkIn: string
-        checkOut: string
+        checkIn?: string
+        checkOut?: string
+        check_in?: string
+        check_out?: string
     }>
 }
 
@@ -218,13 +220,18 @@ function createHotelsContainer(hotels: TripPDFData['hotels']): HTMLDivElement | 
         <h2 style="font-size: 24px; font-weight: bold; color: #1e293b; border-bottom: 3px solid #10b981; padding-bottom: 12px; margin-bottom: 24px;">
             🏨 住宿資訊
         </h2>
-        ${hotels.map(hotel => `
+        ${hotels.map(hotel => {
+            const checkIn = (hotel.check_in ?? hotel.checkIn ?? '').trim()
+            const checkOut = (hotel.check_out ?? hotel.checkOut ?? '').trim()
+            const stayRange = [checkIn, checkOut].filter(Boolean).join(' - ')
+            return `
             <div style="background-color: #f0fdf4; padding: 16px; border-radius: 8px; margin-bottom: 12px; border-left: 4px solid #10b981;">
                 <div style="font-weight: bold; font-size: 16px; color: #166534; margin-bottom: 6px;">${escapeHtml(hotel.name)}</div>
-                <div style="font-size: 14px; color: #15803d;">${escapeHtml(hotel.checkIn || '')} - ${escapeHtml(hotel.checkOut || '')}</div>
+                ${stayRange ? `<div style="font-size: 14px; color: #15803d;">${escapeHtml(stayRange)}</div>` : ''}
                 ${hotel.address ? `<div style="font-size: 13px; color: #64748b; margin-top: 4px;">${escapeHtml(hotel.address)}</div>` : ''}
             </div>
-        `).join('')}
+        `
+        }).join('')}
     `
     return container
 }

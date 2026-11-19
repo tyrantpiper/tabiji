@@ -24,6 +24,7 @@ function loadCleanupCloudinaryExports(envMap: Record<string, string>) {
         exports: mod.exports,
         Deno: { env: { get: (k: string) => envMap[k] } },
         fetch: globalThis.fetch,
+        AbortController: globalThis.AbortController,
         Request,
         Response,
         Headers,
@@ -74,6 +75,7 @@ function loadEdgeServeHandler(
             },
         },
         fetch: globalThis.fetch,
+        AbortController: globalThis.AbortController,
         Request,
         Response,
         Headers,
@@ -261,5 +263,65 @@ describe('Supabase Edge Functions Secret Keys Support', () => {
         }))
         expect(broadcastRes.status).toBe(200)
         expect(broadcastKeysSeen).toEqual(['sb_secret_broadcast_default'])
+
+        // Verify Realtime Broadcast emits opaque notif:refresh with apikey header (and NO Authorization Bearer on sb_secret_*)
+        const origFetch = globalThis.fetch
+        const recordedBroadcastCalls: Array<{ url: string; headers: Record<string, string>; body: unknown }> = []
+        globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+            recordedBroadcastCalls.push({
+                url: String(url),
+                headers: (init?.headers || {}) as Record<string, string>,
+                body: JSON.parse(String(init?.body || '{}')),
+            })
+            return new Response(JSON.stringify({ ok: true }), { status: 202 })
+        }) as typeof fetch
+
+        try {
+            const broadcastSendHandler = loadEdgeServeHandler(
+                'supabase/functions/notify-broadcast/index.ts',
+                {
+                    SUPABASE_URL: 'https://example.supabase.co',
+                    BROADCAST_SECRET: 'test-broadcast-secret',
+                    SUPABASE_SECRET_KEY: 'sb_secret_realtime_check',
+                },
+                () => ({
+                    from: (tbl: string) => {
+                        if (tbl === 'users') {
+                            return {
+                                select: () => Promise.resolve({ data: [{ id: 'u-100' }], error: null }),
+                            }
+                        }
+                        if (tbl === 'push_subscriptions') {
+                            return {
+                                select: () => Promise.resolve({ data: [{ user_id: 'u-100' }, { user_id: 'u-200' }], error: null }),
+                            }
+                        }
+                        if (tbl === 'notifications') {
+                            return {
+                                select: () => ({
+                                    eq: () => ({ contains: () => ({ limit: () => Promise.resolve({ data: [] }) }) }),
+                                }),
+                                insert: () => Promise.resolve({ error: null }),
+                            }
+                        }
+                        return createEmptySupabaseStub().from()
+                    },
+                }),
+            )
+            const res = await broadcastSendHandler(new Request('https://edge.local/notify-broadcast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-broadcast-secret' },
+                body: JSON.stringify({ title: 'Notice', body: 'Hello' }),
+            }))
+            expect(res.status).toBe(200)
+            expect(recordedBroadcastCalls.length).toBe(1)
+            expect(recordedBroadcastCalls[0].url).toBe('https://example.supabase.co/realtime/v1/api/broadcast')
+            expect(recordedBroadcastCalls[0].headers.apikey).toBe('sb_secret_realtime_check')
+            expect(recordedBroadcastCalls[0].headers.Authorization).toBeUndefined()
+            expect((recordedBroadcastCalls[0].body as { messages: Array<{ topic: string; event: string; payload: { ts: number } }> }).messages[0].topic).toBe('realtime:user-notif:broadcast')
+            expect((recordedBroadcastCalls[0].body as { messages: Array<{ topic: string; event: string }> }).messages[0].event).toBe('notif:refresh')
+        } finally {
+            globalThis.fetch = origFetch
+        }
     })
 })

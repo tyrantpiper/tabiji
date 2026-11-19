@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-18T16:05:00Z",
+  "last_audit_date": "2026-11-19T05:06:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 402,
-    "audited_targets": 402,
+    "total_targets": 408,
+    "audited_targets": 408,
     "verified_vulnerabilities": 53,
-    "remediated_vulnerabilities": 175,
+    "remediated_vulnerabilities": 181,
     "dismissed_hypotheses": 174
   },
   "targets": [
@@ -5180,6 +5180,84 @@
       "validator_details": "Proved RED->GREEN in sandbox Vitest F14: boolean/fractional timestamps and folder delimiter smuggling (&/?) bypassed prior validation. Remediated via strict integer timestamp check and /^[a-zA-Z0-9_-]+(\\/[a-zA-Z0-9_-]+)*$/ folder format guard; verified DISMISSED post-fix by Sentinel runner (findings_round3_review_2026-11-18.json); awaits Vercel deploy.",
       "remediated_at": "2026-11-18T16:05:00Z",
       "resolution": "docs/security/history/patches/patch_candidate_prod_auth_edge_audit_2026-11-18.diff"
+    },
+    {
+      "id": "backend/routers/notifications.py:jwt_scoped_notifications_and_https_push_validation",
+      "target_type": "fastapi_router",
+      "trust_boundary": "browser_to_backend",
+      "vectors_checked": [
+        "cross_user_notification_access_and_non_https_push_url"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-19_bug_hunter_remediation.md",
+      "validator_details": "Added FastAPI /api/notifications* and /api/push/subscribe endpoints backed by Depends(get_verified_user) and service_role; enforced UUID validation, ownership eq(user_id), and strict https non-loopback endpoint checks; verified via pytest & Sentinel adaptive runner (DISMISSED).",
+      "remediated_at": "2026-11-19T05:06:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_bug_hunter_2026-11-19.diff"
+    },
+    {
+      "id": "backend/routers/agents.py:fallback_task_db_persistence_and_key_hash_verification",
+      "target_type": "fastapi_router",
+      "trust_boundary": "browser_to_backend",
+      "vectors_checked": [
+        "cross_caller_task_status_access_and_ttl_expiry"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-19_bug_hunter_remediation.md",
+      "validator_details": "Persisted Deep Research fallback tasks to service_role-only public.agent_fallback_tasks with SHA-256 key_hash verified via hmac.compare_digest and 24h TTL expiry cleanup; verified via pytest & Sentinel adaptive runner (DISMISSED).",
+      "remediated_at": "2026-11-19T05:06:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_bug_hunter_2026-11-19.diff"
+    },
+    {
+      "id": "backend/routers/poi.py:missing_key_free_wiki_degradation_and_cache_poisoning",
+      "target_type": "fastapi_router",
+      "trust_boundary": "browser_to_backend",
+      "vectors_checked": [
+        "incomplete_no_key_cache_poisoning_or_keyless_ai_call"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-19_bug_hunter_remediation.md",
+      "validator_details": "Degraded /api/poi/ai-enrich cleanly to free Wikipedia/WikiVoyage/Wikidata when api_key is absent (PARTIAL_SUCCESS + ai_key_missing=True + NO_API_KEY) and gated POI_ENRICH_CACHE strictly on SUCCESS and has_api_key; verified via pytest & Sentinel runner (DISMISSED).",
+      "remediated_at": "2026-11-19T05:06:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_bug_hunter_2026-11-19.diff"
+    },
+    {
+      "id": "cloudflare/edge-shield/worker.js:geocode_v2_cache_bypass_and_isolation",
+      "target_type": "cloudflare_edge_worker",
+      "trust_boundary": "public_to_edge_worker",
+      "vectors_checked": [
+        "edge_cache_key_poisoning_across_locale_coords_or_gemini_key"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-19_bug_hunter_remediation.md",
+      "validator_details": "Bypassed edge cache on X-Gemini-Key/X-Gemini-API-Key (X-Edge-Cache: BYPASS) and built v=2 geocode key incorporating q, bbox, 2-dec lat/lng, country, region, trip, locale, limit without noisy zoom; verified via Vitest VM & Sentinel runner (DISMISSED).",
+      "remediated_at": "2026-11-19T05:06:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_bug_hunter_2026-11-19.diff"
+    },
+    {
+      "id": "frontend/lib/api.ts:consume_trip_stream_line_comment_filtering",
+      "target_type": "frontend_api_client",
+      "trust_boundary": "edge_to_browser",
+      "vectors_checked": [
+        "sse_comment_block_event_drop"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-19_bug_hunter_remediation.md",
+      "validator_details": "Fixed consumeTripStream block-level colon filtering to skip SSE comments line-by-line in both streamed chunks and trailing buffer; verified via Vitest & Sentinel runner (DISMISSED).",
+      "remediated_at": "2026-11-19T05:06:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_bug_hunter_2026-11-19.diff"
+    },
+    {
+      "id": "supabase/migrations/20261119_bug_hunter_remediation_schema.sql:ddl_grants_day0_23505_and_mly_refcount",
+      "target_type": "supabase_migration_ddl",
+      "trust_boundary": "supabase_postgres_rls_and_triggers",
+      "vectors_checked": [
+        "anon_table_exposure_unique_23505_shift_collision_and_shared_asset_loss"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-19_bug_hunter_remediation.md",
+      "validator_details": "Locked agent_fallback_tasks and shift_trip_capsules to service_role only, shifted capsules atomically via +10000 offset preserving day_number=0, added indexed Mapillary EXISTS ref-counting in webhook_cleanup_cloudinary, and attached cleanup trigger to trip_capsule_entries; verified via pytest & Sentinel runner (DISMISSED).",
+      "remediated_at": "2026-11-19T05:06:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_bug_hunter_2026-11-19.diff"
     }
   ],
   "known_design_intents": {

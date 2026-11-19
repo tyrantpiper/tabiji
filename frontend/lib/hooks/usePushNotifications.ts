@@ -1,7 +1,18 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { getSupabaseClient } from "@/lib/supabase"
+import { pushApi } from "@/lib/api"
+import { isUserLoggedIn } from "@/lib/auth-session"
+
+function hasEstablishedPushSession(): boolean {
+    if (typeof window === "undefined" || !isUserLoggedIn()) return false
+    try {
+        const raw = localStorage.getItem("user_uuid")?.trim() || ""
+        return Boolean(raw && raw !== "null" && raw !== "undefined" && !/^tbj_rec_/i.test(raw))
+    } catch {
+        return false
+    }
+}
 
 /**
  * Web Push Notification 訂閱管理 Hook
@@ -53,26 +64,20 @@ export function usePushNotifications() {
                     applicationServerKey: urlBase64ToUint8Array(vapidKey),
                 })
 
-                const userId = localStorage.getItem("user_uuid")
-                if (!userId) return
+                if (!hasEstablishedPushSession()) return
 
                 const subscriptionJson = newSubscription.toJSON()
-                const supabase = getSupabaseClient()
+                if (!subscriptionJson.endpoint) return
 
-                if (supabase) {
-                    await supabase.from("push_subscriptions").upsert(
-                        {
-                            user_id: userId,
-                            endpoint: subscriptionJson.endpoint,
-                            p256dh: subscriptionJson.keys?.p256dh || "",
-                            auth: subscriptionJson.keys?.auth || "",
-                            user_agent: navigator.userAgent,
-                            updated_at: new Date().toISOString(),
-                        },
-                        { onConflict: "user_id,endpoint" }
-                    )
+                const ok = await pushApi.subscribe({
+                    endpoint: subscriptionJson.endpoint,
+                    p256dh: subscriptionJson.keys?.p256dh || "",
+                    auth: subscriptionJson.keys?.auth || "",
+                    user_agent: navigator.userAgent,
+                })
+                if (ok) {
+                    setIsSubscribed(true)
                 }
-                setIsSubscribed(true)
             } catch (error) {
                 console.error("[Push] Auto-subscribe failed:", error)
             }
@@ -171,35 +176,28 @@ export function usePushNotifications() {
                 applicationServerKey: urlBase64ToUint8Array(vapidKey),
             })
 
-            // 4. 將訂閱憑證存入 Supabase
-            const userId = localStorage.getItem("user_uuid")
-            if (!userId) {
-                console.error("[Push] No user_uuid found")
+            // 4. 透過 JWT 驗證的 FastAPI 端點將訂閱憑證存入後端
+            if (!hasEstablishedPushSession()) {
+                console.error("[Push] User session not established")
                 return false
             }
 
             const subscriptionJson = subscription.toJSON()
-            const supabase = getSupabaseClient()
+            if (!subscriptionJson.endpoint) {
+                console.error("[Push] Subscription endpoint missing")
+                return false
+            }
 
-            if (supabase) {
-                const { error } = await supabase
-                    .from("push_subscriptions")
-                    .upsert(
-                        {
-                            user_id: userId,
-                            endpoint: subscriptionJson.endpoint,
-                            p256dh: subscriptionJson.keys?.p256dh || "",
-                            auth: subscriptionJson.keys?.auth || "",
-                            user_agent: navigator.userAgent,
-                            updated_at: new Date().toISOString(),
-                        },
-                        { onConflict: "user_id,endpoint" }
-                    )
+            const ok = await pushApi.subscribe({
+                endpoint: subscriptionJson.endpoint,
+                p256dh: subscriptionJson.keys?.p256dh || "",
+                auth: subscriptionJson.keys?.auth || "",
+                user_agent: navigator.userAgent,
+            })
 
-                if (error) {
-                    console.error("[Push] Failed to save subscription:", error)
-                    return false
-                }
+            if (!ok) {
+                console.error("[Push] Failed to save subscription via API")
+                return false
             }
 
             // 清除使用者手動關閉標記
@@ -234,15 +232,9 @@ export function usePushNotifications() {
                 const subscription = await registration.pushManager.getSubscription()
 
                 if (subscription) {
-                    // 從 Supabase 刪除
-                    const userId = localStorage.getItem("user_uuid")
-                    const supabase = getSupabaseClient()
-                    if (supabase && userId) {
-                        await supabase
-                            .from("push_subscriptions")
-                            .delete()
-                            .eq("user_id", userId)
-                            .eq("endpoint", subscription.endpoint)
+                    // 透過 JWT 驗證的 FastAPI 端點刪除雲端訂閱
+                    if (hasEstablishedPushSession() && subscription.endpoint) {
+                        await pushApi.unsubscribe(subscription.endpoint).catch(() => false)
                     }
 
                     // 取消瀏覽器訂閱

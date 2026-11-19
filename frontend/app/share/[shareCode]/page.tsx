@@ -13,7 +13,7 @@ interface PageProps {
 async function getTripByPublicId(publicId: string): Promise<Trip | null> {
     try {
         const res = await fetch(`${API_HOST}/api/trips/share/${publicId}`, {
-            cache: 'force-cache'
+            next: { revalidate: 60 }
         })
         if (!res.ok) return null
         return res.json()

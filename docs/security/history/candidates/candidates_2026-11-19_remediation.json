@@ -1,0 +1,74 @@
+[
+  {
+    "id": "frontend/components/notifications/notification-bell.tsx:anon_rls_notifications_and_coldstart_401",
+    "file_path": "frontend/components/notifications/notification-bell.tsx",
+    "start_line": 115,
+    "end_line": 230,
+    "attack_vector": "direct_anon_supabase_rls_denial_and_unauth_storm",
+    "hypothesis": "Verify whether NotificationBell queries public.notifications directly via anon Supabase client (blocked by auth.uid() RLS policy and Realtime postgres_changes failure) and lacks isUserLoggedIn() guard before fetching authenticated state.",
+    "severity": "high"
+  },
+  {
+    "id": "frontend/lib/hooks/usePushNotifications.ts:spoofable_x_user_id_push_subscription",
+    "file_path": "frontend/lib/hooks/usePushNotifications.ts",
+    "start_line": 170,
+    "end_line": 265,
+    "attack_vector": "header_spoofable_rls_policy_on_push_subscriptions",
+    "hypothesis": "Verify whether usePushNotifications writes directly to Supabase public.push_subscriptions relying on spoofable x-user-id header instead of routing through JWT-verified FastAPI /api/push/subscribe endpoints.",
+    "severity": "high"
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js:geocode_cache_key_collision_and_ai_bypass",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "start_line": 131,
+    "end_line": 175,
+    "attack_vector": "edge_cache_poisoning_and_personalized_ai_key_leakage",
+    "hypothesis": "Verify whether POST /api/geocode/search cache key omits lat, lng, region, trip, locale, limit and fails to bypass cache when X-Gemini-Key or X-Gemini-API-Key headers are present.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/agents.py:volatile_fallback_tasks_and_missing_key_hash_binding",
+    "file_path": "backend/routers/agents.py",
+    "start_line": 80,
+    "end_line": 115,
+    "attack_vector": "cross_instance_state_loss_and_bola_task_polling",
+    "hypothesis": "Verify whether _execute_flash_fallback_task and polling/cancel endpoints rely on process-local _FALLBACK_TASKS dict without database persistence or key_hash ownership verification, allowing cross-caller task snooping/cancellation or 404 across Cloud Run instances.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/trips.py:day_mutation_capsule_desync_and_23505_conflict",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 546,
+    "end_line": 600,
+    "attack_vector": "orphan_capsule_assets_and_unique_constraint_23505_on_day_shift",
+    "hypothesis": "Verify whether delete_trip, delete_day, add_day, and update_trip_dates fail to cleanup or atomically shift trip_capsule_entries while protecting day_number=0 finale capsules and avoiding uq_trip_day_author 23505 collisions.",
+    "severity": "medium"
+  },
+  {
+    "id": "supabase/migrations/20261115_webhook_cleanup_cloudinary_vault_hmac.sql:shared_mapillary_cloudinary_deletion",
+    "file_path": "supabase/migrations/20261115_webhook_cleanup_cloudinary_vault_hmac.sql",
+    "start_line": 20,
+    "end_line": 157,
+    "attack_vector": "unconditional_shared_asset_deletion_and_missing_capsule_trigger",
+    "hypothesis": "Verify whether webhook_cleanup_cloudinary unconditionally queues Cloudinary deletion for shared mly_ streetview images even when other itinerary_items reference the same mapillary_image_id, and whether trip_capsule_entries lacks cleanup_cloudinary_trigger.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/poi.py:poi_ai_enrich_missing_key_400_crash",
+    "file_path": "backend/routers/poi.py",
+    "start_line": 165,
+    "end_line": 215,
+    "attack_vector": "unauthenticated_missing_ai_key_denial_of_free_wiki_data",
+    "hypothesis": "Verify whether /api/poi/ai-enrich rejects requests with HTTP 400 when user has no Gemini API key instead of degrading cleanly to free Wikipedia/WikiVoyage/Wikidata enrichment.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/lib/api.ts:sse_comment_prefix_drops_adjacent_event",
+    "file_path": "frontend/lib/api.ts",
+    "start_line": 380,
+    "end_line": 445,
+    "attack_vector": "sse_frame_comment_parser_desync",
+    "hypothesis": "Verify whether consumeTripStream skips an entire SSE block whenever a `: keep-alive` comment precedes an event in the same chunk without a blank line separator.",
+    "severity": "medium"
+  }
+]

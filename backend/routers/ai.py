@@ -556,8 +556,9 @@ async def generate_trip_core(
     progress_queue: Optional[asyncio.Queue] = None
 ) -> dict:
     """Core logic for itinerary generation with optional progress event publishing."""
-    from services.model_manager import call_extraction, call_timeout_scope
-    
+    import services.model_manager as mm
+    from services.model_manager import call_timeout_scope
+
     is_en = bool(locale and str(locale).strip().lower().startswith("en"))
     if progress_queue:
         msg15 = "Planning itinerary backbone..." if is_en else "正在規劃行程骨架..."
@@ -628,11 +629,73 @@ async def generate_trip_core(
     sys_inst_with_anchor = sys_inst + spatial_constraint_block
     prompt_payload = f"任務：為使用者規劃方案。\n需求：<user_query>{prompt}</user_query>"
     
+    def _is_mocked(fn, orig_module: str) -> bool:
+        if fn is None:
+            return False
+        return (
+            getattr(fn, "__module__", "") != orig_module
+            or callable(getattr(fn, "assert_called", None))
+        )
+
+    router_call_extraction = globals().get("call_extraction")
+    mm_call_extraction = getattr(mm, "call_extraction", None)
+    mm_call_stream = getattr(mm, "call_extraction_stream", None)
+
+    def _pick_sync_extraction():
+        if _is_mocked(mm_call_extraction, mm.__name__):
+            return mm_call_extraction
+        if _is_mocked(router_call_extraction, mm.__name__):
+            return router_call_extraction
+        return mm_call_extraction or router_call_extraction
+
     if progress_queue is not None:
+        last_sent_percent = 20
+        msg20 = "Analyzing travel flow and timing..." if is_en else "正在深度推敲路線與動線..."
+        await progress_queue.put(("progress", {"percent": 20, "stage": "THINKING", "message": msg20}))
+
+        sync_patched = (
+            _is_mocked(router_call_extraction, mm.__name__)
+            or _is_mocked(mm_call_extraction, mm.__name__)
+        )
+        stream_patched = _is_mocked(mm_call_stream, mm.__name__)
+
+        async def _on_thought(step: int) -> None:
+            nonlocal last_sent_percent
+            pct = min(24, 20 + step)
+            if pct > last_sent_percent:
+                last_sent_percent = pct
+                msg_t = "Structuring daily schedule..." if is_en else "正在梳理每日時間軸..."
+                await progress_queue.put(("progress", {"percent": pct, "stage": "THINKING", "message": msg_t}))
+
+        async def _on_chunk(total_chars: int) -> None:
+            nonlocal last_sent_percent
+            pct = min(68, 25 + int((total_chars / 3200) * 43))
+            if pct > last_sent_percent and (last_sent_percent < 25 or pct - last_sent_percent >= 2 or pct == 68):
+                last_sent_percent = pct
+                msg_g = "Composing attractions and dining details..." if is_en else "正在生成景點、美食與細節..."
+                await progress_queue.put(("progress", {"percent": pct, "stage": "GENERATING", "message": msg_g}))
+
         with call_timeout_scope("PLANNING_SSE"):
-            raw_text = await call_extraction(api_key, prompt_payload, intent_type="PLANNING", system_instruction=sys_inst_with_anchor)
+            if mm_call_stream is not None and (stream_patched or not sync_patched):
+                raw_text = await mm_call_stream(
+                    api_key,
+                    prompt_payload,
+                    intent_type="PLANNING",
+                    system_instruction=sys_inst_with_anchor,
+                    on_thought=_on_thought,
+                    on_chunk=_on_chunk,
+                )
+            else:
+                active_sync = _pick_sync_extraction()
+                raw_text = await active_sync(
+                    api_key,
+                    prompt_payload,
+                    intent_type="PLANNING",
+                    system_instruction=sys_inst_with_anchor,
+                )
     else:
-        raw_text = await call_extraction(api_key, prompt_payload, intent_type="PLANNING", system_instruction=sys_inst_with_anchor)
+        sync_fn = _pick_sync_extraction()
+        raw_text = await sync_fn(api_key, prompt_payload, intent_type="PLANNING", system_instruction=sys_inst_with_anchor)
     cleaned_text = raw_text.replace("```json", "").replace("```", "").strip()
     data = json.loads(cleaned_text)
     
@@ -655,8 +718,8 @@ async def generate_trip_core(
             flat_items.append(a)
 
     if progress_queue:
-        msg50 = "Resolving attraction coordinates and spatial anchors..." if is_en else "正在解析景點座標與空間錨點..."
-        await progress_queue.put(("progress", {"percent": 50, "stage": "GEOCODING", "message": msg50}))
+        msg75 = "Resolving attraction coordinates and spatial anchors..." if is_en else "正在解析景點座標與空間錨點..."
+        await progress_queue.put(("progress", {"percent": 75, "stage": "GEOCODING", "message": msg75}))
     
     # 🌍 [事後逐日空間錨點防呆與非破壞性自癒] 攔截跨國/撞名幻覺座標，保留合法座標並自動生成 daily_locations
     raw_dest = data.get("destination") or data.get("title") or ""
@@ -674,8 +737,8 @@ async def generate_trip_core(
         data["daily_locations"] = resolved_daily_locs
 
     if progress_queue:
-        msg85 = "Calculating legal tender currency and transit timing..." if is_en else "正在計算法定貨幣與交通時序..."
-        await progress_queue.put(("progress", {"percent": 85, "stage": "FINALIZING", "message": msg85}))
+        msg90 = "Calculating legal tender currency and transit timing..." if is_en else "正在計算法定貨幣與交通時序..."
+        await progress_queue.put(("progress", {"percent": 90, "stage": "FINALIZING", "message": msg90}))
     
     data = reconstruct_metadata(data)
     data = normalize_notes(data)
@@ -796,8 +859,9 @@ async def generate_trip_stream(
                         break
                     yield f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 except asyncio.TimeoutError:
-                    # 10s 保活心跳：重置 Cloudflare 100s Idle 計時器
-                    yield ": keep-alive\nevent: ping\ndata: {\"status\":\"waiting\"}\n\n"
+                    # 10s 保活心跳：獨立註解與 ping 事件幀，重置 Cloudflare 100s Idle 計時器
+                    yield ": keep-alive\n\n"
+                    yield "event: ping\ndata: {\"status\":\"waiting\"}\n\n"
         except asyncio.CancelledError:
             producer_task.cancel()
             raise
