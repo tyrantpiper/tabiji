@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { useRouter } from "next/navigation"
 import { dispatchDeepLink } from "@/lib/hooks/useDeepLinkRouter"
 import { useHaptic } from "@/lib/hooks"
+import { toast } from "sonner"
 
 type Notification = NotificationItemDto
 
@@ -196,17 +197,21 @@ export function NotificationBell() {
         if (!readEstablishedBellUserId()) return
         const prevNotifications = notifications
         const prevUnread = unreadCount
+        const target = prevNotifications.find((n) => n.id === id)
 
         setNotifications((prev) =>
             prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
         )
-        setUnreadCount((prev) => Math.max(0, prev - 1))
+        if (target && !target.is_read) {
+            setUnreadCount((prev) => Math.max(0, prev - 1))
+        }
 
         try {
             await notificationsApi.markRead(id)
         } catch {
             setNotifications(prevNotifications)
             setUnreadCount(prevUnread)
+            toast.error(zh ? "通知已讀更新失敗，請稍後再試" : "Failed to update notification")
         }
     }
 
@@ -223,6 +228,7 @@ export function NotificationBell() {
         } catch {
             setNotifications(prevNotifications)
             setUnreadCount(prevUnread)
+            toast.error(zh ? "全部已讀操作失敗，請稍後再試" : "Failed to mark all as read")
         }
     }
 
@@ -245,6 +251,7 @@ export function NotificationBell() {
         } catch {
             setNotifications(prevNotifications)
             setUnreadCount(prevUnread)
+            toast.error(zh ? "刪除通知失敗，請稍後再試" : "Failed to delete notification")
         }
     }
 
@@ -263,6 +270,7 @@ export function NotificationBell() {
         } catch {
             setNotifications(prevNotifications)
             setUnreadCount(prevUnread)
+            toast.error(zh ? "清除通知失敗，請稍後再試" : "Failed to clear notifications")
         }
     }
 

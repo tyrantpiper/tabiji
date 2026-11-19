@@ -64,7 +64,7 @@ async function emitGlobalBroadcastRefresh(
       body: JSON.stringify({
         messages: [
           {
-            topic: 'realtime:user-notif:broadcast',
+            topic: 'user-notif:broadcast',
             event: 'notif:refresh',
             payload: { ts: Date.now() },
           },
@@ -72,6 +72,9 @@ async function emitGlobalBroadcastRefresh(
       }),
       ...(controller ? { signal: controller.signal } : {}),
     });
+    if (!resp.ok) {
+      console.warn('notify-broadcast realtime non-2xx:', resp.status);
+    }
     await resp.body?.cancel().catch(() => {});
   } catch (err) {
     console.warn('notify-broadcast realtime refresh skipped:', err);

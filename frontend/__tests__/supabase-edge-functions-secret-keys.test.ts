@@ -318,7 +318,48 @@ describe('Supabase Edge Functions Secret Keys Support', () => {
             expect(recordedBroadcastCalls[0].url).toBe('https://example.supabase.co/realtime/v1/api/broadcast')
             expect(recordedBroadcastCalls[0].headers.apikey).toBe('sb_secret_realtime_check')
             expect(recordedBroadcastCalls[0].headers.Authorization).toBeUndefined()
-            expect((recordedBroadcastCalls[0].body as { messages: Array<{ topic: string; event: string; payload: { ts: number } }> }).messages[0].topic).toBe('realtime:user-notif:broadcast')
+            expect((recordedBroadcastCalls[0].body as { messages: Array<{ topic: string; event: string; payload: { ts: number } }> }).messages[0].topic).toBe('user-notif:broadcast')
+            expect((recordedBroadcastCalls[0].body as { messages: Array<{ topic: string; event: string }> }).messages[0].event).toBe('notif:refresh')
+
+            // Also verify notify-event emits unprefixed `user-notif:<uid>` matching supabase.channel('user-notif:<uid>')
+            recordedBroadcastCalls.length = 0
+            const eventBroadcastHandler = loadEdgeServeHandler(
+                'supabase/functions/notify-event/index.ts',
+                {
+                    SUPABASE_URL: 'https://example.supabase.co',
+                    SUPABASE_SECRET_KEY: 'sb_secret_event_broadcast_check',
+                },
+                () => ({
+                    from: (tbl: string) => {
+                        if (tbl === 'itineraries') {
+                            return {
+                                select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: { title: 'Kyoto' } }) }) }),
+                            }
+                        }
+                        if (tbl === 'trip_members') {
+                            return {
+                                select: () => ({ eq: () => ({ neq: () => Promise.resolve({ data: [{ user_id: 'u-target-1' }] }) }) }),
+                            }
+                        }
+                        if (tbl === 'notifications') {
+                            return { insert: () => Promise.resolve({ error: null }) }
+                        }
+                        return createEmptySupabaseStub().from()
+                    },
+                }),
+            )
+            const evRes = await eventBroadcastHandler(new Request('https://edge.local/notify-event', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    type: 'INSERT',
+                    table: 'trip_members',
+                    record: { itinerary_id: 'trip-1', user_id: 'u-new', user_name: 'Alice' },
+                }),
+            }))
+            expect(evRes.status).toBe(200)
+            expect(recordedBroadcastCalls.length).toBe(1)
+            expect((recordedBroadcastCalls[0].body as { messages: Array<{ topic: string; event: string }> }).messages[0].topic).toBe('user-notif:u-target-1')
             expect((recordedBroadcastCalls[0].body as { messages: Array<{ topic: string; event: string }> }).messages[0].event).toBe('notif:refresh')
         } finally {
             globalThis.fetch = origFetch

@@ -59,7 +59,7 @@ async function emitNotifRefreshBroadcast(
 
     const ts = Date.now();
     const messages = uniqueIds.map((uid) => ({
-      topic: `realtime:user-notif:${uid}`,
+      topic: `user-notif:${uid}`,
       event: 'notif:refresh',
       payload: { ts },
     }));
@@ -70,6 +70,9 @@ async function emitNotifRefreshBroadcast(
       body: JSON.stringify({ messages }),
       ...(controller ? { signal: controller.signal } : {}),
     });
+    if (!resp.ok) {
+      console.warn('notify-event broadcast non-2xx:', resp.status);
+    }
     await resp.body?.cancel().catch(() => {});
   } catch (err) {
     console.warn('notify-event broadcast refresh skipped:', err);

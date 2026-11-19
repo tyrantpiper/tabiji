@@ -223,6 +223,10 @@ def test_t1_push_subscription_ssrf_and_https_validation(clean_overrides):
         "javascript:alert(1)",
         "https://localhost/push",
         "https://127.0.0.1/push",
+        "https://10.0.0.5/push",
+        "https://192.168.1.10/push",
+        "https://169.254.169.254/latest/meta-data",
+        "https://user:pass@fcm.googleapis.com/send/abc",
         "not-a-url",
     ]:
         r_bad = client.post(
@@ -754,3 +758,71 @@ async def test_t9_generate_trip_core_emits_real_stream_progress_milestones():
     assert 75 in percents
     assert 90 in percents
     assert percents == sorted(percents)
+
+
+@pytest.mark.asyncio
+async def test_t9_generate_trip_core_parses_day_number_places_and_fallback_notice():
+    from routers.ai import generate_trip_core
+    import services.model_manager as mm
+
+    class _StreamList:
+        def __init__(self, items):
+            self._items = iter(items)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._items)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    full_json = json.dumps({
+        "title": "Tokyo 2D",
+        "destination": "Tokyo",
+        "currency": "JPY",
+        "days": [
+            {"day_number": 1, "activities": [{"time": "09:00", "place_name": "Senso-ji", "lat": 35.7148, "lng": 139.7967}]},
+            {"day_number": 2, "activities": [{"time": "10:00", "place_name": "Meiji Jingu", "lat": 35.6764, "lng": 139.6993}]},
+        ],
+    })
+    split_idx = full_json.index('"day_number": 2')
+    c1 = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[SimpleNamespace(thought=False, text=full_json[:split_idx])]))])
+    c2 = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[SimpleNamespace(thought=False, text=full_json[split_idx:])]))])
+    thought_only = SimpleNamespace(candidates=[SimpleNamespace(finish_reason="STOP", content=SimpleNamespace(parts=[SimpleNamespace(thought=True, text="only thought")]))])
+
+    calls = 0
+
+    async def fake_stream(*, model, contents, config):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _StreamList([thought_only])
+        return _StreamList([c1, c2])
+
+    fake_client = MagicMock()
+    fake_client.aio.models.generate_content_stream = fake_stream
+
+    q: asyncio.Queue = asyncio.Queue()
+    with patch.object(mm, "get_cached_client", return_value=fake_client), \
+         patch.object(mm, "build_effective_routing", return_value=["gemini-3.5-flash-lite", "gemini-3.6-flash"]), \
+         patch("services.geocode_service.resolve_prompt_spatial_anchor", AsyncMock(return_value=None)), \
+         patch("services.geocode_service.build_spatial_constraint_prompt", return_value=""), \
+         patch("services.geocode_service.verify_and_heal_itinerary_coords", AsyncMock(return_value=([{"day_number": 1, "place_name": "Senso-ji", "time_slot": "09:00", "lat": 35.7148, "lng": 139.7967}], {}))):
+        res = await generate_trip_core(prompt="Tokyo 2 days", api_key="AIzaSyStreamTestKey1234567890", locale="zh", progress_queue=q)
+
+    assert res["title"] == "Tokyo 2D"
+    events = []
+    while not q.empty():
+        ev_type, payload = q.get_nowait()
+        if ev_type == "progress":
+            events.append(payload)
+
+    messages = [e["message"] for e in events]
+    assert any("切換高速備援模型重試中" in m for m in messages)
+    day_events = [e for e in events if e.get("stage") == "STREAMING" and "current_day" in e]
+    assert [e["current_day"] for e in day_events] == [1, 2]
+    assert any("正在編排第 1 天行程" in e["message"] for e in day_events)
+    assert any("正在編排第 2 天行程" in e["message"] for e in day_events)
+    assert [e["percent"] for e in events] == sorted(e["percent"] for e in events)

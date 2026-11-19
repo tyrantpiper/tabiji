@@ -8,12 +8,14 @@ spoofable `x-user-id` PostgREST headers.
 """
 
 from datetime import datetime, timezone
+import ipaddress
 from typing import Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from utils.deps import get_supabase, get_verified_user
 
@@ -41,46 +43,66 @@ def _validate_uuid(raw_id: str, field_name: str = "notification_id") -> str:
 def _validate_https_push_endpoint(endpoint: str) -> str:
     cleaned = (endpoint or "").strip()
     parsed = urlparse(cleaned)
-    if parsed.scheme != "https" or not parsed.netloc:
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
         raise HTTPException(
             status_code=400,
             detail="Push subscription endpoint must be a valid https:// URL",
         )
-    host = (parsed.hostname or "").lower()
-    if host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local"):
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host or host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local") or host.endswith(".internal"):
         raise HTTPException(
             status_code=400,
             detail="Push subscription endpoint host is not allowed",
         )
+    try:
+        ip_obj = ipaddress.ip_address(host)
+        if (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_reserved
+            or ip_obj.is_multicast
+            or ip_obj.is_unspecified
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Push subscription endpoint host is not allowed",
+            )
+    except ValueError:
+        pass
     return cleaned
 
 
 @router.get("/api/notifications")
 async def list_notifications(
-    limit: int = Query(default=30, ge=1, le=100),
+    limit: int = Query(default=30, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase),
 ):
-    items_res = (
-        supabase.table("notifications")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .range(offset, offset + limit - 1)
-        .execute()
-    )
+    def _query():
+        items_res = (
+            supabase.table("notifications")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        unread_res = (
+            supabase.table("notifications")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .eq("is_read", False)
+            .execute()
+        )
+        return items_res, unread_res
+
+    items_res, unread_res = await run_in_threadpool(_query)
     items = getattr(items_res, "data", None) or []
 
-    unread_res = (
-        supabase.table("notifications")
-        .select("id", count="exact")
-        .eq("user_id", user_id)
-        .eq("is_read", False)
-        .execute()
-    )
     unread_count = getattr(unread_res, "count", None)
-    if unread_count is None:
+    if not isinstance(unread_count, int):
         unread_data = getattr(unread_res, "data", None)
         if isinstance(unread_data, list):
             unread_count = len(unread_data)
@@ -98,8 +120,8 @@ async def mark_all_notifications_read(
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase),
 ):
-    res = (
-        supabase.table("notifications")
+    res = await run_in_threadpool(
+        lambda: supabase.table("notifications")
         .update({"is_read": True})
         .eq("user_id", user_id)
         .eq("is_read", False)
@@ -119,8 +141,8 @@ async def mark_notification_read(
     supabase=Depends(get_supabase),
 ):
     valid_id = _validate_uuid(notification_id, "notification_id")
-    res = (
-        supabase.table("notifications")
+    res = await run_in_threadpool(
+        lambda: supabase.table("notifications")
         .update({"is_read": True})
         .eq("id", valid_id)
         .eq("user_id", user_id)
@@ -137,8 +159,8 @@ async def clear_all_notifications(
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase),
 ):
-    res = (
-        supabase.table("notifications")
+    res = await run_in_threadpool(
+        lambda: supabase.table("notifications")
         .delete()
         .eq("user_id", user_id)
         .execute()
@@ -157,8 +179,8 @@ async def delete_notification(
     supabase=Depends(get_supabase),
 ):
     valid_id = _validate_uuid(notification_id, "notification_id")
-    res = (
-        supabase.table("notifications")
+    res = await run_in_threadpool(
+        lambda: supabase.table("notifications")
         .delete()
         .eq("id", valid_id)
         .eq("user_id", user_id)
@@ -190,10 +212,11 @@ async def subscribe_push_notifications(
         "user_agent": (body.user_agent or "").strip()[:512] or None,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    supabase.table("push_subscriptions").upsert(
-        payload,
-        on_conflict="user_id,endpoint",
-    ).execute()
+    await run_in_threadpool(
+        lambda: supabase.table("push_subscriptions")
+        .upsert(payload, on_conflict="user_id,endpoint")
+        .execute()
+    )
 
     return {"status": "subscribed"}
 
@@ -207,5 +230,11 @@ async def unsubscribe_push_notifications(
 ):
     raw_endpoint = (body.endpoint if body else None) or endpoint_query
     endpoint = _validate_https_push_endpoint(raw_endpoint or "")
-    supabase.table("push_subscriptions").delete().eq("user_id", user_id).eq("endpoint", endpoint).execute()
+    await run_in_threadpool(
+        lambda: supabase.table("push_subscriptions")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("endpoint", endpoint)
+        .execute()
+    )
     return {"status": "unsubscribed"}

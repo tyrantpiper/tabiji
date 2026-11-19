@@ -6,6 +6,7 @@ import { render, screen, act, fireEvent, waitFor } from "@testing-library/react"
 import React from "react"
 import { LanguageProvider } from "@/lib/LanguageContext"
 import { ThemeProvider } from "@/lib/ThemeContext"
+import { toast } from "sonner"
 import { consumeTripStream, itemsApi, API_HOST } from "@/lib/api"
 import { ItineraryItemSchema } from "@/lib/schemas"
 import { NotificationBell } from "@/components/notifications/notification-bell"
@@ -194,7 +195,8 @@ describe("T1–T9 Remediation Verification Suite", () => {
         expect(broadcastListeners["user-notif:11111111-1111-4111-8111-111111111111"]?.length).toBeGreaterThanOrEqual(1)
         expect(broadcastListeners["user-notif:broadcast"]?.length).toBeGreaterThanOrEqual(1)
 
-        // Open bell and click unread notification -> failed PATCH should roll unread badge back to 1
+        // Open bell and click unread notification -> failed PATCH should roll unread badge back to 1 and show error toast
+        const toastErrorSpy = vi.spyOn(toast, "error").mockImplementation(() => "")
         const bellBtn = screen.getByLabelText(/通知|Notifications/i)
         fireEvent.click(bellBtn)
         await waitFor(() => {
@@ -203,7 +205,9 @@ describe("T1–T9 Remediation Verification Suite", () => {
         fireEvent.click(screen.getByText("Kyoto awaits"))
         await waitFor(() => {
             expect(screen.getByText("1")).toBeTruthy()
+            expect(toastErrorSpy).toHaveBeenCalled()
         })
+        toastErrorSpy.mockRestore()
     })
 
     it("T3: Edge Shield geocode cache bypasses on Gemini headers and isolates v=2 key without zoom noise", async () => {
@@ -428,10 +432,18 @@ describe("T1–T9 Remediation Verification Suite", () => {
             collabHandlers["realtime-trip-trip-rt-1"][0]({
                 payload: { event: "item:mutate", senderSessionId: "other-session-123" },
             })
-            expect(eventSpy).toHaveBeenCalledTimes(1)
+            collabHandlers["realtime-trip-trip-rt-1"][0]({
+                payload: { event: "info:update", senderSessionId: "other-session-123" },
+            })
+            expect(eventSpy).toHaveBeenCalledTimes(2)
         } finally {
             window.removeEventListener("tabiji:collab-event", eventSpy)
         }
+
+        const removeSrc = fs.readFileSync(path.resolve(__dirname, "..", "components", "chat", "RemoveItemPreviewCard.tsx"), "utf-8")
+        const expenseSrc = fs.readFileSync(path.resolve(__dirname, "..", "components", "chat", "ExpensePreviewCard.tsx"), "utf-8")
+        expect(removeSrc).toContain('broadcastTripEvent(activeTripId, "item:mutate"')
+        expect(expenseSrc).toContain('broadcastTripEvent(activeTripId, "expense:update"')
     })
 
     it("T4: day-map and FullscreenMapModal preserve L1 localMapped results across debounce and L2 error fallback", () => {

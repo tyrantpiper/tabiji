@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
 import { useTripContext } from "@/lib/trip-context"
 import { itemsApi } from "@/lib/api"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useSWRConfig } from "swr"
 import { useHaptic, useTripDetail } from "@/lib/hooks"
@@ -253,6 +254,7 @@ export default function RemoveItemPreviewCard({
 
         try {
             await itemsApi.delete(targetId, userId || undefined)
+            void broadcastTripEvent(activeTripId, "item:mutate", { id: targetId, action: "delete" })
             setIsDeleted(true)
             toast.success(
                 zh

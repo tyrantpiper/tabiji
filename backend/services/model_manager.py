@@ -2202,6 +2202,8 @@ async def call_extraction_stream(
     system_instruction: Optional[str] = None,
     on_thought: Optional[Callable[[int], Union[Awaitable[None], None]]] = None,
     on_chunk: Optional[Callable[[int], Union[Awaitable[None], None]]] = None,
+    on_text_progress: Optional[Callable[[str, int], Union[Awaitable[None], None]]] = None,
+    on_model_fallback: Optional[Callable[[str, str], Union[Awaitable[None], None]]] = None,
 ) -> str:
     """
     串流版統一 AI 提取/生成函數：即時回傳思考與輸出字元進度，具備 Multi-Model Fallback、
@@ -2212,14 +2214,15 @@ async def call_extraction_stream(
     routing = build_effective_routing(intent_type, routing_strategy, api_key=api_key)
     require_json = intent_type in INTENTS_REQUIRING_JSON
 
-    async def _emit(cb: Optional[Callable[[int], Union[Awaitable[None], None]]], value: int) -> None:
+    async def _emit(cb: Optional[Callable[..., Union[Awaitable[None], None]]], *args: Any) -> None:
         if cb is None:
             return
-        res = cb(value)
+        res = cb(*args)
         if inspect.isawaitable(res):
             await res
 
     attempts: List[Dict[str, Any]] = []
+    last_failed_model: Optional[str] = None
 
     for i, model_name in enumerate(routing):
         caps = MODEL_CAPS.get(model_name)
@@ -2237,6 +2240,9 @@ async def call_extraction_stream(
             if intent_type not in INTENTS_ALLOW_GEMMA_LAST_RESORT:
                 attempts.append({"model": model_name, "decision": "skip_intent_not_allowed_for_gemma"})
                 continue
+
+        if last_failed_model is not None:
+            await _emit(on_model_fallback, last_failed_model, model_name)
 
         timeout_sec = _get_call_timeout(intent_type, model_name=model_name)
         config = sanitize_config_for_model(base_config, model_name, intent_type, explicit_grounding=False)
@@ -2282,6 +2288,8 @@ async def call_extraction_stream(
                                                 chunks.append(part_text)
                                                 output_chars += len(part_text)
                                                 await _emit(on_chunk, output_chars)
+                                                if on_text_progress is not None:
+                                                    await _emit(on_text_progress, "".join(chunks), output_chars)
 
                             if not extracted_from_parts:
                                 fallback_text = extract_clean_response_text(chunk)
@@ -2289,6 +2297,8 @@ async def call_extraction_stream(
                                     chunks.append(fallback_text)
                                     output_chars += len(fallback_text)
                                     await _emit(on_chunk, output_chars)
+                                    if on_text_progress is not None:
+                                        await _emit(on_text_progress, "".join(chunks), output_chars)
                     else:
                         # Fallback cleanly if SDK client only provides non-streaming generate_content
                         async def _non_stream(cfg):
@@ -2306,6 +2316,8 @@ async def call_extraction_stream(
                             chunks.append(fallback_text)
                             output_chars += len(fallback_text)
                             await _emit(on_chunk, output_chars)
+                            if on_text_progress is not None:
+                                await _emit(on_text_progress, "".join(chunks), output_chars)
 
                 text = "".join(chunks)
                 if not text or not text.strip():
@@ -2316,6 +2328,7 @@ async def call_extraction_stream(
                     )
                     record_model_error(model_name, api_key=api_key, is_rate_limit=False)
                     attempts.append({"model": model_name, "decision": "empty_response", **diag})
+                    last_failed_model = model_name
                     break
 
                 if require_json:
@@ -2328,6 +2341,7 @@ async def call_extraction_stream(
             except asyncio.TimeoutError:
                 print(f"⏱️ [ExtractionStream Timeout] {model_name} (intent={intent_type}) exceeded {timeout_sec}s; switching fallback")
                 attempts.append({"model": model_name, "decision": "timeout", "timeout": timeout_sec})
+                last_failed_model = model_name
                 break
             except _MODEL_API_ERRORS as e:
                 kind = classify_api_error(e)
@@ -2338,11 +2352,7 @@ async def call_extraction_stream(
                 if kind == "bad_request":
                     raise NonRetryableRequestError(f"Bad Request: {err_msg}")
                 if kind == "config_unsupported" and retry_idx == 0 and output_chars == 0:
-                    config = copy.deepcopy(config)
-                    if getattr(config, "response_schema", None) is not None:
-                        config.response_schema = None
-                    elif getattr(config, "thinking_config", None) is not None:
-                        config.thinking_config = None
+                    config = build_degraded_config_on_400(config, e)
                     continue
                 if output_chars == 0 and retry_idx == 0 and err_code in (429, 500, 502, 503, 504):
                     await asyncio.sleep(0.15 + random.uniform(0.01, 0.05))
@@ -2351,6 +2361,7 @@ async def call_extraction_stream(
                 attempts.append({"model": model_name, "decision": kind, "code": err_code})
                 if err_code == 429:
                     await asyncio.sleep(0.15 + random.uniform(0.01, 0.05))
+                last_failed_model = model_name
                 break
             except json.JSONDecodeError as e:
                 diag = summarize_response_diagnostics(last_chunk)
@@ -2360,10 +2371,12 @@ async def call_extraction_stream(
                     f"finish_reason={diag['finish_reason']}): {e} | snippet={snippet!r}"
                 )
                 attempts.append({"model": model_name, "decision": "json_parse_fail", "finish_reason": diag["finish_reason"]})
+                last_failed_model = model_name
                 break
             except Exception as e:
                 print(f"⚠️ [ExtractionStream Error] {model_name} (intent={intent_type}) {type(e).__name__}: {e}")
                 attempts.append({"model": model_name, "decision": "exception", "msg": str(e)})
+                last_failed_model = model_name
                 break
 
     raise AllModelsFailedError(attempts)

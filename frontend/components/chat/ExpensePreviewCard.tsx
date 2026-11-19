@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { useTripContext } from "@/lib/trip-context"
 import { expensesApi } from "@/lib/api"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useSWRConfig } from "swr"
 
@@ -78,6 +79,7 @@ export default function ExpensePreviewCard({ expenseData, onDismiss }: ExpensePr
             }, userId || undefined)
 
             setIsAdded(true)
+            void broadcastTripEvent(activeTripId, "expense:update", { action: "create" })
             toast.success(zh ? `💰 記帳成功：${expenseData.title}` : `💰 Expense saved: ${expenseData.title}`)
 
             // 🟢 即時 invalidate 費用清單 SWR 快取，消除快取空洞

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 import httpx
 
 os.environ.setdefault("GOOGLE_GENAI_API_VERSION", "v1beta")
@@ -337,9 +338,10 @@ async def _execute_flash_fallback_task(
                     record_model_error(candidate_model, api_key=api_key, is_rate_limit=False)
                     last_error = ValueError(f"{candidate_model} empty output ({diag})")
                     continue
-                if _is_fallback_task_cancelled(supabase, task_id):
+                if await run_in_threadpool(_is_fallback_task_cancelled, supabase, task_id):
                     return
-                _persist_fallback_task(
+                await run_in_threadpool(
+                    _persist_fallback_task,
                     supabase,
                     task_id,
                     status="completed",
@@ -351,7 +353,8 @@ async def _execute_flash_fallback_task(
             except _INTERACTION_API_ERRORS as e:
                 kind = classify_api_error(e)
                 if kind == "auth_fail":
-                    _persist_fallback_task(
+                    await run_in_threadpool(
+                        _persist_fallback_task,
                         supabase,
                         task_id,
                         status="failed",
@@ -383,9 +386,10 @@ async def _execute_flash_fallback_task(
                         )
                         ungrounded_text = extract_clean_response_text(ungrounded_resp)
                         if ungrounded_text and ungrounded_text.strip():
-                            if _is_fallback_task_cancelled(supabase, task_id):
+                            if await run_in_threadpool(_is_fallback_task_cancelled, supabase, task_id):
                                 return
-                            _persist_fallback_task(
+                            await run_in_threadpool(
+                                _persist_fallback_task,
                                 supabase,
                                 task_id,
                                 status="completed",
@@ -397,7 +401,8 @@ async def _execute_flash_fallback_task(
                     except _INTERACTION_API_ERRORS as e2:
                         kind2 = classify_api_error(e2)
                         if kind2 == "auth_fail":
-                            _persist_fallback_task(
+                            await run_in_threadpool(
+                                _persist_fallback_task,
                                 supabase,
                                 task_id,
                                 status="failed",
@@ -427,7 +432,8 @@ async def _execute_flash_fallback_task(
                 logger.warning(f"[Agents] Candidate {candidate_model} fallback error: {e}")
                 continue
 
-        _persist_fallback_task(
+        await run_in_threadpool(
+            _persist_fallback_task,
             supabase,
             task_id,
             status="failed",
@@ -437,7 +443,8 @@ async def _execute_flash_fallback_task(
         )
     except Exception as e:
         logger.error(f"[Agents] Flash fallback execution error: {e}")
-        _persist_fallback_task(
+        await run_in_threadpool(
+            _persist_fallback_task,
             supabase,
             task_id,
             status="failed",
@@ -520,10 +527,11 @@ async def start_deep_research(
 
     # 🛡️ 關鍵 0.5 分自動熔斷降級：建立背景 Flash 任務 (雙寫記憶體 + DB 並綁定 key_hash 雜湊)
     supabase = _resolve_supabase(request)
-    _cleanup_expired_fallback_tasks(supabase)
+    await run_in_threadpool(_cleanup_expired_fallback_tasks, supabase)
     task_id = f"fallback_{uuid.uuid4().hex[:12]}"
     key_hash = _hash_api_key(api_key)
-    _persist_fallback_task(
+    await run_in_threadpool(
+        _persist_fallback_task,
         supabase,
         task_id,
         status="running",
@@ -564,7 +572,7 @@ async def get_interaction_status(
     # 檢查是否為降級任務
     if interaction_id.startswith("fallback_"):
         supabase = _resolve_supabase(request)
-        task = _load_fallback_task(supabase, interaction_id)
+        task = await run_in_threadpool(_load_fallback_task, supabase, interaction_id)
         if not task:
             raise HTTPException(status_code=404, detail="Fallback 任務不存在")
         stored_hash = task.get("key_hash")
@@ -649,7 +657,7 @@ async def cancel_interaction(
     """
     if interaction_id.startswith("fallback_"):
         supabase = _resolve_supabase(request)
-        task = _load_fallback_task(supabase, interaction_id)
+        task = await run_in_threadpool(_load_fallback_task, supabase, interaction_id)
         if not task:
             raise HTTPException(status_code=404, detail="任務不存在")
         stored_hash = task.get("key_hash")
@@ -659,7 +667,7 @@ async def cancel_interaction(
         if interaction_id in _FALLBACK_TASKS:
             _FALLBACK_TASKS[interaction_id]["status"] = "cancelled"
         if supabase is not None:
-            try:
+            def _cancel_db():
                 now_iso = datetime.now(timezone.utc).isoformat()
                 query = (
                     supabase.table("agent_fallback_tasks")
@@ -669,6 +677,8 @@ async def cancel_interaction(
                 if stored_hash:
                     query = query.eq("key_hash", caller_hash)
                 query.execute()
+            try:
+                await run_in_threadpool(_cancel_db)
             except Exception as db_err:
                 logger.warning(f"[Agents] Cancel DB update skipped ({interaction_id}): {db_err}")
         return {"status": "cancelled", "id": interaction_id}

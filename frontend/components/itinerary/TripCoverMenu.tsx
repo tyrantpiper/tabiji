@@ -16,6 +16,7 @@ import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
 import { compressImage } from "@/lib/image-utils"
 import { tripsApi } from "@/lib/api"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { resolveDestinationCover } from "@/lib/destination-covers"
 import { toast } from "sonner"
 
@@ -118,6 +119,7 @@ export function TripCoverMenu({
 
             // 4. 更新後端資料庫
             await tripsApi.updateCover(tripId, result.secure_url, userId)
+            void broadcastTripEvent(tripId, "info:update", { cover_image: result.secure_url })
             haptic.success()
             toast.success(zh ? "封面已更新！" : "Cover photo updated!")
             onUpdate?.()
@@ -137,6 +139,7 @@ export function TripCoverMenu({
         try {
             const defaultCover = resolveDestinationCover(tripTitle)
             await tripsApi.updateCover(tripId, defaultCover, userId)
+            void broadcastTripEvent(tripId, "info:update", { cover_image: defaultCover })
             haptic.success()
             toast.success(zh ? "已恢復為預設城市封面" : "Reset to default city cover")
             onUpdate?.()
@@ -155,6 +158,7 @@ export function TripCoverMenu({
         setLoading(true)
         try {
             await tripsApi.updateCover(tripId, null, userId)
+            void broadcastTripEvent(tripId, "info:update", { cover_image: null })
             haptic.success()
             toast.success(zh ? "已移除封面" : "Cover photo removed")
             onUpdate?.()

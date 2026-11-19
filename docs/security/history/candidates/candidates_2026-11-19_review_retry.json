@@ -1,0 +1,38 @@
+[
+  {
+    "id": "backend/routers/agents.py:fallback_task_persistence_helpers",
+    "file_path": "backend/routers/agents.py",
+    "start_line": 88,
+    "end_line": 223,
+    "attack_vector": "fallback_task_db_leak_or_sync_overwrite",
+    "hypothesis": "Verify whether _persist_fallback_task, _load_fallback_task, _is_fallback_task_cancelled, and _cleanup_expired_fallback_tasks isolate Supabase calls safely, hash keys with SHA-256, and honor TTL expiry.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/agents.py:fallback_polling_and_cancel_key_hash_bola",
+    "file_path": "backend/routers/agents.py",
+    "start_line": 560,
+    "end_line": 705,
+    "attack_vector": "cross_caller_task_snooping_and_blocking_db_io",
+    "hypothesis": "Verify whether get_interaction_status and cancel_interaction run DB I/O inside run_in_threadpool, enforce SHA-256 key_hash ownership via hmac.compare_digest, and avoid overwriting cancelled status.",
+    "severity": "high"
+  },
+  {
+    "id": "supabase/functions/notify-event/index.ts:unprefixed_broadcast_no_pii_and_sb_secret_header",
+    "file_path": "supabase/functions/notify-event/index.ts",
+    "start_line": 1,
+    "end_line": 238,
+    "attack_vector": "broadcast_pii_leakage_auth_bypass_or_secret_header_misrouting",
+    "hypothesis": "Verify whether notify-event authorizes requests safely, avoids Bearer Authorization for sb_secret_ keys, broadcasts strictly opaque {type:'notif:refresh', ts} with zero PII to unprefixed topic user-notif:${userId}, and wraps broadcast inside a 2000ms timeout try/catch.",
+    "severity": "medium"
+  },
+  {
+    "id": "supabase/functions/notify-countdown/index.ts:countdown_broadcast_no_pii_and_timeout_isolation",
+    "file_path": "supabase/functions/notify-countdown/index.ts",
+    "start_line": 1,
+    "end_line": 250,
+    "attack_vector": "countdown_broadcast_pii_leakage_or_blocking_timeout",
+    "hypothesis": "Verify whether notify-countdown skips Bearer Authorization for sb_secret_ keys, broadcasts strictly opaque no-PII payload to unprefixed topic user-notif:${userId}, and wraps Realtime REST calls inside a 2000ms AbortController try/catch.",
+    "severity": "medium"
+  }
+]

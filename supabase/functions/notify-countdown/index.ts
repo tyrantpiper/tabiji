@@ -68,7 +68,7 @@ async function emitCountdownRefreshBroadcast(
 
     const ts = Date.now();
     const messages = uniqueIds.map((uid) => ({
-      topic: `realtime:user-notif:${uid}`,
+      topic: `user-notif:${uid}`,
       event: 'notif:refresh',
       payload: { ts },
     }));
@@ -79,6 +79,9 @@ async function emitCountdownRefreshBroadcast(
       body: JSON.stringify({ messages }),
       ...(controller ? { signal: controller.signal } : {}),
     });
+    if (!resp.ok) {
+      console.warn('notify-countdown broadcast non-2xx:', resp.status);
+    }
     await resp.body?.cancel().catch(() => {});
   } catch (err) {
     console.warn('notify-countdown broadcast refresh skipped:', err);

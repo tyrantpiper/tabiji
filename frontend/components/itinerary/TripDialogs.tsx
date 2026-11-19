@@ -15,6 +15,7 @@ import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
 import { Plus, Hash, Loader2, Calendar, Sparkles, FileText, Compass, Check, FolderInput } from "lucide-react"
 import { tripsApi, aiApi } from "@/lib/api"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { type Trip, tryParseItinerary } from "@/lib/itinerary-types"
 import { PushPermissionPrompt } from "@/components/notifications/push-permission-prompt"
 import { motion, AnimatePresence } from "framer-motion"
@@ -308,6 +309,7 @@ export function CreateTripModal({
                     ai_review: result.ai_review,
                     user_id: activeUserId
                 })
+                void broadcastTripEvent(targetId, "item:mutate", { action: "import" })
 
                 haptic.success()
                 toast.success(data.message || t('trip_merged_success'))

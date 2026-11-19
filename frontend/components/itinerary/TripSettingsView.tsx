@@ -36,6 +36,7 @@ import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
 import { compressImage } from "@/lib/image-utils"
 import { tripsApi } from "@/lib/api"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { resolveDestinationCover } from "@/lib/destination-covers"
 import { type Trip } from "@/lib/itinerary-types"
 import { toast } from "sonner"
@@ -221,6 +222,7 @@ export function TripSettingsView({
             }
 
             await tripsApi.updateCover(trip.id, result.secure_url, userId || undefined)
+            void broadcastTripEvent(trip.id, "info:update", { cover_image: result.secure_url })
             haptic.success()
             toast.success(zh ? "封面已更新！" : "Cover photo updated!")
             await handleUpdate()
@@ -240,6 +242,7 @@ export function TripSettingsView({
         try {
             const defaultCover = resolveDestinationCover(trip.title)
             await tripsApi.updateCover(trip.id, defaultCover, userId || undefined)
+            void broadcastTripEvent(trip.id, "info:update", { cover_image: defaultCover })
             haptic.success()
             toast.success(zh ? "已恢復為預設城市封面" : "Reset to default city cover")
             await handleUpdate()
@@ -258,6 +261,7 @@ export function TripSettingsView({
         setLoading(true)
         try {
             await tripsApi.updateCover(trip.id, null, userId || undefined)
+            void broadcastTripEvent(trip.id, "info:update", { cover_image: null })
             haptic.success()
             toast.success(zh ? "已移除自訂封面" : "Cover photo removed")
             await handleUpdate()
@@ -282,6 +286,7 @@ export function TripSettingsView({
         setIsSavingTitle(true)
         try {
             await tripsApi.updateTitle(trip.id, cleanTitle, userId || undefined)
+            void broadcastTripEvent(trip.id, "info:update", { title: cleanTitle })
             haptic.success()
             toast.success(zh ? "行程名稱已更新！" : "Trip title updated!")
             setEditTitleOpen(false)

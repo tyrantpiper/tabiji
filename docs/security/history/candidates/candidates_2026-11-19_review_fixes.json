@@ -1,0 +1,56 @@
+[
+  {
+    "id": "backend/routers/notifications.py:jwt_scoped_notifications_and_ssrf_push_validation",
+    "file_path": "backend/routers/notifications.py",
+    "start_line": 1,
+    "end_line": 240,
+    "attack_vector": "cross_user_notification_bola_and_push_endpoint_ssrf",
+    "hypothesis": "Verify whether /api/notifications* and /api/push/subscribe enforce get_verified_user ownership, UUID validation, limit<=50 bounds, non-blocking run_in_threadpool, and strict HTTPS + public IP / non-internal host SSRF filtering rejecting userinfo, .internal, .local, loopback, and private/link-local IP literals.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/agents.py:fallback_task_db_persistence_key_hash_and_threadpool",
+    "file_path": "backend/routers/agents.py",
+    "start_line": 90,
+    "end_line": 705,
+    "attack_vector": "cross_caller_task_snooping_blocking_io_and_stale_status",
+    "hypothesis": "Verify whether fallback research tasks persist cleanly to agent_fallback_tasks via run_in_threadpool, verify SHA-256 key_hash via hmac.compare_digest on polling and cancellation, honor 24h expiry, and prevent background completion from overwriting cancelled status.",
+    "severity": "high"
+  },
+  {
+    "id": "backend/routers/ai.py:stream_progress_parsing_and_error_scrubbing",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 550,
+    "end_line": 880,
+    "attack_vector": "sse_stream_redos_or_api_key_error_leakage",
+    "hypothesis": "Verify whether generate_trip_core SSE regex progress parsing, on_model_fallback callback, and exception handling prevent ReDoS, avoid leaking raw Gemini API keys or internal tracebacks to SSE clients, and keep trip generation failure fallback deterministic.",
+    "severity": "medium"
+  },
+  {
+    "id": "supabase/functions/notify-event/index.ts:unprefixed_broadcast_no_pii_and_sb_secret_header",
+    "file_path": "supabase/functions/notify-event/index.ts",
+    "start_line": 1,
+    "end_line": 238,
+    "attack_vector": "broadcast_pii_leakage_auth_bypass_or_secret_header_misrouting",
+    "hypothesis": "Verify whether notify-event authorizes requests safely, avoids Bearer Authorization for sb_secret_ keys, broadcasts strictly opaque {type:'notif:refresh', ts} with zero PII to unprefixed topic user-notif:${userId}, and wraps broadcast inside a 2000ms timeout try/catch.",
+    "severity": "medium"
+  },
+  {
+    "id": "supabase/functions/notify-broadcast/index.ts:global_broadcast_no_pii_and_timeout_isolation",
+    "file_path": "supabase/functions/notify-broadcast/index.ts",
+    "start_line": 1,
+    "end_line": 263,
+    "attack_vector": "unauthorized_global_broadcast_or_pii_leak",
+    "hypothesis": "Verify whether notify-broadcast enforces admin secret authorization, broadcasts strictly opaque no-PII {type:'notif:refresh', ts} to unprefixed topic user-notif:broadcast, handles sb_secret_ headers safely, and bounds REST calls with a 2000ms AbortController.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/components/notifications/notification-bell.tsx:auth_guard_rollback_and_realtime_cleanup",
+    "file_path": "frontend/components/notifications/notification-bell.tsx",
+    "start_line": 1,
+    "end_line": 428,
+    "attack_vector": "unauth_401_storm_and_optimistic_unread_desync",
+    "hypothesis": "Verify whether NotificationBell guards authenticated requests with isUserLoggedIn(), safely rolls back failed mutations with user-visible error toast without double-decrementing unreadCount, and cleans up both user-specific and user-notif:broadcast Realtime channels.",
+    "severity": "medium"
+  }
+]

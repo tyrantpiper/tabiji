@@ -138,8 +138,8 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                     window.dispatchEvent(new CustomEvent("tabiji:collab-event", { detail: payload }))
                 }
 
-                // 鏡像更新 SWR 快取 (針對細項異動與拖曳)
-                if (payload.event === "item:reorder" || payload.event === "item:mutate") {
+                // 鏡像更新 SWR 快取 (針對細項異動與拖曳與行程主表設定變更)
+                if (payload.event === "item:reorder" || payload.event === "item:mutate" || payload.event === "info:update") {
                     mutate((key: unknown) => {
                         if (Array.isArray(key) && key[0] === `/api/trips/${tripId}`) return true
                         if (Array.isArray(key) && key[0] === "/api/trips") return true

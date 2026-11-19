@@ -1474,6 +1474,7 @@ export function ItineraryView() {
             // 1. 先發送 API 請求
             // 🔒 Standardized: Use tripsApi.deleteDay with userId
             await tripsApi.deleteDay(currentTrip.id, dayNum, userId || "")
+            void broadcastTripEvent(currentTrip.id, "item:mutate", { action: "delete_day", dayNumber: dayNum })
 
             haptic.success()
             toast.success(t('iv_day_deleted'))
@@ -1539,6 +1540,7 @@ export function ItineraryView() {
                 end_date: endDate,
                 on_shorten: onShorten
             }, userId || "")
+            void broadcastTripEvent(currentTrip.id, "item:mutate", { action: "update_dates" })
 
             setWeatherData([])
             await reloadTrips()       // 全域 TripContext 同步

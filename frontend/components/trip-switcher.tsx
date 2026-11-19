@@ -13,6 +13,7 @@ import { useTripContext } from "@/lib/trip-context"
 import { useLanguage } from "@/lib/LanguageContext"
 import { toast } from "sonner"
 import { tripsApi } from "@/lib/api"
+import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { preload } from "swr"
 import { fetcherWithUserId } from "@/lib/hooks"
 
@@ -68,6 +69,7 @@ export function TripSwitcher({
         try {
             // 🔒 Standardized: Use tripsApi.updateTitle to include userId/Auth header
             await tripsApi.updateTitle(activeTripId, newTitle.trim(), userId || "")
+            void broadcastTripEvent(activeTripId, "info:update", { title: newTitle.trim() })
 
             mutate()
             toast.success(t('ts_title_updated'))

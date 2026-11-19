@@ -649,7 +649,13 @@ async def generate_trip_core(
         return mm_call_extraction or router_call_extraction
 
     if progress_queue is not None:
+        import inspect
+        import re
+        import time as _time
+
         last_sent_percent = 20
+        last_day_reported = 0
+        last_emit_ts = 0.0
         msg20 = "Analyzing travel flow and timing..." if is_en else "正在深度推敲路線與動線..."
         await progress_queue.put(("progress", {"percent": 20, "stage": "THINKING", "message": msg20}))
 
@@ -658,6 +664,9 @@ async def generate_trip_core(
             or _is_mocked(mm_call_extraction, mm.__name__)
         )
         stream_patched = _is_mocked(mm_call_stream, mm.__name__)
+
+        _day_re = re.compile(r'"day_number"\s*:\s*(\d{1,2})')
+        _place_re = re.compile(r'"place_name"\s*:')
 
         async def _on_thought(step: int) -> None:
             nonlocal last_sent_percent
@@ -668,22 +677,87 @@ async def generate_trip_core(
                 await progress_queue.put(("progress", {"percent": pct, "stage": "THINKING", "message": msg_t}))
 
         async def _on_chunk(total_chars: int) -> None:
-            nonlocal last_sent_percent
-            pct = min(68, 25 + int((total_chars / 3200) * 43))
+            nonlocal last_sent_percent, last_emit_ts
+            pct = max(last_sent_percent, min(68, 25 + int((total_chars / 3200) * 43)))
             if pct > last_sent_percent and (last_sent_percent < 25 or pct - last_sent_percent >= 2 or pct == 68):
                 last_sent_percent = pct
+                last_emit_ts = _time.monotonic()
                 msg_g = "Composing attractions and dining details..." if is_en else "正在生成景點、美食與細節..."
-                await progress_queue.put(("progress", {"percent": pct, "stage": "GENERATING", "message": msg_g}))
+                await progress_queue.put(("progress", {"percent": pct, "stage": "STREAMING", "message": msg_g}))
+
+        async def _on_text_progress(accumulated_text: str, total_chars: int) -> None:
+            nonlocal last_sent_percent, last_day_reported, last_emit_ts
+            now = _time.monotonic()
+            day_matches = _day_re.findall(accumulated_text)
+            current_day = int(day_matches[-1]) if day_matches else 0
+            places_count = len(_place_re.findall(accumulated_text))
+            raw_pct = 25 + int((total_chars / 3200) * 43)
+            pct = max(last_sent_percent, min(68, raw_pct))
+
+            day_changed = current_day > last_day_reported
+            time_elapsed = (now - last_emit_ts) >= 1.5
+            first_stream = last_sent_percent < 25
+            reached_cap = (pct == 68 and last_sent_percent < 68)
+
+            if not (day_changed or first_stream or reached_cap or (time_elapsed and pct > last_sent_percent) or (pct - last_sent_percent >= 5)):
+                return
+
+            if day_changed:
+                last_day_reported = current_day
+            last_sent_percent = pct
+            last_emit_ts = now
+
+            if current_day > 0:
+                msg_s = (
+                    f"Drafting Day {current_day} itinerary..."
+                    if is_en
+                    else f"正在編排第 {current_day} 天行程..."
+                )
+                payload: dict = {
+                    "percent": pct,
+                    "stage": "STREAMING",
+                    "current_day": current_day,
+                    "places_count": places_count,
+                    "message": msg_s,
+                }
+            else:
+                msg_s = "Composing attractions and dining details..." if is_en else "正在生成景點、美食與細節..."
+                payload = {
+                    "percent": pct,
+                    "stage": "STREAMING",
+                    "places_count": places_count,
+                    "message": msg_s,
+                }
+            await progress_queue.put(("progress", payload))
+
+        async def _on_model_fallback(_failed_model: str, _next_model: str) -> None:
+            nonlocal last_day_reported, last_emit_ts
+            last_day_reported = 0
+            last_emit_ts = _time.monotonic()
+            msg_fb = "Switching to high-speed fallback model..." if is_en else "切換高速備援模型重試中..."
+            await progress_queue.put(("progress", {"percent": last_sent_percent, "stage": "THINKING", "message": msg_fb}))
 
         with call_timeout_scope("PLANNING_SSE"):
             if mm_call_stream is not None and (stream_patched or not sync_patched):
+                stream_kwargs: dict = {
+                    "intent_type": "PLANNING",
+                    "system_instruction": sys_inst_with_anchor,
+                    "on_thought": _on_thought,
+                }
+                try:
+                    sig_params = inspect.signature(mm_call_stream).parameters
+                except Exception:
+                    sig_params = {}
+                if "on_text_progress" in sig_params:
+                    stream_kwargs["on_text_progress"] = _on_text_progress
+                else:
+                    stream_kwargs["on_chunk"] = _on_chunk
+                if "on_model_fallback" in sig_params:
+                    stream_kwargs["on_model_fallback"] = _on_model_fallback
                 raw_text = await mm_call_stream(
                     api_key,
                     prompt_payload,
-                    intent_type="PLANNING",
-                    system_instruction=sys_inst_with_anchor,
-                    on_thought=_on_thought,
-                    on_chunk=_on_chunk,
+                    **stream_kwargs,
                 )
             else:
                 active_sync = _pick_sync_extraction()
