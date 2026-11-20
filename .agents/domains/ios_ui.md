@@ -3,6 +3,8 @@
 > **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
 
 ## 🏛️ 架構決策 (Decisions)
+- **登入頁頂端浮動雙語膠囊安全區淨空與實心選取態聚焦外環契約 (AD-235)**: 登入頁右上角 absolute 語系膠囊 (top: safe-area + 0.75rem, min-h-11 + p-0.5 border) 底緣達 safe-area + 3.875rem。<main> 必須在所有斷點維持 pt-[calc(max(env(safe-area-inset-top,0px),0px)+4rem)]（嚴禁在 sm: 降級為 sm:pt-12 或保留 py-8 sm:py-12 衝突樣式），確保 667x375 橫屏與 320x568 130% 字級下 zero overlap。膠囊內部須採 isolate + z-0 motion.span + relative z-10 文字、Boolean(useReducedMotion()) 正規化，且實心選取態按鈕必須宣告 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-800 維持鍵盤聚焦可視對比。
+
 - **非同步表單雙軌互斥鎖、IME 組字守衛與卸載安全轉場法則**: 凡涉及非同步身分建立或遠端請求之登陸/還原表單，送出前須先通過空白與格式校驗，再同步鎖定 useRef（阻斷單幀連點重入）與 useState（鎖定輸入框、主按鈕與切換鈕 disabled/aria-busy/select-none）；輸入框 Enter 送出必須掛載 !e.nativeEvent.isComposing；document.startViewTransition 必須檢查 typeof === 'function'；且非同步完成與延遲換場計時器必須受 isMountedRef 與 unmount cleanup 保護，異常時於 catch 解鎖並以 toast.error 呈現，嚴禁對 onClick 外拋 unhandled rejection。
 
 - **打字機動畫標題雙層 DOM 無障礙設計與 React Compiler 渲染隔離**: 打字機文字元件必須包含 sr-only 完整可讀文字與 aria-hidden 動態層以維護 a11y；外層 key 隔離內層 state 避免 React 19 / React Compiler 於渲染階段觸發狀態循環更新；支援 prefers-reduced-motion 降級為靜態文字。

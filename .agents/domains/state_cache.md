@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **雙語儲存雙獨立容錯、執行期白名單與安全模板插值契約 (AD-236)**: LanguageContext.tsx 必須將 localStorage.setItem 與 document.cookie 分離為兩個獨立 try/catch 區塊（QuotaExceededError 不可阻斷 Cookie 同步），並於掛載讀取與 LandingPage 掛載 useEffect 全面包裹 try/catch；setLang 必須執行 isValidLanguage() 校驗同時保持 useCallback([], []) 穩定性。共用 translateTemplate() 必須以 Object.prototype.hasOwnProperty.call(dict, key) 阻擋原型鍵查詢，並以 split/join 替代動態 RegExp.replace 消除 $& 展開缺陷且支援 SSR fallback params。
+
 - **認證失敗指紋鎖與永久彈窗靜默取代短時間冷卻法 (AD-228)**: 當 SWR refreshInterval (15s) 大於冷卻時間時，10s/5s 時間冷卻會演變為無限 401 風暴。ensureValidSession 必須改採 JSON 防碰撞憑證指紋鎖 (lastFailedExchangeFingerprint)：相同憑證指紋於本頁內永久阻斷重試，憑證一更新立即解鎖；dismissReauthPrompt 以 isReauthDismissedInMemory 在當前頁面維持離線靜默（僅保留 lastRestoredAt < 5000ms 吸收恢復前在途請求）；useExpenses/useTripCapsules/usePoiPool 一律停試 401/403/404。
 
 - **TripDialogs Daily Locations Clearing on Existing Trip Merge**: In TripDialogs.tsx, when merging AI/Markdown parsed results into an existing trip (saveTarget === 'existing'), tripsApi.importToTrip must pass daily_locations: {} to prevent stale destination anchors from a prior parse from poisoning the target existing trip's spatial anchor.
@@ -61,6 +63,8 @@
 - **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **僅護 Context 漏護 LandingPage 掛載期 Web Storage 導致受限環境整頁崩潰陷阱 (FP-105)**: 僅在 LanguageContext 補齊 localStorage try/catch 並只用 renderHook(() => useLanguage()) 測試會誤以為具備 Safari 隱私瀏覽／受限 iframe 防護；實測掛載 <LandingPage />（特別是 URL 含 ?trip= 時）會在掛載 useEffect 裸呼叫 sessionStorage.setItem / localStorage.getItem 處拋出未捕獲 DOMException('SecurityError') 導致整頁崩潰。Web Storage 防護必須於入口元件對稱落地並以整頁元件渲染驗證。
+
 - **SSE 註解心跳行誤殺整段資料區塊與 Stream Mock 契約破壞陷阱 (FP-104)**: frontend/lib/api.ts 解析 SSE \n\n 區塊時，嚴禁只判斷 trimmed.startsWith(':') 就 continue 整段區塊（會把同區塊內的 event:/data: 一併吞掉），必須先以 line => !line.startsWith(':') 逐行剔除註解行。後端將核心端點重構為 call_extraction_stream 時，必須加入 _is_mocked 相容檢查，否則既有用例 mock 舊 call_extraction 將被靜默繞過。
 
 - **Supabase RLS 靜默回空與 REST Broadcast 重複加 realtime: 前綴失聯陷阱 (FP-101, FP-102)**: 未跑 Supabase Auth 僅用 Publishable Key 時，RLS 綁定 auth.uid() 會使查詢靜默回傳 [] 且 postgres_changes 靜默丟棄事件；實作即時同步應全數改為不透明 Broadcast 訊號搭配認證後端 API 拉取。透過 Supabase Realtime REST API 發送廣播時，topic 嚴禁手動加上 'realtime:' 前綴（客戶端 SDK 已自動附加），否則雙邊主題永遠無法匹配。

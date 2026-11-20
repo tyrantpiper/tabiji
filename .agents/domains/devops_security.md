@@ -3,6 +3,8 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **前端 Worktree 沙盒建置降級與雙層 i18n/Sentinel 契約對齊守則 (AD-237)**: Security Sentinel adversarial_team.py (--mode duel) 僅內建 pytest 而不支援 Vitest；前端變更於隔離 Git Worktree（frontend/node_modules NTFS Junction）須手動執行 Vitest Red->Green PoC + npx next build --webpack（Turbopack 不相容指向根目錄外之 NTFS Junction），套用 Live 後再補跑預設 Turbopack npx next build 與 --start_line/--end_line 切片之 runner.py --mode fast。同時須守衛 remaining.ts 與 legacy translations.ts 雙語對稱，並於 landing_recovery_placeholder 保留 tbj_rec_xxxxxxxx_ 相容現有正則測試。
+
 - **CI 單元測試零即時外網社群依賴與非同步 DOM 查詢不變量 (INV-CI-TEST-DETERMINISM-01)**: 所有單元測試（Vitest 與 Pytest）嚴禁在未經 mock 的狀態下直連外部防爬蟲社群網站（應使用 httpx.Response mock 夾具驗證解析與降級邏輯）；前端 RTL 對非同步請求後的 DOM 更新必須使用 async findBy* / waitFor 查詢。另於整理提交前若因本機 predev 觸發 build-sw.mjs 僅更新 public/sw.js 之 HEAD short SHA，應還原該非程式碼建置雜訊後再送出。
 
 - **安全稽核前必先完成線上五端真實拓撲 Grounding**: 啟動跨模組資安審計與修復前，必須優先以實測驗證 Vercel、Google Cloud Run、Cloudflare Workers/D1、Cloudinary 與 Supabase 線上現況與日誌，嚴禁僅憑離線臆測驅動跨檔案大改；Cloud Run 日誌對無效測試路徑 /api/cloudinary-test 回傳 HTTP 404 屬正常未命中行為。
