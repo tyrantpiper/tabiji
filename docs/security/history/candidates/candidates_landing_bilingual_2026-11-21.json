@@ -1,0 +1,47 @@
+[
+  {
+    "id": "frontend/lib/LanguageContext.tsx:storage_runtime_lang_and_template_guards",
+    "file_path": "frontend/lib/LanguageContext.tsx",
+    "start_line": 1,
+    "end_line": 155,
+    "attack_vector": "storage_exception_unhandled_runtime_lang_and_prototype_lookup",
+    "hypothesis": "Verify whether LanguageContext isolates localStorage.setItem and document.cookie in separate try/catch blocks, catches localStorage.getItem exceptions during mount, rejects non-'en'|'zh' runtime language arguments in setLang, preserves LanguageUrlHandoffObserver /official isolation and ?lang= cleanup, and avoids prototype key lookup and RegExp/$& template expansion in translateTemplate across both Provider and fallback.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/components/auth/landing-language-switcher.tsx:pure_presentational_capsule_and_a11y",
+    "file_path": "frontend/components/auth/landing-language-switcher.tsx",
+    "start_line": 1,
+    "end_line": 90,
+    "attack_vector": "disabled_click_bypass_a11y_contrast_or_motion_regression",
+    "hypothesis": "Verify whether LandingLanguageSwitcher is pure presentational without refs, enforces disabled state and aria-pressed/aria-label attributes, uses 44px touch targets with isolate stacking context, applies focus-visible:ring-offset-2 for active pill keyboard focus contrast, respects useReducedMotion by omitting layoutId and spring duration when reduced, and maintains WCAG AA text contrast in both light and dark themes.",
+    "severity": "low"
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:chunk_boundary_and_bilingual_lock_guard",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "start_line": 1,
+    "end_line": 225,
+    "attack_vector": "async_language_switch_race_or_storage_mount_crash",
+    "hypothesis": "Verify whether LandingPage preserves ChunkErrorBoundary Chinese prop defaults when unconfigured, catches web storage SecurityError during mount useEffect without throwing unhandled exceptions, and synchronously blocks handleLanguageChange via isLoggingInRef.current or isRecoveringRef.current and redundant nextLang === lang guard.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:recovery_localization_and_safe_area_layout",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "start_line": 268,
+    "end_line": 470,
+    "attack_vector": "error_fallback_omission_or_safe_area_header_overlap",
+    "hypothesis": "Verify whether handleRecover localizes loading/online-success/offline-success toasts and handles empty Error('').message fallback via t('landing_verify_failed'), passes localized props to ChunkErrorBoundary, positions LandingLanguageSwitcher inside top-[calc(max(env(safe-area-inset-top,0px),0px)+0.75rem)] right-4 z-20 with disabled={isLoggingIn || isRecovering}, and replaces py-8 sm:py-12 on main with pt-[calc(max(env(safe-area-inset-top,0px),0px)+4rem)] pb-24 sm:pb-12.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/components/views/landing-page.tsx:recovery_input_and_footer_i18n",
+    "file_path": "frontend/components/views/landing-page.tsx",
+    "start_line": 514,
+    "end_line": 607,
+    "attack_vector": "hardcoded_recovery_placeholder_or_footer_copy",
+    "hypothesis": "Verify whether the recovery key input placeholder and landing footer tagline consume localized translation keys t('landing_recovery_placeholder') and t('landing_footer_tagline') without losing existing recovery lock guards.",
+    "severity": "low"
+  }
+]

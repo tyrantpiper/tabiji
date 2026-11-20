@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { WelcomeWizard } from "@/components/onboarding/WelcomeWizard"
 import { useOnboardingStore } from "@/lib/stores/onboardingStore"
-import { useLanguage } from "@/lib/LanguageContext"
+import { useLanguage, type Language } from "@/lib/LanguageContext"
+import { LandingLanguageSwitcher } from "@/components/auth/landing-language-switcher"
 import { cn } from "@/lib/utils"
 import dynamic from "next/dynamic"
 
@@ -21,8 +22,15 @@ function AppShellSkeleton() {
 
 // 🛡️ 防禦 ChunkLoadError 導致的 React 根樹白屏
 import React from "react"
+interface ChunkErrorBoundaryProps {
+    children: React.ReactNode
+    title?: string
+    description?: string
+    retryLabel?: string
+}
+
 class ChunkErrorBoundary extends React.Component<
-    { children: React.ReactNode },
+    ChunkErrorBoundaryProps,
     { hasError: boolean }
 > {
     state = { hasError: false };
@@ -34,14 +42,20 @@ class ChunkErrorBoundary extends React.Component<
     }
     render() {
         if (this.state.hasError) {
+            const title = this.props.title ?? "離線載入中"
+            const description =
+                this.props.description ??
+                "核心模組正在嘗試從本地離線快取載入，請確認裝置快取或重試"
+            const retryLabel = this.props.retryLabel ?? "重新整理"
+
             return (
                 <div className="min-h-screen bg-stone-50 dark:bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
                     <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 dark:text-amber-400 mb-4 text-2xl">
                         ☁️
                     </div>
-                    <h2 className="text-lg font-bold text-stone-800 dark:text-stone-100">離線載入中</h2>
+                    <h2 className="text-lg font-bold text-stone-800 dark:text-stone-100">{title}</h2>
                     <p className="text-sm text-stone-500 dark:text-stone-400 mt-1 mb-6 max-w-xs">
-                        核心模組正在嘗試從本地離線快取載入，請確認裝置快取或重試
+                        {description}
                     </p>
                     <button
                         type="button"
@@ -51,7 +65,7 @@ class ChunkErrorBoundary extends React.Component<
                         }}
                         className="px-5 py-2.5 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 rounded-xl text-sm font-medium active:scale-95 transition-transform shadow-md cursor-pointer"
                     >
-                        重新整理
+                        {retryLabel}
                     </button>
                 </div>
             );
@@ -124,7 +138,7 @@ function runViewTransition(update: () => void) {
 }
 
 export function LandingPage() {
-    const { t } = useLanguage()
+    const { lang, setLang, t } = useLanguage()
     const [mounted, setMounted] = useState(false)
     const [isLoggedIn, setIsLoggedIn] = useState(false)
     const [nickname, setNickname] = useState("")
@@ -158,19 +172,28 @@ export function LandingPage() {
         /* eslint-disable -- SSR hydration pattern: must set mounted after client render */
         setMounted(true)
 
-        // 🧭 暫存深層連結，確保登入後導航不丟失
-        if (typeof window !== "undefined" && window.location.search && window.location.search.includes("trip=")) {
-            sessionStorage.setItem("pending_deep_link", window.location.search)
-        }
+        try {
+            // 🧭 暫存深層連結，確保登入後導航不丟失
+            if (typeof window !== "undefined" && window.location.search && window.location.search.includes("trip=")) {
+                sessionStorage.setItem("pending_deep_link", window.location.search)
+            }
 
-        const storedName = localStorage.getItem("user_nickname")
-        const storedId = localStorage.getItem("user_uuid")
-        if (storedName && storedId && storedId !== "null" && storedId !== "undefined") {
-            setNickname(storedName)
-            setIsLoggedIn(true)
+            const storedName = localStorage.getItem("user_nickname")
+            const storedId = localStorage.getItem("user_uuid")
+            if (storedName && storedId && storedId !== "null" && storedId !== "undefined") {
+                setNickname(storedName)
+                setIsLoggedIn(true)
+            }
+        } catch {
+            // Graceful fallback when web storage is blocked (e.g. Safari Private Mode / sandboxed iframe)
         }
         /* eslint-enable */
     }, [])
+
+    const handleLanguageChange = (nextLang: Language) => {
+        if (isLoggingInRef.current || isRecoveringRef.current || nextLang === lang) return
+        setLang(nextLang)
+    }
 
     const handleLogin = async () => {
         if (isLoggingInRef.current || isRecoveringRef.current) return
@@ -255,7 +278,7 @@ export function LandingPage() {
         setIsRecovering(true)
 
         // 🛡️ Cryptographic account recovery via signed session token
-        const toastId = toast.loading("Verifying identity...")
+        const toastId = toast.loading(t('landing_verifying_identity'))
         try {
             const session = await restoreAccountWithKey(cleanCode)
             if (!isMountedRef.current) {
@@ -301,7 +324,7 @@ export function LandingPage() {
             window.dispatchEvent(new CustomEvent('user-login-state-changed'))
 
             toast.dismiss(toastId)
-            toast.success(`Welcome back, ${fetchedName}!`)
+            toast.success(t('landing_welcome_back', { name: fetchedName }))
 
             const goToApp = () => {
                 if (!isMountedRef.current) return
@@ -338,7 +361,7 @@ export function LandingPage() {
                         sessionStorage.setItem("tabiji_identity_transition_lock", Date.now().toString())
                         window.dispatchEvent(new CustomEvent('user-login-state-changed'))
                     }
-                    toast.success("Account recovered (Offline Mode)")
+                    toast.success(t('landing_recovered_offline'))
                     recoverTimerRef.current = setTimeout(() => {
                         if (!isMountedRef.current) return
                         runViewTransition(() => setIsLoggedIn(true))
@@ -353,7 +376,7 @@ export function LandingPage() {
                     }
                 }
             } else {
-                const message = e instanceof Error ? e.message : "Failed to verify recovery key"
+                const message = e instanceof Error && e.message ? e.message : t('landing_verify_failed')
                 toast.error(message)
                 isRecoveringRef.current = false
                 setIsRecovering(false)
@@ -380,7 +403,11 @@ export function LandingPage() {
 
     if (isLoggedIn) {
         return (
-            <ChunkErrorBoundary>
+            <ChunkErrorBoundary
+                title={t('landing_offline_loading_title')}
+                description={t('landing_offline_loading_desc')}
+                retryLabel={t('landing_offline_retry')}
+            >
                 <AppShell />
             </ChunkErrorBoundary>
         )
@@ -393,9 +420,22 @@ export function LandingPage() {
                 <div className="absolute top-40 -right-20 w-80 h-80 bg-blue-100 dark:bg-blue-900/30 rounded-full blur-3xl opacity-50"></div>
             </div>
 
+            <div className="absolute top-[calc(max(env(safe-area-inset-top,0px),0px)+0.75rem)] right-4 z-20">
+                <LandingLanguageSwitcher
+                    lang={lang}
+                    onChange={handleLanguageChange}
+                    disabled={isLoggingIn || isRecovering}
+                    labels={{
+                        groupAria: t('landing_lang_switcher_aria'),
+                        zhLabel: t('landing_lang_zh'),
+                        enLabel: t('landing_lang_en'),
+                        switchToZhAria: t('landing_lang_switch_to_zh'),
+                        switchToEnAria: t('landing_lang_switch_to_en'),
+                    }}
+                />
+            </div>
 
-
-            <main className="flex-1 flex flex-col items-center justify-center px-6 py-8 sm:py-12 z-10 w-full text-center pb-24 sm:pb-12">
+            <main className="flex-1 flex flex-col items-center justify-center px-6 pt-[calc(max(env(safe-area-inset-top,0px),0px)+4rem)] pb-24 sm:pb-12 z-10 w-full text-center">
                 {/* 品牌人物純線條勾勒立繪 (純粹藝術圖騰 Brand Icon、無水墨底圖、大氣放大、雙主題自適應) */}
                 <div className="relative mb-3 flex items-center justify-center shrink">
                     <div
@@ -514,7 +554,7 @@ export function LandingPage() {
                                     "h-10 text-xs font-mono bg-stone-50 dark:bg-slate-900 dark:border-slate-600 dark:text-white mb-4 text-center",
                                     isRecovering && "select-none"
                                 )}
-                                placeholder="tbj_rec_xxxxxxxx_... 或 UUID"
+                                placeholder={t('landing_recovery_placeholder')}
                                 value={recoverCode}
                                 onChange={e => setRecoverCode(e.target.value)}
                                 onKeyDown={(e) => {
@@ -560,7 +600,7 @@ export function LandingPage() {
             </main>
 
             <footer className="py-6 text-center">
-                <p className="text-[10px] text-slate-300 dark:text-slate-600 uppercase tracking-widest">Your Smart Travel Companion</p>
+                <p className="text-[10px] text-slate-300 dark:text-slate-600 uppercase tracking-widest">{t('landing_footer_tagline')}</p>
             </footer>
         </div>
     )

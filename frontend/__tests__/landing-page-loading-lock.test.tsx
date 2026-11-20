@@ -133,10 +133,14 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
 
     const startBtn = screen.getByRole('button', { name: /開始旅程/ })
     const useRecoveryBtn = screen.getByRole('button', { name: /使用引繼碼登入/ })
+    const zhSwitchBtn = screen.getByRole('button', { name: '切換為繁體中文' })
+    const enSwitchBtn = screen.getByRole('button', { name: '切換為英文' })
 
     expect(startBtn).toHaveClass('select-none')
     expect(input).not.toHaveClass('select-none')
     expect(startBtn.closest('.max-w-xs')).not.toHaveClass('select-none')
+    expect(zhSwitchBtn).not.toBeDisabled()
+    expect(enSwitchBtn).not.toBeDisabled()
 
     // Rapid double click
     fireEvent.click(startBtn)
@@ -150,6 +154,10 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
     expect(startBtn).toHaveAttribute('aria-busy', 'true')
     expect(startBtn).toHaveClass('select-none')
     expect(startBtn).toHaveTextContent('正在準備旅程...')
+    expect(zhSwitchBtn).toBeDisabled()
+    expect(enSwitchBtn).toBeDisabled()
+    fireEvent.click(enSwitchBtn)
+    expect(localStorage.getItem('app_language')).toBeNull()
     const spinner = startBtn.querySelector('svg.animate-spin')
     expect(spinner).not.toBeNull()
     expect(spinner).toHaveClass('size-5')
@@ -240,6 +248,8 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
     const codeInput = screen.getByPlaceholderText(/tbj_rec_xxxxxxxx_/)
     const cancelBtn = screen.getByRole('button', { name: '取消' })
     const recoverBtn = screen.getByRole('button', { name: '還原' })
+    const zhSwitchBtn = screen.getByRole('button', { name: '切換為繁體中文' })
+    const enSwitchBtn = screen.getByRole('button', { name: '切換為英文' })
 
     // Invalid format does not lock UI
     fireEvent.change(codeInput, { target: { value: 'invalid-key' } })
@@ -248,6 +258,8 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
     expect(recoverBtn).not.toBeDisabled()
     expect(cancelBtn).not.toBeDisabled()
     expect(codeInput).not.toBeDisabled()
+    expect(zhSwitchBtn).not.toBeDisabled()
+    expect(enSwitchBtn).not.toBeDisabled()
 
     // Valid format, failing request unlocks UI so user can retry or cancel
     const deferredFail = createDeferred<never>()
@@ -267,6 +279,10 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
     expect(recoverBtn).toHaveClass('select-none')
     expect(recoverBtn).toHaveTextContent('還原中...')
     expect(recoverBtn.querySelector('svg.animate-spin')).not.toBeNull()
+    expect(zhSwitchBtn).toBeDisabled()
+    expect(enSwitchBtn).toBeDisabled()
+    fireEvent.click(enSwitchBtn)
+    expect(localStorage.getItem('app_language')).toBeNull()
 
     await act(async () => {
       deferredFail.reject(new Error('Invalid recovery key'))
@@ -279,6 +295,8 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
     expect(cancelBtn).not.toBeDisabled()
     expect(recoverBtn).not.toBeDisabled()
     expect(recoverBtn).toHaveTextContent('還原')
+    expect(zhSwitchBtn).not.toBeDisabled()
+    expect(enSwitchBtn).not.toBeDisabled()
 
     // Valid format, succeeding request stays locked during 800ms handoff
     vi.useFakeTimers()
@@ -289,6 +307,7 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
     fireEvent.click(recoverBtn)
     expect(recoverBtn).toBeDisabled()
     expect(cancelBtn).toBeDisabled()
+    expect(enSwitchBtn).toBeDisabled()
 
     await act(async () => {
       deferredSuccess.resolve({
@@ -301,10 +320,11 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
     })
 
     // During 800ms handoff delay, buttons remain locked
-    expect(toast.success).toHaveBeenCalledWith('Welcome back, Alice!')
+    expect(toast.success).toHaveBeenCalledWith('歡迎回來，Alice！')
     expect(recoverBtn).toBeDisabled()
     expect(cancelBtn).toBeDisabled()
     expect(codeInput).toBeDisabled()
+    expect(enSwitchBtn).toBeDisabled()
     expect(screen.queryByTestId('mock-app-shell')).toBeNull()
 
     await act(async () => {
@@ -341,7 +361,7 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
       await Promise.resolve()
     })
 
-    expect(toast.success).toHaveBeenCalledWith('Account recovered (Offline Mode)')
+    expect(toast.success).toHaveBeenCalledWith('帳號已還原（離線模式）')
     expect(recoverBtn).toBeDisabled()
     expect(cancelBtn).toBeDisabled()
     expect(codeInput).toBeDisabled()

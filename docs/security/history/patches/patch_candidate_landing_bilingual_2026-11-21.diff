@@ -1,0 +1,1138 @@
+diff --git a/frontend/__tests__/landing-language-switcher.test.tsx b/frontend/__tests__/landing-language-switcher.test.tsx
+new file mode 100644
+index 0000000..4028569
+--- /dev/null
++++ b/frontend/__tests__/landing-language-switcher.test.tsx
+@@ -0,0 +1,514 @@
++/**
++ * @vitest-environment jsdom
++ */
++import React from 'react'
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
++import { render, screen, fireEvent, waitFor, act, renderHook } from '@testing-library/react'
++import fs from 'node:fs'
++import path from 'node:path'
++
++const mockState = vi.hoisted(() => ({
++  pathname: '/',
++  searchParams: new URLSearchParams(),
++  shouldThrowAppShell: false,
++}))
++
++vi.mock('next/navigation', () => ({
++  usePathname: () => mockState.pathname,
++  useSearchParams: () => mockState.searchParams,
++}))
++
++vi.mock('next/dynamic', () => ({
++  default: () => {
++    const MockAppShell = () => {
++      if (mockState.shouldThrowAppShell) {
++        throw new Error('ChunkLoadError: Loading chunk failed')
++      }
++      return <div data-testid="mock-app-shell">AppShell</div>
++    }
++    MockAppShell.displayName = 'MockAppShell'
++    return MockAppShell
++  },
++}))
++
++vi.mock('@/components/onboarding/WelcomeWizard', () => ({
++  WelcomeWizard: ({ onComplete }: { onComplete: () => void }) => (
++    <button onClick={onComplete}>Complete Wizard</button>
++  ),
++}))
++
++vi.mock('@/lib/stores/onboardingStore', () => ({
++  useOnboardingStore: () => ({ isCompleted: true }),
++}))
++
++vi.mock('sonner', () => ({
++  toast: {
++    warning: vi.fn(),
++    error: vi.fn(),
++    loading: vi.fn(() => 'toast-loading-id'),
++    dismiss: vi.fn(),
++    success: vi.fn(),
++  },
++}))
++
++vi.mock('@/lib/auth-session', () => ({
++  ensureValidSession: vi.fn().mockResolvedValue(null),
++  restoreAccountWithKey: vi.fn(),
++}))
++
++vi.mock('@/lib/api', () => ({
++  usersApi: {
++    updateProfile: vi.fn().mockResolvedValue({}),
++    getProfile: vi.fn().mockResolvedValue({ name: 'Alice', avatar_url: '' }),
++  },
++}))
++
++import { LandingLanguageSwitcher } from '@/components/auth/landing-language-switcher'
++import { LandingPage } from '@/components/views/landing-page'
++import { LanguageProvider, useLanguage, type TranslationKey } from '@/lib/LanguageContext'
++import { remainingTranslations } from '@/lib/i18n/remaining'
++import { translations as legacyTranslations } from '@/lib/translations'
++import { toast } from 'sonner'
++import { restoreAccountWithKey } from '@/lib/auth-session'
++import { usersApi } from '@/lib/api'
++
++const LANDING_NEW_KEYS = [
++  'landing_lang_switcher_aria',
++  'landing_lang_zh',
++  'landing_lang_en',
++  'landing_lang_switch_to_zh',
++  'landing_lang_switch_to_en',
++  'landing_recovery_placeholder',
++  'landing_verifying_identity',
++  'landing_welcome_back',
++  'landing_recovered_offline',
++  'landing_verify_failed',
++  'landing_footer_tagline',
++  'landing_offline_loading_title',
++  'landing_offline_loading_desc',
++  'landing_offline_retry',
++] as const
++
++describe('LandingLanguageSwitcher & LandingPage Bilingual Safety Net', () => {
++  beforeEach(() => {
++    vi.clearAllMocks()
++    localStorage.clear()
++    sessionStorage.clear()
++    document.cookie = 'app_language=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/'
++    window.history.replaceState(null, '', '/')
++    mockState.pathname = '/'
++    mockState.searchParams = new URLSearchParams()
++    mockState.shouldThrowAppShell = false
++    Object.defineProperty(navigator, 'onLine', { configurable: true, value: true })
++  })
++
++  afterEach(() => {
++    vi.restoreAllMocks()
++    vi.useRealTimers()
++  })
++
++  describe('1. Pure Presentational LandingLanguageSwitcher Contract', () => {
++    const defaultLabels = {
++      groupAria: '語系切換',
++      zhLabel: '繁中',
++      enLabel: 'EN',
++      switchToZhAria: '切換為繁體中文',
++      switchToEnAria: '切換為英文',
++    }
++
++    it('renders accessible group, 44px touch targets, contrast & isolation tokens, and toggles cleanly', () => {
++      const onChange = vi.fn()
++      const { rerender } = render(
++        <LandingLanguageSwitcher lang="zh" onChange={onChange} labels={defaultLabels} />
++      )
++
++      const group = screen.getByRole('group', { name: '語系切換' })
++      expect(group).toHaveClass('isolate', 'select-none', 'touch-manipulation')
++
++      const zhBtn = screen.getByRole('button', { name: '切換為繁體中文' })
++      const enBtn = screen.getByRole('button', { name: '切換為英文' })
++
++      expect(zhBtn).toHaveAttribute('type', 'button')
++      expect(zhBtn).toHaveAttribute('aria-pressed', 'true')
++      expect(enBtn).toHaveAttribute('type', 'button')
++      expect(enBtn).toHaveAttribute('aria-pressed', 'false')
++
++      for (const btn of [zhBtn, enBtn]) {
++        expect(btn.className).toContain('min-h-11')
++        expect(btn.className).toContain('min-w-11')
++        expect(btn.className).toContain('whitespace-nowrap')
++        expect(btn.className).toContain('shrink-0')
++        expect(btn.className).toContain('touch-manipulation')
++        expect(btn.className).toContain('select-none')
++        expect(btn.className).toContain('focus-visible:ring-2')
++        expect(btn.className).toContain('focus-visible:ring-offset-2')
++        expect(btn.className).toContain('focus-visible:ring-offset-white')
++        expect(btn.className).toContain('dark:focus-visible:ring-offset-slate-800')
++      }
++
++      fireEvent.click(enBtn)
++      expect(onChange).toHaveBeenCalledWith('en')
++
++      rerender(<LandingLanguageSwitcher lang="en" onChange={onChange} labels={defaultLabels} />)
++      expect(zhBtn).toHaveAttribute('aria-pressed', 'false')
++      expect(enBtn).toHaveAttribute('aria-pressed', 'true')
++
++      fireEvent.click(zhBtn)
++      expect(onChange).toHaveBeenCalledWith('zh')
++    })
++
++    it('enforces disabled styling and suppresses clicks when disabled', () => {
++      const onChange = vi.fn()
++      render(
++        <LandingLanguageSwitcher lang="zh" onChange={onChange} disabled={true} labels={defaultLabels} />
++      )
++
++      const zhBtn = screen.getByRole('button', { name: '切換為繁體中文' })
++      const enBtn = screen.getByRole('button', { name: '切換為英文' })
++
++      expect(zhBtn).toBeDisabled()
++      expect(enBtn).toBeDisabled()
++      expect(enBtn.className).toContain('disabled:opacity-50')
++      expect(enBtn.className).toContain('disabled:pointer-events-none')
++      expect(enBtn.className).toContain('disabled:cursor-not-allowed')
++
++      fireEvent.click(enBtn)
++      fireEvent.click(zhBtn)
++      expect(onChange).not.toHaveBeenCalled()
++    })
++
++    it('supports prefers-reduced-motion cleanly and drops layoutId when reduced', () => {
++      const switcherSrc = fs.readFileSync(
++        path.resolve(__dirname, '../components/auth/landing-language-switcher.tsx'),
++        'utf-8'
++      )
++      expect(switcherSrc).toContain('useReducedMotion')
++      expect(switcherSrc).toContain('layoutId={shouldReduceMotion ? undefined : "landing-lang-pill"}')
++
++      const origMatchMedia = window.matchMedia
++      Object.defineProperty(window, 'matchMedia', {
++        configurable: true,
++        value: vi.fn().mockImplementation((query: string) => ({
++          matches: query === '(prefers-reduced-motion: reduce)',
++          media: query,
++          onchange: null,
++          addListener: vi.fn(),
++          removeListener: vi.fn(),
++          addEventListener: vi.fn(),
++          removeEventListener: vi.fn(),
++          dispatchEvent: vi.fn(),
++        })),
++      })
++
++      try {
++        render(
++          <LandingLanguageSwitcher lang="en" onChange={vi.fn()} labels={defaultLabels} />
++        )
++        const enBtn = screen.getByRole('button', { name: '切換為英文' })
++        expect(enBtn).toHaveAttribute('aria-pressed', 'true')
++        expect(enBtn.querySelector('.z-0')).not.toBeNull()
++      } finally {
++        Object.defineProperty(window, 'matchMedia', {
++          configurable: true,
++          value: origMatchMedia,
++        })
++      }
++    })
++  })
++
++  describe('2. LanguageContext Storage, Runtime Validation & Interpolation Safety Net', () => {
++    it('isolates localStorage QuotaExceededError from document.cookie sync and vice versa', () => {
++      const { result } = renderHook(() => useLanguage(), {
++        wrapper: LanguageProvider,
++      })
++
++      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
++        throw new DOMException('QuotaExceededError')
++      })
++
++      act(() => {
++        result.current.setLang('en')
++      })
++
++      expect(result.current.lang).toBe('en')
++      expect(document.cookie).toContain('app_language=en')
++      setItemSpy.mockRestore()
++
++      const cookieSpy = vi.spyOn(document, 'cookie', 'set').mockImplementation(() => {
++        throw new Error('Cookie write blocked')
++      })
++
++      act(() => {
++        result.current.setLang('zh')
++      })
++
++      expect(result.current.lang).toBe('zh')
++      expect(localStorage.getItem('app_language')).toBe('zh')
++      cookieSpy.mockRestore()
++    })
++
++    it('survives localStorage.getItem SecurityError during mount and rejects invalid runtime language values', () => {
++      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
++        throw new DOMException('SecurityError')
++      })
++
++      const { result } = renderHook(() => useLanguage(), {
++        wrapper: LanguageProvider,
++      })
++
++      expect(result.current.lang).toBe('zh')
++
++      act(() => {
++        result.current.setLang('fr' as unknown as 'en' | 'zh')
++        result.current.setLang('__proto__' as unknown as 'en' | 'zh')
++      })
++      expect(result.current.lang).toBe('zh')
++    })
++
++    it('prevents $& replacement expansion, prototype key lookup, and supports fallback params outside Provider', () => {
++      const { result } = renderHook(() => useLanguage(), {
++        wrapper: LanguageProvider,
++      })
++
++      act(() => {
++        result.current.setLang('en')
++      })
++
++      expect(result.current.t('landing_welcome_back', { name: 'Alice$&$$$1' })).toBe(
++        'Welcome back, Alice$&$$$1!'
++      )
++      expect(result.current.t('toString' as TranslationKey)).toBe('toString')
++      expect(result.current.t('constructor' as TranslationKey)).toBe('constructor')
++
++      const { result: fallbackResult } = renderHook(() => useLanguage())
++      expect(fallbackResult.current.t('landing_welcome_back', { name: '旅人' })).toBe(
++        '歡迎回來，旅人！'
++      )
++    })
++
++    it('preserves /official storage isolation and ?lang= URL handoff cleanup', async () => {
++      mockState.pathname = '/official'
++      mockState.searchParams = new URLSearchParams('lang=en')
++      window.history.replaceState(null, '', '/official?lang=en')
++
++      const Probe = () => {
++        const { lang } = useLanguage()
++        return <div data-testid="handoff-lang">{lang}</div>
++      }
++
++      const { rerender } = render(
++        <LanguageProvider>
++          <Probe />
++        </LanguageProvider>
++      )
++
++      await waitFor(() => {
++        expect(screen.getByTestId('handoff-lang').textContent).toBe('zh')
++      })
++      expect(localStorage.getItem('app_language')).toBeNull()
++
++      mockState.pathname = '/'
++      mockState.searchParams = new URLSearchParams('trip=t1&lang=en')
++      window.history.replaceState(null, '', '/?trip=t1&lang=en#day1')
++
++      rerender(
++        <LanguageProvider>
++          <Probe />
++        </LanguageProvider>
++      )
++
++      await waitFor(() => {
++        expect(screen.getByTestId('handoff-lang').textContent).toBe('en')
++      })
++      expect(localStorage.getItem('app_language')).toBe('en')
++      expect(window.location.search).toBe('?trip=t1')
++      expect(window.location.hash).toBe('#day1')
++    })
++  })
++
++  describe('3. LandingPage End-to-End Bilingual Switching, Layout & Recovery Flows', () => {
++    it('places switcher in top-right safe-area wrapper and removes conflicting py-8 sm:py-12 from main', async () => {
++      const { container } = render(
++        <LanguageProvider>
++          <LandingPage />
++        </LanguageProvider>
++      )
++
++      const group = await screen.findByRole('group', { name: '語系切換' })
++      const wrapper = group.parentElement
++      expect(wrapper?.className).toContain('top-[calc(max(env(safe-area-inset-top,0px),0px)+0.75rem)]')
++      expect(wrapper?.className).toContain('right-4')
++      expect(wrapper?.className).toContain('z-20')
++
++      const main = container.querySelector('main')
++      expect(main?.className).toContain('pt-[calc(max(env(safe-area-inset-top,0px),0px)+4rem)]')
++      expect(main?.className).toContain('pb-24')
++      expect(main?.className).toContain('sm:pb-12')
++      expect(main?.className).not.toContain('py-8')
++    })
++
++    it('survives Storage SecurityError during LandingPage mount with deep-link query intact', async () => {
++      window.history.replaceState(null, '', '/?trip=t1')
++      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
++        throw new DOMException('SecurityError', 'SecurityError')
++      })
++      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
++        throw new DOMException('SecurityError', 'SecurityError')
++      })
++
++      render(
++        <LanguageProvider>
++          <LandingPage />
++        </LanguageProvider>
++      )
++
++      expect(await screen.findByRole('group', { name: '語系切換' })).toBeInTheDocument()
++      expect(screen.getByText('旅路 ｜ 旅行提案')).toBeInTheDocument()
++    })
++
++    it('switches copy live across main form, recovery panel, and footer without losing typed input', async () => {
++      render(
++        <LanguageProvider>
++          <LandingPage />
++        </LanguageProvider>
++      )
++
++      const nicknameInput = (await screen.findByPlaceholderText('例如：小明')) as HTMLInputElement
++      fireEvent.change(nicknameInput, { target: { value: 'Ryan' } })
++      expect(screen.getByText('旅路 ｜ 旅行提案')).toBeInTheDocument()
++      expect(screen.getByText('您的智慧旅途夥伴')).toBeInTheDocument()
++
++      // Switch to EN on main form
++      fireEvent.click(screen.getByRole('button', { name: '切換為英文' }))
++
++      expect(await screen.findByText('Tabiji | Travel Planner')).toBeInTheDocument()
++      expect(screen.getByPlaceholderText('E.g. Ryan')).toHaveValue('Ryan')
++      expect(screen.getByText('Your Smart Travel Companion')).toBeInTheDocument()
++      expect(localStorage.getItem('app_language')).toBe('en')
++      expect(document.cookie).toContain('app_language=en')
++
++      // Open recovery panel in EN mode
++      fireEvent.click(screen.getByRole('button', { name: /Use Recovery Key/ }))
++      expect(screen.getByText('Account Recovery')).toBeInTheDocument()
++      const recInput = screen.getByPlaceholderText('tbj_rec_xxxxxxxx_... or UUID') as HTMLInputElement
++      fireEvent.change(recInput, { target: { value: 'tbj_rec_12345678' } })
++
++      // Switch back to ZH inside recovery panel without losing typed code
++      fireEvent.click(screen.getByRole('button', { name: 'Switch to Traditional Chinese' }))
++      expect(await screen.findByText('帳號還原')).toBeInTheDocument()
++      expect(screen.getByPlaceholderText('tbj_rec_xxxxxxxx_... 或 UUID')).toHaveValue('tbj_rec_12345678')
++      expect(screen.getByText('您的智慧旅途夥伴')).toBeInTheDocument()
++      expect(localStorage.getItem('app_language')).toBe('zh')
++    })
++
++    it('emits localized loading/success/error/offline recovery toasts in EN and handles empty Error message fallback', async () => {
++      localStorage.setItem('app_language', 'en')
++
++      const validKey = 'tbj_rec_12345678_1234567890abcdef1234567890abcdef'
++      vi.mocked(restoreAccountWithKey).mockRejectedValueOnce(new Error(''))
++
++      render(
++        <LanguageProvider>
++          <LandingPage />
++        </LanguageProvider>
++      )
++
++      const useRecoveryBtn = await screen.findByRole('button', { name: /Use Recovery Key/ })
++      vi.useFakeTimers()
++      fireEvent.click(useRecoveryBtn)
++
++      const recInput = screen.getByPlaceholderText('tbj_rec_xxxxxxxx_... or UUID')
++      const recoverBtn = screen.getByRole('button', { name: 'Recover' })
++      fireEvent.change(recInput, { target: { value: validKey } })
++      fireEvent.click(recoverBtn)
++
++      expect(toast.loading).toHaveBeenCalledWith('Verifying identity...')
++
++      await act(async () => {
++        await Promise.resolve()
++        await Promise.resolve()
++      })
++      expect(toast.error).toHaveBeenCalledWith('Failed to verify recovery key')
++
++      // Online recovery success in EN
++      vi.mocked(restoreAccountWithKey).mockResolvedValueOnce({
++        accessToken: 'jwt-en',
++        userId: '33333333-3333-4333-8333-333333333333',
++        isNew: false,
++      })
++      vi.mocked(usersApi.getProfile).mockResolvedValueOnce({ name: 'Bob', avatar_url: '' } as never)
++
++      fireEvent.click(recoverBtn)
++      await act(async () => {
++        await Promise.resolve()
++        await Promise.resolve()
++      })
++      expect(toast.success).toHaveBeenCalledWith('Welcome back, Bob!')
++    })
++
++    it('emits localized offline recovery toast in EN', async () => {
++      localStorage.setItem('app_language', 'en')
++      Object.defineProperty(navigator, 'onLine', { configurable: true, value: false })
++      vi.mocked(restoreAccountWithKey).mockRejectedValueOnce(new Error('Offline'))
++
++      render(
++        <LanguageProvider>
++          <LandingPage />
++        </LanguageProvider>
++      )
++
++      fireEvent.click(await screen.findByRole('button', { name: /Use Recovery Key/ }))
++      fireEvent.change(screen.getByPlaceholderText('tbj_rec_xxxxxxxx_... or UUID'), {
++        target: { value: 'tbj_rec_12345678_1234567890abcdef1234567890abcdef' },
++      })
++      fireEvent.click(screen.getByRole('button', { name: 'Recover' }))
++
++      await waitFor(() => {
++        expect(toast.success).toHaveBeenCalledWith('Account recovered (Offline Mode)')
++      })
++    })
++
++    it('renders localized ChunkErrorBoundary fallback in EN when AppShell chunk fails', async () => {
++      localStorage.setItem('app_language', 'en')
++      localStorage.setItem('user_nickname', 'Ryan')
++      localStorage.setItem('user_uuid', '44444444-4444-4444-8444-444444444444')
++      mockState.shouldThrowAppShell = true
++
++      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
++      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
++
++      try {
++        render(
++          <LanguageProvider>
++            <LandingPage />
++          </LanguageProvider>
++        )
++
++        expect(await screen.findByText('Loading Offline')).toBeInTheDocument()
++        expect(
++          screen.getByText('Loading core modules from local offline cache. Please check device cache or retry.')
++        ).toBeInTheDocument()
++        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument()
++      } finally {
++        warnSpy.mockRestore()
++        errorSpy.mockRestore()
++      }
++    })
++  })
++
++  describe('4. i18n Symmetric Key Parity & Recovery Placeholder Sentinel', () => {
++    it('defines all 14 landing_* keys symmetrically in remaining.ts and translations.ts with tbj_rec_xxxxxxxx_ preserved', () => {
++      for (const key of LANDING_NEW_KEYS) {
++        expect(remainingTranslations.en[key]).toBeTruthy()
++        expect(remainingTranslations.zh[key]).toBeTruthy()
++        expect(legacyTranslations.en[key]).toBeTruthy()
++        expect(legacyTranslations.zh[key]).toBeTruthy()
++      }
++
++      expect(remainingTranslations.en.landing_recovery_placeholder).toContain('tbj_rec_xxxxxxxx_')
++      expect(remainingTranslations.zh.landing_recovery_placeholder).toContain('tbj_rec_xxxxxxxx_')
++      expect(legacyTranslations.en.landing_recovery_placeholder).toContain('tbj_rec_xxxxxxxx_')
++      expect(legacyTranslations.zh.landing_recovery_placeholder).toContain('tbj_rec_xxxxxxxx_')
++    })
++  })
++})
+diff --git a/frontend/components/auth/landing-language-switcher.tsx b/frontend/components/auth/landing-language-switcher.tsx
+new file mode 100644
+index 0000000..6aa8a17
+--- /dev/null
++++ b/frontend/components/auth/landing-language-switcher.tsx
+@@ -0,0 +1,90 @@
++"use client"
++
++import { motion, useReducedMotion } from "framer-motion"
++import type { Language } from "@/lib/LanguageContext"
++import { cn } from "@/lib/utils"
++
++export interface LandingLanguageSwitcherLabels {
++    groupAria: string
++    zhLabel: string
++    enLabel: string
++    switchToZhAria: string
++    switchToEnAria: string
++}
++
++export interface LandingLanguageSwitcherProps {
++    lang: Language
++    onChange: (nextLang: Language) => void
++    disabled?: boolean
++    labels: LandingLanguageSwitcherLabels
++    className?: string
++}
++
++export function LandingLanguageSwitcher({
++    lang,
++    onChange,
++    disabled = false,
++    labels,
++    className,
++}: LandingLanguageSwitcherProps) {
++    const shouldReduceMotion = Boolean(useReducedMotion())
++
++    const options: Array<{
++        value: Language
++        label: string
++        ariaLabel: string
++    }> = [
++        { value: "zh", label: labels.zhLabel, ariaLabel: labels.switchToZhAria },
++        { value: "en", label: labels.enLabel, ariaLabel: labels.switchToEnAria },
++    ]
++
++    return (
++        <div
++            role="group"
++            aria-label={labels.groupAria}
++            className={cn(
++                "inline-flex items-center p-0.5 rounded-full border border-stone-200/80 dark:border-slate-700/80 bg-white/85 dark:bg-slate-800/85 backdrop-blur-md shadow-xs isolate select-none touch-manipulation",
++                className
++            )}
++        >
++            {options.map((option) => {
++                const isActive = lang === option.value
++                return (
++                    <button
++                        key={option.value}
++                        type="button"
++                        disabled={disabled}
++                        aria-pressed={isActive}
++                        aria-label={option.ariaLabel}
++                        onClick={() => {
++                            if (!disabled) {
++                                onChange(option.value)
++                            }
++                        }}
++                        className={cn(
++                            "relative min-h-11 min-w-11 px-3 rounded-full text-xs whitespace-nowrap shrink-0 flex items-center justify-center transition-colors duration-160 ease-out touch-manipulation select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 dark:focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-800 disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed",
++                            !disabled && "cursor-pointer active:scale-[0.96]",
++                            isActive
++                                ? "text-white dark:text-slate-900 font-bold"
++                                : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white font-semibold"
++                        )}
++                    >
++                        {isActive && (
++                            <motion.span
++                                aria-hidden="true"
++                                layoutId={shouldReduceMotion ? undefined : "landing-lang-pill"}
++                                transition={
++                                    shouldReduceMotion
++                                        ? { duration: 0 }
++                                        : { type: "spring", stiffness: 400, damping: 30 }
++                                }
++                                className="absolute inset-0 rounded-full bg-slate-900 dark:bg-white shadow-xs z-0"
++                            />
++                        )}
++                        <span className="relative z-10">{option.label}</span>
++                    </button>
++                )
++            })}
++        </div>
++    )
++}
+diff --git a/frontend/__tests__/landing-page-loading-lock.test.tsx b/frontend/__tests__/landing-page-loading-lock.test.tsx
+index be30101..d34072d 100644
+--- a/frontend/__tests__/landing-page-loading-lock.test.tsx
++++ b/frontend/__tests__/landing-page-loading-lock.test.tsx
+@@ -133,10 +133,14 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
+ 
+     const startBtn = screen.getByRole('button', { name: /開始旅程/ })
+     const useRecoveryBtn = screen.getByRole('button', { name: /使用引繼碼登入/ })
++    const zhSwitchBtn = screen.getByRole('button', { name: '切換為繁體中文' })
++    const enSwitchBtn = screen.getByRole('button', { name: '切換為英文' })
+ 
+     expect(startBtn).toHaveClass('select-none')
+     expect(input).not.toHaveClass('select-none')
+     expect(startBtn.closest('.max-w-xs')).not.toHaveClass('select-none')
++    expect(zhSwitchBtn).not.toBeDisabled()
++    expect(enSwitchBtn).not.toBeDisabled()
+ 
+     // Rapid double click
+     fireEvent.click(startBtn)
+@@ -150,6 +154,10 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
+     expect(startBtn).toHaveAttribute('aria-busy', 'true')
+     expect(startBtn).toHaveClass('select-none')
+     expect(startBtn).toHaveTextContent('正在準備旅程...')
++    expect(zhSwitchBtn).toBeDisabled()
++    expect(enSwitchBtn).toBeDisabled()
++    fireEvent.click(enSwitchBtn)
++    expect(localStorage.getItem('app_language')).toBeNull()
+     const spinner = startBtn.querySelector('svg.animate-spin')
+     expect(spinner).not.toBeNull()
+     expect(spinner).toHaveClass('size-5')
+@@ -240,6 +248,8 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
+     const codeInput = screen.getByPlaceholderText(/tbj_rec_xxxxxxxx_/)
+     const cancelBtn = screen.getByRole('button', { name: '取消' })
+     const recoverBtn = screen.getByRole('button', { name: '還原' })
++    const zhSwitchBtn = screen.getByRole('button', { name: '切換為繁體中文' })
++    const enSwitchBtn = screen.getByRole('button', { name: '切換為英文' })
+ 
+     // Invalid format does not lock UI
+     fireEvent.change(codeInput, { target: { value: 'invalid-key' } })
+@@ -248,6 +258,8 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
+     expect(recoverBtn).not.toBeDisabled()
+     expect(cancelBtn).not.toBeDisabled()
+     expect(codeInput).not.toBeDisabled()
++    expect(zhSwitchBtn).not.toBeDisabled()
++    expect(enSwitchBtn).not.toBeDisabled()
+ 
+     // Valid format, failing request unlocks UI so user can retry or cancel
+     const deferredFail = createDeferred<never>()
+@@ -267,6 +279,10 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
+     expect(recoverBtn).toHaveClass('select-none')
+     expect(recoverBtn).toHaveTextContent('還原中...')
+     expect(recoverBtn.querySelector('svg.animate-spin')).not.toBeNull()
++    expect(zhSwitchBtn).toBeDisabled()
++    expect(enSwitchBtn).toBeDisabled()
++    fireEvent.click(enSwitchBtn)
++    expect(localStorage.getItem('app_language')).toBeNull()
+ 
+     await act(async () => {
+       deferredFail.reject(new Error('Invalid recovery key'))
+@@ -279,6 +295,8 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
+     expect(cancelBtn).not.toBeDisabled()
+     expect(recoverBtn).not.toBeDisabled()
+     expect(recoverBtn).toHaveTextContent('還原')
++    expect(zhSwitchBtn).not.toBeDisabled()
++    expect(enSwitchBtn).not.toBeDisabled()
+ 
+     // Valid format, succeeding request stays locked during 800ms handoff
+     vi.useFakeTimers()
+@@ -289,6 +307,7 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
+     fireEvent.click(recoverBtn)
+     expect(recoverBtn).toBeDisabled()
+     expect(cancelBtn).toBeDisabled()
++    expect(enSwitchBtn).toBeDisabled()
+ 
+     await act(async () => {
+       deferredSuccess.resolve({
+@@ -301,10 +320,11 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
+     })
+ 
+     // During 800ms handoff delay, buttons remain locked
+-    expect(toast.success).toHaveBeenCalledWith('Welcome back, Alice!')
++    expect(toast.success).toHaveBeenCalledWith('歡迎回來，Alice！')
+     expect(recoverBtn).toBeDisabled()
+     expect(cancelBtn).toBeDisabled()
+     expect(codeInput).toBeDisabled()
++    expect(enSwitchBtn).toBeDisabled()
+     expect(screen.queryByTestId('mock-app-shell')).toBeNull()
+ 
+     await act(async () => {
+@@ -341,7 +361,7 @@ describe('LandingPage Loading State, Anti-Double-Click & Recovery Lock', () => {
+       await Promise.resolve()
+     })
+ 
+-    expect(toast.success).toHaveBeenCalledWith('Account recovered (Offline Mode)')
++    expect(toast.success).toHaveBeenCalledWith('帳號已還原（離線模式）')
+     expect(recoverBtn).toBeDisabled()
+     expect(cancelBtn).toBeDisabled()
+     expect(codeInput).toBeDisabled()
+diff --git a/frontend/components/views/landing-page.tsx b/frontend/components/views/landing-page.tsx
+index 0c63d38..f436ac2 100644
+--- a/frontend/components/views/landing-page.tsx
++++ b/frontend/components/views/landing-page.tsx
+@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
+ import { Input } from "@/components/ui/input"
+ import { WelcomeWizard } from "@/components/onboarding/WelcomeWizard"
+ import { useOnboardingStore } from "@/lib/stores/onboardingStore"
+-import { useLanguage } from "@/lib/LanguageContext"
++import { useLanguage, type Language } from "@/lib/LanguageContext"
++import { LandingLanguageSwitcher } from "@/components/auth/landing-language-switcher"
+ import { cn } from "@/lib/utils"
+ import dynamic from "next/dynamic"
+ 
+@@ -21,8 +22,15 @@ function AppShellSkeleton() {
+ 
+ // 🛡️ 防禦 ChunkLoadError 導致的 React 根樹白屏
+ import React from "react"
++interface ChunkErrorBoundaryProps {
++    children: React.ReactNode
++    title?: string
++    description?: string
++    retryLabel?: string
++}
++
+ class ChunkErrorBoundary extends React.Component<
+-    { children: React.ReactNode },
++    ChunkErrorBoundaryProps,
+     { hasError: boolean }
+ > {
+     state = { hasError: false };
+@@ -34,14 +42,20 @@ class ChunkErrorBoundary extends React.Component<
+     }
+     render() {
+         if (this.state.hasError) {
++            const title = this.props.title ?? "離線載入中"
++            const description =
++                this.props.description ??
++                "核心模組正在嘗試從本地離線快取載入，請確認裝置快取或重試"
++            const retryLabel = this.props.retryLabel ?? "重新整理"
++
+             return (
+                 <div className="min-h-screen bg-stone-50 dark:bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
+                     <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 dark:text-amber-400 mb-4 text-2xl">
+                         ☁️
+                     </div>
+-                    <h2 className="text-lg font-bold text-stone-800 dark:text-stone-100">離線載入中</h2>
++                    <h2 className="text-lg font-bold text-stone-800 dark:text-stone-100">{title}</h2>
+                     <p className="text-sm text-stone-500 dark:text-stone-400 mt-1 mb-6 max-w-xs">
+-                        核心模組正在嘗試從本地離線快取載入，請確認裝置快取或重試
++                        {description}
+                     </p>
+                     <button
+                         type="button"
+@@ -51,7 +65,7 @@ class ChunkErrorBoundary extends React.Component<
+                         }}
+                         className="px-5 py-2.5 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 rounded-xl text-sm font-medium active:scale-95 transition-transform shadow-md cursor-pointer"
+                     >
+-                        重新整理
++                        {retryLabel}
+                     </button>
+                 </div>
+             );
+@@ -124,7 +138,7 @@ function runViewTransition(update: () => void) {
+ }
+ 
+ export function LandingPage() {
+-    const { t } = useLanguage()
++    const { lang, setLang, t } = useLanguage()
+     const [mounted, setMounted] = useState(false)
+     const [isLoggedIn, setIsLoggedIn] = useState(false)
+     const [nickname, setNickname] = useState("")
+@@ -158,20 +172,29 @@ export function LandingPage() {
+         /* eslint-disable -- SSR hydration pattern: must set mounted after client render */
+         setMounted(true)
+ 
+-        // 🧭 暫存深層連結，確保登入後導航不丟失
+-        if (typeof window !== "undefined" && window.location.search && window.location.search.includes("trip=")) {
+-            sessionStorage.setItem("pending_deep_link", window.location.search)
+-        }
++        try {
++            // 🧭 暫存深層連結，確保登入後導航不丟失
++            if (typeof window !== "undefined" && window.location.search && window.location.search.includes("trip=")) {
++                sessionStorage.setItem("pending_deep_link", window.location.search)
++            }
+ 
+-        const storedName = localStorage.getItem("user_nickname")
+-        const storedId = localStorage.getItem("user_uuid")
+-        if (storedName && storedId && storedId !== "null" && storedId !== "undefined") {
+-            setNickname(storedName)
+-            setIsLoggedIn(true)
++            const storedName = localStorage.getItem("user_nickname")
++            const storedId = localStorage.getItem("user_uuid")
++            if (storedName && storedId && storedId !== "null" && storedId !== "undefined") {
++                setNickname(storedName)
++                setIsLoggedIn(true)
++            }
++        } catch {
++            // Graceful fallback when web storage is blocked (e.g. Safari Private Mode / sandboxed iframe)
+         }
+         /* eslint-enable */
+     }, [])
+ 
++    const handleLanguageChange = (nextLang: Language) => {
++        if (isLoggingInRef.current || isRecoveringRef.current || nextLang === lang) return
++        setLang(nextLang)
++    }
++
+     const handleLogin = async () => {
+         if (isLoggingInRef.current || isRecoveringRef.current) return
+         if (!nickname.trim()) { toast.warning(t('landing_please_enter_nickname')); return }
+@@ -255,7 +278,7 @@ export function LandingPage() {
+         setIsRecovering(true)
+ 
+         // 🛡️ Cryptographic account recovery via signed session token
+-        const toastId = toast.loading("Verifying identity...")
++        const toastId = toast.loading(t('landing_verifying_identity'))
+         try {
+             const session = await restoreAccountWithKey(cleanCode)
+             if (!isMountedRef.current) {
+@@ -301,7 +324,7 @@ export function LandingPage() {
+             window.dispatchEvent(new CustomEvent('user-login-state-changed'))
+ 
+             toast.dismiss(toastId)
+-            toast.success(`Welcome back, ${fetchedName}!`)
++            toast.success(t('landing_welcome_back', { name: fetchedName }))
+ 
+             const goToApp = () => {
+                 if (!isMountedRef.current) return
+@@ -338,7 +361,7 @@ export function LandingPage() {
+                         sessionStorage.setItem("tabiji_identity_transition_lock", Date.now().toString())
+                         window.dispatchEvent(new CustomEvent('user-login-state-changed'))
+                     }
+-                    toast.success("Account recovered (Offline Mode)")
++                    toast.success(t('landing_recovered_offline'))
+                     recoverTimerRef.current = setTimeout(() => {
+                         if (!isMountedRef.current) return
+                         runViewTransition(() => setIsLoggedIn(true))
+@@ -353,7 +376,7 @@ export function LandingPage() {
+                     }
+                 }
+             } else {
+-                const message = e instanceof Error ? e.message : "Failed to verify recovery key"
++                const message = e instanceof Error && e.message ? e.message : t('landing_verify_failed')
+                 toast.error(message)
+                 isRecoveringRef.current = false
+                 setIsRecovering(false)
+@@ -380,7 +403,11 @@ export function LandingPage() {
+ 
+     if (isLoggedIn) {
+         return (
+-            <ChunkErrorBoundary>
++            <ChunkErrorBoundary
++                title={t('landing_offline_loading_title')}
++                description={t('landing_offline_loading_desc')}
++                retryLabel={t('landing_offline_retry')}
++            >
+                 <AppShell />
+             </ChunkErrorBoundary>
+         )
+@@ -393,9 +420,22 @@ export function LandingPage() {
+                 <div className="absolute top-40 -right-20 w-80 h-80 bg-blue-100 dark:bg-blue-900/30 rounded-full blur-3xl opacity-50"></div>
+             </div>
+ 
++            <div className="absolute top-[calc(max(env(safe-area-inset-top,0px),0px)+0.75rem)] right-4 z-20">
++                <LandingLanguageSwitcher
++                    lang={lang}
++                    onChange={handleLanguageChange}
++                    disabled={isLoggingIn || isRecovering}
++                    labels={{
++                        groupAria: t('landing_lang_switcher_aria'),
++                        zhLabel: t('landing_lang_zh'),
++                        enLabel: t('landing_lang_en'),
++                        switchToZhAria: t('landing_lang_switch_to_zh'),
++                        switchToEnAria: t('landing_lang_switch_to_en'),
++                    }}
++                />
++            </div>
+ 
+-
+-            <main className="flex-1 flex flex-col items-center justify-center px-6 py-8 sm:py-12 z-10 w-full text-center pb-24 sm:pb-12">
++            <main className="flex-1 flex flex-col items-center justify-center px-6 pt-[calc(max(env(safe-area-inset-top,0px),0px)+4rem)] pb-24 sm:pb-12 z-10 w-full text-center">
+                 {/* 品牌人物純線條勾勒立繪 (純粹藝術圖騰 Brand Icon、無水墨底圖、大氣放大、雙主題自適應) */}
+                 <div className="relative mb-3 flex items-center justify-center shrink">
+                     <div
+@@ -514,7 +554,7 @@ export function LandingPage() {
+                                     "h-10 text-xs font-mono bg-stone-50 dark:bg-slate-900 dark:border-slate-600 dark:text-white mb-4 text-center",
+                                     isRecovering && "select-none"
+                                 )}
+-                                placeholder="tbj_rec_xxxxxxxx_... 或 UUID"
++                                placeholder={t('landing_recovery_placeholder')}
+                                 value={recoverCode}
+                                 onChange={e => setRecoverCode(e.target.value)}
+                                 onKeyDown={(e) => {
+@@ -560,7 +600,7 @@ export function LandingPage() {
+             </main>
+ 
+             <footer className="py-6 text-center">
+-                <p className="text-[10px] text-slate-300 dark:text-slate-600 uppercase tracking-widest">Your Smart Travel Companion</p>
++                <p className="text-[10px] text-slate-300 dark:text-slate-600 uppercase tracking-widest">{t('landing_footer_tagline')}</p>
+             </footer>
+         </div>
+     )
+diff --git a/frontend/lib/LanguageContext.tsx b/frontend/lib/LanguageContext.tsx
+index 9237323..5d9ea82 100644
+--- a/frontend/lib/LanguageContext.tsx
++++ b/frontend/lib/LanguageContext.tsx
+@@ -5,7 +5,7 @@ import { usePathname, useSearchParams } from 'next/navigation'
+ import { translations, type TranslationKey } from './i18n'
+ export type { TranslationKey }
+ 
+-type Language = 'en' | 'zh'
++export type Language = 'en' | 'zh'
+ 
+ interface LanguageContextType {
+     lang: Language
+@@ -17,6 +17,40 @@ interface LanguageContextType {
+ 
+ const LanguageContext = createContext<LanguageContextType | undefined>(undefined)
+ 
++function isValidLanguage(value: unknown): value is Language {
++    return value === 'en' || value === 'zh'
++}
++
++function persistLanguageStorage(targetLang: Language) {
++    try {
++        localStorage.setItem('app_language', targetLang)
++    } catch {
++        // Graceful fallback when localStorage is unavailable or throws QuotaExceededError
++    }
++    try {
++        // Sync to cookie so Server Components (SSR) can read the language preference
++        document.cookie = `app_language=${targetLang}; path=/; max-age=31536000; SameSite=Lax`
++    } catch {
++        // Graceful fallback when cookie access is restricted
++    }
++}
++
++function translateTemplate(
++    targetLang: Language,
++    key: TranslationKey,
++    params?: Record<string, string | number>
++): string {
++    const dict = (translations[targetLang] ?? translations.zh) as Record<string, string>
++    const rawValue = Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : undefined
++    let result: string = typeof rawValue === 'string' ? rawValue : key
++    if (params) {
++        for (const [k, v] of Object.entries(params)) {
++            result = result.split(`{${k}}`).join(String(v))
++        }
++    }
++    return result
++}
++
+ function LanguageUrlHandoffObserver({ onAdoptLang }: { onAdoptLang: (lang: Language) => void }) {
+     const pathname = usePathname()
+     const searchParams = useSearchParams()
+@@ -27,7 +61,7 @@ function LanguageUrlHandoffObserver({ onAdoptLang }: { onAdoptLang: (lang: Langu
+         if (currentPathname.startsWith('/official')) return
+ 
+         const urlLang = searchParams?.get('lang') ?? new URLSearchParams(window.location.search).get('lang')
+-        if (urlLang === 'en' || urlLang === 'zh') {
++        if (isValidLanguage(urlLang)) {
+             onAdoptLang(urlLang)
+             try {
+                 const url = new URL(window.location.href)
+@@ -55,25 +89,27 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
+         const isOfficial = typeof window !== 'undefined' && window.location.pathname.startsWith('/official')
+         if (!isOfficial) {
+             const urlLang = new URLSearchParams(window.location.search).get('lang')
+-            if (urlLang === 'en' || urlLang === 'zh') {
++            if (isValidLanguage(urlLang)) {
+                 setLangState(urlLang)
+-                localStorage.setItem('app_language', urlLang)
+-                document.cookie = `app_language=${urlLang}; path=/; max-age=31536000; SameSite=Lax`
++                persistLanguageStorage(urlLang)
+                 return
+             }
+         }
+ 
+-        const saved = localStorage.getItem('app_language') as Language
+-        if (saved && (saved === 'en' || saved === 'zh')) {
+-            setLangState(saved)
++        try {
++            const saved = localStorage.getItem('app_language')
++            if (isValidLanguage(saved)) {
++                setLangState(saved)
++            }
++        } catch {
++            // Graceful fallback when localStorage is blocked (e.g. Safari Private Mode)
+         }
+     }, [])
+ 
+     const setLang = useCallback((newLang: Language) => {
++        if (!isValidLanguage(newLang)) return
+         setLangState(newLang)
+-        localStorage.setItem('app_language', newLang)
+-        // Sync to cookie so Server Components (SSR) can read the language preference
+-        document.cookie = `app_language=${newLang}; path=/; max-age=31536000; SameSite=Lax`
++        persistLanguageStorage(newLang)
+     }, [])
+ 
+     /**
+@@ -82,14 +118,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
+      * The dictionary value should contain `{name}` as placeholder.
+      */
+     const t = useCallback((key: TranslationKey, params?: Record<string, string | number>): string => {
+-        const dict = translations[lang] as Record<string, string>
+-        let result: string = dict[key] || key
+-        if (params) {
+-            Object.entries(params).forEach(([k, v]) => {
+-                result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
+-            })
+-        }
+-        return result
++        return translateTemplate(lang, key, params)
+     }, [lang])
+ 
+     /** Format a Date according to the current app language (not OS locale). */
+@@ -116,10 +145,8 @@ export function useLanguage() {
+         return {
+             lang: 'zh' as Language,
+             setLang: () => { },
+-            t: (key: TranslationKey) => {
+-                const dict = translations.zh as Record<string, string>
+-                return dict[key] || key
+-            },
++            t: (key: TranslationKey, params?: Record<string, string | number>) =>
++                translateTemplate('zh', key, params),
+             formatDate: (date: Date) => date.toLocaleDateString('zh-TW'),
+             isReady: true,
+         }
+diff --git a/frontend/lib/i18n/remaining.ts b/frontend/lib/i18n/remaining.ts
+index 2abd4c5..a2af9ac 100644
+--- a/frontend/lib/i18n/remaining.ts
++++ b/frontend/lib/i18n/remaining.ts
+@@ -26,6 +26,20 @@ export const remainingTranslations = {
+         landing_recovered: "Account recovered!",
+         landing_or: "Or",
+         landing_cancel: "Cancel",
++        landing_lang_switcher_aria: "Language switcher",
++        landing_lang_zh: "繁中",
++        landing_lang_en: "EN",
++        landing_lang_switch_to_zh: "Switch to Traditional Chinese",
++        landing_lang_switch_to_en: "Switch to English",
++        landing_recovery_placeholder: "tbj_rec_xxxxxxxx_... or UUID",
++        landing_verifying_identity: "Verifying identity...",
++        landing_welcome_back: "Welcome back, {name}!",
++        landing_recovered_offline: "Account recovered (Offline Mode)",
++        landing_verify_failed: "Failed to verify recovery key",
++        landing_footer_tagline: "Your Smart Travel Companion",
++        landing_offline_loading_title: "Loading Offline",
++        landing_offline_loading_desc: "Loading core modules from local offline cache. Please check device cache or retry.",
++        landing_offline_retry: "Reload",
+ 
+         // General
+         back: "BACK",
+@@ -747,6 +761,20 @@ export const remainingTranslations = {
+         landing_please_enter_nickname: "請輸入暱稱",
+         landing_invalid_code: "引繼碼格式不正確",
+         landing_recovered: "🎉 帳號已還原！歡迎回來。",
++        landing_lang_switcher_aria: "語系切換",
++        landing_lang_zh: "繁中",
++        landing_lang_en: "EN",
++        landing_lang_switch_to_zh: "切換為繁體中文",
++        landing_lang_switch_to_en: "切換為英文",
++        landing_recovery_placeholder: "tbj_rec_xxxxxxxx_... 或 UUID",
++        landing_verifying_identity: "正在驗證身分...",
++        landing_welcome_back: "歡迎回來，{name}！",
++        landing_recovered_offline: "帳號已還原（離線模式）",
++        landing_verify_failed: "無法驗證引繼碼，請稍後再試",
++        landing_footer_tagline: "您的智慧旅途夥伴",
++        landing_offline_loading_title: "離線載入中",
++        landing_offline_loading_desc: "核心模組正在嘗試從本地離線快取載入，請確認裝置快取或重試",
++        landing_offline_retry: "重新整理",
+ 
+         // Itinerary
+         my_trips: "我的行程",
+diff --git a/frontend/lib/translations.ts b/frontend/lib/translations.ts
+index 2a8cb3f..4675a22 100644
+--- a/frontend/lib/translations.ts
++++ b/frontend/lib/translations.ts
+@@ -31,6 +31,20 @@ export const translations = {
+         landing_please_enter_nickname: "Please enter nickname",
+         landing_invalid_code: "Invalid recovery key format",
+         landing_recovered: "Account recovered!",
++        landing_lang_switcher_aria: "Language switcher",
++        landing_lang_zh: "繁中",
++        landing_lang_en: "EN",
++        landing_lang_switch_to_zh: "Switch to Traditional Chinese",
++        landing_lang_switch_to_en: "Switch to English",
++        landing_recovery_placeholder: "tbj_rec_xxxxxxxx_... or UUID",
++        landing_verifying_identity: "Verifying identity...",
++        landing_welcome_back: "Welcome back, {name}!",
++        landing_recovered_offline: "Account recovered (Offline Mode)",
++        landing_verify_failed: "Failed to verify recovery key",
++        landing_footer_tagline: "Your Smart Travel Companion",
++        landing_offline_loading_title: "Loading Offline",
++        landing_offline_loading_desc: "Loading core modules from local offline cache. Please check device cache or retry.",
++        landing_offline_retry: "Reload",
+ 
+         // Itinerary
+         my_trips: "My Trips",
+@@ -382,6 +396,20 @@ export const translations = {
+         landing_please_enter_nickname: "請輸入暱稱",
+         landing_invalid_code: "引繼碼格式不正確",
+         landing_recovered: "🎉 帳號已還原！歡迎回來。",
++        landing_lang_switcher_aria: "語系切換",
++        landing_lang_zh: "繁中",
++        landing_lang_en: "EN",
++        landing_lang_switch_to_zh: "切換為繁體中文",
++        landing_lang_switch_to_en: "切換為英文",
++        landing_recovery_placeholder: "tbj_rec_xxxxxxxx_... 或 UUID",
++        landing_verifying_identity: "正在驗證身分...",
++        landing_welcome_back: "歡迎回來，{name}！",
++        landing_recovered_offline: "帳號已還原（離線模式）",
++        landing_verify_failed: "無法驗證引繼碼，請稍後再試",
++        landing_footer_tagline: "您的智慧旅途夥伴",
++        landing_offline_loading_title: "離線載入中",
++        landing_offline_loading_desc: "核心模組正在嘗試從本地離線快取載入，請確認裝置快取或重試",
++        landing_offline_retry: "重新整理",
+ 
+         // Itinerary
+         my_trips: "我的行程",

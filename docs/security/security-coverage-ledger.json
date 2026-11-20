@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-19T05:06:00Z",
+  "last_audit_date": "2026-11-20T17:25:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 408,
-    "audited_targets": 408,
+    "total_targets": 413,
+    "audited_targets": 413,
     "verified_vulnerabilities": 53,
-    "remediated_vulnerabilities": 181,
-    "dismissed_hypotheses": 174
+    "remediated_vulnerabilities": 185,
+    "dismissed_hypotheses": 175
   },
   "targets": [
     {
@@ -5258,6 +5258,69 @@
       "validator_details": "Locked agent_fallback_tasks and shift_trip_capsules to service_role only, shifted capsules atomically via +10000 offset preserving day_number=0, added indexed Mapillary EXISTS ref-counting in webhook_cleanup_cloudinary, and attached cleanup trigger to trip_capsule_entries; verified via pytest & Sentinel runner (DISMISSED).",
       "remediated_at": "2026-11-19T05:06:00Z",
       "resolution": "docs/security/history/patches/patch_candidate_bug_hunter_2026-11-19.diff"
+    },
+    {
+      "id": "frontend/lib/LanguageContext.tsx:storage_runtime_lang_and_template_guards",
+      "target_type": "frontend_i18n_context",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "storage_exception_unhandled_runtime_lang_and_prototype_lookup"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_landing_bilingual.md",
+      "validator_details": "Verified Red->Green PoC in sandbox worktree & Sentinel runner retry (DISMISSED): separated localStorage.setItem and document.cookie into independent try/catch guards, guarded localStorage.getItem on mount, enforced runtime isValidLanguage check in setLang while keeping useCallback([], ) stability, and hardened translateTemplate via hasOwnProperty + split/join across Provider and fallback.",
+      "remediated_at": "2026-11-20T17:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_landing_bilingual_2026-11-21.diff"
+    },
+    {
+      "id": "frontend/components/auth/landing-language-switcher.tsx:pure_presentational_capsule_and_a11y",
+      "target_type": "frontend_ui_auth",
+      "trust_boundary": "client_ui_render",
+      "vectors_checked": [
+        "disabled_click_bypass_a11y_contrast_or_motion_regression"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_landing_bilingual.md",
+      "validator_details": "Verified safe by Vitest component suite, Playwright Chromium telemetry, and Sentinel runner (DISMISSED): pure presentational controlled capsule with 44px touch targets, isolate stacking context, triple-enforced disabled guard, WCAG AA light/dark contrast, focus-visible:ring-offset-2 active pill focus visibility, and useReducedMotion layoutId/duration fallback."
+    },
+    {
+      "id": "frontend/components/views/landing-page.tsx:chunk_boundary_and_bilingual_lock_guard",
+      "target_type": "client_auth_view",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "async_language_switch_race_or_storage_mount_crash"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_landing_bilingual.md",
+      "validator_details": "Verified Red->Green PoC in sandbox worktree, Vitest loading lock suite, and Sentinel runner (DISMISSED): added try/catch around mount sessionStorage/localStorage access to survive SecurityError, synchronous ref-guarded handleLanguageChange (isLoggingInRef || isRecoveringRef || nextLang === lang), and optional localized ChunkErrorBoundary props preserving Chinese defaults.",
+      "remediated_at": "2026-11-20T17:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_landing_bilingual_2026-11-21.diff"
+    },
+    {
+      "id": "frontend/components/views/landing-page.tsx:recovery_localization_and_safe_area_layout",
+      "target_type": "client_auth_view",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "error_fallback_omission_or_safe_area_header_overlap"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_landing_bilingual.md",
+      "validator_details": "Verified by Vitest and Sentinel runner (DISMISSED): localized recovery toasts, added empty Error('').message fallback via t('landing_verify_failed'), positioned top-right capsule with safe-area-inset-top + 0.75rem, and replaced conflicting py-8 sm:py-12 with pt-[calc(max(env(safe-area-inset-top,0px),0px)+4rem)] pb-24 sm:pb-12.",
+      "remediated_at": "2026-11-20T17:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_landing_bilingual_2026-11-21.diff"
+    },
+    {
+      "id": "frontend/components/views/landing-page.tsx:recovery_input_and_footer_i18n",
+      "target_type": "client_auth_view",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "hardcoded_recovery_placeholder_or_footer_copy"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_landing_bilingual.md",
+      "validator_details": "Verified by Vitest and Sentinel runner (DISMISSED): localized recovery placeholder (retaining tbj_rec_xxxxxxxx_ in both en and zh) and footer tagline across remaining.ts and translations.ts while preserving recovery lock and IME guards.",
+      "remediated_at": "2026-11-20T17:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_landing_bilingual_2026-11-21.diff"
     }
   ],
   "known_design_intents": {

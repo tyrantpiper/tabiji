@@ -5,7 +5,7 @@ import { usePathname, useSearchParams } from 'next/navigation'
 import { translations, type TranslationKey } from './i18n'
 export type { TranslationKey }
 
-type Language = 'en' | 'zh'
+export type Language = 'en' | 'zh'
 
 interface LanguageContextType {
     lang: Language
@@ -17,6 +17,40 @@ interface LanguageContextType {
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined)
 
+function isValidLanguage(value: unknown): value is Language {
+    return value === 'en' || value === 'zh'
+}
+
+function persistLanguageStorage(targetLang: Language) {
+    try {
+        localStorage.setItem('app_language', targetLang)
+    } catch {
+        // Graceful fallback when localStorage is unavailable or throws QuotaExceededError
+    }
+    try {
+        // Sync to cookie so Server Components (SSR) can read the language preference
+        document.cookie = `app_language=${targetLang}; path=/; max-age=31536000; SameSite=Lax`
+    } catch {
+        // Graceful fallback when cookie access is restricted
+    }
+}
+
+function translateTemplate(
+    targetLang: Language,
+    key: TranslationKey,
+    params?: Record<string, string | number>
+): string {
+    const dict = (translations[targetLang] ?? translations.zh) as Record<string, string>
+    const rawValue = Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : undefined
+    let result: string = typeof rawValue === 'string' ? rawValue : key
+    if (params) {
+        for (const [k, v] of Object.entries(params)) {
+            result = result.split(`{${k}}`).join(String(v))
+        }
+    }
+    return result
+}
+
 function LanguageUrlHandoffObserver({ onAdoptLang }: { onAdoptLang: (lang: Language) => void }) {
     const pathname = usePathname()
     const searchParams = useSearchParams()
@@ -27,7 +61,7 @@ function LanguageUrlHandoffObserver({ onAdoptLang }: { onAdoptLang: (lang: Langu
         if (currentPathname.startsWith('/official')) return
 
         const urlLang = searchParams?.get('lang') ?? new URLSearchParams(window.location.search).get('lang')
-        if (urlLang === 'en' || urlLang === 'zh') {
+        if (isValidLanguage(urlLang)) {
             onAdoptLang(urlLang)
             try {
                 const url = new URL(window.location.href)
@@ -55,25 +89,27 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
         const isOfficial = typeof window !== 'undefined' && window.location.pathname.startsWith('/official')
         if (!isOfficial) {
             const urlLang = new URLSearchParams(window.location.search).get('lang')
-            if (urlLang === 'en' || urlLang === 'zh') {
+            if (isValidLanguage(urlLang)) {
                 setLangState(urlLang)
-                localStorage.setItem('app_language', urlLang)
-                document.cookie = `app_language=${urlLang}; path=/; max-age=31536000; SameSite=Lax`
+                persistLanguageStorage(urlLang)
                 return
             }
         }
 
-        const saved = localStorage.getItem('app_language') as Language
-        if (saved && (saved === 'en' || saved === 'zh')) {
-            setLangState(saved)
+        try {
+            const saved = localStorage.getItem('app_language')
+            if (isValidLanguage(saved)) {
+                setLangState(saved)
+            }
+        } catch {
+            // Graceful fallback when localStorage is blocked (e.g. Safari Private Mode)
         }
     }, [])
 
     const setLang = useCallback((newLang: Language) => {
+        if (!isValidLanguage(newLang)) return
         setLangState(newLang)
-        localStorage.setItem('app_language', newLang)
-        // Sync to cookie so Server Components (SSR) can read the language preference
-        document.cookie = `app_language=${newLang}; path=/; max-age=31536000; SameSite=Lax`
+        persistLanguageStorage(newLang)
     }, [])
 
     /**
@@ -82,14 +118,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
      * The dictionary value should contain `{name}` as placeholder.
      */
     const t = useCallback((key: TranslationKey, params?: Record<string, string | number>): string => {
-        const dict = translations[lang] as Record<string, string>
-        let result: string = dict[key] || key
-        if (params) {
-            Object.entries(params).forEach(([k, v]) => {
-                result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
-            })
-        }
-        return result
+        return translateTemplate(lang, key, params)
     }, [lang])
 
     /** Format a Date according to the current app language (not OS locale). */
@@ -116,10 +145,8 @@ export function useLanguage() {
         return {
             lang: 'zh' as Language,
             setLang: () => { },
-            t: (key: TranslationKey) => {
-                const dict = translations.zh as Record<string, string>
-                return dict[key] || key
-            },
+            t: (key: TranslationKey, params?: Record<string, string | number>) =>
+                translateTemplate('zh', key, params),
             formatDate: (date: Date) => date.toLocaleDateString('zh-TW'),
             isReady: true,
         }
