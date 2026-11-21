@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
 import { compressImage } from "@/lib/image-utils"
 import { useLanguage } from "@/lib/LanguageContext"
+import { cloudinaryApi } from "@/lib/api"
 
 interface ImageUploadProps {
     value?: string
@@ -32,6 +33,7 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
     const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file) return
+        e.target.value = ""
 
         setLoading(true)
         setProgress(0)
@@ -39,34 +41,22 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
             // 🆕 執行大解析度優化 (No more 1600px limit)
             const compressedFile = await compressImage(file, { maxWidth: 8192, maxHeight: 8192, quality: 0.9 });
 
-            const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
-            const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+            const timestamp = Math.round(Date.now() / 1000);
+            const paramsToSign = { timestamp, folder };
+            const signData = await cloudinaryApi.signUpload(paramsToSign);
+
+            const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+            const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
 
             if (!cloudName || !apiKey) {
                 console.error("Missing Cloudinary env vars:", { cloudName: !!cloudName, apiKey: !!apiKey })
                 toast.error(zh ? `環境變數缺失！請確認 .env.local 並重啟前端。` : `Missing env vars! Check .env.local and restart.`)
                 setLoading(false)
+                setProgress(0)
                 return
             }
 
-            const timestamp = Math.round((new Date).getTime() / 1000);
-            const paramsToSign = { timestamp, folder };
-
-            const res = await fetch("/api/sign-cloudinary", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ paramsToSign }),
-            });
-
-            if (!res.ok) {
-                const errText = await res.text()
-                console.error("Sign API error:", errText)
-                toast.error(zh ? `簽名 API 錯誤: ${res.status}` : `Sign API error: ${res.status}`)
-                setLoading(false)
-                return
-            }
-
-            const { signature } = await res.json();
+            const { signature } = signData;
 
             const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
             const data = new FormData()

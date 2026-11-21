@@ -15,7 +15,7 @@ import { ZoomableImage } from "@/components/ui/zoomable-image"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
 import { compressImage } from "@/lib/image-utils"
-import { tripsApi } from "@/lib/api"
+import { tripsApi, cloudinaryApi } from "@/lib/api"
 import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { resolveDestinationCover } from "@/lib/destination-covers"
 import { toast } from "sonner"
@@ -63,8 +63,14 @@ export function TripCoverMenu({
                 quality: 0.85
             })
 
-            const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
-            const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+            const timestamp = Math.round(Date.now() / 1000)
+            const paramsToSign = { timestamp, folder }
+
+            // 2. 取得後端簽名 (附帶 JWT 認證與自動 401 換票重試)
+            const signData = await cloudinaryApi.signUpload(paramsToSign)
+
+            const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+            const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
 
             if (!cloudName || !apiKey) {
                 toast.error(zh ? "環境變數缺失，無法連線至 Cloudinary" : "Missing Cloudinary environment variables")
@@ -72,23 +78,7 @@ export function TripCoverMenu({
                 return
             }
 
-            const timestamp = Math.round(Date.now() / 1000)
-            const paramsToSign = { timestamp, folder }
-
-            // 2. 取得後端簽名
-            const signRes = await fetch("/api/sign-cloudinary", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ paramsToSign }),
-            })
-
-            if (!signRes.ok) {
-                toast.error(zh ? "簽名授權失敗" : "Failed to obtain upload signature")
-                setLoading(false)
-                return
-            }
-
-            const { signature } = await signRes.json()
+            const { signature } = signData
 
             // 3. 上傳至 Cloudinary
             const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`

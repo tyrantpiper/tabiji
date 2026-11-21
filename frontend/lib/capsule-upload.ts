@@ -1,4 +1,5 @@
 import { compressImage } from "@/lib/image-utils"
+import { cloudinaryApi } from "@/lib/api"
 
 export const MAX_PHOTO_BYTES = 8 * 1024 * 1024 // 8MB
 
@@ -27,29 +28,20 @@ export async function uploadCapsulePhotoToCloudinary(
     // 🛡️ 門禁 3: 前端極限壓縮至 2048px / 85% 質量 (降低傳輸流量至 ~600KB)
     const compressed = await compressImage(file, { maxWidth: 2048, maxHeight: 2048, quality: 0.85 })
 
-    const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
-    const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
-    if (!cloudName || !apiKey) {
-        throw new Error("缺少 Cloudinary 環境變數 (NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME / API_KEY)")
-    }
-
     const folder = "tabidachi_capsules"
     const timestamp = Math.round(Date.now() / 1000)
     const paramsToSign = { timestamp, folder }
 
-    // 1. 取得 Next.js 伺服器端 Cloudinary 簽名 (受白名單防禦保護)
-    const signRes = await fetch("/api/sign-cloudinary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paramsToSign }),
-    })
+    // 1. 取得後端 Cloudinary 簽名 (附帶 JWT 認證、白名單防禦與自動 401 換票重試)
+    const signData = await cloudinaryApi.signUpload(paramsToSign)
 
-    if (!signRes.ok) {
-        const errJson = await signRes.json().catch(() => ({}))
-        throw new Error(errJson.error || `取得簽名失敗: HTTP ${signRes.status}`)
+    const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+    const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+    if (!cloudName || !apiKey) {
+        throw new Error("缺少 Cloudinary 環境變數 (NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME / API_KEY)")
     }
 
-    const { signature } = await signRes.json()
+    const { signature } = signData
 
     // 2. 構建 FormData 直傳 Cloudinary
     const formData = new FormData()

@@ -35,7 +35,7 @@ import { ZoomableImage } from "@/components/ui/zoomable-image"
 import { useLanguage } from "@/lib/LanguageContext"
 import { useHaptic } from "@/lib/hooks"
 import { compressImage } from "@/lib/image-utils"
-import { tripsApi } from "@/lib/api"
+import { tripsApi, cloudinaryApi } from "@/lib/api"
 import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { resolveDestinationCover } from "@/lib/destination-covers"
 import { type Trip } from "@/lib/itinerary-types"
@@ -169,8 +169,13 @@ export function TripSettingsView({
                 quality: 0.85
             })
 
-            const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
-            const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+            const timestamp = Math.round(Date.now() / 1000)
+            const paramsToSign = { timestamp, folder }
+
+            const signData = await cloudinaryApi.signUpload(paramsToSign)
+
+            const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+            const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
 
             if (!cloudName || !apiKey) {
                 toast.error(zh ? "系統設定不完整，無法上傳圖片" : "Upload service not properly configured")
@@ -178,22 +183,7 @@ export function TripSettingsView({
                 return
             }
 
-            const timestamp = Math.round(Date.now() / 1000)
-            const paramsToSign = { timestamp, folder }
-
-            const signRes = await fetch("/api/sign-cloudinary", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ paramsToSign }),
-            })
-
-            if (!signRes.ok) {
-                toast.error(zh ? "簽名授權失敗" : "Failed to obtain upload signature")
-                setLoading(false)
-                return
-            }
-
-            const { signature } = await signRes.json()
+            const { signature } = signData
 
             const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
             const data = new FormData()

@@ -11,6 +11,7 @@
  */
 
 import { MAPILLARY } from '@/lib/constants'
+import { cloudinaryApi } from '@/lib/api'
 
 // ============================================================
 // Types
@@ -274,32 +275,23 @@ export function isMapillaryAvailable(): boolean {
  */
 export async function uploadMapillaryToCloudinary(imageUrl: string, imageId: string): Promise<string | null> {
     try {
-        const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-        const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY;
+        const folder = "ryan_travel/streetview";
+        const timestamp = Math.round(Date.now() / 1000);
+        const public_id = `mly_${imageId}`;
+
+        // 1. 取得後端 Cloudinary 簽名 (附帶 JWT 認證與自動 401 換票重試)
+        const paramsToSign = { timestamp, folder, public_id };
+        const signData = await cloudinaryApi.signUpload(paramsToSign);
+
+        const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+        const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY;
 
         if (!cloudName || !apiKey) {
             console.warn('[Mapillary] Missing Cloudinary env vars, skipping upload');
             return null;
         }
 
-        const folder = "ryan_travel/streetview";
-        const timestamp = Math.round(Date.now() / 1000);
-        const public_id = `mly_${imageId}`;
-        
-        // 1. 取得 Cloudinary 簽名
-        const paramsToSign = { timestamp, folder, public_id };
-        const signRes = await fetch("/api/sign-cloudinary", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ paramsToSign }),
-        });
-
-        if (!signRes.ok) {
-            console.error('[Mapillary] Failed to sign Cloudinary request:', await signRes.text());
-            return null;
-        }
-
-        const { signature } = await signRes.json();
+        const { signature } = signData;
 
         // 2. 直接讓 Cloudinary 透過 URL 抓取並上傳
         const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;

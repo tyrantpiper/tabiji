@@ -21,6 +21,7 @@ import { ZoomableImage } from "@/components/ui/zoomable-image"
 import { compressImage } from "@/lib/image-utils"
 import { useLanguage } from "@/lib/LanguageContext"
 import { isTrustedUrl } from "@/lib/security"
+import { cloudinaryApi } from "@/lib/api"
 
 // 🆕 DND-Kit imports
 import {
@@ -121,25 +122,24 @@ export function MultiImageUpload({
             // 🆕 執行大解析度優化 (No more 1600px limit)
             const compressedFile = await compressImage(file, { maxWidth: 8192, maxHeight: 8192, quality: 0.9 });
 
-            const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
-            const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+            const timestamp = Math.round(Date.now() / 1000)
+            const paramsToSign = { timestamp, folder }
+            const signData = await cloudinaryApi.signUpload(paramsToSign)
+
+            const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+            const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
 
             if (!cloudName || !apiKey) {
                 toast.error("環境變數缺失！")
                 setLoading(false)
+                setProgress(0)
+                if (fileInputRef.current) {
+                    fileInputRef.current.value = ""
+                }
                 return
             }
 
-            const timestamp = Math.round((new Date).getTime() / 1000)
-            const paramsToSign = { timestamp, folder }
-
-            const res = await fetch("/api/sign-cloudinary", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ paramsToSign }),
-            })
-
-            const { signature } = await res.json()
+            const { signature } = signData
 
             const formData = new FormData()
             formData.append("file", compressedFile, file.name)
@@ -186,6 +186,7 @@ export function MultiImageUpload({
             console.error("Upload error:", err)
             toast.error(t('img_upload_error'))
             setLoading(false)
+            setProgress(0)
         }
 
         // 清空 input

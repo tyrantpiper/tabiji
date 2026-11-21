@@ -143,6 +143,7 @@ export const API = {
     SMART_SEARCH: `${API_HOST}/api/ai/smart-search`,
     RESOLVE_ADDRESS: `${API_HOST}/api/geocode/resolve-address`,
     TRAVEL_DATA: `${API_HOST}/api/travel-data`,
+    SIGN_CLOUDINARY: `${API_HOST}/api/sign-cloudinary`,
 }
 
 export const API_BASE_PATH = "/api";
@@ -1903,6 +1904,44 @@ export const pushApi = {
             body: JSON.stringify({ endpoint }),
         })
         return res.ok
+    },
+}
+
+export interface CloudinarySignParams {
+    timestamp: number
+    folder: string
+    public_id?: string
+}
+
+export interface CloudinarySignResponse {
+    signature: string
+    apiKey?: string
+    cloudName?: string
+}
+
+export const cloudinaryApi = {
+    signUpload: async (paramsToSign: CloudinarySignParams): Promise<CloudinarySignResponse> => {
+        const res = await fetch(API.SIGN_CLOUDINARY, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paramsToSign }),
+        })
+        if (!res.ok) {
+            const errMsg = await extractError(res, `Failed to sign upload: HTTP ${res.status}`)
+            throw new Error(errMsg)
+        }
+        const data = (await res.json().catch(() => null)) as Partial<CloudinarySignResponse> | null
+        const signature = typeof data?.signature === "string" ? data.signature.trim() : ""
+        if (!signature) {
+            throw new Error("Invalid upload signature response")
+        }
+        const apiKey = typeof data?.apiKey === "string" ? data.apiKey.trim() : ""
+        const cloudName = typeof data?.cloudName === "string" ? data.cloudName.trim() : ""
+        return {
+            signature,
+            ...(apiKey ? { apiKey } : {}),
+            ...(cloudName ? { cloudName } : {}),
+        }
     },
 }
 

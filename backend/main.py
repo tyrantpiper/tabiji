@@ -239,6 +239,7 @@ from routers.auth import router as auth_router
 from routers.mcp import router as mcp_router
 from routers.affiliate import router as affiliate_router
 from routers.notifications import router as notifications_router
+from routers.cloudinary import router as cloudinary_router
 
 app.include_router(auth_router)
 app.include_router(mcp_router)
@@ -258,6 +259,7 @@ app.include_router(travel_data_router)
 app.include_router(agents_router)
 app.include_router(capsules_router)
 app.include_router(notifications_router)
+app.include_router(cloudinary_router)
 print("[Routers] ✅ All systems registered")
 
 # 2. CORS 設定與主機白名單
