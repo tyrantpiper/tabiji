@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-20T17:25:00Z",
+  "last_audit_date": "2026-11-21T16:15:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 413,
-    "audited_targets": 413,
+    "total_targets": 418,
+    "audited_targets": 418,
     "verified_vulnerabilities": 53,
-    "remediated_vulnerabilities": 185,
+    "remediated_vulnerabilities": 190,
     "dismissed_hypotheses": 175
   },
   "targets": [
@@ -5321,6 +5321,71 @@
       "validator_details": "Verified by Vitest and Sentinel runner (DISMISSED): localized recovery placeholder (retaining tbj_rec_xxxxxxxx_ in both en and zh) and footer tagline across remaining.ts and translations.ts while preserving recovery lock and IME guards.",
       "remediated_at": "2026-11-20T17:25:00Z",
       "resolution": "docs/security/history/patches/patch_candidate_landing_bilingual_2026-11-21.diff"
+    },
+    {
+      "id": "backend/routers/cloudinary.py:auth_and_rate_limit_order",
+      "target_type": "fastapi_router",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "rate_limit_key_isolation_and_auth_ordering"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_cloudinary_pr1.md",
+      "validator_details": "Verified by test_cloudinary_sign_sentinel.py (17/17 passed, Mantis Block G 5 benign + 12 attack/config) and full-file Sentinel runner --mode adaptive (DISMISSED): pre-auth rightmost-XFF OrderedDict LRU IP limiter (240/min, 4096 max tracked IPs) scans all x-forwarded-for headers via getlist() + tail rsplit() with lowercase normalization before get_verified_user() (returning Retry-After + Cache-Control: no-store on 429), preserves app.dependency_overrides[get_verified_user] with single jwt.decode per request, and keys SlowAPI 60/min strictly by case-normalized uid:{user_id.lower()}.",
+      "remediated_at": "2026-11-21T16:15:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_cloudinary_pr1_2026-11-21.diff"
+    },
+    {
+      "id": "backend/routers/cloudinary.py:param_folder_timestamp_public_id_guard",
+      "target_type": "fastapi_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "parameter_validation_and_public_id_overwrite_scope"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_cloudinary_pr1.md",
+      "validator_details": "Verified by test_cloudinary_sign_sentinel.py (17/17) and full-file Sentinel runner --mode adaptive (DISMISSED): enforces RFC 9110 §8.6 strict Content-Length validation + 4096-byte chunked streaming body cap (413), ALLOWED_PARAM_KEYS, ALLOWED_FOLDERS with \\Z anchor, non-bool integer/non-leading-zero ASCII-digit timestamp (^[1-9][0-9]{0,11}\\Z) within +-600s, streetview-only public_id ^mly_[0-9A-Za-z_-]{1,64}\\Z, Cache-Control: no-store, atomic {signature, apiKey, cloudName}, CRLF-stripped secrets, and zero BYOK trigger words.",
+      "remediated_at": "2026-11-21T16:15:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_cloudinary_pr1_2026-11-21.diff"
+    },
+    {
+      "id": "frontend/lib/api.ts:cloudinary_sign_upload_client_boundary",
+      "target_type": "frontend_api_client",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "client_auth_propagation_and_response_validation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_cloudinary_pr1.md",
+      "validator_details": "Verified by Vitest F9/F15, cloudinary-upload-components-sentinel.test.tsx (4/4 RTL), and Sentinel runner --mode adaptive (DISMISSED): cloudinaryApi.signUpload calls API.SIGN_CLOUDINARY through authenticated module fetch wrapper with Bearer JWT injection and 1-time 401 refresh retry, extracts FastAPI detail and SlowAPI error, safely catches non-JSON 200 payloads, trims/rejects whitespace-only signature, and omits whitespace-only apiKey/cloudName.",
+      "remediated_at": "2026-11-21T16:15:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_cloudinary_pr1_2026-11-21.diff"
+    },
+    {
+      "id": "cloudflare/edge-shield/worker.js:sign_cloudinary_edge_forwarding",
+      "target_type": "cloudflare_edge_worker",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "edge_routing_header_and_body_forwarding"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_cloudinary_pr1.md",
+      "validator_details": "Verified by Vitest F14 (asserting URL, POST, Authorization, Host, redirect: manual, duplex: half, body, Cache-Control: no-store), live wrangler deploy (e89aecbf-4315-4ab5-a394-51afc8b90037), 4-domain live verification, and Sentinel runner --mode adaptive (DISMISSED).",
+      "remediated_at": "2026-11-21T16:15:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_cloudinary_pr1_2026-11-21.diff"
+    },
+    {
+      "id": "frontend/components/ui/multi-image-upload.tsx:upload_error_and_progress_cleanup",
+      "target_type": "frontend_upload_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "error_handling_and_state_reset_hygiene"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-21_cloudinary_pr1.md",
+      "validator_details": "Verified by Vitest F15, cloudinary-upload-components-sentinel.test.tsx (4/4 React component RTL tests across ImageUpload, MultiImageUpload, TripCoverMenu, TripSettingsView), and Sentinel runner --mode adaptive (DISMISSED): all 6 upload callers migrated to cloudinaryApi.signUpload preferring rotated server apiKey/cloudName; multi-image-upload.tsx rejects non-OK sign responses and resets loading, progress (0), and fileInputRef across early-return and catch paths; image-upload.tsx resets file input on selection so failed uploads can retry the same file.",
+      "remediated_at": "2026-11-21T16:15:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_cloudinary_pr1_2026-11-21.diff"
     }
   ],
   "known_design_intents": {

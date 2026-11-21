@@ -45,12 +45,8 @@ export default {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    // 1. 放行 Vercel 本地處理的 API（如 Cloudinary 收據簽章與本地路由）
-    if (pathname.startsWith('/api/sign-cloudinary')) {
-      return fetch(request);
-    }
-
-    // 1.5 轉發至 POI Service 景點微服務 (Cloudflare D1 儲存)
+    // 1. 轉發至 POI Service 景點微服務 (Cloudflare D1 儲存)
+    // 注：/api/sign-cloudinary 已遷移至 Cloud Run 鑑權端點，由下方統一代理至後端
     const POI_POOL_ENDPOINTS = ['/api/poi/all', '/api/poi/import-link', '/api/poi/add', '/api/poi/batch-save'];
     const BACKEND_POI_ENDPOINTS = [
       '/api/poi/nearby',

@@ -41,7 +41,7 @@ const nextConfig = {
         buildActivityPosition: 'bottom-right',
     },
     // 🚀 本機開發與邊緣反向代理 (Local Development & Edge Reverse Proxy)
-    // 預設 after-files rewrites，確保本地 App Router (/api/sign-cloudinary) 優先由 Next.js 處理
+    // 使用 fallback rewrites，確保本地 App Router 優先處理，其餘路由（含 /api/sign-cloudinary）統一轉發至後端
     async rewrites() {
         const rawTarget = process.env.INTERNAL_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008";
         const backendTarget = rawTarget.replace(/\/+$/, "");

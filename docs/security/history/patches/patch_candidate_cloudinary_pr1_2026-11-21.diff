@@ -1,0 +1,2474 @@
+diff --git a/backend/main.py b/backend/main.py
+index bed42d3..264f5f8 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -239,6 +239,7 @@ from routers.auth import router as auth_router
+ from routers.mcp import router as mcp_router
+ from routers.affiliate import router as affiliate_router
+ from routers.notifications import router as notifications_router
++from routers.cloudinary import router as cloudinary_router
+ 
+ app.include_router(auth_router)
+ app.include_router(mcp_router)
+@@ -258,6 +259,7 @@ app.include_router(travel_data_router)
+ app.include_router(agents_router)
+ app.include_router(capsules_router)
+ app.include_router(notifications_router)
++app.include_router(cloudinary_router)
+ print("[Routers] ✅ All systems registered")
+ 
+ # 2. CORS 設定與主機白名單
+diff --git a/backend/routers/cloudinary.py b/backend/routers/cloudinary.py
+new file mode 100644
+index 0000000..a112264
+--- /dev/null
++++ b/backend/routers/cloudinary.py
+@@ -0,0 +1,283 @@
++"""
++Cloudinary Upload Signing Router
++--------------------------------
++Issues authenticated, short-lived SHA-1 upload signatures for direct browser-to-Cloudinary
++uploads so CLOUDINARY_API_SECRET lives exclusively on the Cloud Run backend (never Vercel).
++
++Security controls:
++1. Pre-auth rightmost-XFF IP rate limit runs BEFORE get_verified_user to shield
++   supabase.auth.get_user() fallback from unauthenticated floods without trusting
++   spoofable CF-Connecting-IP or leftmost X-Forwarded-For headers (CWE-290).
++2. Mandatory JWT authentication via Depends(get_verified_user), preserving
++   app.dependency_overrides[get_verified_user] and avoiding duplicate JWT decoding.
++3. Per-user SlowAPI rate limit (60/minute) keyed strictly by verified user ID
++   (uid:{user_id}), immune to X-Gemini-API-Key / IP header spoofing.
++4. Strict parameter allowlist, folder allowlist + subpath regex, non-bool integer
++   timestamp within ±600s, and public_id overwrite protection (restricted solely to
++   ryan_travel/streetview with ^mly_[0-9A-Za-z_-]{1,64}$).
++5. Atomic { signature, apiKey, cloudName } response with Cache-Control: no-store
++   to enable zero-downtime Cloudinary key rotation.
++"""
++
++from collections import OrderedDict, deque
++import hashlib
++import json
++import re
++import threading
++import time
++from typing import Dict, Optional, Union
++
++from fastapi import APIRouter, Depends, HTTPException, Request
++from fastapi.responses import JSONResponse
++
++from routers.users import _get_cloudinary_config
++from utils.deps import get_verified_user
++from utils.limiter import limiter
++
++router = APIRouter(tags=["cloudinary"])
++
++ALLOWED_PARAM_KEYS = frozenset({"timestamp", "folder", "public_id"})
++ALLOWED_FOLDERS = ("tabidachi_capsules", "ryan_travel", "trip_covers", "receipts")
++STREETVIEW_FOLDER = "ryan_travel/streetview"
++
++_SAFE_FOLDER_RE = re.compile(r"^[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)*\Z")
++_DIGIT_TIMESTAMP_RE = re.compile(r"^[1-9][0-9]{0,11}\Z")
++_ASCII_UINT_RE = re.compile(r"^[0-9]+\Z")
++_STREETVIEW_PUBLIC_ID_RE = re.compile(r"^mly_[0-9A-Za-z_-]{1,64}\Z")
++_TIMESTAMP_SKEW_SECONDS = 600
++_MAX_SIGN_BODY_BYTES = 4096
++
++# Pre-auth IP rate limit protects get_verified_user() / supabase.auth.get_user() fallback.
++# Uses a generous per-IP ceiling so shared Cloudflare/NAT egress IPs are not impacted.
++_PREAUTH_IP_LIMIT = 240
++_PREAUTH_IP_WINDOW_SECONDS = 60.0
++_PREAUTH_MAX_TRACKED_IPS = 4096
++_PREAUTH_LOCK = threading.Lock()
++_PREAUTH_IP_HITS: "OrderedDict[str, deque]" = OrderedDict()
++
++
++def _extract_trusted_client_ip(request: Request) -> str:
++    """
++    Extract client IP strictly from the rightmost Google Frontend (GFE) X-Forwarded-For
++    hop across ALL X-Forwarded-For header occurrences (RFC 9110 §5.3) or direct socket
++    peer address. Never trusts spoofable CF-Connecting-IP, X-Real-IP, or leftmost
++    X-Forwarded-For values (CWE-290).
++    """
++    xff_headers = request.headers.getlist("x-forwarded-for")
++    for raw_header in reversed(xff_headers):
++        # Walk backwards from the tail without splitting attacker-padded headers into O(N) lists
++        remaining = raw_header.rstrip(" ,\t")
++        while remaining:
++            if "," in remaining:
++                head, tail = remaining.rsplit(",", 1)
++                candidate = tail.strip()
++                if candidate:
++                    return candidate[:64].lower()
++                remaining = head.rstrip(" ,\t")
++            else:
++                candidate = remaining.strip()
++                if candidate:
++                    return candidate[:64].lower()
++                break
++    if request.client and request.client.host:
++        return str(request.client.host).strip()[:64].lower() or "unknown"
++    return "unknown"
++
++
++async def _enforce_preauth_ip_limit(request: Request) -> None:
++    """Pre-auth sliding-window IP limiter executed strictly before JWT verification."""
++    if not limiter.enabled:
++        return
++
++    client_ip = _extract_trusted_client_ip(request)
++    now = time.monotonic()
++    cutoff = now - _PREAUTH_IP_WINDOW_SECONDS
++
++    with _PREAUTH_LOCK:
++        bucket = _PREAUTH_IP_HITS.get(client_ip)
++        if bucket is not None:
++            while bucket and bucket[0] <= cutoff:
++                bucket.popleft()
++            if not bucket:
++                _PREAUTH_IP_HITS.pop(client_ip, None)
++                bucket = None
++
++        if bucket is not None and len(bucket) >= _PREAUTH_IP_LIMIT:
++            _PREAUTH_IP_HITS.move_to_end(client_ip)
++            raise HTTPException(
++                status_code=429,
++                detail="Too many upload signing requests. Please try again shortly.",
++                headers={
++                    "Retry-After": str(int(_PREAUTH_IP_WINDOW_SECONDS)),
++                    "Cache-Control": "no-store",
++                },
++            )
++
++        if bucket is None:
++            if len(_PREAUTH_IP_HITS) >= _PREAUTH_MAX_TRACKED_IPS:
++                expired_ips = [
++                    ip
++                    for ip, hits in _PREAUTH_IP_HITS.items()
++                    if not hits or hits[-1] <= cutoff
++                ]
++                for ip in expired_ips:
++                    _PREAUTH_IP_HITS.pop(ip, None)
++                while len(_PREAUTH_IP_HITS) >= _PREAUTH_MAX_TRACKED_IPS:
++                    _PREAUTH_IP_HITS.popitem(last=False)
++            bucket = deque()
++            _PREAUTH_IP_HITS[client_ip] = bucket
++        else:
++            _PREAUTH_IP_HITS.move_to_end(client_ip)
++
++        bucket.append(now)
++
++
++async def _bind_verified_user_for_sign(
++    request: Request,
++    _preauth: None = Depends(_enforce_preauth_ip_limit),
++    user_id: str = Depends(get_verified_user),
++) -> str:
++    """
++    Bind verified user_id onto request.state after pre-auth IP check and
++    get_verified_user() so SlowAPI can rate-limit by uid without double decoding JWT.
++    """
++    request.state.verified_user_id = user_id
++    return user_id
++
++
++def _cloudinary_sign_rate_limit_key(request: Request) -> str:
++    """Per-user SlowAPI key_func isolated from X-Gemini-API-Key and spoofable IP headers."""
++    uid = getattr(request.state, "verified_user_id", None)
++    if isinstance(uid, str) and uid.strip():
++        return f"uid:{uid.strip().lower()}"
++    return f"ip:{_extract_trusted_client_ip(request)}"
++
++
++def __reset_cloudinary_sign_rate_limits_for_testing() -> None:
++    """Reset module-level pre-auth IP buckets and SlowAPI storage for deterministic tests."""
++    with _PREAUTH_LOCK:
++        _PREAUTH_IP_HITS.clear()
++    storage = getattr(limiter, "_storage", None)
++    if storage is not None and hasattr(storage, "reset"):
++        storage.reset()
++
++
++def _is_allowed_folder(target_folder: object) -> bool:
++    if not isinstance(target_folder, str):
++        return False
++    if not target_folder or len(target_folder) > 160:
++        return False
++    if not _SAFE_FOLDER_RE.match(target_folder):
++        return False
++    return any(
++        target_folder == allowed or target_folder.startswith(f"{allowed}/")
++        for allowed in ALLOWED_FOLDERS
++    )
++
++
++def _parse_valid_timestamp(raw_timestamp: object, now_ts: int) -> int:
++    if isinstance(raw_timestamp, bool):
++        raise HTTPException(status_code=400, detail="Invalid or expired timestamp")
++
++    if isinstance(raw_timestamp, int):
++        ts = raw_timestamp
++    elif isinstance(raw_timestamp, str) and _DIGIT_TIMESTAMP_RE.match(raw_timestamp):
++        ts = int(raw_timestamp)
++    else:
++        raise HTTPException(status_code=400, detail="Invalid or expired timestamp")
++
++    if ts <= 0 or abs(ts - now_ts) > _TIMESTAMP_SKEW_SECONDS:
++        raise HTTPException(status_code=400, detail="Invalid or expired timestamp")
++    return ts
++
++
++@router.post("/api/sign-cloudinary")
++@limiter.limit("60/minute", key_func=_cloudinary_sign_rate_limit_key)
++async def sign_cloudinary_upload(
++    request: Request,
++    user_id: str = Depends(_bind_verified_user_for_sign),
++):
++    """
++    Generate an authenticated Cloudinary SHA-1 upload signature.
++    Returns atomic { signature, apiKey, cloudName } for zero-downtime key rotation.
++    """
++    declared_length: Optional[str] = None
++    for raw_cl in request.headers.getlist("content-length"):
++        for part in raw_cl.split(","):
++            token = part.strip(" \t")
++            if not _ASCII_UINT_RE.match(token):
++                raise HTTPException(status_code=400, detail="Invalid signing payload")
++            norm_length = token.lstrip("0") or "0"
++            if declared_length is not None and norm_length != declared_length:
++                raise HTTPException(status_code=400, detail="Invalid signing payload")
++            declared_length = norm_length
++
++    if declared_length is not None:
++        if len(declared_length) > 10 or int(declared_length) > _MAX_SIGN_BODY_BYTES:
++            raise HTTPException(status_code=413, detail="Signing payload too large")
++
++    chunks = bytearray()
++    async for chunk in request.stream():
++        if len(chunks) + len(chunk) > _MAX_SIGN_BODY_BYTES:
++            raise HTTPException(status_code=413, detail="Signing payload too large")
++        chunks.extend(chunk)
++
++    try:
++        body = json.loads(chunks.decode("utf-8"))
++    except Exception:
++        raise HTTPException(status_code=400, detail="Invalid signing payload")
++
++    if not isinstance(body, dict):
++        raise HTTPException(status_code=400, detail="Invalid signing payload")
++
++    params_to_sign = body.get("paramsToSign")
++    if not isinstance(params_to_sign, dict) or not params_to_sign:
++        raise HTTPException(status_code=400, detail="Invalid signing payload")
++
++    for key in params_to_sign.keys():
++        if not isinstance(key, str) or key not in ALLOWED_PARAM_KEYS:
++            raise HTTPException(status_code=400, detail="Unauthorized signing parameter")
++
++    target_folder = params_to_sign.get("folder")
++    if not _is_allowed_folder(target_folder):
++        raise HTTPException(status_code=400, detail="Unauthorized upload folder")
++
++    now_ts = int(time.time())
++    timestamp = _parse_valid_timestamp(params_to_sign.get("timestamp"), now_ts)
++
++    sanitized_params: Dict[str, Union[str, int]] = {
++        "timestamp": timestamp,
++        "folder": target_folder,
++    }
++
++    if "public_id" in params_to_sign:
++        if target_folder != STREETVIEW_FOLDER:
++            raise HTTPException(
++                status_code=400,
++                detail="Custom public_id is not permitted for this folder",
++            )
++        raw_public_id = params_to_sign.get("public_id")
++        if not isinstance(raw_public_id, str) or not _STREETVIEW_PUBLIC_ID_RE.match(raw_public_id):
++            raise HTTPException(status_code=400, detail="Invalid public_id")
++        sanitized_params["public_id"] = raw_public_id
++
++    cloud_name, api_key, api_secret = _get_cloudinary_config()
++    if not (cloud_name and api_key and api_secret):
++        raise HTTPException(
++            status_code=500,
++            detail="Upload signing service is not configured",
++        )
++
++    canonical_params = "&".join(
++        f"{k}={sanitized_params[k]}" for k in sorted(sanitized_params.keys())
++    )
++    signature = hashlib.sha1(f"{canonical_params}{api_secret}".encode("utf-8")).hexdigest()
++
++    return JSONResponse(
++        content={
++            "signature": signature,
++            "apiKey": api_key,
++            "cloudName": cloud_name,
++        },
++        headers={"Cache-Control": "no-store"},
++    )
+diff --git a/backend/tests/test_cloudinary_sign_sentinel.py b/backend/tests/test_cloudinary_sign_sentinel.py
+new file mode 100644
+index 0000000..b163a21
+--- /dev/null
++++ b/backend/tests/test_cloudinary_sign_sentinel.py
+@@ -0,0 +1,829 @@
++"""
++Security Sentinel In-Memory Verification Suite for POST /api/sign-cloudinary
++============================================================================
++Verifies:
++1. Mantis Block G Benign Controls (all legitimate upload folders, streetview public_id,
++   atomic {signature, apiKey, cloudName}, Cache-Control: no-store, CLOUDINARY_URL fallback,
++   and FastAPI dependency_overrides[get_verified_user] compatibility).
++2. Mandatory JWT authentication (401 on missing/forged/expired tokens, zero BYOK trigger keywords).
++3. public_id overwrite protection (restricted solely to ryan_travel/streetview with ^mly_[0-9A-Za-z_-]{1,64}$).
++4. Parameter allowlist, folder allowlist/traversal/delimiter/newline smuggling rejection.
++5. Timestamp skew (±600s, blocking year-2050 pre-signing), bool/float/Unicode-digit rejection.
++6. Per-user SlowAPI rate limit (60/min keyed strictly by uid) immune to X-Gemini-API-Key,
++   CF-Connecting-IP, and leftmost X-Forwarded-For spoofing (CWE-290).
++7. Pre-auth rightmost-XFF IP rate limit executing strictly BEFORE get_verified_user()
++   to protect supabase.auth.get_user() fallback from unauthenticated floods.
++"""
++
++import asyncio
++import hashlib
++import json
++import time
++import uuid
++from unittest.mock import MagicMock
++
++import jwt
++import pytest
++from fastapi.testclient import TestClient
++
++from main import app
++import routers.cloudinary as cloudinary_router
++from routers.cloudinary import __reset_cloudinary_sign_rate_limits_for_testing
++from utils.deps import get_supabase, get_verified_user
++from utils.limiter import limiter
++
++TEST_SESSION_SECRET = "test-session-secret-cloudinary-sign-sentinel-2026-32b"
++TEST_CLOUD_NAME = "demo_cloud_sandbox"
++TEST_API_KEY = "111122223333444"
++TEST_API_SECRET = "synthetic_test_secret_not_prod_xyz"
++BYOK_TRIGGER_WORDS = ("gemini", "api key", "金鑰")
++
++
++def _mint_session_jwt(
++    user_id: str,
++    *,
++    secret: str = TEST_SESSION_SECRET,
++    exp_offset: int = 3600,
++    issuer: str = "tabiji-core",
++    token_type: str = "device_session",
++) -> str:
++    now = int(time.time())
++    payload = {
++        "sub": user_id,
++        "iss": issuer,
++        "iat": now,
++        "exp": now + exp_offset,
++        "type": token_type,
++    }
++    return jwt.encode(payload, secret, algorithm="HS256")
++
++
++def _expected_sha1(params: dict, secret: str) -> str:
++    canonical = "&".join(f"{k}={params[k]}" for k in sorted(params.keys()))
++    return hashlib.sha1(f"{canonical}{secret}".encode("utf-8")).hexdigest()
++
++
++@pytest.fixture(autouse=True)
++def _isolated_cloudinary_env(monkeypatch):
++    monkeypatch.setenv("SESSION_SECRET_KEY", TEST_SESSION_SECRET)
++    monkeypatch.setenv("CLOUDINARY_CLOUD_NAME", TEST_CLOUD_NAME)
++    monkeypatch.setenv("CLOUDINARY_API_KEY", TEST_API_KEY)
++    monkeypatch.setenv("CLOUDINARY_API_SECRET", TEST_API_SECRET)
++    monkeypatch.delenv("CLOUDINARY_URL", raising=False)
++    monkeypatch.delenv("NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME", raising=False)
++    monkeypatch.delenv("NEXT_PUBLIC_CLOUDINARY_API_KEY", raising=False)
++
++    prev_enabled = limiter.enabled
++    limiter.enabled = True
++    __reset_cloudinary_sign_rate_limits_for_testing()
++    try:
++        yield
++    finally:
++        __reset_cloudinary_sign_rate_limits_for_testing()
++        limiter.enabled = prev_enabled
++        app.dependency_overrides.pop(get_verified_user, None)
++        app.dependency_overrides.pop(get_supabase, None)
++
++
++# =====================================================================
++# Mantis Block G: Benign Control Tests
++# =====================================================================
++
++
++def test_benign_valid_folders_and_sha1_signature_contract():
++    client = TestClient(app)
++    uid = str(uuid.uuid4())
++    token = _mint_session_jwt(uid)
++    now_ts = int(time.time())
++
++    legitimate_folders = [
++        "ryan_travel",
++        "ryan_travel/covers",
++        "ryan_travel/spots",
++        "ryan_travel/hotels",
++        "ryan_travel/avatars",
++        f"ryan_travel/receipts/{uid}",
++        "tabidachi_capsules",
++        "trip_covers",
++        "receipts",
++    ]
++
++    for folder in legitimate_folders:
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers={"Authorization": f"Bearer {token}"},
++            json={"paramsToSign": {"timestamp": now_ts, "folder": folder}},
++        )
++        assert resp.status_code == 200, f"folder={folder} failed: {resp.text}"
++        assert resp.headers.get("cache-control") == "no-store"
++        data = resp.json()
++        assert data == {
++            "signature": _expected_sha1({"timestamp": now_ts, "folder": folder}, TEST_API_SECRET),
++            "apiKey": TEST_API_KEY,
++            "cloudName": TEST_CLOUD_NAME,
++        }
++        assert TEST_API_SECRET not in resp.text
++
++
++def test_benign_streetview_public_id_and_string_timestamp():
++    client = TestClient(app)
++    token = _mint_session_jwt(str(uuid.uuid4()))
++    now_ts = int(time.time())
++
++    resp = client.post(
++        "/api/sign-cloudinary",
++        headers={"Authorization": f"Bearer {token}"},
++        json={
++            "paramsToSign": {
++                "timestamp": str(now_ts),
++                "folder": "ryan_travel/streetview",
++                "public_id": "mly_1414593269762424",
++            }
++        },
++    )
++    assert resp.status_code == 200, resp.text
++    data = resp.json()
++    expected = _expected_sha1(
++        {
++            "timestamp": now_ts,
++            "folder": "ryan_travel/streetview",
++            "public_id": "mly_1414593269762424",
++        },
++        TEST_API_SECRET,
++    )
++    assert data["signature"] == expected
++    assert data["apiKey"] == TEST_API_KEY
++    assert data["cloudName"] == TEST_CLOUD_NAME
++
++
++def test_benign_cloudinary_url_fallback_and_whitespace_stripping(monkeypatch):
++    monkeypatch.delenv("CLOUDINARY_CLOUD_NAME", raising=False)
++    monkeypatch.delenv("CLOUDINARY_API_KEY", raising=False)
++    monkeypatch.delenv("CLOUDINARY_API_SECRET", raising=False)
++    monkeypatch.setenv(
++        "CLOUDINARY_URL",
++        "  cloudinary://555666777:fallback_secret_trimmed@fallback_cloud \r\n",
++    )
++
++    client = TestClient(app)
++    token = _mint_session_jwt(str(uuid.uuid4()))
++    now_ts = int(time.time())
++
++    resp = client.post(
++        "/api/sign-cloudinary",
++        headers={"Authorization": f"Bearer {token}"},
++        json={"paramsToSign": {"timestamp": now_ts, "folder": "tabidachi_capsules"}},
++    )
++    assert resp.status_code == 200, resp.text
++    data = resp.json()
++    assert data["cloudName"] == "fallback_cloud"
++    assert data["apiKey"] == "555666777"
++    assert data["signature"] == _expected_sha1(
++        {"timestamp": now_ts, "folder": "tabidachi_capsules"},
++        "fallback_secret_trimmed",
++    )
++
++
++def test_benign_dependency_override_get_verified_user_preserved():
++    override_uid = str(uuid.uuid4())
++    app.dependency_overrides[get_verified_user] = lambda: override_uid
++
++    client = TestClient(app)
++    now_ts = int(time.time())
++    resp = client.post(
++        "/api/sign-cloudinary",
++        json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}},
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["apiKey"] == TEST_API_KEY
++
++
++# =====================================================================
++# Adversarial Security Tests
++# =====================================================================
++
++
++def test_attack_unauthenticated_and_forged_jwt_rejected_401():
++    client = TestClient(app)
++    now_ts = int(time.time())
++    payload = {"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}}
++
++    # 1. Missing Authorization
++    res_missing = client.post("/api/sign-cloudinary", json=payload)
++    assert res_missing.status_code == 401
++    detail_missing = str(res_missing.json().get("detail", "")).lower()
++    for word in BYOK_TRIGGER_WORDS:
++        assert word not in detail_missing
++
++    # 2. Forged JWT signed with attacker secret
++    forged_jwt = _mint_session_jwt(
++        str(uuid.uuid4()),
++        secret="attacker-forged-secret-of-at-least-32-bytes",
++    )
++    res_forged = client.post(
++        "/api/sign-cloudinary",
++        headers={"Authorization": f"Bearer {forged_jwt}"},
++        json=payload,
++    )
++    assert res_forged.status_code == 401
++    detail_forged = str(res_forged.json().get("detail", "")).lower()
++    for word in BYOK_TRIGGER_WORDS:
++        assert word not in detail_forged
++
++    # 3. Expired JWT
++    expired_jwt = _mint_session_jwt(str(uuid.uuid4()), exp_offset=-120)
++    res_expired = client.post(
++        "/api/sign-cloudinary",
++        headers={"Authorization": f"Bearer {expired_jwt}"},
++        json=payload,
++    )
++    assert res_expired.status_code == 401
++    detail_expired = str(res_expired.json().get("detail", "")).lower()
++    for word in BYOK_TRIGGER_WORDS:
++        assert word not in detail_expired
++
++
++def test_attack_public_id_overwrite_protection():
++    client = TestClient(app)
++    token = _mint_session_jwt(str(uuid.uuid4()))
++    now_ts = int(time.time())
++    headers = {"Authorization": f"Bearer {token}"}
++
++    # public_id forbidden on every non-streetview folder (prevents overwriting victim assets)
++    disallowed_folders = [
++        "ryan_travel",
++        "ryan_travel/avatars",
++        "ryan_travel/covers",
++        "ryan_travel/spots",
++        "ryan_travel/receipts/victim-uid",
++        "tabidachi_capsules",
++        "trip_covers",
++        "receipts",
++    ]
++    for folder in disallowed_folders:
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers=headers,
++            json={"paramsToSign": {"timestamp": now_ts, "folder": folder, "public_id": "mly_12345"}},
++        )
++        assert resp.status_code == 400, f"public_id unexpectedly accepted for folder={folder}"
++
++    # Invalid public_id formats even inside ryan_travel/streetview
++    bad_public_ids = [
++        "victim_avatar_123",
++        "mly_",
++        "mly_../other",
++        "mly_123/456",
++        "mly_123&overwrite=true",
++        "mly_123\n",
++        "mly_" + ("a" * 65),
++        None,
++        12345,
++    ]
++    for bad_pid in bad_public_ids:
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers=headers,
++            json={
++                "paramsToSign": {
++                    "timestamp": now_ts,
++                    "folder": "ryan_travel/streetview",
++                    "public_id": bad_pid,
++                }
++            },
++        )
++        assert resp.status_code == 400, f"Bad public_id unexpectedly accepted: {bad_pid!r}"
++
++
++def test_attack_parameter_injection_and_folder_smuggling():
++    client = TestClient(app)
++    token = _mint_session_jwt(str(uuid.uuid4()))
++    now_ts = int(time.time())
++    headers = {"Authorization": f"Bearer {token}"}
++
++    # Unauthorized signing parameter keys
++    for extra_key, extra_val in [
++        ("overwrite", True),
++        ("invalidate", True),
++        ("eager", "w_100"),
++        ("transformation", "c_scale,w_500"),
++        ("upload_preset", "unsigned_preset"),
++        ("notification_url", "https://evil.example/hook"),
++        ("callback", "https://evil.example/cb"),
++    ]:
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers=headers,
++            json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers", extra_key: extra_val}},
++        )
++        assert resp.status_code == 400, f"Extra key {extra_key} unexpectedly accepted"
++
++    # Malicious / malformed folders
++    bad_folders = [
++        None,
++        "",
++        "attacker_bucket",
++        "ryan_travel_evil",
++        "ryan_travel/../evil",
++        "ryan_travel\\covers",
++        "ryan_travel/covers&overwrite=true",
++        "ryan_travel/covers?x=1",
++        "ryan_travel/covers\n",
++        "ryan_travel//covers",
++        "/ryan_travel/covers",
++        "ryan_travel/covers/",
++        "ryan_travel/" + ("a" * 160),
++    ]
++    for folder in bad_folders:
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers=headers,
++            json={"paramsToSign": {"timestamp": now_ts, "folder": folder}},
++        )
++        assert resp.status_code == 400, f"Bad folder unexpectedly accepted: {folder!r}"
++
++    # Malformed payloads
++    assert client.post("/api/sign-cloudinary", headers=headers, json={}).status_code == 400
++    assert client.post("/api/sign-cloudinary", headers=headers, json={"paramsToSign": {}}).status_code == 400
++    assert client.post("/api/sign-cloudinary", headers=headers, json={"paramsToSign": []}).status_code == 400
++    assert client.post(
++        "/api/sign-cloudinary",
++        headers={**headers, "Content-Type": "application/json"},
++        content=b"not-valid-json",
++    ).status_code == 400
++
++
++def test_attack_timestamp_skew_bool_float_and_unicode_digits():
++    client = TestClient(app)
++    token = _mint_session_jwt(str(uuid.uuid4()))
++    now_ts = int(time.time())
++    headers = {"Authorization": f"Bearer {token}"}
++
++    bad_timestamps = [
++        2524608000,           # Year 2050 pre-signed token
++        now_ts + 601,         # Just beyond +600s skew
++        now_ts - 601,         # Just beyond -600s skew
++        0,
++        -100,
++        True,                 # Python bool is subclass of int
++        False,
++        float(now_ts) + 0.5,  # Fractional float
++        float(now_ts),        # Exact float
++        "١٧٠٠٠٠٠٠٠٠",          # Non-ASCII Unicode digits
++        f"{now_ts}\n",        # Trailing newline
++        None,
++    ]
++    for bad_ts in bad_timestamps:
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers=headers,
++            json={"paramsToSign": {"timestamp": bad_ts, "folder": "ryan_travel/covers"}},
++        )
++        assert resp.status_code == 400, f"Bad timestamp unexpectedly accepted: {bad_ts!r}"
++
++    # Boundary acceptance within ±600s
++    for ok_ts in (now_ts - 590, now_ts + 590):
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers=headers,
++            json={"paramsToSign": {"timestamp": ok_ts, "folder": "ryan_travel/covers"}},
++        )
++        assert resp.status_code == 200, f"Valid boundary timestamp rejected: {ok_ts}"
++
++
++def test_attack_per_user_rate_limit_immune_to_header_spoofing():
++    client = TestClient(app)
++    uid_a = str(uuid.uuid4())
++    uid_b = str(uuid.uuid4())
++    token_a = _mint_session_jwt(uid_a)
++    token_b = _mint_session_jwt(uid_b)
++    now_ts = int(time.time())
++
++    # User A exhausts 60/min limit while rotating spoofable headers every single request
++    for i in range(60):
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers={
++                "Authorization": f"Bearer {token_a}",
++                "X-Gemini-API-Key": f"spoof-rotate-key-{i:04d}-1234567890123456789",
++                "X-Gemini-Key": f"spoof-alt-key-{i:04d}-123456789012345678901",
++                "CF-Connecting-IP": f"198.51.100.{(i % 250) + 1}",
++                "X-Forwarded-For": f"203.0.113.{(i % 250) + 1}, 35.190.1.10",
++            },
++            json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}},
++        )
++        assert resp.status_code == 200, f"Request {i + 1}/60 unexpectedly failed: {resp.status_code}"
++
++    # 61st request from User A MUST hit 429 even with brand new spoofed headers,
++    # while preserving outermost CORS headers for trusted origins.
++    blocked = client.post(
++        "/api/sign-cloudinary",
++        headers={
++            "Authorization": f"Bearer {token_a}",
++            "Origin": "https://www.tabijiapp.com",
++            "X-Gemini-API-Key": "spoof-brand-new-key-9999999999999999",
++            "CF-Connecting-IP": "192.0.2.200",
++            "X-Forwarded-For": "192.0.2.201, 35.190.1.10",
++        },
++        json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}},
++    )
++    assert blocked.status_code == 429
++    assert blocked.headers.get("access-control-allow-origin") == "https://www.tabijiapp.com"
++
++    # User B sharing the EXACT same rightmost egress IP is NOT affected by User A's bucket
++    user_b_resp = client.post(
++        "/api/sign-cloudinary",
++        headers={
++            "Authorization": f"Bearer {token_b}",
++            "X-Forwarded-For": "203.0.113.99, 35.190.1.10",
++        },
++        json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}},
++    )
++    assert user_b_resp.status_code == 200
++
++
++def test_attack_preauth_ip_limiter_blocks_unauth_flood_before_supabase_fallback(monkeypatch):
++    monkeypatch.setattr(cloudinary_router, "_PREAUTH_IP_LIMIT", 5)
++
++    mock_supabase = MagicMock()
++    mock_supabase.auth.get_user.side_effect = Exception("Invalid opaque token")
++    monkeypatch.setattr("utils.deps.get_supabase", lambda request=None: mock_supabase)
++
++    client = TestClient(app)
++    now_ts = int(time.time())
++    payload = {"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}}
++
++    # 5 unauthenticated requests with non-tabiji-core opaque tokens from same rightmost GFE IP
++    # while rotating spoofable CF-Connecting-IP and leftmost XFF
++    for i in range(5):
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers={
++                "Authorization": f"Bearer opaque-external-token-{i}",
++                "CF-Connecting-IP": f"198.51.100.{i + 1}",
++                "X-Forwarded-For": f"203.0.113.{i + 1}, 34.100.200.5",
++            },
++            json=payload,
++        )
++        assert resp.status_code == 401
++
++    assert mock_supabase.auth.get_user.call_count == 5
++
++    # 6th request from the same rightmost GFE IP MUST return 429 BEFORE supabase.auth.get_user()
++    blocked = client.post(
++        "/api/sign-cloudinary",
++        headers={
++            "Authorization": "Bearer opaque-external-token-flood",
++            "CF-Connecting-IP": "198.51.100.99",
++            "X-Forwarded-For": "203.0.113.99, 34.100.200.5",
++        },
++        json=payload,
++    )
++    assert blocked.status_code == 429
++    assert mock_supabase.auth.get_user.call_count == 5
++    detail_429 = str(blocked.json().get("detail", "")).lower()
++    for word in BYOK_TRIGGER_WORDS:
++        assert word not in detail_429
++
++    # Different rightmost GFE IP is isolated into its own bucket
++    other_ip_resp = client.post(
++        "/api/sign-cloudinary",
++        headers={
++            "Authorization": "Bearer opaque-external-token-other-ip",
++            "X-Forwarded-For": "203.0.113.1, 34.100.200.99",
++        },
++        json=payload,
++    )
++    assert other_ip_resp.status_code == 401
++    assert mock_supabase.auth.get_user.call_count == 6
++
++
++def test_missing_cloudinary_config_returns_500_without_byok_keywords(monkeypatch):
++    monkeypatch.delenv("CLOUDINARY_CLOUD_NAME", raising=False)
++    monkeypatch.delenv("CLOUDINARY_API_KEY", raising=False)
++    monkeypatch.delenv("CLOUDINARY_API_SECRET", raising=False)
++    monkeypatch.delenv("CLOUDINARY_URL", raising=False)
++
++    client = TestClient(app)
++    token = _mint_session_jwt(str(uuid.uuid4()))
++    now_ts = int(time.time())
++
++    resp = client.post(
++        "/api/sign-cloudinary",
++        headers={"Authorization": f"Bearer {token}"},
++        json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}},
++    )
++    assert resp.status_code == 500
++    body_lower = resp.text.lower()
++    assert "cloudinary_api_secret" not in body_lower
++    for word in BYOK_TRIGGER_WORDS:
++        assert word not in body_lower
++
++
++def test_benign_zero_double_jwt_decode_and_secret_trailing_ws_stripped(monkeypatch):
++    """Mantis Block G benign control: single JWT decode per request + secret CRLF trimming."""
++    monkeypatch.setenv("CLOUDINARY_API_SECRET", f"  {TEST_API_SECRET}\r\n ")
++
++    decode_calls = []
++    orig_decode = jwt.decode
++
++    def _spy_decode(*args, **kwargs):
++        decode_calls.append(True)
++        return orig_decode(*args, **kwargs)
++
++    monkeypatch.setattr("utils.deps.jwt.decode", _spy_decode)
++
++    client = TestClient(app)
++    token = _mint_session_jwt(str(uuid.uuid4()))
++    now_ts = int(time.time())
++
++    resp = client.post(
++        "/api/sign-cloudinary",
++        headers={"Authorization": f"Bearer {token}"},
++        json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}},
++    )
++    assert resp.status_code == 200, resp.text
++    assert len(decode_calls) == 1, f"Expected exactly 1 jwt.decode call, got {len(decode_calls)}"
++    assert resp.json()["signature"] == _expected_sha1(
++        {"timestamp": now_ts, "folder": "ryan_travel/covers"},
++        TEST_API_SECRET,
++    )
++
++
++def test_attack_multi_header_xff_and_inflated_xff_cannot_bypass_preauth_limit(monkeypatch):
++    """CWE-290 regression: multiple X-Forwarded-For headers (RFC 9110 §5.3) must use true rightmost hop."""
++    monkeypatch.setattr(cloudinary_router, "_PREAUTH_IP_LIMIT", 5)
++
++    mock_supabase = MagicMock()
++    mock_supabase.auth.get_user.side_effect = Exception("Invalid opaque token")
++    monkeypatch.setattr("utils.deps.get_supabase", lambda request=None: mock_supabase)
++
++    client = TestClient(app)
++    now_ts = int(time.time())
++    payload = {"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}}
++
++    for i in range(5):
++        req = client.build_request(
++            "POST",
++            "/api/sign-cloudinary",
++            headers=[
++                ("Authorization", f"Bearer opaque-multi-xff-{i}"),
++                ("X-Forwarded-For", f"198.51.100.{i + 1}, " + (", " * 500) + f"203.0.113.{i + 1}"),
++                ("X-Forwarded-For", "34.100.200.5"),
++            ],
++            json=payload,
++        )
++        resp = client.send(req)
++        assert resp.status_code == 401
++
++    assert mock_supabase.auth.get_user.call_count == 5
++
++    blocked_req = client.build_request(
++        "POST",
++        "/api/sign-cloudinary",
++        headers=[
++            ("Authorization", "Bearer opaque-multi-xff-flood"),
++            ("X-Forwarded-For", "198.51.100.250"),
++            ("X-Forwarded-For", "34.100.200.5, "),
++        ],
++        json=payload,
++    )
++    blocked = client.send(blocked_req)
++    assert blocked.status_code == 429
++    assert blocked.headers.get("retry-after") == "60"
++    assert blocked.headers.get("cache-control") == "no-store"
++    assert mock_supabase.auth.get_user.call_count == 5
++
++
++def test_attack_uuid_case_variation_cannot_split_per_user_rate_limit():
++    """Rate limit key must normalize UUID hex case so mixed-case sub cannot double quota."""
++    client = TestClient(app)
++    uid_lower = "3f7abf22-b447-4281-b240-584549c79943"
++    token_lower = _mint_session_jwt(uid_lower)
++    token_upper = _mint_session_jwt(uid_lower.upper())
++    now_ts = int(time.time())
++
++    for i in range(60):
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers={"Authorization": f"Bearer {token_lower}"},
++            json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}},
++        )
++        assert resp.status_code == 200, f"Request {i + 1}/60 failed: {resp.status_code}"
++
++    blocked_upper = client.post(
++        "/api/sign-cloudinary",
++        headers={"Authorization": f"Bearer {token_upper}"},
++        json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}},
++    )
++    assert blocked_upper.status_code == 429
++
++
++def test_attack_oversized_payload_and_leading_zero_timestamp_rejected():
++    """Reject leading-zero digit strings (canonicalization drift) and oversized JSON bodies (>4KB)."""
++    client = TestClient(app)
++    token = _mint_session_jwt(str(uuid.uuid4()))
++    headers = {"Authorization": f"Bearer {token}"}
++    now_ts = int(time.time())
++
++    # Leading-zero timestamp string rejected (400)
++    resp_leading_zero = client.post(
++        "/api/sign-cloudinary",
++        headers=headers,
++        json={"paramsToSign": {"timestamp": f"0{now_ts}", "folder": "ryan_travel/covers"}},
++    )
++    assert resp_leading_zero.status_code == 400
++
++    # Oversized JSON payload rejected (413) without BYOK keywords
++    resp_oversized = client.post(
++        "/api/sign-cloudinary",
++        headers=headers,
++        json={"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}, "junk": "A" * 8192},
++    )
++    assert resp_oversized.status_code == 413
++    detail_413 = str(resp_oversized.json().get("detail", "")).lower()
++    for word in BYOK_TRIGGER_WORDS:
++        assert word not in detail_413
++
++
++def test_attack_preauth_ip_lru_eviction_and_window_expiry(monkeypatch):
++    """
++    Pre-auth IP limiter must use LRU (not FIFO) eviction so an actively flooding IP
++    inserted earliest cannot have its bucket wiped when a single new IP arrives at capacity,
++    must normalize IPv6 hex case, and must prune expired buckets once the window elapses.
++    """
++    monkeypatch.setattr(cloudinary_router, "_PREAUTH_MAX_TRACKED_IPS", 5)
++    monkeypatch.setattr(cloudinary_router, "_PREAUTH_IP_LIMIT", 3)
++
++    fake_clock = [1000.0]
++    monkeypatch.setattr(cloudinary_router.time, "monotonic", lambda: fake_clock[0])
++
++    client = TestClient(app)
++    now_ts = int(time.time())
++    payload = {"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}}
++
++    # 1. Attacker IPv6 hits once at t=1000 (inserted at front of LRU table)
++    r1 = client.post("/api/sign-cloudinary", headers={"X-Forwarded-For": "2001:DB8::1"}, json=payload)
++    assert r1.status_code == 401
++
++    # 2. 4 other IPs arrive at t=1001..1004, filling the table to capacity (5/5)
++    for k in range(2, 6):
++        fake_clock[0] += 1.0
++        rk = client.post("/api/sign-cloudinary", headers={"X-Forwarded-For": f"10.0.0.{k}"}, json=payload)
++        assert rk.status_code == 401
++
++    # 3. Attacker IPv6 sends 2 more requests with lowercase hex (must share same bucket & move to MRU)
++    fake_clock[0] = 1020.0
++    for _ in range(2):
++        r_more = client.post("/api/sign-cloudinary", headers={"X-Forwarded-For": "2001:db8::1"}, json=payload)
++        assert r_more.status_code == 401
++
++    # 4th request hits pre-auth 429 and refreshes MRU position
++    r_blocked_before = client.post("/api/sign-cloudinary", headers={"X-Forwarded-For": "2001:DB8::1"}, json=payload)
++    assert r_blocked_before.status_code == 429
++    assert r_blocked_before.headers.get("retry-after") == "60"
++    assert r_blocked_before.headers.get("cache-control") == "no-store"
++
++    # 4. A single new IP arrives at capacity -> must evict idle 10.0.0.2, NOT active flooder 2001:db8::1
++    fake_clock[0] = 1021.0
++    r_new_ip = client.post("/api/sign-cloudinary", headers={"X-Forwarded-For": "10.0.0.99"}, json=payload)
++    assert r_new_ip.status_code == 401
++    assert "10.0.0.2" not in cloudinary_router._PREAUTH_IP_HITS
++    assert "2001:db8::1" in cloudinary_router._PREAUTH_IP_HITS
++
++    # Active flooder MUST still be blocked (429)
++    r_blocked_after = client.post("/api/sign-cloudinary", headers={"X-Forwarded-For": "2001:db8::1"}, json=payload)
++    assert r_blocked_after.status_code == 429
++
++    # 5. Once window (>60s) elapses, expired buckets prune and IP recovers cleanly
++    fake_clock[0] = 1085.0
++    r_recovered = client.post("/api/sign-cloudinary", headers={"X-Forwarded-For": "2001:db8::1"}, json=payload)
++    assert r_recovered.status_code == 401
++
++
++def test_attack_content_length_smuggling_and_chunked_stream_cutoff():
++    """
++    Verify RFC 9110 Content-Length strictness (rejecting negative, signed, underscored,
++    Unicode-digit, empty, and conflicting duplicate Content-Length headers) and verify
++    chunked streaming without Content-Length aborts immediately at >4096 bytes without
++    draining subsequent chunks from ASGI receive().
++    """
++    client = TestClient(app)
++    token = _mint_session_jwt(str(uuid.uuid4()))
++    now_ts = int(time.time())
++    valid_bytes = json.dumps(
++        {"paramsToSign": {"timestamp": now_ts, "folder": "ryan_travel/covers"}}
++    ).encode("utf-8")
++
++    # Malformed / negative / non-ASCII Content-Length must return 400
++    for bad_cl in ("-1", "+10", "1_000", "abc", ""):
++        resp = client.post(
++            "/api/sign-cloudinary",
++            headers={
++                "Authorization": f"Bearer {token}",
++                "Content-Length": bad_cl,
++                "Content-Type": "application/json",
++            },
++            content=valid_bytes,
++        )
++        assert resp.status_code == 400, f"Malformed Content-Length={bad_cl!r} returned {resp.status_code}"
++
++    # Conflicting multi-header Content-Length must return 400
++    req_conflict = client.build_request(
++        "POST",
++        "/api/sign-cloudinary",
++        headers=[
++            ("Authorization", f"Bearer {token}"),
++            ("Content-Length", "10"),
++            ("Content-Length", "99999"),
++            ("Content-Type", "application/json"),
++        ],
++        content=valid_bytes,
++    )
++    assert client.send(req_conflict).status_code == 400
++
++    # Identical oversized multi-header & huge-digit Content-Length must return 413
++    req_dup_large = client.build_request(
++        "POST",
++        "/api/sign-cloudinary",
++        headers=[
++            ("Authorization", f"Bearer {token}"),
++            ("Content-Length", "5000"),
++            ("Content-Length", "5000"),
++            ("Content-Type", "application/json"),
++        ],
++        content=valid_bytes,
++    )
++    assert client.send(req_dup_large).status_code == 413
++
++    resp_giant_cl = client.post(
++        "/api/sign-cloudinary",
++        headers={
++            "Authorization": f"Bearer {token}",
++            "Content-Length": "9" * 5000,
++            "Content-Type": "application/json",
++        },
++        content=valid_bytes,
++    )
++    assert resp_giant_cl.status_code == 413
++
++    # Exact 4096-byte body without Content-Length (chunked) succeeds (200)
++    prefix = valid_bytes[:-1] + b',"pad":"'
++    suffix = b'"}'
++    pad_len = 4096 - len(prefix) - len(suffix)
++    exact_chunks = [prefix, b"A" * pad_len, suffix]
++
++    def _gen_exact():
++        yield from exact_chunks
++
++    resp_exact = client.post(
++        "/api/sign-cloudinary",
++        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
++        content=_gen_exact(),
++    )
++    assert resp_exact.status_code == 200
++
++    # Direct ASGI chunked stream (no Content-Length) exceeding 4096 bytes must abort with 413
++    # on chunk 3 (4097th byte) and NEVER await chunk 4..20 from receive().
++    async def _run_asgi_stream_cutoff():
++        stream_chunks = [b"A" * 2048, b"B" * 2048, b"C", b"D" * 2048, b"E" * 2048]
++        receive_calls = 0
++        sent_messages = []
++
++        async def _receive():
++            nonlocal receive_calls
++            if receive_calls < len(stream_chunks):
++                chunk = stream_chunks[receive_calls]
++                receive_calls += 1
++                more = receive_calls < len(stream_chunks)
++                return {"type": "http.request", "body": chunk, "more_body": more}
++            return {"type": "http.request", "body": b"", "more_body": False}
++
++        async def _send(message):
++            sent_messages.append(message)
++
++        scope = {
++            "type": "http",
++            "asgi": {"version": "3.0"},
++            "http_version": "1.1",
++            "method": "POST",
++            "scheme": "http",
++            "path": "/api/sign-cloudinary",
++            "raw_path": b"/api/sign-cloudinary",
++            "query_string": b"",
++            "headers": [
++                (b"host", b"testserver"),
++                (b"authorization", f"Bearer {token}".encode("ascii")),
++                (b"content-type", b"application/json"),
++                (b"transfer-encoding", b"chunked"),
++            ],
++            "client": ("127.0.0.1", 50000),
++            "server": ("testserver", 80),
++        }
++        await app(scope, _receive, _send)
++        return receive_calls, sent_messages
++
++    receive_calls, sent_messages = asyncio.run(_run_asgi_stream_cutoff())
++    start_msg = next(m for m in sent_messages if m["type"] == "http.response.start")
++    assert start_msg["status"] == 413
++    assert receive_calls == 3, f"Expected immediate cutoff on 3rd chunk (4097 bytes), read {receive_calls} chunks"
+diff --git a/cloudflare/edge-shield/worker.js b/cloudflare/edge-shield/worker.js
+index a402418..385e95b 100644
+--- a/cloudflare/edge-shield/worker.js
++++ b/cloudflare/edge-shield/worker.js
+@@ -45,12 +45,8 @@ export default {
+     const url = new URL(request.url);
+     const pathname = url.pathname;
+ 
+-    // 1. 放行 Vercel 本地處理的 API（如 Cloudinary 收據簽章與本地路由）
+-    if (pathname.startsWith('/api/sign-cloudinary')) {
+-      return fetch(request);
+-    }
+-
+-    // 1.5 轉發至 POI Service 景點微服務 (Cloudflare D1 儲存)
++    // 1. 轉發至 POI Service 景點微服務 (Cloudflare D1 儲存)
++    // 注：/api/sign-cloudinary 已遷移至 Cloud Run 鑑權端點，由下方統一代理至後端
+     const POI_POOL_ENDPOINTS = ['/api/poi/all', '/api/poi/import-link', '/api/poi/add', '/api/poi/batch-save'];
+     const BACKEND_POI_ENDPOINTS = [
+       '/api/poi/nearby',
+diff --git a/frontend/__tests__/cloudinary-upload-components-sentinel.test.tsx b/frontend/__tests__/cloudinary-upload-components-sentinel.test.tsx
+new file mode 100644
+index 0000000..fe78360
+--- /dev/null
++++ b/frontend/__tests__/cloudinary-upload-components-sentinel.test.tsx
+@@ -0,0 +1,453 @@
++/**
++ * @vitest-environment jsdom
++ */
++import React from 'react'
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
++import { render, fireEvent, waitFor } from '@testing-library/react'
++import { toast } from 'sonner'
++
++vi.mock('sonner', () => ({
++    toast: {
++        success: vi.fn(),
++        error: vi.fn(),
++        info: vi.fn(),
++    },
++}))
++
++vi.mock('@/lib/image-utils', () => ({
++    compressImage: vi.fn(async (file: File) => file),
++}))
++
++vi.mock('@/lib/hooks', () => ({
++    useHaptic: () => ({
++        tap: vi.fn(),
++        selection: vi.fn(),
++        success: vi.fn(),
++        error: vi.fn(),
++    }),
++}))
++
++vi.mock('@/lib/hooks/useTripRealtime', () => ({
++    broadcastTripEvent: vi.fn(async () => {}),
++}))
++
++vi.mock('@/lib/LanguageContext', () => ({
++    useLanguage: () => ({
++        lang: 'zh',
++        t: (key: string) => key,
++    }),
++}))
++
++vi.mock('next/image', () => ({
++    default: ({
++        alt = '',
++        fill: _fill,
++        unoptimized: _unoptimized,
++        priority: _priority,
++        ...props
++    }: React.ComponentProps<'img'> & { fill?: boolean; unoptimized?: boolean; priority?: boolean }) => {
++        void _fill
++        void _unoptimized
++        void _priority
++        // eslint-disable-next-line @next/next/no-img-element
++        return <img alt={alt} {...props} />
++    },
++}))
++
++vi.mock('framer-motion', () => ({
++    motion: {
++        div: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
++    },
++    AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
++}))
++
++import { ImageUpload } from '@/components/ui/image-upload'
++import { MultiImageUpload } from '@/components/ui/multi-image-upload'
++import { TripCoverMenu } from '@/components/itinerary/TripCoverMenu'
++import { TripSettingsView } from '@/components/itinerary/TripSettingsView'
++import { tripsApi } from '@/lib/api'
++import { __resetExchangeFailedForTesting } from '@/lib/auth-session'
++import type { Trip } from '@/lib/itinerary-types'
++
++function createMockJwt(payload: Record<string, unknown>): string {
++    const enc = (obj: Record<string, unknown>) =>
++        btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
++    return `${enc({ alg: 'HS256', typ: 'JWT' })}.${enc(payload)}.mock_sig`
++}
++
++const TEST_UID = '3f7abf22-b447-4281-b240-584549c79943'
++
++const SAMPLE_TRIP: Trip = {
++    id: 'trip-upload-test',
++    title: '京都賞楓之旅',
++    start_date: '2026-11-10',
++    end_date: '2026-11-14',
++    created_by: TEST_UID,
++    days: [{ day: 1, activities: [] }],
++}
++
++describe('🛡️ Cloudinary PR 1 React Upload Components Interaction Sentinel', () => {
++    const origFetch = globalThis.fetch
++    const origXhr = globalThis.XMLHttpRequest
++    const origTestAuth = process.env.TEST_AUTH_EXCHANGE
++
++    beforeEach(() => {
++        vi.clearAllMocks()
++        __resetExchangeFailedForTesting()
++        localStorage.clear()
++        process.env.TEST_AUTH_EXCHANGE = 'true'
++        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME', 'stale_env_cloud')
++        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_API_KEY', '999999999999999')
++
++        const futureExp = Math.floor(Date.now() / 1000) + 3600
++        localStorage.setItem('user_uuid', TEST_UID)
++        localStorage.setItem('user_nickname', 'Ryan')
++        localStorage.setItem('user_recovery_key', 'tbj_rec_deadbeef_0123456789abcdef0123456789abcdef')
++        localStorage.setItem('tabiji_session_token', createMockJwt({ sub: TEST_UID, exp: futureExp }))
++    })
++
++    afterEach(() => {
++        globalThis.fetch = origFetch
++        globalThis.XMLHttpRequest = origXhr
++        process.env.TEST_AUTH_EXCHANGE = origTestAuth
++        vi.unstubAllEnvs()
++        vi.restoreAllMocks()
++    })
++
++    it('C1 (ImageUpload): retries once on 401 refresh, uploads with atomic rotated server credentials, and resets loading/progress on 429 failure', async () => {
++        const freshJwt = createMockJwt({ sub: TEST_UID, exp: Math.floor(Date.now() / 1000) + 7200 })
++        let signCalls = 0
++        const authSeen: Array<string | null> = []
++
++        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
++            const url = typeof input === 'string' ? input : input.toString()
++            if (url.includes('/api/auth/session')) {
++                return new Response(JSON.stringify({ access_token: freshJwt, user_id: TEST_UID }), {
++                    status: 200,
++                    headers: { 'Content-Type': 'application/json' },
++                })
++            }
++            if (url.includes('/api/sign-cloudinary')) {
++                signCalls += 1
++                authSeen.push(new Headers(init?.headers).get('Authorization'))
++                if (signCalls === 1) {
++                    return new Response(JSON.stringify({ detail: 'Invalid or expired token' }), {
++                        status: 401,
++                        headers: { 'Content-Type': 'application/json' },
++                    })
++                }
++                return new Response(
++                    JSON.stringify({
++                        signature: 'img_upload_sig_v2',
++                        apiKey: '111122223333444',
++                        cloudName: 'rotated_prod_cloud',
++                    }),
++                    { status: 200, headers: { 'Content-Type': 'application/json' } }
++                )
++            }
++            return new Response('{}', { status: 404 })
++        }) as unknown as typeof fetch
++
++        const xhrLog: Array<{ url: string; apiKey: string; signature: string; folder: string }> = []
++        class MockXHR {
++            status = 200
++            responseText = JSON.stringify({
++                secure_url: 'https://res.cloudinary.com/rotated_prod_cloud/image/upload/v1/ryan_travel/receipts/r1.jpg',
++            })
++            upload: { onprogress?: (e: { lengthComputable: boolean; loaded: number; total: number }) => void } = {}
++            onload?: () => void
++            onerror?: () => void
++            private targetUrl = ''
++            open(_method: string, url: string) {
++                this.targetUrl = url
++            }
++            send(body: FormData) {
++                xhrLog.push({
++                    url: this.targetUrl,
++                    apiKey: String(body.get('api_key') || ''),
++                    signature: String(body.get('signature') || ''),
++                    folder: String(body.get('folder') || ''),
++                })
++                this.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 })
++                this.onload?.()
++            }
++        }
++        globalThis.XMLHttpRequest = MockXHR as unknown as typeof XMLHttpRequest
++
++        const onChange = vi.fn()
++        const { container } = render(<ImageUpload onChange={onChange} folder="ryan_travel/receipts/user1" />)
++        const input = container.querySelector('input[type="file"]') as HTMLInputElement
++        const file = new File(['img-bytes'], 'receipt.jpg', { type: 'image/jpeg' })
++
++        fireEvent.change(input, { target: { files: [file] } })
++
++        await waitFor(() => {
++            expect(onChange).toHaveBeenCalledWith(
++                'https://res.cloudinary.com/rotated_prod_cloud/image/upload/v1/ryan_travel/receipts/r1.jpg'
++            )
++        })
++        expect(signCalls).toBe(2)
++        expect(authSeen[1]).toBe(`Bearer ${freshJwt}`)
++        expect(xhrLog).toEqual([
++            {
++                url: 'https://api.cloudinary.com/v1_1/rotated_prod_cloud/image/upload',
++                apiKey: '111122223333444',
++                signature: 'img_upload_sig_v2',
++                folder: 'ryan_travel/receipts/user1',
++            },
++        ])
++        expect(input.value).toBe('')
++
++        // Error path: 429 signing error must not call XHR and must reset loading/progress cleanly
++        xhrLog.length = 0
++        globalThis.fetch = vi.fn(async () =>
++            new Response(JSON.stringify({ detail: 'Too many upload signing requests. Please try again shortly.' }), {
++                status: 429,
++                headers: { 'Content-Type': 'application/json' },
++            })
++        ) as unknown as typeof fetch
++
++        fireEvent.change(input, { target: { files: [file] } })
++
++        await waitFor(() => {
++            expect(toast.error).toHaveBeenCalled()
++        })
++        expect(xhrLog).toHaveLength(0)
++        expect(container.textContent).not.toContain('%')
++    })
++
++    it('C2 (MultiImageUpload): rejects non-OK signing responses without sending XHR and resets loading/progress, while happy path uses rotated credentials', async () => {
++        const xhrLog: Array<{ url: string; apiKey: string; signature: string }> = []
++        class MockXHR {
++            status = 200
++            responseText = JSON.stringify({
++                secure_url: 'https://res.cloudinary.com/rotated_spots_cloud/image/upload/v1/ryan_travel/spots/s1.jpg',
++            })
++            upload: { onprogress?: (e: { lengthComputable: boolean; loaded: number; total: number }) => void } = {}
++            onload?: () => void
++            onerror?: () => void
++            private targetUrl = ''
++            open(_method: string, url: string) {
++                this.targetUrl = url
++            }
++            send(body: FormData) {
++                xhrLog.push({
++                    url: this.targetUrl,
++                    apiKey: String(body.get('api_key') || ''),
++                    signature: String(body.get('signature') || ''),
++                })
++                this.onload?.()
++            }
++        }
++        globalThis.XMLHttpRequest = MockXHR as unknown as typeof XMLHttpRequest
++
++        // 1. Error path first: 500 sign error must abort before XHR and re-enable upload button
++        globalThis.fetch = vi.fn(async () =>
++            new Response(JSON.stringify({ detail: 'Upload signing service is not configured' }), {
++                status: 500,
++                headers: { 'Content-Type': 'application/json' },
++            })
++        ) as unknown as typeof fetch
++
++        const onChange = vi.fn()
++        const { container } = render(<MultiImageUpload values={[]} onChange={onChange} folder="ryan_travel/spots" />)
++        const input = container.querySelector('input[type="file"]') as HTMLInputElement
++        const file = new File(['spot-bytes'], 'spot.jpg', { type: 'image/jpeg' })
++
++        fireEvent.change(input, { target: { files: [file] } })
++
++        await waitFor(() => {
++            expect(toast.error).toHaveBeenCalledWith('img_upload_error')
++        })
++        expect(xhrLog).toHaveLength(0)
++        const addButton = container.querySelector('button[type="button"]') as HTMLButtonElement
++        expect(addButton.disabled).toBe(false)
++        expect(container.textContent).not.toContain('%')
++
++        // 2. Benign happy path with rotated server credentials
++        let seenAuth: string | null = null
++        globalThis.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
++            seenAuth = new Headers(init?.headers).get('Authorization')
++            return new Response(
++                JSON.stringify({
++                    signature: 'multi_sig_v2',
++                    apiKey: '111122223333444',
++                    cloudName: 'rotated_spots_cloud',
++                }),
++                { status: 200, headers: { 'Content-Type': 'application/json' } }
++            )
++        }) as unknown as typeof fetch
++
++        fireEvent.change(input, { target: { files: [file] } })
++
++        await waitFor(() => {
++            expect(onChange).toHaveBeenCalledWith([
++                'https://res.cloudinary.com/rotated_spots_cloud/image/upload/v1/ryan_travel/spots/s1.jpg',
++            ])
++        })
++        expect(seenAuth).toContain('Bearer ')
++        expect(xhrLog).toEqual([
++            {
++                url: 'https://api.cloudinary.com/v1_1/rotated_spots_cloud/image/upload',
++                apiKey: '111122223333444',
++                signature: 'multi_sig_v2',
++            },
++        ])
++    })
++
++    it('C3 (TripCoverMenu): uses rotated server credentials on happy path and recovers loading state on 429 signing failure', async () => {
++        const updateCoverSpy = vi.spyOn(tripsApi, 'updateCover').mockResolvedValue({ status: 'ok' } as never)
++        const onUpdate = vi.fn()
++        const uploadRequests: Array<{ url: string; apiKey: string; folder: string }> = []
++
++        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
++            const url = typeof input === 'string' ? input : input.toString()
++            if (url.includes('/api/sign-cloudinary')) {
++                expect(new Headers(init?.headers).get('Authorization')).toContain('Bearer ')
++                return new Response(
++                    JSON.stringify({
++                        signature: 'cover_menu_sig',
++                        apiKey: '111122223333444',
++                        cloudName: 'rotated_cover_cloud',
++                    }),
++                    { status: 200, headers: { 'Content-Type': 'application/json' } }
++                )
++            }
++            const fd = init?.body as FormData
++            uploadRequests.push({
++                url,
++                apiKey: String(fd.get('api_key') || ''),
++                folder: String(fd.get('folder') || ''),
++            })
++            return new Response(
++                JSON.stringify({
++                    secure_url: 'https://res.cloudinary.com/rotated_cover_cloud/image/upload/v1/ryan_travel/covers/c1.jpg',
++                }),
++                { status: 200, headers: { 'Content-Type': 'application/json' } }
++            )
++        }) as unknown as typeof fetch
++
++        const { container } = render(
++            <TripCoverMenu
++                tripId={SAMPLE_TRIP.id}
++                tripTitle={SAMPLE_TRIP.title}
++                userId={TEST_UID}
++                onUpdate={onUpdate}
++            />
++        )
++        const input = container.querySelector('input[type="file"]') as HTMLInputElement
++        const file = new File(['cover-bytes'], 'cover.jpg', { type: 'image/jpeg' })
++
++        fireEvent.change(input, { target: { files: [file] } })
++
++        await waitFor(() => {
++            expect(updateCoverSpy).toHaveBeenCalledWith(
++                SAMPLE_TRIP.id,
++                'https://res.cloudinary.com/rotated_cover_cloud/image/upload/v1/ryan_travel/covers/c1.jpg',
++                TEST_UID
++            )
++        })
++        expect(onUpdate).toHaveBeenCalledTimes(1)
++        expect(uploadRequests).toEqual([
++            {
++                url: 'https://api.cloudinary.com/v1_1/rotated_cover_cloud/image/upload',
++                apiKey: '111122223333444',
++                folder: 'ryan_travel/covers',
++            },
++        ])
++
++        // Error path: 429 signing failure must not upload to Cloudinary and must reset loading
++        uploadRequests.length = 0
++        globalThis.fetch = vi.fn(async () =>
++            new Response(JSON.stringify({ error: 'Rate limit exceeded: 60 per 1 minute' }), {
++                status: 429,
++                headers: { 'Content-Type': 'application/json' },
++            })
++        ) as unknown as typeof fetch
++
++        fireEvent.change(input, { target: { files: [file] } })
++
++        await waitFor(() => {
++            expect(toast.error).toHaveBeenCalled()
++        })
++        expect(uploadRequests).toHaveLength(0)
++        const triggerBtn = container.querySelector('button[aria-label]') as HTMLButtonElement
++        expect(triggerBtn.disabled).toBe(false)
++    })
++
++    it('C4 (TripSettingsView): uses rotated server credentials on cover upload and recovers cleanly on 400 signing failure', async () => {
++        const updateCoverSpy = vi.spyOn(tripsApi, 'updateCover').mockResolvedValue({ status: 'ok' } as never)
++        const onTripUpdated = vi.fn()
++        const uploadRequests: Array<{ url: string; apiKey: string }> = []
++
++        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
++            const url = typeof input === 'string' ? input : input.toString()
++            if (url.includes('/api/sign-cloudinary')) {
++                expect(new Headers(init?.headers).get('Authorization')).toContain('Bearer ')
++                return new Response(
++                    JSON.stringify({
++                        signature: 'settings_cover_sig',
++                        apiKey: '111122223333444',
++                        cloudName: 'rotated_settings_cloud',
++                    }),
++                    { status: 200, headers: { 'Content-Type': 'application/json' } }
++                )
++            }
++            const fd = init?.body as FormData
++            uploadRequests.push({
++                url,
++                apiKey: String(fd.get('api_key') || ''),
++            })
++            return new Response(
++                JSON.stringify({
++                    secure_url: 'https://res.cloudinary.com/rotated_settings_cloud/image/upload/v1/ryan_travel/covers/s1.jpg',
++                }),
++                { status: 200, headers: { 'Content-Type': 'application/json' } }
++            )
++        }) as unknown as typeof fetch
++
++        const { container } = render(
++            <TripSettingsView
++                currentTrip={SAMPLE_TRIP}
++                userId={TEST_UID}
++                totalDays={1}
++                onBack={vi.fn()}
++                onTripUpdated={onTripUpdated}
++            />
++        )
++        const input = container.querySelector('input[type="file"]') as HTMLInputElement
++        const file = new File(['settings-cover'], 'settings.jpg', { type: 'image/jpeg' })
++
++        fireEvent.change(input, { target: { files: [file] } })
++
++        await waitFor(() => {
++            expect(updateCoverSpy).toHaveBeenCalledWith(
++                SAMPLE_TRIP.id,
++                'https://res.cloudinary.com/rotated_settings_cloud/image/upload/v1/ryan_travel/covers/s1.jpg',
++                TEST_UID
++            )
++        })
++        expect(uploadRequests).toEqual([
++            {
++                url: 'https://api.cloudinary.com/v1_1/rotated_settings_cloud/image/upload',
++                apiKey: '111122223333444',
++            },
++        ])
++
++        // Error path: 400 signing failure must not call Cloudinary and must fire error toast
++        uploadRequests.length = 0
++        globalThis.fetch = vi.fn(async () =>
++            new Response(JSON.stringify({ detail: 'Invalid or expired timestamp' }), {
++                status: 400,
++                headers: { 'Content-Type': 'application/json' },
++            })
++        ) as unknown as typeof fetch
++
++        fireEvent.change(input, { target: { files: [file] } })
++
++        await waitFor(() => {
++            expect(toast.error).toHaveBeenCalled()
++        })
++        expect(uploadRequests).toHaveLength(0)
++    })
++})
+diff --git a/frontend/__tests__/prod-auth-and-edge-resilience.test.ts b/frontend/__tests__/prod-auth-and-edge-resilience.test.ts
+index 935fa15..c40f2c8 100644
+--- a/frontend/__tests__/prod-auth-and-edge-resilience.test.ts
++++ b/frontend/__tests__/prod-auth-and-edge-resilience.test.ts
+@@ -481,34 +481,138 @@ describe('🛡️ Production Auth Storm, POI Isolation, Cloudinary Gate & Edge W
+         expect(res.status).toBe(401)
+     })
+ 
+-    it('F9: /api/sign-cloudinary enforces mandatory folder whitelist, path traversal guard, and parameter allowlist', async () => {
+-        vi.stubEnv('CLOUDINARY_API_SECRET', 'cloudinary_test_secret_1234567890abcdef')
+-        const { POST } = await import('@/app/api/sign-cloudinary/route')
++    it('F9: cloudinaryApi.signUpload injects JWT, retries once on 401 refresh, returns atomic {signature,apiKey,cloudName}, and Vercel sign-cloudinary route is removed', async () => {
++        const legacySignRoutePath = path.resolve(__dirname, '../app/api/sign-cloudinary/route.ts')
++        expect(fs.existsSync(legacySignRoutePath)).toBe(false)
+ 
+-        const postSign = (body: unknown) =>
+-            POST(new Request('https://travel-pwa-five.vercel.app/api/sign-cloudinary', {
+-                method: 'POST',
++        const { __resetExchangeFailedForTesting } = await import('@/lib/auth-session')
++        const { cloudinaryApi } = await import('@/lib/api')
++        __resetExchangeFailedForTesting()
++        process.env.TEST_AUTH_EXCHANGE = 'true'
++
++        const uid = '3f7abf22-b447-4281-b240-584549c79943'
++        const futureExp = Math.floor(Date.now() / 1000) + 3600
++        const staleJwt = createMockJwt({ sub: uid, exp: futureExp })
++        const freshJwt = createMockJwt({ sub: uid, exp: futureExp + 7200 })
++        mockStorage['user_uuid'] = uid
++        mockStorage['user_nickname'] = 'Ryan'
++        mockStorage['user_recovery_key'] = 'tbj_rec_deadbeef_0123456789abcdef0123456789abcdef'
++        mockStorage['tabiji_session_token'] = staleJwt
++
++        let signAttempt = 0
++        const seenAuthHeaders: Array<string | null> = []
++        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
++            const url = typeof input === 'string' ? input : input.toString()
++            if (url.includes('/api/auth/session')) {
++                return new Response(JSON.stringify({ access_token: freshJwt, user_id: uid }), {
++                    status: 200,
++                    headers: { 'Content-Type': 'application/json' },
++                })
++            }
++            if (url.includes('/api/sign-cloudinary')) {
++                signAttempt += 1
++                const hdrs = new Headers(init?.headers)
++                seenAuthHeaders.push(hdrs.get('Authorization'))
++                if (signAttempt === 1) {
++                    return new Response(JSON.stringify({ detail: 'Invalid or expired token' }), {
++                        status: 401,
++                        headers: { 'Content-Type': 'application/json' },
++                    })
++                }
++                return new Response(
++                    JSON.stringify({
++                        signature: 'abc123def456signature',
++                        apiKey: '111122223333444',
++                        cloudName: 'demo_cloud',
++                    }),
++                    {
++                        status: 200,
++                        headers: { 'Content-Type': 'application/json' },
++                    }
++                )
++            }
++            return new Response(JSON.stringify({ detail: 'Unexpected URL' }), { status: 404 })
++        }) as unknown as typeof fetch
++
++        const signed = await cloudinaryApi.signUpload({
++            timestamp: Math.floor(Date.now() / 1000),
++            folder: 'ryan_travel/covers',
++        })
++        expect(signed).toEqual({
++            signature: 'abc123def456signature',
++            apiKey: '111122223333444',
++            cloudName: 'demo_cloud',
++        })
++        expect(signAttempt).toBe(2)
++        expect(seenAuthHeaders).toEqual([`Bearer ${staleJwt}`, `Bearer ${freshJwt}`])
++
++        // Error extraction supports both FastAPI detail and SlowAPI error payloads
++        globalThis.fetch = vi.fn(async () =>
++            new Response(JSON.stringify({ detail: 'Custom public_id is not permitted for this folder' }), {
++                status: 400,
++                headers: { 'Content-Type': 'application/json' },
++            })
++        ) as unknown as typeof fetch
++        await expect(
++            cloudinaryApi.signUpload({
++                timestamp: Math.floor(Date.now() / 1000),
++                folder: 'ryan_travel/avatars',
++                public_id: 'victim_avatar',
++            })
++        ).rejects.toThrow('Custom public_id is not permitted for this folder')
++
++        globalThis.fetch = vi.fn(async () =>
++            new Response(JSON.stringify({ error: 'Rate limit exceeded: 60 per 1 minute' }), {
++                status: 429,
++                headers: { 'Content-Type': 'application/json' },
++            })
++        ) as unknown as typeof fetch
++        await expect(
++            cloudinaryApi.signUpload({
++                timestamp: Math.floor(Date.now() / 1000),
++                folder: 'tabidachi_capsules',
++            })
++        ).rejects.toThrow('Rate limit exceeded: 60 per 1 minute')
++
++        // Malformed / whitespace-only 200 responses must be rejected or trimmed cleanly
++        globalThis.fetch = vi.fn(async () =>
++            new Response(JSON.stringify({ signature: '   ', apiKey: '  ', cloudName: '  ' }), {
++                status: 200,
++                headers: { 'Content-Type': 'application/json' },
++            })
++        ) as unknown as typeof fetch
++        await expect(
++            cloudinaryApi.signUpload({
++                timestamp: Math.floor(Date.now() / 1000),
++                folder: 'tabidachi_capsules',
++            })
++        ).rejects.toThrow('Invalid upload signature response')
++
++        globalThis.fetch = vi.fn(async () =>
++            new Response('<html>502 Bad Gateway</html>', {
++                status: 200,
++                headers: { 'Content-Type': 'text/html' },
++            })
++        ) as unknown as typeof fetch
++        await expect(
++            cloudinaryApi.signUpload({
++                timestamp: Math.floor(Date.now() / 1000),
++                folder: 'tabidachi_capsules',
++            })
++        ).rejects.toThrow('Invalid upload signature response')
++
++        globalThis.fetch = vi.fn(async () =>
++            new Response(JSON.stringify({ signature: '  sig_trimmed  ', apiKey: '   ', cloudName: '   ' }), {
++                status: 200,
+                 headers: { 'Content-Type': 'application/json' },
+-                body: JSON.stringify(body),
+-            }))
+-
+-        // Missing folder -> 400
+-        expect((await postSign({ paramsToSign: { timestamp: 1700000000 } })).status).toBe(400)
+-        // Path traversal -> 400
+-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/../evil' } })).status).toBe(400)
+-        // Disallowed folder -> 400
+-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'attacker_bucket' } })).status).toBe(400)
+-        // Extra unauthorized parameter (overwrite) -> 400
+-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/covers', overwrite: true } })).status).toBe(400)
+-
+-        // Legitimate folders + optional public_id -> 200
+-        const ok1 = await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'tabidachi_capsules' } })
+-        expect(ok1.status).toBe(200)
+-        expect((await ok1.json()).signature).toBeTruthy()
+-
+-        const ok2 = await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/streetview', public_id: 'mly_12345' } })
+-        expect(ok2.status).toBe(200)
+-        expect((await ok2.json()).signature).toBeTruthy()
++            })
++        ) as unknown as typeof fetch
++        await expect(
++            cloudinaryApi.signUpload({
++                timestamp: Math.floor(Date.now() / 1000),
++                folder: 'tabidachi_capsules',
++            })
++        ).resolves.toEqual({ signature: 'sig_trimmed' })
+     })
+ 
+     it('F10: Stale concurrent ensureValidSession 401 resolving after reanchorSessionWithKey does not overwrite restored state', async () => {
+@@ -844,26 +948,193 @@ describe('🛡️ Production Auth Storm, POI Isolation, Cloudinary Gate & Edge W
+         }
+     })
+ 
+-    it('F14: /api/sign-cloudinary rejects boolean/float timestamps and delimiter-smuggled folders while allowing valid receipt subpaths', async () => {
+-        vi.stubEnv('CLOUDINARY_API_SECRET', 'cloudinary_test_secret_1234567890abcdef')
+-        const { POST } = await import('@/app/api/sign-cloudinary/route')
++    it('F14: Edge Shield forwards POST /api/sign-cloudinary to Cloud Run preserving Authorization, and callers prefer server-returned apiKey/cloudName', async () => {
++        const edgeShield = loadWorkerModule('cloudflare/edge-shield/worker.js')
++        const capturedCalls: Array<{
++            url: string
++            method?: string
++            auth: string | null
++            host: string | null
++            redirect?: RequestRedirect
++            duplex?: string
++            hasBody: boolean
++        }> = []
++
++        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit & { duplex?: string }) => {
++            const url = typeof input === 'string' ? input : input.toString()
++            const hdrs = new Headers(init?.headers)
++            capturedCalls.push({
++                url,
++                method: init?.method,
++                auth: hdrs.get('Authorization'),
++                host: hdrs.get('Host'),
++                redirect: init?.redirect,
++                duplex: init?.duplex,
++                hasBody: Boolean(init?.body),
++            })
++            return new Response(
++                JSON.stringify({
++                    signature: 'cloudrun_sig_ok',
++                    apiKey: '111122223333444',
++                    cloudName: 'demo_cloud',
++                }),
++                {
++                    status: 200,
++                    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
++                }
++            )
++        }) as unknown as typeof fetch
+ 
+-        const postSign = (body: unknown) =>
+-            POST(new Request('https://travel-pwa-five.vercel.app/api/sign-cloudinary', {
++        const res = await edgeShield.fetch(
++            new Request('https://www.tabijiapp.com/api/sign-cloudinary', {
+                 method: 'POST',
+-                headers: { 'Content-Type': 'application/json' },
+-                body: JSON.stringify(body),
+-            }))
++                headers: {
++                    'Content-Type': 'application/json',
++                    Authorization: 'Bearer mock-session-jwt',
++                },
++                body: JSON.stringify({
++                    paramsToSign: {
++                        timestamp: Math.floor(Date.now() / 1000),
++                        folder: 'ryan_travel/receipts/3f7abf22-b447-4281-b240-584549c79943',
++                    },
++                }),
++            }),
++            {},
++            {}
++        )
+ 
+-        expect((await postSign({ paramsToSign: { timestamp: true, folder: 'ryan_travel/covers' } })).status).toBe(400)
+-        expect((await postSign({ paramsToSign: { timestamp: 1700000000.5, folder: 'ryan_travel/covers' } })).status).toBe(400)
+-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/covers&overwrite=true' } })).status).toBe(400)
+-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/covers?x=1' } })).status).toBe(400)
++        expect(res.status).toBe(200)
++        expect(res.headers.get('X-Edge-Shield')).toBe('Cloudflare-Worker-Active')
++        expect(res.headers.get('Cache-Control')).toBe('no-store')
++        expect(capturedCalls).toHaveLength(1)
++        expect(capturedCalls[0].url).toBe('https://antigravity-backend-589255638719.us-central1.run.app/api/sign-cloudinary')
++        expect(capturedCalls[0].method).toBe('POST')
++        expect(capturedCalls[0].auth).toBe('Bearer mock-session-jwt')
++        expect(capturedCalls[0].host).toBe('antigravity-backend-589255638719.us-central1.run.app')
++        expect(capturedCalls[0].redirect).toBe('manual')
++        expect(capturedCalls[0].duplex).toBe('half')
++        expect(capturedCalls[0].hasBody).toBe(true)
++
++        // Verify uploadMapillaryToCloudinary consumes atomic server-returned apiKey/cloudName over stale NEXT_PUBLIC_* env
++        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME', 'stale_cloud')
++        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_API_KEY', '999999999999999')
++        const uid = '3f7abf22-b447-4281-b240-584549c79943'
++        mockStorage['tabiji_session_token'] = createMockJwt({ sub: uid, exp: Math.floor(Date.now() / 1000) + 3600 })
+ 
+-        const okReceipt = await postSign({
+-            paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/receipts/3f7abf22-b447-4281-b240-584549c79943' },
+-        })
+-        expect(okReceipt.status).toBe(200)
+-        expect((await okReceipt.json()).signature).toBeTruthy()
++        let uploadUrlSeen = ''
++        let uploadedApiKey = ''
++        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
++            const url = typeof input === 'string' ? input : input.toString()
++            if (url.includes('/api/sign-cloudinary')) {
++                return new Response(
++                    JSON.stringify({
++                        signature: 'mly_sig_atomic',
++                        apiKey: '111122223333444',
++                        cloudName: 'rotated_cloud',
++                    }),
++                    { status: 200, headers: { 'Content-Type': 'application/json' } }
++                )
++            }
++            uploadUrlSeen = url
++            const fd = init?.body as FormData
++            uploadedApiKey = String(fd.get('api_key') || '')
++            return new Response(
++                JSON.stringify({ secure_url: 'https://res.cloudinary.com/rotated_cloud/image/upload/v1/ryan_travel/streetview/mly_98765.jpg' }),
++                { status: 200, headers: { 'Content-Type': 'application/json' } }
++            )
++        }) as unknown as typeof fetch
++
++        const { uploadMapillaryToCloudinary } = await import('@/lib/mapillary')
++        const secureUrl = await uploadMapillaryToCloudinary('https://scontent.mapillary.com/img.jpg', '98765')
++        expect(secureUrl).toBe('https://res.cloudinary.com/rotated_cloud/image/upload/v1/ryan_travel/streetview/mly_98765.jpg')
++        expect(uploadUrlSeen).toBe('https://api.cloudinary.com/v1_1/rotated_cloud/image/upload')
++        expect(uploadedApiKey).toBe('111122223333444')
++    })
++
++    it('F15: All 6 frontend upload callers route through cloudinaryApi.signUpload and uploadCapsulePhotoToCloudinary uses atomic server credentials', async () => {
++        const callerFiles = [
++            'components/ui/image-upload.tsx',
++            'components/ui/multi-image-upload.tsx',
++            'components/itinerary/TripCoverMenu.tsx',
++            'components/itinerary/TripSettingsView.tsx',
++            'lib/capsule-upload.ts',
++            'lib/mapillary.ts',
++        ]
++        for (const rel of callerFiles) {
++            const src = fs.readFileSync(path.resolve(__dirname, '..', rel), 'utf8')
++            expect(src).not.toMatch(/fetch\(\s*["'`]\/api\/sign-cloudinary/)
++            expect(src).toContain('cloudinaryApi.signUpload')
++            expect(src).toContain('signData.cloudName')
++            expect(src).toContain('signData.apiKey')
++        }
++        const multiSrc = fs.readFileSync(path.resolve(__dirname, '../components/ui/multi-image-upload.tsx'), 'utf8')
++        expect(multiSrc).toMatch(/catch\s*\(err\)\s*\{[\s\S]*?setLoading\(false\)[\s\S]*?setProgress\(0\)/)
++
++        // End-to-end unit check for uploadCapsulePhotoToCloudinary with atomic rotated credentials
++        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME', 'stale_cloud')
++        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_API_KEY', '999999999999999')
++        const uid = '3f7abf22-b447-4281-b240-584549c79943'
++        mockStorage['tabiji_session_token'] = createMockJwt({ sub: uid, exp: Math.floor(Date.now() / 1000) + 3600 })
++
++        let seenAuthHeader: string | null = null
++        globalThis.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
++            seenAuthHeader = new Headers(init?.headers).get('Authorization')
++            return new Response(
++                JSON.stringify({
++                    signature: 'capsule_sig_atomic',
++                    apiKey: '111122223333444',
++                    cloudName: 'rotated_capsule_cloud',
++                }),
++                { status: 200, headers: { 'Content-Type': 'application/json' } }
++            )
++        }) as unknown as typeof fetch
++
++        let xhrUrl = ''
++        let xhrApiKey = ''
++        let xhrSig = ''
++        const origXhr = globalThis.XMLHttpRequest
++        class MockXHR {
++            status = 200
++            responseText = JSON.stringify({
++                secure_url: 'https://res.cloudinary.com/rotated_capsule_cloud/image/upload/v1/tabidachi_capsules/pic.jpg',
++            })
++            upload: { onprogress?: (e: { lengthComputable: boolean; loaded: number; total: number }) => void } = {}
++            onload?: () => void
++            onerror?: () => void
++            open(_method: string, url: string) {
++                xhrUrl = url
++            }
++            send(body: FormData) {
++                xhrApiKey = String(body.get('api_key') || '')
++                xhrSig = String(body.get('signature') || '')
++                this.onload?.()
++            }
++        }
++        globalThis.XMLHttpRequest = MockXHR as unknown as typeof XMLHttpRequest
++        try {
++            const { uploadCapsulePhotoToCloudinary } = await import('@/lib/capsule-upload')
++            const file = new File(['<svg/>'], 'polaroid.svg', { type: 'image/svg+xml' })
++            const url = await uploadCapsulePhotoToCloudinary(file)
++            expect(url).toBe('https://res.cloudinary.com/rotated_capsule_cloud/image/upload/v1/tabidachi_capsules/pic.jpg')
++            expect(seenAuthHeader).toContain('Bearer ')
++            expect(xhrUrl).toBe('https://api.cloudinary.com/v1_1/rotated_capsule_cloud/image/upload')
++            expect(xhrApiKey).toBe('111122223333444')
++            expect(xhrSig).toBe('capsule_sig_atomic')
++
++            // Signing failure propagates backend FastAPI detail without sending XHR
++            xhrUrl = ''
++            globalThis.fetch = vi.fn(async () =>
++                new Response(JSON.stringify({ detail: 'Too many upload signing requests. Please try again shortly.' }), {
++                    status: 429,
++                    headers: { 'Content-Type': 'application/json' },
++                })
++            ) as unknown as typeof fetch
++            await expect(uploadCapsulePhotoToCloudinary(file)).rejects.toThrow(
++                'Too many upload signing requests. Please try again shortly.'
++            )
++            expect(xhrUrl).toBe('')
++        } finally {
++            globalThis.XMLHttpRequest = origXhr
++        }
+     })
+ })
+diff --git a/frontend/app/api/sign-cloudinary/route.ts b/frontend/app/api/sign-cloudinary/route.ts
+deleted file mode 100644
+index 069449e..0000000
+--- a/frontend/app/api/sign-cloudinary/route.ts
++++ /dev/null
+@@ -1,70 +0,0 @@
+-import { v2 as cloudinary } from "cloudinary";
+-import { NextResponse } from "next/server";
+-
+-cloudinary.config({
+-    cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
+-    api_key: process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY,
+-    api_secret: process.env.CLOUDINARY_API_SECRET,
+-});
+-
+-export async function POST(request: Request) {
+-    const body = await request.json().catch(() => null);
+-    const paramsToSign = body?.paramsToSign;
+-    if (!paramsToSign || typeof paramsToSign !== "object" || Array.isArray(paramsToSign)) {
+-        return NextResponse.json({ error: "Invalid signing payload" }, { status: 400 });
+-    }
+-
+-    const ALLOWED_PARAM_KEYS = new Set(["timestamp", "folder", "public_id"]);
+-    for (const key of Object.keys(paramsToSign)) {
+-        if (!ALLOWED_PARAM_KEYS.has(key)) {
+-            return NextResponse.json({ error: `Unauthorized signing parameter: ${key}` }, { status: 400 });
+-        }
+-    }
+-
+-    const ALLOWED_FOLDERS = ["tabidachi_capsules", "ryan_travel", "trip_covers", "receipts"];
+-    const targetFolder = paramsToSign.folder;
+-    const isSafeFolderFormat =
+-        typeof targetFolder === "string" &&
+-        targetFolder.length > 0 &&
+-        targetFolder.length <= 160 &&
+-        /^[a-zA-Z0-9_-]+(\/[a-zA-Z0-9_-]+)*$/.test(targetFolder);
+-    const isValidFolder =
+-        isSafeFolderFormat &&
+-        ALLOWED_FOLDERS.some((f) => targetFolder === f || targetFolder.startsWith(f + "/"));
+-
+-    if (!isValidFolder) {
+-        return NextResponse.json({ error: "Unauthorized upload folder" }, { status: 400 });
+-    }
+-
+-    const rawTimestamp = paramsToSign.timestamp;
+-    const timestamp =
+-        typeof rawTimestamp === "number" || (typeof rawTimestamp === "string" && /^\d+$/.test(rawTimestamp))
+-            ? Number(rawTimestamp)
+-            : NaN;
+-    if (!Number.isInteger(timestamp) || timestamp <= 0) {
+-        return NextResponse.json({ error: "Invalid timestamp" }, { status: 400 });
+-    }
+-
+-    const sanitizedParams: Record<string, string | number> = {
+-        timestamp,
+-        folder: targetFolder,
+-    };
+-    if (paramsToSign.public_id !== undefined) {
+-        if (typeof paramsToSign.public_id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(paramsToSign.public_id)) {
+-            return NextResponse.json({ error: "Invalid public_id" }, { status: 400 });
+-        }
+-        sanitizedParams.public_id = paramsToSign.public_id;
+-    }
+-
+-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+-    if (!apiSecret) {
+-        return NextResponse.json({ error: "CLOUDINARY_API_SECRET not configured" }, { status: 500 });
+-    }
+-
+-    const signature = cloudinary.utils.api_sign_request(
+-        sanitizedParams,
+-        apiSecret
+-    );
+-
+-    return NextResponse.json({ signature });
+-}
+diff --git a/frontend/components/itinerary/TripCoverMenu.tsx b/frontend/components/itinerary/TripCoverMenu.tsx
+index 25b99c8..a5d3e75 100644
+--- a/frontend/components/itinerary/TripCoverMenu.tsx
++++ b/frontend/components/itinerary/TripCoverMenu.tsx
+@@ -15,7 +15,7 @@ import { ZoomableImage } from "@/components/ui/zoomable-image"
+ import { useLanguage } from "@/lib/LanguageContext"
+ import { useHaptic } from "@/lib/hooks"
+ import { compressImage } from "@/lib/image-utils"
+-import { tripsApi } from "@/lib/api"
++import { tripsApi, cloudinaryApi } from "@/lib/api"
+ import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
+ import { resolveDestinationCover } from "@/lib/destination-covers"
+ import { toast } from "sonner"
+@@ -63,32 +63,22 @@ export function TripCoverMenu({
+                 quality: 0.85
+             })
+ 
+-            const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+-            const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+-
+-            if (!cloudName || !apiKey) {
+-                toast.error(zh ? "環境變數缺失，無法連線至 Cloudinary" : "Missing Cloudinary environment variables")
+-                setLoading(false)
+-                return
+-            }
+-
+             const timestamp = Math.round(Date.now() / 1000)
+             const paramsToSign = { timestamp, folder }
+ 
+-            // 2. 取得後端簽名
+-            const signRes = await fetch("/api/sign-cloudinary", {
+-                method: "POST",
+-                headers: { "Content-Type": "application/json" },
+-                body: JSON.stringify({ paramsToSign }),
+-            })
++            // 2. 取得後端簽名 (附帶 JWT 認證與自動 401 換票重試)
++            const signData = await cloudinaryApi.signUpload(paramsToSign)
+ 
+-            if (!signRes.ok) {
+-                toast.error(zh ? "簽名授權失敗" : "Failed to obtain upload signature")
++            const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
++            const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
++
++            if (!cloudName || !apiKey) {
++                toast.error(zh ? "環境變數缺失，無法連線至 Cloudinary" : "Missing Cloudinary environment variables")
+                 setLoading(false)
+                 return
+             }
+ 
+-            const { signature } = await signRes.json()
++            const { signature } = signData
+ 
+             // 3. 上傳至 Cloudinary
+             const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
+diff --git a/frontend/components/itinerary/TripSettingsView.tsx b/frontend/components/itinerary/TripSettingsView.tsx
+index 2069455..6d64826 100644
+--- a/frontend/components/itinerary/TripSettingsView.tsx
++++ b/frontend/components/itinerary/TripSettingsView.tsx
+@@ -35,7 +35,7 @@ import { ZoomableImage } from "@/components/ui/zoomable-image"
+ import { useLanguage } from "@/lib/LanguageContext"
+ import { useHaptic } from "@/lib/hooks"
+ import { compressImage } from "@/lib/image-utils"
+-import { tripsApi } from "@/lib/api"
++import { tripsApi, cloudinaryApi } from "@/lib/api"
+ import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
+ import { resolveDestinationCover } from "@/lib/destination-covers"
+ import { type Trip } from "@/lib/itinerary-types"
+@@ -169,31 +169,21 @@ export function TripSettingsView({
+                 quality: 0.85
+             })
+ 
+-            const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+-            const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+-
+-            if (!cloudName || !apiKey) {
+-                toast.error(zh ? "系統設定不完整，無法上傳圖片" : "Upload service not properly configured")
+-                setLoading(false)
+-                return
+-            }
+-
+             const timestamp = Math.round(Date.now() / 1000)
+             const paramsToSign = { timestamp, folder }
+ 
+-            const signRes = await fetch("/api/sign-cloudinary", {
+-                method: "POST",
+-                headers: { "Content-Type": "application/json" },
+-                body: JSON.stringify({ paramsToSign }),
+-            })
++            const signData = await cloudinaryApi.signUpload(paramsToSign)
+ 
+-            if (!signRes.ok) {
+-                toast.error(zh ? "簽名授權失敗" : "Failed to obtain upload signature")
++            const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
++            const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
++
++            if (!cloudName || !apiKey) {
++                toast.error(zh ? "系統設定不完整，無法上傳圖片" : "Upload service not properly configured")
+                 setLoading(false)
+                 return
+             }
+ 
+-            const { signature } = await signRes.json()
++            const { signature } = signData
+ 
+             const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
+             const data = new FormData()
+diff --git a/frontend/components/ui/image-upload.tsx b/frontend/components/ui/image-upload.tsx
+index c7d304d..6833f17 100644
+--- a/frontend/components/ui/image-upload.tsx
++++ b/frontend/components/ui/image-upload.tsx
+@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
+ import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
+ import { compressImage } from "@/lib/image-utils"
+ import { useLanguage } from "@/lib/LanguageContext"
++import { cloudinaryApi } from "@/lib/api"
+ 
+ interface ImageUploadProps {
+     value?: string
+@@ -32,6 +33,7 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
+     const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+         const file = e.target.files?.[0]
+         if (!file) return
++        e.target.value = ""
+ 
+         setLoading(true)
+         setProgress(0)
+@@ -39,34 +41,22 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
+             // 🆕 執行大解析度優化 (No more 1600px limit)
+             const compressedFile = await compressImage(file, { maxWidth: 8192, maxHeight: 8192, quality: 0.9 });
+ 
+-            const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+-            const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
++            const timestamp = Math.round(Date.now() / 1000);
++            const paramsToSign = { timestamp, folder };
++            const signData = await cloudinaryApi.signUpload(paramsToSign);
++
++            const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
++            const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+ 
+             if (!cloudName || !apiKey) {
+                 console.error("Missing Cloudinary env vars:", { cloudName: !!cloudName, apiKey: !!apiKey })
+                 toast.error(zh ? `環境變數缺失！請確認 .env.local 並重啟前端。` : `Missing env vars! Check .env.local and restart.`)
+                 setLoading(false)
++                setProgress(0)
+                 return
+             }
+ 
+-            const timestamp = Math.round((new Date).getTime() / 1000);
+-            const paramsToSign = { timestamp, folder };
+-
+-            const res = await fetch("/api/sign-cloudinary", {
+-                method: "POST",
+-                headers: { "Content-Type": "application/json" },
+-                body: JSON.stringify({ paramsToSign }),
+-            });
+-
+-            if (!res.ok) {
+-                const errText = await res.text()
+-                console.error("Sign API error:", errText)
+-                toast.error(zh ? `簽名 API 錯誤: ${res.status}` : `Sign API error: ${res.status}`)
+-                setLoading(false)
+-                return
+-            }
+-
+-            const { signature } = await res.json();
++            const { signature } = signData;
+ 
+             const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
+             const data = new FormData()
+diff --git a/frontend/components/ui/multi-image-upload.tsx b/frontend/components/ui/multi-image-upload.tsx
+index 409baa5..45d8b30 100644
+--- a/frontend/components/ui/multi-image-upload.tsx
++++ b/frontend/components/ui/multi-image-upload.tsx
+@@ -21,6 +21,7 @@ import { ZoomableImage } from "@/components/ui/zoomable-image"
+ import { compressImage } from "@/lib/image-utils"
+ import { useLanguage } from "@/lib/LanguageContext"
+ import { isTrustedUrl } from "@/lib/security"
++import { cloudinaryApi } from "@/lib/api"
+ 
+ // 🆕 DND-Kit imports
+ import {
+@@ -121,25 +122,24 @@ export function MultiImageUpload({
+             // 🆕 執行大解析度優化 (No more 1600px limit)
+             const compressedFile = await compressImage(file, { maxWidth: 8192, maxHeight: 8192, quality: 0.9 });
+ 
+-            const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+-            const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
++            const timestamp = Math.round(Date.now() / 1000)
++            const paramsToSign = { timestamp, folder }
++            const signData = await cloudinaryApi.signUpload(paramsToSign)
++
++            const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
++            const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+ 
+             if (!cloudName || !apiKey) {
+                 toast.error("環境變數缺失！")
+                 setLoading(false)
++                setProgress(0)
++                if (fileInputRef.current) {
++                    fileInputRef.current.value = ""
++                }
+                 return
+             }
+ 
+-            const timestamp = Math.round((new Date).getTime() / 1000)
+-            const paramsToSign = { timestamp, folder }
+-
+-            const res = await fetch("/api/sign-cloudinary", {
+-                method: "POST",
+-                headers: { "Content-Type": "application/json" },
+-                body: JSON.stringify({ paramsToSign }),
+-            })
+-
+-            const { signature } = await res.json()
++            const { signature } = signData
+ 
+             const formData = new FormData()
+             formData.append("file", compressedFile, file.name)
+@@ -186,6 +186,7 @@ export function MultiImageUpload({
+             console.error("Upload error:", err)
+             toast.error(t('img_upload_error'))
+             setLoading(false)
++            setProgress(0)
+         }
+ 
+         // 清空 input
+diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
+index 441c78c..588a275 100644
+--- a/frontend/lib/api.ts
++++ b/frontend/lib/api.ts
+@@ -143,6 +143,7 @@ export const API = {
+     SMART_SEARCH: `${API_HOST}/api/ai/smart-search`,
+     RESOLVE_ADDRESS: `${API_HOST}/api/geocode/resolve-address`,
+     TRAVEL_DATA: `${API_HOST}/api/travel-data`,
++    SIGN_CLOUDINARY: `${API_HOST}/api/sign-cloudinary`,
+ }
+ 
+ export const API_BASE_PATH = "/api";
+@@ -1906,5 +1907,43 @@ export const pushApi = {
+     },
+ }
+ 
++export interface CloudinarySignParams {
++    timestamp: number
++    folder: string
++    public_id?: string
++}
++
++export interface CloudinarySignResponse {
++    signature: string
++    apiKey?: string
++    cloudName?: string
++}
++
++export const cloudinaryApi = {
++    signUpload: async (paramsToSign: CloudinarySignParams): Promise<CloudinarySignResponse> => {
++        const res = await fetch(API.SIGN_CLOUDINARY, {
++            method: "POST",
++            headers: { "Content-Type": "application/json" },
++            body: JSON.stringify({ paramsToSign }),
++        })
++        if (!res.ok) {
++            const errMsg = await extractError(res, `Failed to sign upload: HTTP ${res.status}`)
++            throw new Error(errMsg)
++        }
++        const data = (await res.json().catch(() => null)) as Partial<CloudinarySignResponse> | null
++        const signature = typeof data?.signature === "string" ? data.signature.trim() : ""
++        if (!signature) {
++            throw new Error("Invalid upload signature response")
++        }
++        const apiKey = typeof data?.apiKey === "string" ? data.apiKey.trim() : ""
++        const cloudName = typeof data?.cloudName === "string" ? data.cloudName.trim() : ""
++        return {
++            signature,
++            ...(apiKey ? { apiKey } : {}),
++            ...(cloudName ? { cloudName } : {}),
++        }
++    },
++}
++
+ 
+ 
+diff --git a/frontend/lib/capsule-upload.ts b/frontend/lib/capsule-upload.ts
+index e57b77e..e4d1e80 100644
+--- a/frontend/lib/capsule-upload.ts
++++ b/frontend/lib/capsule-upload.ts
+@@ -1,4 +1,5 @@
+ import { compressImage } from "@/lib/image-utils"
++import { cloudinaryApi } from "@/lib/api"
+ 
+ export const MAX_PHOTO_BYTES = 8 * 1024 * 1024 // 8MB
+ 
+@@ -27,29 +28,20 @@ export async function uploadCapsulePhotoToCloudinary(
+     // 🛡️ 門禁 3: 前端極限壓縮至 2048px / 85% 質量 (降低傳輸流量至 ~600KB)
+     const compressed = await compressImage(file, { maxWidth: 2048, maxHeight: 2048, quality: 0.85 })
+ 
+-    const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+-    const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
+-    if (!cloudName || !apiKey) {
+-        throw new Error("缺少 Cloudinary 環境變數 (NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME / API_KEY)")
+-    }
+-
+     const folder = "tabidachi_capsules"
+     const timestamp = Math.round(Date.now() / 1000)
+     const paramsToSign = { timestamp, folder }
+ 
+-    // 1. 取得 Next.js 伺服器端 Cloudinary 簽名 (受白名單防禦保護)
+-    const signRes = await fetch("/api/sign-cloudinary", {
+-        method: "POST",
+-        headers: { "Content-Type": "application/json" },
+-        body: JSON.stringify({ paramsToSign }),
+-    })
++    // 1. 取得後端 Cloudinary 簽名 (附帶 JWT 認證、白名單防禦與自動 401 換票重試)
++    const signData = await cloudinaryApi.signUpload(paramsToSign)
+ 
+-    if (!signRes.ok) {
+-        const errJson = await signRes.json().catch(() => ({}))
+-        throw new Error(errJson.error || `取得簽名失敗: HTTP ${signRes.status}`)
++    const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
++    const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
++    if (!cloudName || !apiKey) {
++        throw new Error("缺少 Cloudinary 環境變數 (NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME / API_KEY)")
+     }
+ 
+-    const { signature } = await signRes.json()
++    const { signature } = signData
+ 
+     // 2. 構建 FormData 直傳 Cloudinary
+     const formData = new FormData()
+diff --git a/frontend/lib/mapillary.ts b/frontend/lib/mapillary.ts
+index 4325dbf..ee1edd8 100644
+--- a/frontend/lib/mapillary.ts
++++ b/frontend/lib/mapillary.ts
+@@ -11,6 +11,7 @@
+  */
+ 
+ import { MAPILLARY } from '@/lib/constants'
++import { cloudinaryApi } from '@/lib/api'
+ 
+ // ============================================================
+ // Types
+@@ -274,32 +275,23 @@ export function isMapillaryAvailable(): boolean {
+  */
+ export async function uploadMapillaryToCloudinary(imageUrl: string, imageId: string): Promise<string | null> {
+     try {
+-        const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+-        const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY;
+-
+-        if (!cloudName || !apiKey) {
+-            console.warn('[Mapillary] Missing Cloudinary env vars, skipping upload');
+-            return null;
+-        }
+-
+         const folder = "ryan_travel/streetview";
+         const timestamp = Math.round(Date.now() / 1000);
+         const public_id = `mly_${imageId}`;
+-        
+-        // 1. 取得 Cloudinary 簽名
++
++        // 1. 取得後端 Cloudinary 簽名 (附帶 JWT 認證與自動 401 換票重試)
+         const paramsToSign = { timestamp, folder, public_id };
+-        const signRes = await fetch("/api/sign-cloudinary", {
+-            method: "POST",
+-            headers: { "Content-Type": "application/json" },
+-            body: JSON.stringify({ paramsToSign }),
+-        });
++        const signData = await cloudinaryApi.signUpload(paramsToSign);
+ 
+-        if (!signRes.ok) {
+-            console.error('[Mapillary] Failed to sign Cloudinary request:', await signRes.text());
++        const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
++        const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY;
++
++        if (!cloudName || !apiKey) {
++            console.warn('[Mapillary] Missing Cloudinary env vars, skipping upload');
+             return null;
+         }
+ 
+-        const { signature } = await signRes.json();
++        const { signature } = signData;
+ 
+         // 2. 直接讓 Cloudinary 透過 URL 抓取並上傳
+         const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+diff --git a/frontend/next.config.mjs b/frontend/next.config.mjs
+index a17992e..9acedfe 100644
+--- a/frontend/next.config.mjs
++++ b/frontend/next.config.mjs
+@@ -41,7 +41,7 @@ const nextConfig = {
+         buildActivityPosition: 'bottom-right',
+     },
+     // 🚀 本機開發與邊緣反向代理 (Local Development & Edge Reverse Proxy)
+-    // 預設 after-files rewrites，確保本地 App Router (/api/sign-cloudinary) 優先由 Next.js 處理
++    // 使用 fallback rewrites，確保本地 App Router 優先處理，其餘路由（含 /api/sign-cloudinary）統一轉發至後端
+     async rewrites() {
+         const rawTarget = process.env.INTERNAL_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8008";
+         const backendTarget = rawTarget.replace(/\/+$/, "");

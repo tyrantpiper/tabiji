@@ -481,34 +481,138 @@ describe('🛡️ Production Auth Storm, POI Isolation, Cloudinary Gate & Edge W
         expect(res.status).toBe(401)
     })
 
-    it('F9: /api/sign-cloudinary enforces mandatory folder whitelist, path traversal guard, and parameter allowlist', async () => {
-        vi.stubEnv('CLOUDINARY_API_SECRET', 'cloudinary_test_secret_1234567890abcdef')
-        const { POST } = await import('@/app/api/sign-cloudinary/route')
+    it('F9: cloudinaryApi.signUpload injects JWT, retries once on 401 refresh, returns atomic {signature,apiKey,cloudName}, and Vercel sign-cloudinary route is removed', async () => {
+        const legacySignRoutePath = path.resolve(__dirname, '../app/api/sign-cloudinary/route.ts')
+        expect(fs.existsSync(legacySignRoutePath)).toBe(false)
 
-        const postSign = (body: unknown) =>
-            POST(new Request('https://travel-pwa-five.vercel.app/api/sign-cloudinary', {
-                method: 'POST',
+        const { __resetExchangeFailedForTesting } = await import('@/lib/auth-session')
+        const { cloudinaryApi } = await import('@/lib/api')
+        __resetExchangeFailedForTesting()
+        process.env.TEST_AUTH_EXCHANGE = 'true'
+
+        const uid = '3f7abf22-b447-4281-b240-584549c79943'
+        const futureExp = Math.floor(Date.now() / 1000) + 3600
+        const staleJwt = createMockJwt({ sub: uid, exp: futureExp })
+        const freshJwt = createMockJwt({ sub: uid, exp: futureExp + 7200 })
+        mockStorage['user_uuid'] = uid
+        mockStorage['user_nickname'] = 'Ryan'
+        mockStorage['user_recovery_key'] = 'tbj_rec_deadbeef_0123456789abcdef0123456789abcdef'
+        mockStorage['tabiji_session_token'] = staleJwt
+
+        let signAttempt = 0
+        const seenAuthHeaders: Array<string | null> = []
+        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = typeof input === 'string' ? input : input.toString()
+            if (url.includes('/api/auth/session')) {
+                return new Response(JSON.stringify({ access_token: freshJwt, user_id: uid }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            }
+            if (url.includes('/api/sign-cloudinary')) {
+                signAttempt += 1
+                const hdrs = new Headers(init?.headers)
+                seenAuthHeaders.push(hdrs.get('Authorization'))
+                if (signAttempt === 1) {
+                    return new Response(JSON.stringify({ detail: 'Invalid or expired token' }), {
+                        status: 401,
+                        headers: { 'Content-Type': 'application/json' },
+                    })
+                }
+                return new Response(
+                    JSON.stringify({
+                        signature: 'abc123def456signature',
+                        apiKey: '111122223333444',
+                        cloudName: 'demo_cloud',
+                    }),
+                    {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    }
+                )
+            }
+            return new Response(JSON.stringify({ detail: 'Unexpected URL' }), { status: 404 })
+        }) as unknown as typeof fetch
+
+        const signed = await cloudinaryApi.signUpload({
+            timestamp: Math.floor(Date.now() / 1000),
+            folder: 'ryan_travel/covers',
+        })
+        expect(signed).toEqual({
+            signature: 'abc123def456signature',
+            apiKey: '111122223333444',
+            cloudName: 'demo_cloud',
+        })
+        expect(signAttempt).toBe(2)
+        expect(seenAuthHeaders).toEqual([`Bearer ${staleJwt}`, `Bearer ${freshJwt}`])
+
+        // Error extraction supports both FastAPI detail and SlowAPI error payloads
+        globalThis.fetch = vi.fn(async () =>
+            new Response(JSON.stringify({ detail: 'Custom public_id is not permitted for this folder' }), {
+                status: 400,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            }))
+            })
+        ) as unknown as typeof fetch
+        await expect(
+            cloudinaryApi.signUpload({
+                timestamp: Math.floor(Date.now() / 1000),
+                folder: 'ryan_travel/avatars',
+                public_id: 'victim_avatar',
+            })
+        ).rejects.toThrow('Custom public_id is not permitted for this folder')
 
-        // Missing folder -> 400
-        expect((await postSign({ paramsToSign: { timestamp: 1700000000 } })).status).toBe(400)
-        // Path traversal -> 400
-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/../evil' } })).status).toBe(400)
-        // Disallowed folder -> 400
-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'attacker_bucket' } })).status).toBe(400)
-        // Extra unauthorized parameter (overwrite) -> 400
-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/covers', overwrite: true } })).status).toBe(400)
+        globalThis.fetch = vi.fn(async () =>
+            new Response(JSON.stringify({ error: 'Rate limit exceeded: 60 per 1 minute' }), {
+                status: 429,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch
+        await expect(
+            cloudinaryApi.signUpload({
+                timestamp: Math.floor(Date.now() / 1000),
+                folder: 'tabidachi_capsules',
+            })
+        ).rejects.toThrow('Rate limit exceeded: 60 per 1 minute')
 
-        // Legitimate folders + optional public_id -> 200
-        const ok1 = await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'tabidachi_capsules' } })
-        expect(ok1.status).toBe(200)
-        expect((await ok1.json()).signature).toBeTruthy()
+        // Malformed / whitespace-only 200 responses must be rejected or trimmed cleanly
+        globalThis.fetch = vi.fn(async () =>
+            new Response(JSON.stringify({ signature: '   ', apiKey: '  ', cloudName: '  ' }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch
+        await expect(
+            cloudinaryApi.signUpload({
+                timestamp: Math.floor(Date.now() / 1000),
+                folder: 'tabidachi_capsules',
+            })
+        ).rejects.toThrow('Invalid upload signature response')
 
-        const ok2 = await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/streetview', public_id: 'mly_12345' } })
-        expect(ok2.status).toBe(200)
-        expect((await ok2.json()).signature).toBeTruthy()
+        globalThis.fetch = vi.fn(async () =>
+            new Response('<html>502 Bad Gateway</html>', {
+                status: 200,
+                headers: { 'Content-Type': 'text/html' },
+            })
+        ) as unknown as typeof fetch
+        await expect(
+            cloudinaryApi.signUpload({
+                timestamp: Math.floor(Date.now() / 1000),
+                folder: 'tabidachi_capsules',
+            })
+        ).rejects.toThrow('Invalid upload signature response')
+
+        globalThis.fetch = vi.fn(async () =>
+            new Response(JSON.stringify({ signature: '  sig_trimmed  ', apiKey: '   ', cloudName: '   ' }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        ) as unknown as typeof fetch
+        await expect(
+            cloudinaryApi.signUpload({
+                timestamp: Math.floor(Date.now() / 1000),
+                folder: 'tabidachi_capsules',
+            })
+        ).resolves.toEqual({ signature: 'sig_trimmed' })
     })
 
     it('F10: Stale concurrent ensureValidSession 401 resolving after reanchorSessionWithKey does not overwrite restored state', async () => {
@@ -844,26 +948,193 @@ describe('🛡️ Production Auth Storm, POI Isolation, Cloudinary Gate & Edge W
         }
     })
 
-    it('F14: /api/sign-cloudinary rejects boolean/float timestamps and delimiter-smuggled folders while allowing valid receipt subpaths', async () => {
-        vi.stubEnv('CLOUDINARY_API_SECRET', 'cloudinary_test_secret_1234567890abcdef')
-        const { POST } = await import('@/app/api/sign-cloudinary/route')
+    it('F14: Edge Shield forwards POST /api/sign-cloudinary to Cloud Run preserving Authorization, and callers prefer server-returned apiKey/cloudName', async () => {
+        const edgeShield = loadWorkerModule('cloudflare/edge-shield/worker.js')
+        const capturedCalls: Array<{
+            url: string
+            method?: string
+            auth: string | null
+            host: string | null
+            redirect?: RequestRedirect
+            duplex?: string
+            hasBody: boolean
+        }> = []
 
-        const postSign = (body: unknown) =>
-            POST(new Request('https://travel-pwa-five.vercel.app/api/sign-cloudinary', {
+        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit & { duplex?: string }) => {
+            const url = typeof input === 'string' ? input : input.toString()
+            const hdrs = new Headers(init?.headers)
+            capturedCalls.push({
+                url,
+                method: init?.method,
+                auth: hdrs.get('Authorization'),
+                host: hdrs.get('Host'),
+                redirect: init?.redirect,
+                duplex: init?.duplex,
+                hasBody: Boolean(init?.body),
+            })
+            return new Response(
+                JSON.stringify({
+                    signature: 'cloudrun_sig_ok',
+                    apiKey: '111122223333444',
+                    cloudName: 'demo_cloud',
+                }),
+                {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+                }
+            )
+        }) as unknown as typeof fetch
+
+        const res = await edgeShield.fetch(
+            new Request('https://www.tabijiapp.com/api/sign-cloudinary', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            }))
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: 'Bearer mock-session-jwt',
+                },
+                body: JSON.stringify({
+                    paramsToSign: {
+                        timestamp: Math.floor(Date.now() / 1000),
+                        folder: 'ryan_travel/receipts/3f7abf22-b447-4281-b240-584549c79943',
+                    },
+                }),
+            }),
+            {},
+            {}
+        )
 
-        expect((await postSign({ paramsToSign: { timestamp: true, folder: 'ryan_travel/covers' } })).status).toBe(400)
-        expect((await postSign({ paramsToSign: { timestamp: 1700000000.5, folder: 'ryan_travel/covers' } })).status).toBe(400)
-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/covers&overwrite=true' } })).status).toBe(400)
-        expect((await postSign({ paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/covers?x=1' } })).status).toBe(400)
+        expect(res.status).toBe(200)
+        expect(res.headers.get('X-Edge-Shield')).toBe('Cloudflare-Worker-Active')
+        expect(res.headers.get('Cache-Control')).toBe('no-store')
+        expect(capturedCalls).toHaveLength(1)
+        expect(capturedCalls[0].url).toBe('https://antigravity-backend-589255638719.us-central1.run.app/api/sign-cloudinary')
+        expect(capturedCalls[0].method).toBe('POST')
+        expect(capturedCalls[0].auth).toBe('Bearer mock-session-jwt')
+        expect(capturedCalls[0].host).toBe('antigravity-backend-589255638719.us-central1.run.app')
+        expect(capturedCalls[0].redirect).toBe('manual')
+        expect(capturedCalls[0].duplex).toBe('half')
+        expect(capturedCalls[0].hasBody).toBe(true)
 
-        const okReceipt = await postSign({
-            paramsToSign: { timestamp: 1700000000, folder: 'ryan_travel/receipts/3f7abf22-b447-4281-b240-584549c79943' },
-        })
-        expect(okReceipt.status).toBe(200)
-        expect((await okReceipt.json()).signature).toBeTruthy()
+        // Verify uploadMapillaryToCloudinary consumes atomic server-returned apiKey/cloudName over stale NEXT_PUBLIC_* env
+        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME', 'stale_cloud')
+        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_API_KEY', '999999999999999')
+        const uid = '3f7abf22-b447-4281-b240-584549c79943'
+        mockStorage['tabiji_session_token'] = createMockJwt({ sub: uid, exp: Math.floor(Date.now() / 1000) + 3600 })
+
+        let uploadUrlSeen = ''
+        let uploadedApiKey = ''
+        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = typeof input === 'string' ? input : input.toString()
+            if (url.includes('/api/sign-cloudinary')) {
+                return new Response(
+                    JSON.stringify({
+                        signature: 'mly_sig_atomic',
+                        apiKey: '111122223333444',
+                        cloudName: 'rotated_cloud',
+                    }),
+                    { status: 200, headers: { 'Content-Type': 'application/json' } }
+                )
+            }
+            uploadUrlSeen = url
+            const fd = init?.body as FormData
+            uploadedApiKey = String(fd.get('api_key') || '')
+            return new Response(
+                JSON.stringify({ secure_url: 'https://res.cloudinary.com/rotated_cloud/image/upload/v1/ryan_travel/streetview/mly_98765.jpg' }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+        }) as unknown as typeof fetch
+
+        const { uploadMapillaryToCloudinary } = await import('@/lib/mapillary')
+        const secureUrl = await uploadMapillaryToCloudinary('https://scontent.mapillary.com/img.jpg', '98765')
+        expect(secureUrl).toBe('https://res.cloudinary.com/rotated_cloud/image/upload/v1/ryan_travel/streetview/mly_98765.jpg')
+        expect(uploadUrlSeen).toBe('https://api.cloudinary.com/v1_1/rotated_cloud/image/upload')
+        expect(uploadedApiKey).toBe('111122223333444')
+    })
+
+    it('F15: All 6 frontend upload callers route through cloudinaryApi.signUpload and uploadCapsulePhotoToCloudinary uses atomic server credentials', async () => {
+        const callerFiles = [
+            'components/ui/image-upload.tsx',
+            'components/ui/multi-image-upload.tsx',
+            'components/itinerary/TripCoverMenu.tsx',
+            'components/itinerary/TripSettingsView.tsx',
+            'lib/capsule-upload.ts',
+            'lib/mapillary.ts',
+        ]
+        for (const rel of callerFiles) {
+            const src = fs.readFileSync(path.resolve(__dirname, '..', rel), 'utf8')
+            expect(src).not.toMatch(/fetch\(\s*["'`]\/api\/sign-cloudinary/)
+            expect(src).toContain('cloudinaryApi.signUpload')
+            expect(src).toContain('signData.cloudName')
+            expect(src).toContain('signData.apiKey')
+        }
+        const multiSrc = fs.readFileSync(path.resolve(__dirname, '../components/ui/multi-image-upload.tsx'), 'utf8')
+        expect(multiSrc).toMatch(/catch\s*\(err\)\s*\{[\s\S]*?setLoading\(false\)[\s\S]*?setProgress\(0\)/)
+
+        // End-to-end unit check for uploadCapsulePhotoToCloudinary with atomic rotated credentials
+        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME', 'stale_cloud')
+        vi.stubEnv('NEXT_PUBLIC_CLOUDINARY_API_KEY', '999999999999999')
+        const uid = '3f7abf22-b447-4281-b240-584549c79943'
+        mockStorage['tabiji_session_token'] = createMockJwt({ sub: uid, exp: Math.floor(Date.now() / 1000) + 3600 })
+
+        let seenAuthHeader: string | null = null
+        globalThis.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            seenAuthHeader = new Headers(init?.headers).get('Authorization')
+            return new Response(
+                JSON.stringify({
+                    signature: 'capsule_sig_atomic',
+                    apiKey: '111122223333444',
+                    cloudName: 'rotated_capsule_cloud',
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+        }) as unknown as typeof fetch
+
+        let xhrUrl = ''
+        let xhrApiKey = ''
+        let xhrSig = ''
+        const origXhr = globalThis.XMLHttpRequest
+        class MockXHR {
+            status = 200
+            responseText = JSON.stringify({
+                secure_url: 'https://res.cloudinary.com/rotated_capsule_cloud/image/upload/v1/tabidachi_capsules/pic.jpg',
+            })
+            upload: { onprogress?: (e: { lengthComputable: boolean; loaded: number; total: number }) => void } = {}
+            onload?: () => void
+            onerror?: () => void
+            open(_method: string, url: string) {
+                xhrUrl = url
+            }
+            send(body: FormData) {
+                xhrApiKey = String(body.get('api_key') || '')
+                xhrSig = String(body.get('signature') || '')
+                this.onload?.()
+            }
+        }
+        globalThis.XMLHttpRequest = MockXHR as unknown as typeof XMLHttpRequest
+        try {
+            const { uploadCapsulePhotoToCloudinary } = await import('@/lib/capsule-upload')
+            const file = new File(['<svg/>'], 'polaroid.svg', { type: 'image/svg+xml' })
+            const url = await uploadCapsulePhotoToCloudinary(file)
+            expect(url).toBe('https://res.cloudinary.com/rotated_capsule_cloud/image/upload/v1/tabidachi_capsules/pic.jpg')
+            expect(seenAuthHeader).toContain('Bearer ')
+            expect(xhrUrl).toBe('https://api.cloudinary.com/v1_1/rotated_capsule_cloud/image/upload')
+            expect(xhrApiKey).toBe('111122223333444')
+            expect(xhrSig).toBe('capsule_sig_atomic')
+
+            // Signing failure propagates backend FastAPI detail without sending XHR
+            xhrUrl = ''
+            globalThis.fetch = vi.fn(async () =>
+                new Response(JSON.stringify({ detail: 'Too many upload signing requests. Please try again shortly.' }), {
+                    status: 429,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            ) as unknown as typeof fetch
+            await expect(uploadCapsulePhotoToCloudinary(file)).rejects.toThrow(
+                'Too many upload signing requests. Please try again shortly.'
+            )
+            expect(xhrUrl).toBe('')
+        } finally {
+            globalThis.XMLHttpRequest = origXhr
+        }
     })
 })
