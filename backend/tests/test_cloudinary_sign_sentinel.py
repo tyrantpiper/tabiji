@@ -353,10 +353,11 @@ def test_attack_parameter_injection_and_folder_smuggling():
     ).status_code == 400
 
 
-def test_attack_timestamp_skew_bool_float_and_unicode_digits():
+def test_attack_timestamp_skew_bool_float_and_unicode_digits(monkeypatch):
     client = TestClient(app)
-    token = _mint_session_jwt(str(uuid.uuid4()))
     now_ts = int(time.time())
+    monkeypatch.setattr(cloudinary_router.time, "time", lambda: float(now_ts))
+    token = _mint_session_jwt(str(uuid.uuid4()))
     headers = {"Authorization": f"Bearer {token}"}
 
     bad_timestamps = [
@@ -381,8 +382,8 @@ def test_attack_timestamp_skew_bool_float_and_unicode_digits():
         )
         assert resp.status_code == 400, f"Bad timestamp unexpectedly accepted: {bad_ts!r}"
 
-    # Boundary acceptance within ±600s
-    for ok_ts in (now_ts - 590, now_ts + 590):
+    # Exact boundary acceptance within ±600s (deterministic under frozen wall clock)
+    for ok_ts in (now_ts - 600, now_ts + 600):
         resp = client.post(
             "/api/sign-cloudinary",
             headers=headers,

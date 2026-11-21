@@ -309,10 +309,10 @@ index 0000000..a112264
 +    )
 diff --git a/backend/tests/test_cloudinary_sign_sentinel.py b/backend/tests/test_cloudinary_sign_sentinel.py
 new file mode 100644
-index 0000000..b163a21
+index 0000000..57e2928
 --- /dev/null
 +++ b/backend/tests/test_cloudinary_sign_sentinel.py
-@@ -0,0 +1,829 @@
+@@ -0,0 +1,830 @@
 +"""
 +Security Sentinel In-Memory Verification Suite for POST /api/sign-cloudinary
 +============================================================================
@@ -668,10 +668,11 @@ index 0000000..b163a21
 +    ).status_code == 400
 +
 +
-+def test_attack_timestamp_skew_bool_float_and_unicode_digits():
++def test_attack_timestamp_skew_bool_float_and_unicode_digits(monkeypatch):
 +    client = TestClient(app)
-+    token = _mint_session_jwt(str(uuid.uuid4()))
 +    now_ts = int(time.time())
++    monkeypatch.setattr(cloudinary_router.time, "time", lambda: float(now_ts))
++    token = _mint_session_jwt(str(uuid.uuid4()))
 +    headers = {"Authorization": f"Bearer {token}"}
 +
 +    bad_timestamps = [
@@ -696,8 +697,8 @@ index 0000000..b163a21
 +        )
 +        assert resp.status_code == 400, f"Bad timestamp unexpectedly accepted: {bad_ts!r}"
 +
-+    # Boundary acceptance within ±600s
-+    for ok_ts in (now_ts - 590, now_ts + 590):
++    # Exact boundary acceptance within ±600s (deterministic under frozen wall clock)
++    for ok_ts in (now_ts - 600, now_ts + 600):
 +        resp = client.post(
 +            "/api/sign-cloudinary",
 +            headers=headers,

@@ -13,7 +13,7 @@
   - **Dismissed**: `5`
   - **Inconclusive**: `0`
   - **Harness² Conservation Identity**: `0 + 5 + 0 == 5 == len(findings)` (`PASS`)
-- **Mantis Block G Split Verification (`backend/tests/test_cloudinary_sign_sentinel.py`, 829 lines)**:
+- **Mantis Block G Split Verification (`backend/tests/test_cloudinary_sign_sentinel.py`, 830 lines)**:
   - `pytest -v -k "benign"`: **5 passed** (`EXIT 0`)
   - `pytest -v -k "not benign"`: **12 passed** (`EXIT 0`, including `OrderedDict` LRU eviction/window expiry and RFC 9110 §8.6 `Content-Length` smuggling + chunked stream cutoff)
   - Full backend regression (`pytest -q`): **743 passed, 5 skipped** (`EXIT 0`; HEAD baseline `726 passed, 5 skipped`)
