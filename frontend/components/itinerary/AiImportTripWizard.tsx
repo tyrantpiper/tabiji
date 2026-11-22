@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { aiApi } from "@/lib/api"
+import { compressImage, isImageFile, readImageFileAsDataUrl } from "@/lib/image-utils"
 import { motion, AnimatePresence } from "framer-motion"
 
 interface AiImportTripWizardProps {
@@ -244,30 +245,47 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
 
     const [importText, setImportText] = useState("")
     const [imagePreview, setImagePreview] = useState<string | null>(null)
+    const [imagePreviewError, setImagePreviewError] = useState(false)
+    const [isCompressing, setIsCompressing] = useState(false)
     const [isDragging, setIsDragging] = useState(false)
     const [isLoading, setIsLoading] = useState(false)
     const [progressText, setProgressText] = useState<string | null>(null)
 
     const fileInputRef = useRef<HTMLInputElement>(null)
     const containerRef = useRef<HTMLDivElement>(null)
+    const compressingRef = useRef(false)
 
-    const handleFileSelected = useCallback((file: File) => {
-        if (!file.type.startsWith("image/")) {
-            toast.error(zh ? "請上傳圖片檔案 (PNG, JPG, WEBP)" : "Please upload an image file (PNG, JPG, WEBP)")
+    const handleFileSelected = useCallback(async (file: File) => {
+        if (!isImageFile(file) || (file.type || "").toLowerCase() === "image/svg+xml") {
+            toast.error(zh ? "請上傳圖片檔案 (PNG, JPG, WEBP, HEIC)" : "Please upload an image file (PNG, JPG, WEBP, HEIC)")
             return
         }
-        if (file.size > 10 * 1024 * 1024) {
-            toast.error(zh ? "圖片檔案請小於 10MB" : "Image size must be under 10MB")
+        if (file.size > 25 * 1024 * 1024) {
+            toast.error(zh ? "原始圖片檔案請小於 25MB" : "Raw image size must be under 25MB")
             return
         }
+        if (compressingRef.current) return
 
-        const reader = new FileReader()
-        reader.onload = (e) => {
-            const b64 = e.target?.result as string
+        compressingRef.current = true
+        setIsCompressing(true)
+        try {
+            const compressed = await compressImage(file, "ai_input")
+            if (compressed.size > 10 * 1024 * 1024) {
+                toast.error(zh ? "壓縮後圖片檔案仍超過 10MB，請選擇較小的圖片" : "Compressed image size still exceeds 10MB")
+                return
+            }
+
+            const b64 = await readImageFileAsDataUrl(compressed)
+            setImagePreviewError(false)
             setImagePreview(b64)
             haptic.selection()
+        } catch (err) {
+            console.error("[AiImportTripWizard] Image compression failed:", err)
+            toast.error(zh ? "圖片處理失敗，請重試" : "Failed to process image")
+        } finally {
+            compressingRef.current = false
+            setIsCompressing(false)
         }
-        reader.readAsDataURL(file)
     }, [haptic, zh])
 
     // 📋 支援剪貼簿 Paste (文字 / 圖片)
@@ -399,19 +417,31 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
 
                 {imagePreview ? (
                     <div className="relative rounded-2xl border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/40 dark:bg-emerald-950/20 p-2.5 flex items-center gap-3">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                            src={imagePreview} 
-                            alt="Preview" 
-                            className="w-16 h-16 object-cover rounded-xl border border-emerald-200 dark:border-emerald-800 shrink-0" 
-                        />
+                        {imagePreviewError ? (
+                            <div className="w-16 h-16 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-100/70 dark:bg-emerald-900/40 flex flex-col items-center justify-center shrink-0 text-emerald-700 dark:text-emerald-300">
+                                <ImageIcon className="w-5 h-5" />
+                                <span className="text-[9px] font-bold mt-0.5">HEIC</span>
+                            </div>
+                        ) : (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                                src={imagePreview}
+                                alt="Preview"
+                                onError={() => setImagePreviewError(true)}
+                                className="w-16 h-16 object-cover rounded-xl border border-emerald-200 dark:border-emerald-800 shrink-0"
+                            />
+                        )}
                         <div className="flex-1 min-w-0">
                             <div className="text-xs font-bold text-emerald-800 dark:text-emerald-200 flex items-center gap-1">
                                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                                {zh ? "截圖已就緒" : "Screenshot ready"}
+                                {imagePreviewError
+                                    ? (zh ? "圖片已就緒（HEIC 格式）" : "Image ready (HEIC format)")
+                                    : (zh ? "截圖已就緒" : "Screenshot ready")}
                             </div>
                             <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                                {zh ? "將使用多模態視覺模型深度識別景點" : "Multimodal vision will extract all stops and times"}
+                                {imagePreviewError
+                                    ? (zh ? "瀏覽器不支援預覽，仍可送交 AI 解析或改傳 JPG/PNG" : "Browser cannot preview; AI can still analyze or use JPG/PNG")
+                                    : (zh ? "將使用多模態視覺模型深度識別景點" : "Multimodal vision will extract all stops and times")}
                             </div>
                         </div>
                         <button
@@ -419,6 +449,7 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
                             onClick={() => {
                                 haptic.tap()
                                 setImagePreview(null)
+                                setImagePreviewError(false)
                             }}
                             className="w-7 h-7 rounded-full bg-stone-200 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-red-100 hover:text-red-600 cursor-pointer transition-colors"
                         >
@@ -430,19 +461,26 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
                         onDrop={handleDrop}
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
-                        onClick={() => fileInputRef.current?.click()}
+                        onClick={() => !isCompressing && fileInputRef.current?.click()}
                         className={cn(
                             "p-3 rounded-2xl border-2 border-dashed transition-all cursor-pointer flex items-center justify-center gap-3 text-center",
                             isDragging
                                 ? "border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/40 scale-[0.99]"
-                                : "border-stone-200 dark:border-slate-700 bg-stone-100/60 dark:bg-slate-800/60 hover:bg-stone-200/50"
+                                : "border-stone-200 dark:border-slate-700 bg-stone-100/60 dark:bg-slate-800/60 hover:bg-stone-200/50",
+                            isCompressing && "opacity-60 pointer-events-none"
                         )}
                     >
                         <input
                             ref={fileInputRef}
                             type="file"
                             accept="image/*"
-                            onChange={e => e.target.files?.[0] && handleFileSelected(e.target.files[0])}
+                            onChange={e => {
+                                const selected = e.target.files?.[0]
+                                e.target.value = ""
+                                if (selected) {
+                                    void handleFileSelected(selected)
+                                }
+                            }}
                             className="hidden"
                         />
                         <div className="w-8 h-8 rounded-xl bg-emerald-500/10 dark:bg-emerald-400/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">

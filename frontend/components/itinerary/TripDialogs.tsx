@@ -564,6 +564,7 @@ export function CreateTripModal({
                                             fill
                                             className="object-cover"
                                             sizes="(max-width: 768px) 100vw, 500px"
+                                            unoptimized
                                         />
                                         <div className="absolute inset-0 bg-linear-to-t from-black/70 via-black/20 to-transparent flex items-end justify-between p-2.5">
                                             <span className="text-[11px] font-bold text-white drop-shadow-xs flex items-center gap-1.5">
@@ -769,6 +770,7 @@ export function CreateTripModal({
                                             fill
                                             className="object-cover"
                                             sizes="(max-width: 768px) 100vw, 500px"
+                                            unoptimized
                                         />
                                         <div className="absolute inset-0 bg-linear-to-t from-black/70 via-black/20 to-transparent flex items-end justify-between p-2.5">
                                             <span className="text-[11px] font-bold text-white drop-shadow-xs flex items-center gap-1.5">

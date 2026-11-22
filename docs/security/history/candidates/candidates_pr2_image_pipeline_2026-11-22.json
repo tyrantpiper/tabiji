@@ -1,0 +1,82 @@
+[
+  {
+    "id": "frontend/lib/image-utils.ts:pr2_jpeg_exif_marker_walker",
+    "file_path": "frontend/lib/image-utils.ts",
+    "start_line": 215,
+    "end_line": 292,
+    "attack_vector": "metadata_stripping_and_parser_boundary",
+    "hypothesis": "Verify whether hasJpegExifMetadata reliably walks JPEG markers up to SOS (0xFFDA) within the first 64KB slice to detect APP1 (0xFFE1) and APP13 (0xFFED), avoids false positives in compressed scan bytes, and fails closed on truncated, oversized-ICC, or malformed headers so GPS metadata is not retained."
+  },
+  {
+    "id": "frontend/lib/image-utils.ts:pr2_compress_image_safari_fallback_and_vram",
+    "file_path": "frontend/lib/image-utils.ts",
+    "start_line": 595,
+    "end_line": 741,
+    "attack_vector": "client_media_resilience_and_privacy",
+    "hypothesis": "Verify whether compressImage pre-checks 2D canvas support to avoid jsdom/WebView deadlocks, honors serial queue cancellation signals after timeout so concurrent canvases never exceed 1, preserves SVG and small GIF passthrough, fills #ffffff before drawImage, handles Safari WebP-to-PNG fallback, prevents EXIF-bearing JPEGs from falling back to the original file, and releases bitmap and canvas memory in finally."
+  },
+  {
+    "id": "frontend/components/ui/image-upload.tsx:pr2_direct_pass_and_reentrancy_guard",
+    "file_path": "frontend/components/ui/image-upload.tsx",
+    "start_line": 75,
+    "end_line": 240,
+    "attack_vector": "upload_state_integrity_and_error_handling",
+    "hypothesis": "Verify whether ImageUpload prevents re-entrant overlapping uploads via uploadingRef, aborts in-flight XHR and suppresses callbacks on unmount, handles xhr.onabort cleanly, precomputes dataUrl only for bounded decoded raster images when onUploadSuccess is provided, wraps JSON.parse in try/catch with guaranteed cleanup in finally, normalizes .heic/.heif secure_url extensions to .jpg, and preserves single-argument onChange semantics."
+  },
+  {
+    "id": "frontend/lib/capsule-upload.ts:pr2_capsule_post_compression_gate",
+    "file_path": "frontend/lib/capsule-upload.ts",
+    "start_line": 1,
+    "end_line": 94,
+    "attack_vector": "upload_size_and_mime_boundary",
+    "hypothesis": "Verify whether uploadCapsulePhotoToCloudinary enforces both a 25MB raw size ceiling and an 8MB post-compression ceiling, accepts empty-MIME HEIC and SVG files consistently with isImageFile, forwards compressed File names, and normalizes .heic/.heif Cloudinary URLs to .jpg."
+  },
+  {
+    "id": "frontend/lib/api.ts:pr2_parse_receipt_direct_client_forwarding",
+    "file_path": "frontend/lib/api.ts",
+    "start_line": 815,
+    "end_line": 845,
+    "attack_vector": "api_proxy_decommissioning_and_header_parity",
+    "hypothesis": "Verify whether aiApi.parseReceipt cleanly forwards X-Gemini-API-Key, Accept-Language, locale, imageUrl, and optional direct image payload directly to FastAPI /api/ai/parse-receipt after decommissioning the unauthenticated Next.js /api/parse-receipt proxy route."
+  },
+  {
+    "id": "backend/routers/ai.py:pr2_receipt_dimension_and_strict_mode",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 108,
+    "end_line": 185,
+    "attack_vector": "image_processing_memory_and_error_boundary",
+    "hypothesis": "Verify whether compute_receipt_target_dimensions preserves long-receipt readability while capping pixel counts and whether process_and_optimize_image_sync avoids mutating Image.MAX_IMAGE_PIXELS per thread, handles DecompressionBombError with HTTP 400, and raises ValueError on unreadable bytes when strict=True."
+  },
+  {
+    "id": "backend/routers/ai.py:pr2_parse_md_image_validation_and_heic",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 448,
+    "end_line": 512,
+    "attack_vector": "multimodal_import_validation_and_sanitization",
+    "hypothesis": "Verify whether /api/ai/parse-md parses Data URL MIME types, enforces the explicit image MIME allowlist rejecting SVG and octet-stream payloads with HTTP 400, bounds base64 size before and after strict base64 decoding (validate=True), and optimizes images including HEIC off-event-loop via process_and_optimize_image_sync."
+  },
+  {
+    "id": "backend/routers/ai.py:pr2_receipt_base64_mime_and_fallback",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 1085,
+    "end_line": 1155,
+    "attack_vector": "input_validation_and_fallback_safety",
+    "hypothesis": "Verify whether parse_receipt validates Data URL MIME types against ALLOWED_MIME_TYPES, enforces MAX_IMAGE_SIZE before and after strict base64 decoding (validate=True), rejects invalid base64 with HTTP 400 when imageUrl is absent, and safely falls back to safe_download_image when imageUrl is present."
+  },
+  {
+    "id": "backend/main.py:pr2_chat_image_validation_and_http_propagation",
+    "file_path": "backend/main.py",
+    "start_line": 1135,
+    "end_line": 1235,
+    "attack_vector": "multimodal_input_validation_and_exception_propagation",
+    "hypothesis": "Verify whether /api/chat validates Data URL MIME types against the explicit image allowlist, enforces strict base64 decoding and MAX_IMAGE_SIZE, sanitizes images via process_and_optimize_image_sync(..., strict=True) in a worker thread, re-raises HTTPException 400 before generic exception handling, and gracefully degrades truly corrupt image bytes."
+  },
+  {
+    "id": "cloudflare/cloudinary-proxy/worker.js:pr2_edge_proxy_origin_path_and_cache_isolation",
+    "file_path": "cloudflare/cloudinary-proxy/worker.js",
+    "start_line": 1,
+    "end_line": 254,
+    "attack_vector": "edge_proxy_origin_path_and_cache_hygiene",
+    "hypothesis": "Verify whether cloudinary-proxy resolves cloud name without REDACTED placeholders, restricts methods to GET/HEAD/OPTIONS, validates Referer/Origin using strict new URL() hostname checks while allowing empty headers for iOS PWA, blocks path traversal and transform injection via strict regex, respects Accept q=0 while sending canonical upstream Accept, catches upstream network errors as 502 no-store, rejects SVG responses with 415 sandbox no-store, isolates WebP/AVIF cache keys, strips upstream cache/debug headers, and caches only GET 200 raster image/* responses."
+  }
+]

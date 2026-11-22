@@ -26,6 +26,7 @@ import { API_HOST } from "@/lib/api"
 import { useWeatherStore } from "@/lib/stores/weatherStore"
 import { debugLog } from "@/lib/debug"
 import { useLanguage, type TranslationKey } from "@/lib/LanguageContext"
+import { compressImage, isImageFile, readImageFileAsDataUrl } from "@/lib/image-utils"
 import { type ParsedItinerary, type ParsedItineraryItem } from "@/lib/itinerary-types"
 import * as authSession from "@/lib/auth-session"
 
@@ -254,6 +255,9 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
         url?: string
     }>({ phase: "thinking" })
     const [selectedImage, setSelectedImage] = useState<string | null>(null)
+    const [imagePreviewError, setImagePreviewError] = useState(false)
+    const [isCompressingImage, setIsCompressingImage] = useState(false)
+    const compressingImageRef = useRef(false)
     // 🆕 v3.5: 保存失敗的訊息用於重試
     const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null)
     // 🆕 v3.6: 記憶摘要永動機
@@ -519,6 +523,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
 
         setInput("")
         setSelectedImage(null)
+        setImagePreviewError(false)
         if (textareaRef.current) {
             textareaRef.current.style.height = "auto"
         }
@@ -1149,14 +1154,38 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
         setIsLoading(false)
     }
 
-    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
-        if (file) {
-            const reader = new FileReader()
-            reader.onloadend = () => {
-                setSelectedImage(reader.result as string)
+        e.target.value = ""
+        if (!file || compressingImageRef.current) return
+
+        if (!isImageFile(file) || (file.type || "").toLowerCase() === "image/svg+xml") {
+            toast.error(zh ? "請選擇圖片檔案 (JPG, PNG, WEBP, HEIC)" : "Please select an image file (JPG, PNG, WEBP, HEIC)")
+            return
+        }
+        if (file.size > 25 * 1024 * 1024) {
+            toast.error(zh ? "原始圖片請小於 25MB" : "Raw image must be under 25MB")
+            return
+        }
+
+        compressingImageRef.current = true
+        setIsCompressingImage(true)
+        try {
+            const compressed = await compressImage(file, "ai_input")
+            if (compressed.size > 10 * 1024 * 1024) {
+                toast.error(zh ? "壓縮後圖片仍超過 10MB，請選擇較小圖片" : "Compressed image still exceeds 10MB")
+                return
             }
-            reader.readAsDataURL(file)
+
+            const dataUrl = await readImageFileAsDataUrl(compressed)
+            setImagePreviewError(false)
+            setSelectedImage(dataUrl)
+        } catch (err) {
+            console.error("[ChatWidget] Image compression error:", err)
+            toast.error(zh ? "圖片處理失敗，請重試" : "Failed to process image")
+        } finally {
+            compressingImageRef.current = false
+            setIsCompressingImage(false)
         }
     }
 
@@ -1529,10 +1558,25 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             </div>
                             {selectedImage && (
                                 <div className="mb-2 relative inline-block">
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img src={selectedImage} alt="Selected" className="h-16 w-auto rounded-lg border border-slate-200 dark:border-slate-700" />
+                                    {imagePreviewError ? (
+                                        <div className="h-16 px-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/40 flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-200">
+                                            <ImageIcon className="w-4 h-4 shrink-0" />
+                                            <span>{zh ? "HEIC 圖片已就緒" : "HEIC image ready"}</span>
+                                        </div>
+                                    ) : (
+                                        /* eslint-disable-next-line @next/next/no-img-element */
+                                        <img
+                                            src={selectedImage}
+                                            alt="Selected"
+                                            onError={() => setImagePreviewError(true)}
+                                            className="h-16 w-auto rounded-lg border border-slate-200 dark:border-slate-700"
+                                        />
+                                    )}
                                     <button
-                                        onClick={() => setSelectedImage(null)}
+                                        onClick={() => {
+                                            setSelectedImage(null)
+                                            setImagePreviewError(false)
+                                        }}
                                         className="absolute -top-2 -right-2 bg-slate-500 text-white rounded-full p-0.5 hover:bg-slate-600 cursor-pointer"
                                     >
                                         <X className="w-3 h-3" />
@@ -1550,8 +1594,9 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="shrink-0 text-tabiji-slate hover:text-tabiji-charcoal dark:hover:text-tabiji-paper cursor-pointer"
-                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={isCompressingImage}
+                                    className="shrink-0 text-tabiji-slate hover:text-tabiji-charcoal dark:hover:text-tabiji-paper cursor-pointer disabled:opacity-50"
+                                    onClick={() => !isCompressingImage && fileInputRef.current?.click()}
                                 >
                                     <ImageIcon className="w-5 h-5" />
                                 </Button>

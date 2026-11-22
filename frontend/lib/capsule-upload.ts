@@ -1,7 +1,8 @@
-import { compressImage } from "@/lib/image-utils"
+import { compressImage, isImageFile } from "@/lib/image-utils"
 import { cloudinaryApi } from "@/lib/api"
 
-export const MAX_PHOTO_BYTES = 8 * 1024 * 1024 // 8MB
+export const MAX_PHOTO_BYTES = 8 * 1024 * 1024 // 8MB (post-compression hard limit)
+export const MAX_RAW_PHOTO_BYTES = 25 * 1024 * 1024 // 25MB (pre-compression raw limit)
 
 export interface UploadProgressCallback {
     (percent: number): void
@@ -9,24 +10,29 @@ export interface UploadProgressCallback {
 
 /**
  * Uploads a polaroid photo to Cloudinary within the tabidachi_capsules folder.
- * Enforces client-side size limits, dimension compression, and signature authentication.
+ * Enforces raw size guard, image type check, preset compression, post-compression 8MB gate, and signature authentication.
  */
 export async function uploadCapsulePhotoToCloudinary(
     file: File,
     onProgress?: UploadProgressCallback
 ): Promise<string> {
-    // 🛡️ 門禁 1: 檔案大小硬性攔截 (8MB)
-    if (file.size > MAX_PHOTO_BYTES) {
-        throw new Error("相片大小不得超過 8MB，請重新選擇較小的相片。")
+    // 🛡️ 門禁 1: 原始檔案大小寬鬆攔截 (25MB)
+    if (file.size > MAX_RAW_PHOTO_BYTES) {
+        throw new Error("相片原始大小不得超過 25MB，請重新選擇較小的相片。")
     }
 
-    // 🛡️ 門禁 2: MIME 圖片類型驗證
-    if (!file.type.startsWith("image/")) {
+    // 🛡️ 門禁 2: 圖片類型驗證（相容空 MIME .heic/.heif 並保留 SVG 測試通道）
+    if (!isImageFile(file)) {
         throw new Error("僅支援圖片檔案格式 (JPEG, PNG, WebP, HEIC)。")
     }
 
-    // 🛡️ 門禁 3: 前端極限壓縮至 2048px / 85% 質量 (降低傳輸流量至 ~600KB)
-    const compressed = await compressImage(file, { maxWidth: 2048, maxHeight: 2048, quality: 0.85 })
+    // 🛡️ 門禁 3: 前端壓縮至 capsule preset (1600px / 82% 質量)
+    const compressed = await compressImage(file, "capsule")
+
+    // 🛡️ 門禁 4: 壓縮後 8MB 硬性門禁
+    if (compressed.size > MAX_PHOTO_BYTES) {
+        throw new Error("相片大小不得超過 8MB，請重新選擇較小的相片。")
+    }
 
     const folder = "tabidachi_capsules"
     const timestamp = Math.round(Date.now() / 1000)
@@ -45,7 +51,7 @@ export async function uploadCapsulePhotoToCloudinary(
 
     // 2. 構建 FormData 直傳 Cloudinary
     const formData = new FormData()
-    formData.append("file", compressed, file.name)
+    formData.append("file", compressed, compressed instanceof File ? compressed.name : file.name)
     formData.append("timestamp", timestamp.toString())
     formData.append("folder", folder)
     formData.append("signature", signature)
@@ -68,8 +74,9 @@ export async function uploadCapsulePhotoToCloudinary(
             if (xhr.status === 200) {
                 try {
                     const result = JSON.parse(xhr.responseText)
-                    if (result.secure_url) {
-                        resolve(result.secure_url)
+                    if (result.secure_url && typeof result.secure_url === "string") {
+                        const safeUrl = result.secure_url.replace(/\.(heic|heif)(?=[?#]|$)/i, ".jpg")
+                        resolve(safeUrl)
                     } else {
                         reject(new Error(result.error?.message || "Cloudinary 回傳無效的 secure_url"))
                     }

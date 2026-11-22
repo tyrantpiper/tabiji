@@ -11,7 +11,7 @@ import { memo } from "react"
 import {
     MapPin, Utensils, Train, ShoppingBag, Bed, Camera, StickyNote
 } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn, getOptimizedImageUrl } from "@/lib/utils"
 import Image from "next/image"
 import { Activity } from "@/lib/itinerary-types"
 
@@ -91,10 +91,10 @@ export const TimelineCardOverlay = memo(function TimelineCardOverlay({
                     )}
                 </div>
 
-                {activity.image_url && (
+                {(activity.image_urls?.[0] || activity.image_url) && (
                     <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 border border-slate-200 dark:border-slate-700">
                         <Image
-                            src={activity.image_url}
+                            src={getOptimizedImageUrl(activity.image_urls?.[0] || activity.image_url, 320)}
                             alt=""
                             width={56}
                             height={56}

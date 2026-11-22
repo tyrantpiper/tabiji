@@ -1,9 +1,9 @@
+import fs from 'fs'
+import path from 'path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { NextRequest } from 'next/server'
 import { AiParseResponseSchema, AiGenerateResponseSchema } from '@/lib/schemas'
-import { aiApi } from '@/lib/api'
+import { aiApi, API } from '@/lib/api'
 import { streamChat } from '@/lib/sse-parser'
-import { POST as parseReceiptPost } from '@/app/api/parse-receipt/route'
 
 describe('AI Systemic Remediation Sentinel (Frontend)', () => {
     const originalFetch = global.fetch
@@ -62,31 +62,43 @@ describe('AI Systemic Remediation Sentinel (Frontend)', () => {
         ).rejects.toThrow('Gemini API Key 無效或已過期')
     })
 
-    it('Next /api/parse-receipt proxy forwards X-Gemini-API-Key, Accept-Language, and locale', async () => {
+    it('aiApi.parseReceipt forwards X-Gemini-API-Key, Accept-Language, locale, and direct image / imageUrl payload while orphan Next proxy is deleted', async () => {
+        // Verify unauthenticated orphan Next.js proxy route is removed
+        const orphanRoutePath = path.resolve(__dirname, '../app/api/parse-receipt/route.ts')
+        expect(fs.existsSync(orphanRoutePath)).toBe(false)
+
+        const storageMap: Record<string, string> = {
+            user_gemini_key: 'AIzaSyProxyHeaderForwardTest12345',
+        }
+        vi.stubGlobal('localStorage', {
+            getItem: vi.fn((k: string) => storageMap[k] ?? null),
+            setItem: vi.fn((k: string, v: string) => { storageMap[k] = v }),
+            removeItem: vi.fn((k: string) => { delete storageMap[k] }),
+            clear: vi.fn(() => { Object.keys(storageMap).forEach(k => delete storageMap[k]) }),
+        })
+
         const mockUpstreamFetch = vi.fn().mockResolvedValueOnce({
             ok: true,
             status: 200,
-            json: async () => ({ status: 'success', data: { title: '7-11', currency: 'JPY', expense_date: '2026-11-11' } }),
+            json: async () => ({ title: '7-11', currency: 'JPY', expense_date: '2026-11-11', total_amount: 550 }),
         })
         global.fetch = mockUpstreamFetch as unknown as typeof fetch
 
-        const req = new NextRequest('http://localhost/api/parse-receipt', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Gemini-API-Key': 'AIzaSyProxyHeaderForwardTest12345',
-                'Accept-Language': 'en-US',
-            },
-            body: JSON.stringify({ image: 'data:image/jpeg;base64,/9j/', locale: 'en' }),
-        })
+        const receiptUrl = 'https://res.cloudinary.com/dnpcnwrcu/image/upload/v1/ryan_travel/receipts/r1.webp'
+        const directDataUrl = 'data:image/webp;base64,UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA='
+        const res = await aiApi.parseReceipt(receiptUrl, directDataUrl, 'en')
 
-        const res = await parseReceiptPost(req)
-        expect(res.status).toBe(200)
+        expect(res.title).toBe('7-11')
         expect(mockUpstreamFetch).toHaveBeenCalledTimes(1)
-        const [, fetchInit] = mockUpstreamFetch.mock.calls[0]
+        const [fetchUrl, fetchInit] = mockUpstreamFetch.mock.calls[0]
+        expect(fetchUrl).toBe(API.RECEIPT_PARSE)
         expect(fetchInit.headers['X-Gemini-API-Key']).toBe('AIzaSyProxyHeaderForwardTest12345')
         expect(fetchInit.headers['Accept-Language']).toBe('en-US')
-        expect(JSON.parse(fetchInit.body)).toMatchObject({ locale: 'en' })
+        expect(JSON.parse(fetchInit.body)).toEqual({
+            imageUrl: receiptUrl,
+            image: directDataUrl,
+            locale: 'en',
+        })
     })
 
     it('401 from Gemini API Key does NOT wipe tabiji_session_token in apiFetch', async () => {

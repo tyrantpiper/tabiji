@@ -14,6 +14,7 @@ if sys.stdout and hasattr(sys.stdout, 'buffer') and 'pytest' not in sys.modules:
 import os
 import time
 import base64
+import binascii
 import json
 import asyncio
 import traceback
@@ -223,7 +224,11 @@ app.add_middleware(SlowAPIMiddleware)
 # [NEW] Phase 4: 註冊 Routers (保持在頂層但延遲部分內部依賴)
 from routers.geocode import router as geocode_router
 from routers.expenses import router as expenses_router
-from routers.ai import router as ai_router
+from routers.ai import (
+    router as ai_router,
+    process_and_optimize_image_sync,
+    MAX_IMAGE_SIZE,
+)
 from routers.trips import router as trips_router
 from routers.gdpr import router as gdpr_router
 from routers.route import router as route_router
@@ -1130,19 +1135,63 @@ Please answer the user's question based on the live data above."""
         
         # [VISION] Step 4: 圖像處理 (Vision Overlay)
         if body.image:
-            
+            _ALLOWED_CHAT_IMAGE_MIMES = {
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+                "image/heic",
+                "image/heif",
+                "image/gif",
+            }
             try:
-                # 1. 提煉 MIME 格式 (如果前端有傳遞 "data:image/png;base64,")
-                mime_type = "image/jpeg" # 預設 Fallback
-                if "data:" in body.image and ";base64," in body.image:
-                    mime_type = body.image.split(";")[0].split(":")[1]
-                
-                # 2. 擷取純 Base64 字串並解碼成二進位資料
-                if "base64," in body.image:
-                    image_data = base64.b64decode(body.image.split("base64,")[1])
-                else:
-                    image_data = base64.b64decode(body.image)
-                    
+                raw_img = body.image.strip()
+                mime_type = "image/jpeg"
+                b64_payload = raw_img
+                if raw_img.lower().startswith("data:") and "," in raw_img:
+                    header_part, b64_payload = raw_img.split(",", 1)
+                    parsed_mime = header_part[5:].split(";", 1)[0].strip().lower()
+                    if parsed_mime:
+                        mime_type = parsed_mime
+
+                if mime_type not in _ALLOWED_CHAT_IMAGE_MIMES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported image MIME type: {mime_type}" if is_en else f"不支援的圖片格式：{mime_type}",
+                    )
+
+                b64_clean = b64_payload.strip()
+                if len(b64_clean) > ((MAX_IMAGE_SIZE * 4) // 3) + 1024:
+                    limit_mb = MAX_IMAGE_SIZE // (1024 * 1024)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Image too large (exceeds {limit_mb}MB limit)" if is_en else f"圖片超過 {limit_mb}MB 上限",
+                    )
+
+                try:
+                    image_data = base64.b64decode(b64_clean, validate=True)
+                except (binascii.Error, ValueError):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid base64 image data" if is_en else "無效的圖片 Base64 編碼格式",
+                    )
+
+                if not image_data:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Image payload is empty" if is_en else "圖片內容不可為空",
+                    )
+
+                if len(image_data) > MAX_IMAGE_SIZE:
+                    limit_mb = MAX_IMAGE_SIZE // (1024 * 1024)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Image too large (exceeds {limit_mb}MB limit)" if is_en else f"圖片超過 {limit_mb}MB 上限",
+                    )
+
+                image_data, mime_type = await asyncio.to_thread(
+                    process_and_optimize_image_sync, image_data, 2048, True
+                )
+
                 # 如果只有附圖沒有文字，加上預設的分析提示
                 if not enhanced_message.strip():
                     enhanced_message = (
@@ -1150,13 +1199,15 @@ Please answer the user's question based on the live data above."""
                         if is_en
                         else "請幫我分析這張圖片，並依據它提供旅遊建議"
                     )
-                
+
                 # 3. 鑄造無敵的 SDK 原生物件 (types.Part.from_bytes)
                 image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
-                
+
                 # Google GenAI SDK 支援直接傳入 [Part, Part]
                 final_message = [image_part, types.Part.from_text(text=enhanced_message)]
                 print(f"[VISION] 成功載入圖片 ({mime_type})，切換為 Multi-modal 原生請求")
+            except HTTPException:
+                raise
             except Exception as img_err:
                 print(f"⚠️ Image processing error: {img_err}")
                 err_prefix = (

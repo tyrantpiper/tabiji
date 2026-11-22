@@ -56,12 +56,8 @@ export function TripCoverMenu({
         const folder = "ryan_travel/covers"
 
         try {
-            // 1. 圖片壓縮優化
-            const compressedFile = await compressImage(file, {
-                maxWidth: 4096,
-                maxHeight: 4096,
-                quality: 0.85
-            })
+            // 1. 圖片壓縮優化 (cover preset: 1920px / 0.82)
+            const compressedFile = await compressImage(file, "cover")
 
             const timestamp = Math.round(Date.now() / 1000)
             const paramsToSign = { timestamp, folder }
@@ -83,7 +79,7 @@ export function TripCoverMenu({
             // 3. 上傳至 Cloudinary
             const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
             const data = new FormData()
-            data.append("file", compressedFile, file.name)
+            data.append("file", compressedFile, compressedFile instanceof File ? compressedFile.name : file.name)
             data.append("timestamp", timestamp.toString())
             data.append("folder", folder)
             data.append("signature", signature)
@@ -101,15 +97,17 @@ export function TripCoverMenu({
             }
 
             const result = await uploadRes.json()
-            if (!result.secure_url) {
+            if (!result.secure_url || typeof result.secure_url !== "string") {
                 toast.error(zh ? "未取得有效圖片連結" : "Invalid image URL received")
                 setLoading(false)
                 return
             }
 
+            const safeCoverUrl = result.secure_url.replace(/\.(heic|heif)(?=[?#]|$)/i, ".jpg")
+
             // 4. 更新後端資料庫
-            await tripsApi.updateCover(tripId, result.secure_url, userId)
-            void broadcastTripEvent(tripId, "info:update", { cover_image: result.secure_url })
+            await tripsApi.updateCover(tripId, safeCoverUrl, userId)
+            void broadcastTripEvent(tripId, "info:update", { cover_image: safeCoverUrl })
             haptic.success()
             toast.success(zh ? "封面已更新！" : "Cover photo updated!")
             onUpdate?.()

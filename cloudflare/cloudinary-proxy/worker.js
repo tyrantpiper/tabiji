@@ -1,51 +1,145 @@
 /**
  * Cloudflare Worker: cloudinary-proxy
- * 
+ *
  * 職責：
- * 1. Cloudinary 圖片邊緣代理與格式最佳化 (WebP / AVIF)
- * 2. 邊緣節點雙重快取 (Cloudflare Cache API + Browser Cache-Control)
- * 3. 防盜鏈保護 (支援 tabijiapp.com, travel-pwa-five.vercel.app, localhost 與 PWA 模式)
+ * 1. Cloudinary 圖片邊緣代理與格式最佳化 (WebP / AVIF) + c_limit 防放大
+ * 2. 嚴格路徑白名單與防盜鏈保護 (new URL() 精確主機名稱比對，同時相容 iOS Standalone PWA)
+ * 3. 安全邊緣快取 (按格式隔離 Cache Key、剝除上游 cdn-cache-control / vary / x-cld-error，僅快取 GET 200 image/*)
  * 4. 注入 Access-Control-Allow-Origin: *，支援 HTML5 Canvas (html2canvas / PDF 匯出)
  */
 
-const CLOUDINARY_CLOUD_NAME = 'REDACTED_CLOUDINARY_CLOUD'; 
-// 生產環境防護：只允許這些特定的寬度參數。防止惡意者窮舉寬度 (如 w_101, w_102) 耗盡額度
-const ALLOWED_WIDTHS = ['320', '640', '768', '1024', '1280']; 
-
-// 允許的來源 (包含本地開發、舊版 Vercel 與自訂主網域)
-const ALLOWED_ORIGIN_PATTERNS = [
+const DEFAULT_CLOUDINARY_CLOUD_NAME = 'dnpcnwrcu';
+const ALLOWED_WIDTHS = new Set(['320', '640', '768', '1024', '1280']);
+const ALLOWED_EXACT_HOSTS = new Set([
   'travel-pwa-five.vercel.app',
   'tabijiapp.com',
   'www.tabijiapp.com',
   'localhost',
-  '127.0.0.1'
+  '127.0.0.1',
+]);
+const ALLOWED_VERCEL_PREVIEW_HOST_RE = /^travel-pwa-[a-z0-9-]+\.vercel\.app$/;
+const STRICT_PROXY_PATH_RE = /^\/w_(320|640|768|1024|1280)\/(v\d+\/[a-zA-Z0-9_./-]+)$/;
+const WIDTH_PREFIX_RE = /^\/w_(\d+)\//;
+
+const STRIP_UPSTREAM_HEADERS = [
+  'cdn-cache-control',
+  'cloudflare-cdn-cache-control',
+  'vary',
+  'set-cookie',
+  'x-cld-error',
+  'access-control-expose-headers',
+  'server-timing',
 ];
 
-function isOriginAllowed(referer, origin) {
-  // 檢查 Referer
-  if (referer) {
-    if (ALLOWED_ORIGIN_PATTERNS.some(pattern => referer.includes(pattern)) || referer.includes('.vercel.app')) {
-      return true;
+export function prefersAvif(rawAcceptHeader) {
+  if (!rawAcceptHeader || typeof rawAcceptHeader !== 'string') return false;
+  const parts = rawAcceptHeader.toLowerCase().split(',');
+  for (const part of parts) {
+    const tokens = part.trim().split(';');
+    if (tokens[0]?.trim() !== 'image/avif') continue;
+    let q = 1;
+    for (let i = 1; i < tokens.length; i += 1) {
+      const [k, v] = tokens[i].split('=');
+      if (k?.trim() === 'q' && v !== undefined) {
+        const parsed = Number.parseFloat(v.trim());
+        if (!Number.isNaN(parsed)) q = parsed;
+      }
     }
-  }
-  // 檢查 Origin
-  if (origin) {
-    if (ALLOWED_ORIGIN_PATTERNS.some(pattern => origin.includes(pattern)) || origin.includes('.vercel.app')) {
-      return true;
-    }
-  }
-  // 若兩者皆未攜帶（常見於手機 Standalone PWA、原生 Image preloading 或嚴格防追蹤隱私模式）
-  // 只要路徑符合規格，予以放行以保障 PWA 使用者體驗
-  if (!referer && !origin) {
-    return true;
+    if (q > 0) return true;
   }
   return false;
 }
 
+export function resolveCloudName(env) {
+  const configured = typeof env?.CLOUDINARY_CLOUD_NAME === 'string' ? env.CLOUDINARY_CLOUD_NAME.trim() : '';
+  return configured && !configured.includes('REDACTED') ? configured : DEFAULT_CLOUDINARY_CLOUD_NAME;
+}
+
+function isAllowedOriginUrl(rawHeaderValue) {
+  if (!rawHeaderValue || typeof rawHeaderValue !== 'string') return false;
+  try {
+    const parsed = new URL(rawHeaderValue.trim());
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return false;
+    }
+    const host = parsed.hostname.toLowerCase();
+    return ALLOWED_EXACT_HOSTS.has(host) || ALLOWED_VERCEL_PREVIEW_HOST_RE.test(host);
+  } catch {
+    return false;
+  }
+}
+
+export function isOriginAllowed(referer, origin) {
+  const cleanReferer = typeof referer === 'string' ? referer.trim() : '';
+  const cleanOrigin = typeof origin === 'string' ? origin.trim() : '';
+
+  // iOS Standalone PWA / privacy mode may omit both Referer and Origin
+  if (!cleanReferer && !cleanOrigin) {
+    return true;
+  }
+  if (cleanOrigin && !isAllowedOriginUrl(cleanOrigin)) {
+    return false;
+  }
+  if (cleanReferer && !isAllowedOriginUrl(cleanReferer)) {
+    return false;
+  }
+  return true;
+}
+
+export function parseProxyPath(rawPathname) {
+  if (!rawPathname || typeof rawPathname !== 'string') {
+    return { ok: false, status: 400, reason: 'Invalid path' };
+  }
+
+  // Block encoded traversal, dot-dot segments, double slashes, transform commas/colons, control chars
+  if (
+    rawPathname.includes('%') ||
+    rawPathname.includes('..') ||
+    rawPathname.includes('//') ||
+    rawPathname.includes(',') ||
+    rawPathname.includes(':') ||
+    rawPathname.includes('\\')
+  ) {
+    return { ok: false, status: 400, reason: 'Forbidden path syntax' };
+  }
+
+  const widthPrefixMatch = rawPathname.match(WIDTH_PREFIX_RE);
+  if (widthPrefixMatch && !ALLOWED_WIDTHS.has(widthPrefixMatch[1])) {
+    return { ok: false, status: 403, reason: 'Forbidden: Invalid Image Width' };
+  }
+
+  const strictMatch = rawPathname.match(STRICT_PROXY_PATH_RE);
+  if (!strictMatch) {
+    return { ok: false, status: 400, reason: 'Invalid image proxy path' };
+  }
+
+  const width = strictMatch[1];
+  const assetPath = strictMatch[2];
+  const segments = assetPath.split('/');
+  if (segments.some((seg) => !seg || seg === '.' || seg === '..' || seg.startsWith('.'))) {
+    return { ok: false, status: 400, reason: 'Forbidden path segment' };
+  }
+
+  return { ok: true, width, assetPath };
+}
+
+function makeNoStoreResponse(body, status, extraHeaders = {}) {
+  return new Response(body, {
+    status,
+    headers: {
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+      ...extraHeaders,
+    },
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
-    // 處理 CORS Preflight (OPTIONS)
-    if (request.method.toUpperCase() === 'OPTIONS') {
+    const method = (request.method || 'GET').toUpperCase();
+
+    // 1. CORS Preflight (OPTIONS)
+    if (method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
         headers: {
@@ -53,71 +147,108 @@ export default {
           'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
           'Access-Control-Allow-Headers': '*',
           'Access-Control-Max-Age': '86400',
+          'Cache-Control': 'no-store',
         },
       });
     }
 
+    // 2. Method allowlist: only GET / HEAD permitted
+    if (method !== 'GET' && method !== 'HEAD') {
+      return makeNoStoreResponse('Method Not Allowed', 405, {
+        Allow: 'GET, HEAD, OPTIONS',
+      });
+    }
+
     const url = new URL(request.url);
-    const acceptHeader = request.headers.get('Accept') || '';
+    const acceptHeader = (request.headers.get('Accept') || '').toLowerCase();
     const referer = request.headers.get('Referer') || '';
     const origin = request.headers.get('Origin') || '';
 
-    // 1. 防盜鏈與來源驗證
+    // 3. Anti-hotlink strict hostname validation
     if (!isOriginAllowed(referer, origin)) {
-      return new Response('Forbidden: Invalid Referer or Origin', { status: 403 });
+      return makeNoStoreResponse('Forbidden: Invalid Referer or Origin', 403);
     }
 
-    // ⭐ 關鍵：使用 Cloudflare Cache API (確保 workers.dev 也能邊緣快取)
-    const cache = caches.default;
-    const cacheKey = new Request(request.url, request);
-    let response = await cache.match(cacheKey);
-
-    // 如果快取命中了，注入 CORS 標頭後直接回傳，完全不消耗 Cloudinary 流量
-    if (response) {
-      const cachedResponse = new Response(response.body, response);
-      cachedResponse.headers.set('Access-Control-Allow-Origin', '*');
-      return cachedResponse;
+    // 4. Strict path & width allowlist validation (blocks transform injection & traversal)
+    const parsedPath = parseProxyPath(url.pathname);
+    if (!parsedPath.ok) {
+      return makeNoStoreResponse(parsedPath.reason, parsedPath.status);
     }
 
-    // === 如果快取沒命中，才去 Cloudinary 抓圖 ===
-    
-    // 2. 解析路徑與參數
-    let imagePath = url.pathname;
-    let widthParam = '';
+    // 5. Negotiate format (respecting q=0) and isolate Cache Key by format
+    const format = prefersAvif(acceptHeader) ? 'f_avif' : 'f_webp';
+    const cache = typeof caches !== 'undefined' ? caches.default : null;
+    const cacheKeyUrl = new URL(`${url.origin}${url.pathname}`);
+    cacheKeyUrl.searchParams.set('fmt', format);
+    const cacheKey = new Request(cacheKeyUrl.toString(), { method: 'GET' });
 
-    const widthMatch = imagePath.match(/^\/w_(\d+)(\/.*)/);
-    if (widthMatch) {
-      const requestedWidth = widthMatch[1];
-      // 3. 安全過濾：檢查請求的寬度是否在白名單內
-      if (!ALLOWED_WIDTHS.includes(requestedWidth)) {
-        return new Response('Forbidden: Invalid Image Width', { status: 403 });
+    if (cache && method === 'GET') {
+      const cached = await cache.match(cacheKey);
+      if (cached) {
+        const cachedResponse = new Response(cached.body, cached);
+        cachedResponse.headers.set('Access-Control-Allow-Origin', '*');
+        return cachedResponse;
       }
-      widthParam = `w_${requestedWidth},`;
-      imagePath = widthMatch[2]; 
-    }
-    
-    // 4. 節省點數策略：避免 f_auto
-    let format = 'f_webp'; 
-    if (acceptHeader.includes('image/avif')) {
-      format = 'f_avif';
     }
 
-    const optimizationParams = `${widthParam}${format},q_auto`;
+    // 6. Upstream fetch to Cloudinary with c_limit, resolved cloud name, and canonical Accept header
+    const cloudName = resolveCloudName(env);
+    const optimizationParams = `w_${parsedPath.width},c_limit,${format},q_auto`;
+    const cloudinaryUrl = `https://res.cloudinary.com/${cloudName}/image/upload/${optimizationParams}/${parsedPath.assetPath}`;
+    const canonicalAccept = format === 'f_avif' ? 'image/avif,image/webp,*/*' : 'image/webp,*/*';
 
-    // 5. 發送請求到 Cloudinary
-    const cloudinaryUrl = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload/${optimizationParams}${imagePath}`;
-    const cloudinaryRequest = new Request(cloudinaryUrl, request);
-    response = await fetch(cloudinaryRequest);
-    
-    // 6. 確保 Cloudflare 與瀏覽器雙重快取，並注入 CORS
-    response = new Response(response.body, response);
-    // s-maxage 讓 Cloudflare Edge 記住，max-age 讓使用者的瀏覽器記住 (一年)
-    response.headers.set('Cache-Control', 'public, s-maxage=31536000, max-age=31536000, immutable'); 
-    response.headers.set('Access-Control-Allow-Origin', '*');
-    
-    // ⭐ 將抓回來的圖片寫入 Cloudflare 快取，下一次其他訪客要同一張圖時就會直接命中 Cache！
-    ctx.waitUntil(cache.put(cacheKey, response.clone()));
-    
-    return response;
+    let upstreamResponse;
+    try {
+      upstreamResponse = await fetch(cloudinaryUrl, {
+        method,
+        headers: {
+          Accept: canonicalAccept,
+        },
+      });
+    } catch {
+      return makeNoStoreResponse('Bad Gateway: Upstream image fetch failed', 502);
+    }
+
+    // 7. Rebuild headers, stripping upstream cache-poisoning/debug headers
+    const headers = new Headers(upstreamResponse.headers);
+    for (const h of STRIP_UPSTREAM_HEADERS) {
+      headers.delete(h);
+    }
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('X-Content-Type-Options', 'nosniff');
+
+    const contentType = (headers.get('content-type') || '').toLowerCase();
+    // Never serve or cache SVG payloads on the proxy origin (prevents Stored SVG XSS)
+    if (contentType.startsWith('image/svg')) {
+      return makeNoStoreResponse('Unsupported Media Type', 415, {
+        'Content-Security-Policy': 'sandbox',
+        'X-Content-Type-Options': 'nosniff',
+      });
+    }
+
+    const isValidImage200 = upstreamResponse.status === 200 && contentType.startsWith('image/');
+
+    if (isValidImage200) {
+      headers.set('Cache-Control', 'public, s-maxage=31536000, max-age=31536000, immutable');
+    } else {
+      headers.set('Cache-Control', 'no-store');
+    }
+
+    const finalResponse = new Response(method === 'HEAD' ? null : upstreamResponse.body, {
+      status: upstreamResponse.status,
+      statusText: upstreamResponse.statusText,
+      headers,
+    });
+
+    if (cache && method === 'GET' && isValidImage200) {
+      const putPromise = cache.put(cacheKey, finalResponse.clone());
+      if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(putPromise);
+      } else {
+        await putPromise;
+      }
+    }
+
+    return finalResponse;
   },
 };

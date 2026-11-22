@@ -817,17 +817,18 @@ export const aiApi = {
     /** 📸 Parse receipt image into structured expense data (Phase 5) */
     parseReceipt: async (imageUrl: string, image?: string, locale?: string) => {
         const apiKey = getSecureApiKey()
+        const resolvedLocale = locale || "zh"
 
-        // We forward the auth header so the Proxy can authenticate with the Backend FastAPI
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
-            "X-Gemini-API-Key": apiKey
+            "X-Gemini-API-Key": apiKey,
+            "Accept-Language": resolvedLocale.toLowerCase().startsWith("en") ? "en-US" : "zh-TW",
         }
 
         const res = await fetch(API.RECEIPT_PARSE, {
             method: "POST",
             headers,
-            body: JSON.stringify({ imageUrl, image, locale: locale || "zh" })
+            body: JSON.stringify({ imageUrl, image, locale: resolvedLocale })
         })
 
         if (!res.ok) {

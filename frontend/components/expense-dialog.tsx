@@ -156,6 +156,7 @@ export function ExpenseDialog({
     const [cardName, setCardName] = useState("")
     const [cashback, setCashback] = useState("")
     const [receiptUrl, setReceiptUrl] = useState("")
+    const [localReceipt, setLocalReceipt] = useState<{ url: string; dataUrl: string } | null>(null)
     const [expenseDate, setExpenseDate] = useState("")
     const [items, setItems] = useState<{ original_name: string, translated_name?: string, amount: number }[]>([])
     const [breakdown, setBreakdown] = useState({
@@ -191,7 +192,7 @@ export function ExpenseDialog({
         haptic.selection()
     }
 
-    const formInitializedRef = useRef(false)
+    const initializedKeyRef = useRef<string | null>(null)
     const skipRateFetchRef = useRef(false)
 
     const markAsUserEdited = () => {
@@ -212,8 +213,11 @@ export function ExpenseDialog({
     // Initialization Logic
     useEffect(() => {
         if (open) {
-            if (formInitializedRef.current) return
-            formInitializedRef.current = true
+            const initKey = editItem
+                ? (editItem.id ? `edit:${editItem.id}` : `edit:${editItem.title}:${editItem.image_url || ""}`)
+                : "__new__"
+            if (initializedKeyRef.current === initKey) return
+            initializedKeyRef.current = initKey
 
             setIsEditingIcon(false)
 
@@ -233,6 +237,7 @@ export function ExpenseDialog({
                 setCardName(editItem.card_name || "")
                 setCashback(editItem.cashback_rate?.toString() || "")
                 setReceiptUrl(editItem.image_url || "")
+                setLocalReceipt(null)
                 setItems(editItem.items || [])
                 setBreakdown({
                     subtotal: editItem.subtotal_amount || 0,
@@ -265,6 +270,7 @@ export function ExpenseDialog({
                 setCardName("")
                 setCashback("")
                 setReceiptUrl("")
+                setLocalReceipt(null)
                 setItems([])
                 setBreakdown({ subtotal: 0, tax: 0, tip: 0, service: 0, discount: 0 })
                 setDiagnostics(undefined)
@@ -287,7 +293,8 @@ export function ExpenseDialog({
                 setInputCurrency(selectedCurrency || "JPY")
             }
         } else {
-            formInitializedRef.current = false
+            initializedKeyRef.current = null
+            setLocalReceipt(null)
             setCurrencyOpen(false)
             setCurrencySearch("")
             setPayerOpen(false)
@@ -350,7 +357,8 @@ export function ExpenseDialog({
         setIsParsing(true)
         haptic.tap()
         try {
-            const response = await aiApi.parseReceipt(receiptUrl, undefined, lang)
+            const directImage = localReceipt && localReceipt.url === receiptUrl ? localReceipt.dataUrl : undefined
+            const response = await aiApi.parseReceipt(receiptUrl, directImage, lang)
             debugLog("[AI Parse Result]", response)
             if (response && (response.total_amount || response.amount_jpy)) {
                 setParseResult(response)
@@ -1049,8 +1057,22 @@ export function ExpenseDialog({
                             </div>
                             <ImageUpload
                                 value={receiptUrl}
-                                onChange={(url) => setReceiptUrl(url)}
-                                onRemove={() => setReceiptUrl("")}
+                                preset="receipt"
+                                onChange={(url) => {
+                                    setReceiptUrl(url)
+                                    setLocalReceipt((prev) => (prev && prev.url === url ? prev : null))
+                                }}
+                                onUploadSuccess={({ url, dataUrl }) => {
+                                    if (dataUrl) {
+                                        setLocalReceipt({ url, dataUrl })
+                                    } else {
+                                        setLocalReceipt(null)
+                                    }
+                                }}
+                                onRemove={() => {
+                                    setReceiptUrl("")
+                                    setLocalReceipt(null)
+                                }}
                                 folder={`ryan_travel/receipts/${typeof window !== 'undefined' ? localStorage.getItem("user_uuid") || 'anonymous' : 'anonymous'}`}
                             />
                         </div>

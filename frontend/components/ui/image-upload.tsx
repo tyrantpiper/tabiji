@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import Image from "next/image"
 import { ZoomableImage } from "@/components/ui/zoomable-image"
 import { Camera, Loader2, Trash2 } from "lucide-react"
@@ -8,42 +8,115 @@ import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
-import { compressImage } from "@/lib/image-utils"
+import { compressImage, type ImagePresetName } from "@/lib/image-utils"
 import { useLanguage } from "@/lib/LanguageContext"
 import { cloudinaryApi } from "@/lib/api"
+
+const DIRECT_PASS_RASTER_MIMES = new Set(["image/webp", "image/jpeg", "image/png"])
+const DIRECT_PASS_MAX_BYTES = 4 * 1024 * 1024
+
+function inferPresetFromFolder(folder?: string): ImagePresetName {
+    const normalized = (folder || "").toLowerCase()
+    if (normalized.includes("avatars")) return "avatar"
+    if (normalized.includes("receipts")) return "receipt"
+    if (normalized.includes("covers")) return "cover"
+    if (normalized.includes("hotels")) return "document"
+    return "spot"
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+            if (typeof reader.result === "string") {
+                resolve(reader.result)
+            } else {
+                reject(new Error("Failed to encode image as data URL"))
+            }
+        }
+        reader.onerror = () => reject(reader.error || new Error("FileReader error"))
+        reader.readAsDataURL(blob)
+    })
+}
+
+export interface ImageUploadSuccessPayload {
+    url: string
+    file: Blob | File
+    dataUrl?: string
+}
 
 interface ImageUploadProps {
     value?: string
     onChange: (url: string) => void
+    onUploadSuccess?: (payload: ImageUploadSuccessPayload) => void
     onRemove?: () => void
     folder?: string
+    preset?: ImagePresetName
     className?: string
     icon?: React.ReactNode
     showPreview?: boolean
 }
 
-export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel", className, icon, showPreview = true }: ImageUploadProps) {
+export function ImageUpload({
+    value,
+    onChange,
+    onUploadSuccess,
+    onRemove,
+    folder = "ryan_travel",
+    preset,
+    className,
+    icon,
+    showPreview = true,
+}: ImageUploadProps) {
     const { t, lang } = useLanguage()
     const zh = lang === 'zh'
     const [loading, setLoading] = useState(false)
     const [progress, setProgress] = useState(0)
     const [previewOpen, setPreviewOpen] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const uploadingRef = useRef(false)
+    const isMountedRef = useRef(true)
+    const activeXhrRef = useRef<XMLHttpRequest | null>(null)
+
+    useEffect(() => {
+        isMountedRef.current = true
+        return () => {
+            isMountedRef.current = false
+            uploadingRef.current = false
+            if (activeXhrRef.current) {
+                try {
+                    activeXhrRef.current.abort()
+                } catch {
+                    // ignore abort errors during unmount
+                }
+                activeXhrRef.current = null
+            }
+        }
+    }, [])
+
+    const triggerFilePicker = () => {
+        if (loading || uploadingRef.current) return
+        fileInputRef.current?.click()
+    }
 
     const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file) return
         e.target.value = ""
 
+        if (uploadingRef.current) return
+        uploadingRef.current = true
         setLoading(true)
         setProgress(0)
         try {
-            // 🆕 執行大解析度優化 (No more 1600px limit)
-            const compressedFile = await compressImage(file, { maxWidth: 8192, maxHeight: 8192, quality: 0.9 });
+            const targetPreset = preset ?? inferPresetFromFolder(folder)
+            const compressedFile = await compressImage(file, targetPreset)
+            if (!isMountedRef.current) return
 
             const timestamp = Math.round(Date.now() / 1000);
             const paramsToSign = { timestamp, folder };
             const signData = await cloudinaryApi.signUpload(paramsToSign);
+            if (!isMountedRef.current) return
 
             const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
             const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
@@ -51,6 +124,7 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
             if (!cloudName || !apiKey) {
                 console.error("Missing Cloudinary env vars:", { cloudName: !!cloudName, apiKey: !!apiKey })
                 toast.error(zh ? `環境變數缺失！請確認 .env.local 並重啟前端。` : `Missing env vars! Check .env.local and restart.`)
+                uploadingRef.current = false
                 setLoading(false)
                 setProgress(0)
                 return
@@ -58,17 +132,30 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
 
             const { signature } = signData;
 
+            let precomputedDataUrl: string | undefined
+            if (
+                onUploadSuccess &&
+                DIRECT_PASS_RASTER_MIMES.has((compressedFile.type || "").toLowerCase()) &&
+                compressedFile.size <= DIRECT_PASS_MAX_BYTES
+            ) {
+                precomputedDataUrl = await blobToDataUrl(compressedFile).catch(() => undefined)
+                if (!isMountedRef.current) return
+            }
+
             const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
             const data = new FormData()
-            data.append("file", compressedFile, file.name)
+            const uploadName = compressedFile instanceof File ? compressedFile.name : file.name
+            data.append("file", compressedFile, uploadName)
             data.append("timestamp", timestamp.toString())
             data.append("folder", folder)
             data.append("signature", signature)
             data.append("api_key", apiKey)
 
             const xhr = new XMLHttpRequest()
+            activeXhrRef.current = xhr
 
             xhr.upload.onprogress = (event) => {
+                if (!isMountedRef.current) return
                 if (event.lengthComputable) {
                     const percent = Math.round((event.loaded / event.total) * 100)
                     setProgress(percent)
@@ -76,24 +163,57 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
             }
 
             xhr.onload = () => {
-                if (xhr.status === 200) {
-                    const result = JSON.parse(xhr.responseText)
-                    if (result.secure_url) {
-                        onChange(result.secure_url)
-                        toast.success(t('img_upload_success'))
-                    } else {
-                        console.error("Cloudinary error:", result)
-                        toast.error(zh ? `Cloudinary 錯誤: ${result.error?.message || JSON.stringify(result)}` : `Cloudinary error: ${result.error?.message || JSON.stringify(result)}`)
-                    }
-                } else {
-                    toast.error(zh ? `上傳失敗: ${xhr.status}` : `Upload failed: ${xhr.status}`)
+                if (activeXhrRef.current === xhr) {
+                    activeXhrRef.current = null
                 }
+                if (!isMountedRef.current) {
+                    uploadingRef.current = false
+                    return
+                }
+                try {
+                    if (xhr.status === 200) {
+                        const result = JSON.parse(xhr.responseText)
+                        if (result?.secure_url && typeof result.secure_url === "string") {
+                            const safeUrl = result.secure_url.replace(/\.(heic|heif)(?=[?#]|$)/i, ".jpg")
+                            onChange(safeUrl)
+                            onUploadSuccess?.({ url: safeUrl, file: compressedFile, dataUrl: precomputedDataUrl })
+                            toast.success(t('img_upload_success'))
+                        } else {
+                            console.error("Cloudinary error:", result)
+                            toast.error(zh ? `Cloudinary 錯誤: ${result?.error?.message || JSON.stringify(result)}` : `Cloudinary error: ${result?.error?.message || JSON.stringify(result)}`)
+                        }
+                    } else {
+                        toast.error(zh ? `上傳失敗: ${xhr.status}` : `Upload failed: ${xhr.status}`)
+                    }
+                } catch (parseError) {
+                    console.error("Cloudinary response parse error:", parseError)
+                    toast.error(t('img_upload_failed'))
+                } finally {
+                    uploadingRef.current = false
+                    if (isMountedRef.current) {
+                        setLoading(false)
+                        setProgress(0)
+                    }
+                }
+            }
+
+            xhr.onerror = () => {
+                if (activeXhrRef.current === xhr) {
+                    activeXhrRef.current = null
+                }
+                uploadingRef.current = false
+                if (!isMountedRef.current) return
+                toast.error(t('img_upload_failed'))
                 setLoading(false)
                 setProgress(0)
             }
 
-            xhr.onerror = () => {
-                toast.error(t('img_upload_failed'))
+            xhr.onabort = () => {
+                if (activeXhrRef.current === xhr) {
+                    activeXhrRef.current = null
+                }
+                uploadingRef.current = false
+                if (!isMountedRef.current) return
                 setLoading(false)
                 setProgress(0)
             }
@@ -103,9 +223,12 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
 
         } catch (error) {
             console.error("Upload error:", error)
-            toast.error(t('img_upload_failed'))
-            setLoading(false)
-            setProgress(0)
+            uploadingRef.current = false
+            if (isMountedRef.current) {
+                toast.error(t('img_upload_failed'))
+                setLoading(false)
+                setProgress(0)
+            }
         }
     }
 
@@ -144,8 +267,9 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
                 {/* 上傳按鈕 - 永遠顯示（可以上傳/替換圖片）*/}
                 {icon ? (
                     <div
-                        onClick={() => fileInputRef.current?.click()}
-                        className={cn("flex items-center justify-center cursor-pointer", className)}
+                        onClick={triggerFilePicker}
+                        aria-disabled={loading}
+                        className={cn("flex items-center justify-center cursor-pointer", loading && "pointer-events-none opacity-60", className)}
                     >
                         {loading ? (
                             <span className="text-[10px] font-mono text-blue-500">{progress}%</span>
@@ -153,8 +277,12 @@ export function ImageUpload({ value, onChange, onRemove, folder = "ryan_travel",
                     </div>
                 ) : (
                     <div
-                        onClick={() => fileInputRef.current?.click()}
-                        className="h-16 w-16 rounded-lg border-2 border-dashed border-slate-300 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 hover:border-blue-400 transition-colors shrink-0"
+                        onClick={triggerFilePicker}
+                        aria-disabled={loading}
+                        className={cn(
+                            "h-16 w-16 rounded-lg border-2 border-dashed border-slate-300 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 hover:border-blue-400 transition-colors shrink-0",
+                            loading && "pointer-events-none opacity-60"
+                        )}
                     >
                         {loading ? (
                             <div className="flex flex-col items-center">

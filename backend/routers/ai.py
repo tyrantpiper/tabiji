@@ -22,6 +22,9 @@ try:
 except ImportError:
     pass
 
+# Module-level DecompressionBomb cap (never mutate global PIL setting inside worker threads)
+Image.MAX_IMAGE_PIXELS = 50_000_000
+
 from google import genai
 from google.genai import types
 from typing import Optional
@@ -103,16 +106,51 @@ async def safe_download_image(url: str) -> tuple[bytes, str]:
         print(f"❌ [SafeDownload] Failed: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to fetch image: {str(e)}")
 
-def process_and_optimize_image_sync(data: bytes, max_dimension: int = 2048) -> tuple[bytes, str]:
+def compute_receipt_target_dimensions(orig_w: int, orig_h: int, max_dimension: int = 2048) -> tuple[int, int]:
+    """
+    Bit-for-bit aligned target dimension calculator shared with frontend `computeTargetDimensions`.
+    - Standard aspect ratio (<= 2.0): clamp longest edge to `max_dimension` (4000x3000 -> 2048x1536).
+    - Long receipt / LINE screenshot (> 2.0): preserve short edge up to 1200px, long edge up to 4096px,
+      and total pixel count <= 5MP (1200x4800 -> 1024x4096, 1000x5000 -> 819x4096).
+    Never upscales.
+    """
+    if orig_w <= 0 or orig_h <= 0:
+        return max(1, orig_w), max(1, orig_h)
+
+    short_edge = min(orig_w, orig_h)
+    long_edge = max(orig_w, orig_h)
+    aspect = long_edge / float(short_edge)
+
+    if aspect > 2.0:
+        scale = min(
+            1.0,
+            1200.0 / float(short_edge),
+            4096.0 / float(long_edge),
+            (5_000_000.0 / float(orig_w * orig_h)) ** 0.5,
+        )
+    else:
+        if long_edge <= max_dimension:
+            return orig_w, orig_h
+        scale = min(1.0, float(max_dimension) / float(long_edge))
+
+    target_w = max(1, int(orig_w * scale + 0.5))
+    target_h = max(1, int(orig_h * scale + 0.5))
+    return target_w, target_h
+
+
+def process_and_optimize_image_sync(
+    data: bytes,
+    max_dimension: int = 2048,
+    strict: bool = False,
+) -> tuple[bytes, str]:
     """
     🛡️ 生產級同步圖片消毒器 (在獨立線程池中執行，防禦 OOM 與 Event Loop 阻塞)
-    - 防 Decompression Bomb (單圖上限 50MP)
+    - 防 Decompression Bomb (單圖上限 50MP，於模組頂層設定)
     - EXIF 轉向校正 (防止手機直拍發票橫躺)
     - RGBA/LA/P 透明背景以「純白底」平滑合成，防轉 JPEG 崩潰
-    - 2048px LANCZOS 等比例縮放 (解壓縮記憶體從 144MB 降至 12MB，降載 90%)
+    - 與前端位元一致之 LANCZOS 縮放（長條收據保留短邊清晰度，一般圖片壓制至 2048px）
     """
     try:
-        Image.MAX_IMAGE_PIXELS = 50_000_000
         with Image.open(io.BytesIO(data)) as img:
             # 1. 依 EXIF 自動旋轉
             img = ImageOps.exif_transpose(img)
@@ -125,10 +163,11 @@ def process_and_optimize_image_sync(data: bytes, max_dimension: int = 2048) -> t
             elif img.mode != "RGB":
                 img = img.convert("RGB")
 
-            # 3. 2048px 邊長壓制
+            # 3. 前後端一致之目標尺寸計算 + LANCZOS 重採樣
             orig_w, orig_h = img.size
-            if max(orig_w, orig_h) > max_dimension:
-                img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+            target_w, target_h = compute_receipt_target_dimensions(orig_w, orig_h, max_dimension)
+            if (target_w, target_h) != (orig_w, orig_h):
+                img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
                 print(f"📐 [Image Downscale] {orig_w}x{orig_h} -> {img.width}x{img.height}")
 
             out = io.BytesIO()
@@ -138,6 +177,8 @@ def process_and_optimize_image_sync(data: bytes, max_dimension: int = 2048) -> t
     except Image.DecompressionBombError:
         raise HTTPException(status_code=400, detail="圖片像素過大，觸發防護閾值")
     except Exception as e:
+        if strict:
+            raise ValueError(f"Invalid or corrupt image payload: {e}") from e
         print(f"⚠️ [Image Optimization Fallback] {e}")
         return data, "image/jpeg"
 
@@ -407,20 +448,60 @@ async def parse_markdown(
         prompt_text = f"待解析內容:\n<user_query>\n{body.markdown_text or '請辨識圖片中的旅遊行程與景點規劃並解析為結構化 JSON'}\n</user_query>"
         
         if body.image_base64:
-            clean_b64 = body.image_base64.split(",")[-1].strip()
+            is_en_md = str(body.locale or "zh").strip().lower().startswith("en")
+            allowed_md_mimes = {
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+                "image/heic",
+                "image/heif",
+                "image/gif",
+            }
+            raw_md_img = body.image_base64.strip()
+            mime_type = "image/jpeg"
+            b64_payload = raw_md_img
+            if raw_md_img.lower().startswith("data:") and "," in raw_md_img:
+                header_part, b64_payload = raw_md_img.split(",", 1)
+                parsed_mime = header_part[5:].split(";", 1)[0].strip().lower()
+                if parsed_mime:
+                    mime_type = parsed_mime
+
+            if mime_type not in allowed_md_mimes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported image MIME type: {mime_type}" if is_en_md else f"不支援的圖片格式：{mime_type}",
+                )
+
+            clean_b64 = b64_payload.strip()
+            if len(clean_b64) > ((MAX_IMAGE_SIZE * 4) // 3) + 1024:
+                limit_mb = MAX_IMAGE_SIZE // (1024 * 1024)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Image too large (exceeds {limit_mb}MB limit)" if is_en_md else f"圖片超過 {limit_mb}MB 上限",
+                )
+
             try:
                 image_bytes = base64.b64decode(clean_b64, validate=True)
             except (binascii.Error, ValueError):
-                raise HTTPException(status_code=400, detail="無效的圖片 Base64 編碼格式")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid base64 image data" if is_en_md else "無效的圖片 Base64 編碼格式",
+                )
             if not image_bytes:
-                raise HTTPException(status_code=400, detail="圖片內容不可為空")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Image payload is empty" if is_en_md else "圖片內容不可為空",
+                )
             if len(image_bytes) > MAX_IMAGE_SIZE:
-                raise HTTPException(status_code=400, detail=f"圖片超過 {MAX_IMAGE_SIZE // (1024 * 1024)}MB 上限")
-            mime_type = "image/jpeg"
-            if "data:image/png" in body.image_base64:
-                mime_type = "image/png"
-            elif "data:image/webp" in body.image_base64:
-                mime_type = "image/webp"
+                limit_mb = MAX_IMAGE_SIZE // (1024 * 1024)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Image too large (exceeds {limit_mb}MB limit)" if is_en_md else f"圖片超過 {limit_mb}MB 上限",
+                )
+
+            image_bytes, mime_type = await asyncio.to_thread(
+                process_and_optimize_image_sync, image_bytes, 2048
+            )
             img_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
             payload_parts = [img_part, prompt_text]
             raw_text = await call_extraction(api_key, payload_parts, intent_type="PARSE_MD", system_instruction=sys_inst)
@@ -1002,19 +1083,57 @@ async def parse_receipt(
         """
         
         parts = [prompt]
-        mime_type = body.mime_type or "image/jpeg"
+        mime_type = (body.mime_type or "image/jpeg").strip().lower()
         image_bytes = None
+        allowed_receipt_mimes = set(ALLOWED_MIME_TYPES)
 
-        # 1. Source Determination
+        # 1. Source Determination (Direct base64 preferred; resilient fallback to imageUrl if base64 fails)
         if body.image:
-            # Base64 path (容錯切分，兼容純 Base64 與 data URL)
-            img_data = body.image.split(",")[-1].strip()
-            image_bytes = base64.b64decode(img_data)
-            if len(image_bytes) > MAX_IMAGE_SIZE:
+            raw_image = body.image.strip()
+            b64_payload = raw_image
+            if raw_image.lower().startswith("data:") and "," in raw_image:
+                header_part, b64_payload = raw_image.split(",", 1)
+                parsed_mime = header_part[5:].split(";", 1)[0].strip().lower()
+                if parsed_mime:
+                    mime_type = parsed_mime
+
+            if mime_type not in allowed_receipt_mimes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported format: {mime_type}" if is_en else f"不支援的圖片格式：{mime_type}",
+                )
+
+            clean_b64 = b64_payload.strip()
+            if len(clean_b64) > ((MAX_IMAGE_SIZE * 4) // 3) + 1024:
                 limit_mb = MAX_IMAGE_SIZE // (1024 * 1024)
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Image exceeds {limit_mb}MB limit" if is_en else f"圖片超過 {limit_mb}MB 上限",
+                    detail=f"Image too large (exceeds {limit_mb}MB limit)" if is_en else f"圖片超過 {limit_mb}MB 上限",
+                )
+
+            decoded_ok = False
+            try:
+                candidate_bytes = base64.b64decode(clean_b64, validate=True)
+                if candidate_bytes:
+                    image_bytes = candidate_bytes
+                    decoded_ok = True
+            except (binascii.Error, ValueError):
+                decoded_ok = False
+
+            if not decoded_ok:
+                if body.imageUrl:
+                    print("⚠️ [parse_receipt] Invalid base64 image payload; falling back to safe_download_image(imageUrl)")
+                    image_bytes, mime_type = await safe_download_image(body.imageUrl)
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid base64 image data" if is_en else "無效的圖片 Base64 編碼格式",
+                    )
+            elif len(image_bytes) > MAX_IMAGE_SIZE:
+                limit_mb = MAX_IMAGE_SIZE // (1024 * 1024)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Image too large (exceeds {limit_mb}MB limit)" if is_en else f"圖片超過 {limit_mb}MB 上限",
                 )
         elif body.imageUrl:
             # Remote URL path (Safe Download)

@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-21T16:15:00Z",
+  "last_audit_date": "2026-11-22T05:15:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 418,
-    "audited_targets": 418,
+    "total_targets": 428,
+    "audited_targets": 428,
     "verified_vulnerabilities": 53,
-    "remediated_vulnerabilities": 190,
+    "remediated_vulnerabilities": 200,
     "dismissed_hypotheses": 175
   },
   "targets": [
@@ -5386,6 +5386,136 @@
       "validator_details": "Verified by Vitest F15, cloudinary-upload-components-sentinel.test.tsx (4/4 React component RTL tests across ImageUpload, MultiImageUpload, TripCoverMenu, TripSettingsView), and Sentinel runner --mode adaptive (DISMISSED): all 6 upload callers migrated to cloudinaryApi.signUpload preferring rotated server apiKey/cloudName; multi-image-upload.tsx rejects non-OK sign responses and resets loading, progress (0), and fileInputRef across early-return and catch paths; image-upload.tsx resets file input on selection so failed uploads can retry the same file.",
       "remediated_at": "2026-11-21T16:15:00Z",
       "resolution": "docs/security/history/patches/patch_candidate_cloudinary_pr1_2026-11-21.diff"
+    },
+    {
+      "id": "frontend/lib/image-utils.ts:pr2_jpeg_exif_marker_walker",
+      "target_type": "client_image_parser",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "metadata_stripping_and_parser_boundary"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection confirms that hasJpegExifMetadata robustly and defensively satisfies all specifications. It validates the SOI header (0xFFD8), handles variable 0xFF marker padding bytes, and halts at SOS (0xFFDA) or EOI (0xFFD9) before compressed scan data begins, preventing false positives from entropy-coded byte sequences. APP1 (0xFFE1 EXIF/XMP) and APP13 (0xFFED IPTC) are accurately detected. Crucially, the function fails closed (returns true) across all failure modes: slice truncation (<4 bytes), invalid marker prefix (non-0xFF), invalid 0xFF00 byte stuffing outside scan data, standalone markers, invalid segment lengths (segLen < 2), slice boundary overruns (such as oversized APP2 ICC profiles exceeding the 64KB slice), unexpected EOF before SOS/EOI, and I/O exceptions. This ensures GPS and EXIF metadata cannot leak due to parser confusion or truncation.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "frontend/lib/image-utils.ts:pr2_compress_image_safari_fallback_and_vram",
+      "target_type": "client_image_compressor",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "client_media_resilience_and_privacy"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection confirms all robustness, security, and lifecycle requirements are fully satisfied: (1) 2D canvas support and decoders are pre-checked via hasCanvas2dSupport() and document/decoder checks to avoid SSR/jsdom deadlocks; (2) serial queue cancellation signal is validated after every async operation (decoding, WebP probing, canvasToBlob, EXIF detection, and retry re-encoding) ensuring cancelled tasks terminate immediately; (3) SVG and small GIF files (<= SMALL_GIF_PASSTHROUGH_BYTES) are exempted and passed through untouched; (4) an opaque #ffffff background is filled prior to drawImage; (5) Safari's silent WebP fallback to PNG is detected at runtime by checking outBlob.type !== 'image/webp' and re-encoded to JPEG; (6) EXIF-bearing JPEGs are prevented from returning the uncompressed original file when output size >= input size, instead attempting lower quality re-encoding and always returning the canvas-stripped blob; (7) image decoding resources (ImageBitmap/ObjectURL) and canvas dimensions (VRAM/backing store) are unconditionally released in the finally block.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "frontend/components/ui/image-upload.tsx:pr2_direct_pass_and_reentrancy_guard",
+      "target_type": "frontend_upload_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "upload_state_integrity_and_error_handling"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): The code thoroughly and correctly implements all specified defensive architecture requirements: 1) Re-entrancy prevention is enforced synchronously via uploadingRef.current checks in triggerFilePicker and handleUpload. 2) In-flight uploads are tracked in activeXhrRef and aborted on component unmount in useEffect cleanup, while isMountedRef guards suppress state updates across async compression, signature signing, dataUrl generation, and XHR progress/completion callbacks. 3) xhr.onabort cleanly clears activeXhrRef and resets loading state without firing false error toasts. 4) Raster dataUrl precomputation is bounded to cases where onUploadSuccess is provided, MIME type is in DIRECT_PASS_RASTER_MIMES, and size <= DIRECT_PASS_MAX_BYTES. 5) JSON.parse is wrapped in try/catch with guaranteed cleanup of uploadingRef, loading, and progress in the finally block. 6) HEIC/HEIF extensions in secure_url are properly normalized to .jpg using regex with lookahead. 7) Single-argument onChange(safeUrl) and onChange('') semantics are fully preserved.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "frontend/lib/capsule-upload.ts:pr2_capsule_post_compression_gate",
+      "target_type": "frontend_upload_service",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "upload_size_and_mime_boundary"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection confirms that uploadCapsulePhotoToCloudinary correctly implements all specified quality and defensive requirements: (1) enforces both the 25MB pre-compression ceiling (MAX_RAW_PHOTO_BYTES) and the 8MB post-compression hard limit (MAX_PHOTO_BYTES); (2) validates file formats via isImageFile(file) before compression; (3) forwards the compressed file's name (compressed.name) when compressed is an instance of File, with fallback to file.name; and (4) safely normalizes .heic and .heif Cloudinary secure_url extensions to .jpg using boundary-aware regex matching (/(heic|heif)(?=[?#]|$)/i). No unhandled boundary flaw or missing gate exists.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "frontend/lib/api.ts:pr2_parse_receipt_direct_client_forwarding",
+      "target_type": "frontend_api_client",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "api_proxy_decommissioning_and_header_parity"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection confirms that `aiApi.parseReceipt` cleanly forwards all required headers and parameters directly to the FastAPI endpoint via `API.RECEIPT_PARSE`. Specifically: (1) `X-Gemini-API-Key` is sourced via `getSecureApiKey()` and attached to headers; (2) `Accept-Language` is dynamically mapped to 'en-US' or 'zh-TW' based on `resolvedLocale`; (3) `imageUrl`, optional `image`, and `locale` (`resolvedLocale`) are serialized in the JSON request body; (4) HTTP response errors are intercepted when `!res.ok` using `extractError` before throwing. No missing forwarding fields, security regressions, or parity defects exist.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "backend/routers/ai.py:pr2_receipt_dimension_and_strict_mode",
+      "target_type": "backend_image_sanitizer",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "image_processing_memory_and_error_boundary"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection verifies that all quality and security invariants are properly satisfied: 1) `compute_receipt_target_dimensions` preserves readability for aspect ratios > 2.0 by allowing short edges up to 1200px and long edges up to 4096px while capping total pixels at 5MP and preventing upscaling via `min(1.0, ...)`. 2) `process_and_optimize_image_sync` avoids mutating `Image.MAX_IMAGE_PIXELS` at runtime/per thread (enforcing it module-wide), preventing race conditions across thread pool workers. 3) `Image.DecompressionBombError` is explicitly caught and re-raised as `HTTPException(status_code=400, ...)` before general exception handling. 4) Unreadable or corrupt image payloads caught by `except Exception` raise `ValueError` when `strict=True`, while falling back gracefully when `strict=False`.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "backend/routers/ai.py:pr2_parse_md_image_validation_and_heic",
+      "target_type": "fastapi_ai_endpoint",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "multimodal_import_validation_and_sanitization"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static review confirms that all security and robustness requirements in the quality check are fully and properly implemented: 1) Data URL MIME parsing correctly extracts header types via `header_part[5:].split(';', 1)[0]`; 2) An explicit MIME allowlist (`allowed_md_mimes`) is enforced, rejecting disallowed formats such as SVG (`image/svg+xml`) or `application/octet-stream` with HTTP 400; 3) Size bounding is enforced both before decoding (`len(clean_b64) > ((MAX_IMAGE_SIZE * 4) // 3) + 1024`) and after decoding (`len(image_bytes) > MAX_IMAGE_SIZE`), alongside an empty payload check; 4) Strict Base64 decoding is enforced with `validate=True` and handles `(binascii.Error, ValueError)` raising HTTP 400; 5) Heavy image processing (including HEIC/HEIF optimization) is dispatched off the event loop via `await asyncio.to_thread(process_and_optimize_image_sync, image_bytes, 2048)`. No unhandled defect or vulnerability was identified.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "backend/routers/ai.py:pr2_receipt_base64_mime_and_fallback",
+      "target_type": "fastapi_ai_endpoint",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "input_validation_and_fallback_safety"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection confirms that the implementation fully satisfies all robustness, security, and fallback requirements: (1) Data URL headers are parsed and validated against allowed_receipt_mimes (set(ALLOWED_MIME_TYPES)), raising HTTP 400 on unsupported formats. (2) Pre-decoding length check prevents allocation abuse before decoding, strict base64 decoding is performed with validate=True catching binascii.Error and ValueError, and an exact post-decoding length check enforces MAX_IMAGE_SIZE. (3) Corrupt or empty base64 payloads without an imageUrl reject immediately with HTTP 400. (4) When imageUrl is present alongside invalid base64, it safely falls back to safe_download_image.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "backend/main.py:pr2_chat_image_validation_and_http_propagation",
+      "target_type": "fastapi_chat_endpoint",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "multimodal_input_validation_and_exception_propagation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection verifies that all quality check and defensive architecture criteria are rigorously implemented: 1) Data URL MIME extraction parses and strictly validates against the explicit allowlist `_ALLOWED_CHAT_IMAGE_MIMES`, raising HTTPException 400 for unsupported types; 2) Pre-decode length checks guard against memory exhaustion before executing strict `base64.b64decode(..., validate=True)` with handling for `binascii.Error` and `ValueError`, followed by empty check and post-decode `MAX_IMAGE_SIZE` enforcement; 3) Heavy image optimization/sanitization is offloaded to a thread pool via `asyncio.to_thread(process_and_optimize_image_sync, image_data, 2048, True)` preventing event loop starvation; 4) `except HTTPException: raise` is placed prior to generic exception handling, guaranteeing that 400 Client Errors properly propagate to the caller; and 5) Corrupted image bytes causing internal image processing failures fall into `except Exception`, which gracefully degrades to text-only mode with an informative system notice rather than terminating the chat session.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "cloudflare/cloudinary-proxy/worker.js:pr2_edge_proxy_origin_path_and_cache_isolation",
+      "target_type": "cloudflare_edge_worker",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "edge_proxy_origin_path_and_cache_hygiene"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md",
+      "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static analysis confirms that worker.js correctly fulfills all edge proxy, origin validation, path sanitization, and cache hygiene requirements: (1) resolveCloudName sanitizes the environment variable and falls back to DEFAULT_CLOUDINARY_CLOUD_NAME if REDACTED or empty; (2) Methods are strictly restricted to OPTIONS (204 CORS preflight) and GET/HEAD (others rejected with 405 Method Not Allowed); (3) isOriginAllowed safely permits empty Referer/Origin for iOS PWA standalone mode while strictly validating non-empty headers with new URL() against protocol and hostname allowlists; (4) parseProxyPath blocks path traversal, encoded characters (%), and transform injection (colons, commas, double slashes) via STRICT_PROXY_PATH_RE, segment checks, and ALLOWED_WIDTHS; (5) prefersAvif parses q-value tokens and respects q=0; (6) format is appended to the cacheKey URL (?fmt=f_avif|f_webp) ensuring complete cache isolation; (7) upstream network errors are handled in a try/catch returning 502 no-store; (8) SVG responses are rejected with 415 Unsupported Media Type and CSP sandbox; (9) sensitive and cache-control upstream headers are stripped; and (10) only GET 200 raster image/* responses are cached.",
+      "remediated_at": "2026-11-22T05:15:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
     }
   ],
   "known_design_intents": {

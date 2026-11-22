@@ -12,7 +12,7 @@
  * - 🆕 拖曳排序 (長按啟動，觸控友好)
  */
 
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import { Loader2, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -60,6 +60,25 @@ export function MultiImageUpload({
     const [progress, setProgress] = useState(0)
     const [previewIndex, setPreviewIndex] = useState<number | null>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const isMountedRef = useRef(true)
+    const activeXhrRef = useRef<XMLHttpRequest | null>(null)
+    const uploadingRef = useRef(false)
+
+    useEffect(() => {
+        isMountedRef.current = true
+        return () => {
+            isMountedRef.current = false
+            uploadingRef.current = false
+            if (activeXhrRef.current) {
+                try {
+                    activeXhrRef.current.abort()
+                } catch {
+                    // ignore abort errors on unmount
+                }
+                activeXhrRef.current = null
+            }
+        }
+    }, [])
 
     // 🆕 使用內部 State 管理穩定 ID，防止 URL 變動或特殊字元導致 dnd-kit 失效
     const [photoItems, setPhotoItems] = useState<{ id: string, url: string }[]>(() =>
@@ -116,21 +135,26 @@ export function MultiImageUpload({
             return
         }
 
+        if (uploadingRef.current) return
+        uploadingRef.current = true
         setLoading(true)
         setProgress(0)
         try {
-            // 🆕 執行大解析度優化 (No more 1600px limit)
-            const compressedFile = await compressImage(file, { maxWidth: 8192, maxHeight: 8192, quality: 0.9 });
+            // 壓縮為景點預設規格 (1600px / 0.82)
+            const compressedFile = await compressImage(file, "spot");
+            if (!isMountedRef.current) return
 
             const timestamp = Math.round(Date.now() / 1000)
             const paramsToSign = { timestamp, folder }
             const signData = await cloudinaryApi.signUpload(paramsToSign)
+            if (!isMountedRef.current) return
 
             const cloudName = signData.cloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
             const apiKey = signData.apiKey || process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY
 
             if (!cloudName || !apiKey) {
                 toast.error("環境變數缺失！")
+                uploadingRef.current = false
                 setLoading(false)
                 setProgress(0)
                 if (fileInputRef.current) {
@@ -142,7 +166,7 @@ export function MultiImageUpload({
             const { signature } = signData
 
             const formData = new FormData()
-            formData.append("file", compressedFile, file.name)
+            formData.append("file", compressedFile, compressedFile instanceof File ? compressedFile.name : file.name)
             formData.append("api_key", apiKey)
             formData.append("timestamp", String(timestamp))
             formData.append("signature", signature)
@@ -150,31 +174,68 @@ export function MultiImageUpload({
 
             // 上傳到 Cloudinary
             const xhr = new XMLHttpRequest()
+            activeXhrRef.current = xhr
 
             xhr.upload.onprogress = (e) => {
+                if (!isMountedRef.current) return
                 if (e.lengthComputable) {
                     setProgress(Math.round((e.loaded / e.total) * 100))
                 }
             }
 
             xhr.onload = () => {
-                if (xhr.status === 200) {
-                    const data = JSON.parse(xhr.responseText)
-                    const newUrl = data.secure_url
-                    const newUrls = [...values, newUrl]
-                    onChange(newUrls)
-                    // 同步更新內部狀態以便立即顯示
-                    setPhotoItems(prev => [...prev, { id: `photo-new-${Date.now()}`, url: newUrl }])
-                    toast.success(t('img_uploaded'))
-                } else {
-                    toast.error(t('img_upload_failed'))
+                if (activeXhrRef.current === xhr) {
+                    activeXhrRef.current = null
                 }
+                if (!isMountedRef.current) {
+                    uploadingRef.current = false
+                    return
+                }
+                try {
+                    if (xhr.status === 200) {
+                        const data = JSON.parse(xhr.responseText)
+                        if (data?.secure_url && typeof data.secure_url === "string") {
+                            const newUrl = data.secure_url.replace(/\.(heic|heif)(?=[?#]|$)/i, ".jpg")
+                            const newUrls = [...values, newUrl]
+                            onChange(newUrls)
+                            // 同步更新內部狀態以便立即顯示
+                            setPhotoItems(prev => [...prev, { id: `photo-new-${Date.now()}`, url: newUrl }])
+                            toast.success(t('img_uploaded'))
+                        } else {
+                            toast.error(t('img_upload_failed'))
+                        }
+                    } else {
+                        toast.error(t('img_upload_failed'))
+                    }
+                } catch (parseErr) {
+                    console.error("Cloudinary response parse error:", parseErr)
+                    toast.error(t('img_upload_failed'))
+                } finally {
+                    uploadingRef.current = false
+                    if (isMountedRef.current) {
+                        setLoading(false)
+                        setProgress(0)
+                    }
+                }
+            }
+
+            xhr.onerror = () => {
+                if (activeXhrRef.current === xhr) {
+                    activeXhrRef.current = null
+                }
+                uploadingRef.current = false
+                if (!isMountedRef.current) return
+                toast.error(t('img_upload_failed'))
                 setLoading(false)
                 setProgress(0)
             }
 
-            xhr.onerror = () => {
-                toast.error(t('img_upload_failed'))
+            xhr.onabort = () => {
+                if (activeXhrRef.current === xhr) {
+                    activeXhrRef.current = null
+                }
+                uploadingRef.current = false
+                if (!isMountedRef.current) return
                 setLoading(false)
                 setProgress(0)
             }
@@ -184,9 +245,12 @@ export function MultiImageUpload({
 
         } catch (err) {
             console.error("Upload error:", err)
-            toast.error(t('img_upload_error'))
-            setLoading(false)
-            setProgress(0)
+            uploadingRef.current = false
+            if (isMountedRef.current) {
+                toast.error(t('img_upload_error'))
+                setLoading(false)
+                setProgress(0)
+            }
         }
 
         // 清空 input
@@ -207,7 +271,7 @@ export function MultiImageUpload({
     // 🛡️ Security Hardened: Verify actual hostname to prevent path-traversal bypass
     const getThumbnailUrl = useCallback((url: string) => {
         if (!isTrustedUrl(url, 'cloudinary.com')) return url
-        return url.replace('/upload/', '/upload/w_200,h_200,c_fill,q_auto/')
+        return url.replace('/upload/', '/upload/w_200,h_200,c_fill,f_auto,q_auto/')
     }, [])
 
     return (

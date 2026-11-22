@@ -163,11 +163,7 @@ export function TripSettingsView({
         const folder = "ryan_travel/covers"
 
         try {
-            const compressedFile = await compressImage(file, {
-                maxWidth: 4096,
-                maxHeight: 4096,
-                quality: 0.85
-            })
+            const compressedFile = await compressImage(file, "cover")
 
             const timestamp = Math.round(Date.now() / 1000)
             const paramsToSign = { timestamp, folder }
@@ -187,7 +183,7 @@ export function TripSettingsView({
 
             const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
             const data = new FormData()
-            data.append("file", compressedFile, file.name)
+            data.append("file", compressedFile, compressedFile instanceof File ? compressedFile.name : file.name)
             data.append("timestamp", timestamp.toString())
             data.append("folder", folder)
             data.append("signature", signature)
@@ -205,14 +201,16 @@ export function TripSettingsView({
             }
 
             const result = await uploadRes.json()
-            if (!result.secure_url) {
+            if (!result.secure_url || typeof result.secure_url !== "string") {
                 toast.error(zh ? "未取得有效圖片連結" : "Invalid image URL received")
                 setLoading(false)
                 return
             }
 
-            await tripsApi.updateCover(trip.id, result.secure_url, userId || undefined)
-            void broadcastTripEvent(trip.id, "info:update", { cover_image: result.secure_url })
+            const safeCoverUrl = result.secure_url.replace(/\.(heic|heif)(?=[?#]|$)/i, ".jpg")
+
+            await tripsApi.updateCover(trip.id, safeCoverUrl, userId || undefined)
+            void broadcastTripEvent(trip.id, "info:update", { cover_image: safeCoverUrl })
             haptic.success()
             toast.success(zh ? "封面已更新！" : "Cover photo updated!")
             await handleUpdate()
@@ -391,6 +389,7 @@ export function TripSettingsView({
                                 className="object-cover"
                                 sizes="(max-width: 768px) 100vw, 800px"
                                 priority
+                                unoptimized
                             />
                             <div className="absolute inset-0 bg-linear-to-t from-black/70 via-black/20 to-transparent flex items-end justify-between p-4">
                                 <div className="space-y-0.5">
