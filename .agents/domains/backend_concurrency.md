@@ -3,6 +3,10 @@
 > **所屬領域**: FastAPI, Python 3.11+, Cloudflare D1, Supabase (PostgreSQL), Uvicorn, LinkResolver
 
 ## 🏛️ 架構決策 (Decisions)
+- **長條收據前後端位元級一致縮放、原子直傳與 AI 實體圖片消毒契約 (AD-240)**: 前後端對 aspect > 2.0 長條收據與長截圖共用 s = min(1, 1200/short, 4096/long, sqrt(5_000_000/(W*H)))，後端 ai.py 採 int(orig_w * s + 0.5) + img.resize(..., LANCZOS) 對齊 JS Math.round()，且於模組頂層設 Image.MAX_IMAGE_PIXELS = 50_000_000。ExpenseDialog 須以 localReceipt: { url, dataUrl } 同源綁定並以 editItem.id 鍵值化初始化，於上傳 200 時直傳 body.image 並保留 receiptUrl 回退。/api/chat、/api/ai/parse-md 與 /api/ai/parse-receipt 必須強制 MIME 白名單、validate=True Base64、reject_unidentified=True 實體解碼／PDF %PDF- 驗簽，且 /api/chat 外層必先 except HTTPException: raise 杜絕吞掉 400。
+
+- **Cloudinary 簽章端點雙層限流、嚴格白名單與原子輪換契約 (AD-238)**: POST /api/sign-cloudinary 僅存於 Cloud Run (backend/routers/cloudinary.py)，嚴禁於 Vercel 保存 CLOUDINARY_API_SECRET。必須經 _bind_verified_user_for_sign 先執行前置 OrderedDict LRU 右端 GFE X-Forwarded-For IP 限流 (240/min, 遍歷 getlist('x-forwarded-for') 且 IPv6 .lower()，429 帶 Retry-After 與 Cache-Control: no-store)，再執行 Depends(get_verified_user) 寫入 request.state.verified_user_id，供 SlowAPI @limiter.limit('60/minute') 以 uid:{uid.lower()} 分桶。強制 RFC 9110 §8.6 Content-Length + 4096B 串流截斷、無前導零非布林 timestamp (±600s)、public_id 僅限 ryan_travel/streetview 且匹配 ^mly_[0-9A-Za-z_-]{1,64}\Z、錯誤訊息禁用 gemini/api key/金鑰 關鍵字，並回傳原子 { signature, apiKey, cloudName } (Cache-Control: no-store)。
+
 - **膠囊二階段正數位移、無 Key Wiki 保底與單索引街景引用計數契約 (AD-232, AD-233)**: 對具 (itinerary_id, day_number) 唯一鍵之時光膠囊平移天數，必須經 Postgres 原子 RPC (+10000 臨時偏移再寫目標值) 且限定 day_number > 0 保護 Day 0。webhook_cleanup_cloudinary 必須於單一表達式索引 idx_itinerary_items_mly_ref_id 下執行 to_jsonb(OLD) #- '{preview_metadata,mapillary_thumb}' 跨表引用計數（嚴禁 LIKE '%...' Seq Scan）。/api/poi/ai-enrich 無 API Key 時回傳 200 PARTIAL_SUCCESS（禁用快取寫入），且 agents Fallback 表須經 RLS + SHA-256 key_hash + conftest.py 測試隔離。
 
 - **Supabase sb_* 非 JWT 金鑰標頭分離與禁止轉發瀏覽器 UA 法則 (AD-227)**: Supabase sb_publishable_* 與 sb_secret_* 非 JWT 格式，所有直連 PostgREST (/rest/v1/*) 與 Edge Functions 之 HTTP 請求必須透過 build_supabase_rest_headers() 僅置入 apikey 標頭並嚴禁放入 Authorization: Bearer（Authorization 僅保留給使用者 JWT）；且後端不得對 Supabase API Gateway 轉發使用者瀏覽器 User-Agent，避免觸發 Gateway 401 封鎖。
@@ -103,6 +107,10 @@
 - **Supabase PostgREST 顯式 DAC 授權與 RLS 雙軌防衛法則 (AD-143)**: PostgreSQL 中 DAC 權限 (`GRANT`) 優先於 RLS。Supabase 2026-10-30 關閉 `public` 預設 ACL 後，所有新建或重構表格必須在同一 Migration 內顯式向 `anon`, `authenticated`, `service_role` 派發 DAC 存取權，否則 PostgREST 在 DAC 檢查階段即阻斷連線 (`42501`)；同時，跨型別 RLS 比較必須實施雙向純字串正規化 (`auth.uid()::text = user_id::text`)，防止 `operator does not exist: text = uuid` 型別崩潰。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **ai.py 雙層 except Exception 靜默吞錯穿透 Gemini 與未凍結時鐘測試浮動陷阱 (FP-110)**: process_and_optimize_image_sync 預設 except Exception 回傳原始位元組為 image/jpeg，加上 main.py 外層 except Exception，會使偽裝成 image/jpeg 的 <svg> 繞過驗證直打 Gemini API 且跳過 parse-receipt 的 imageUrl 回退；此外時間戳偏移測試若未以 monkeypatch 凍結 cloudinary_router.time.time，跨秒邊界會令 now+601 偶發通過變 200 造成 CI 浮動。
+
+- **SlowAPI 與 Depends 執行順序倒置及 CWE-290 多重 XFF / FIFO 驅逐繞過陷阱 (FP-106)**: FastAPI 會先執行 Depends(get_verified_user) 才進入 @limiter.limit 裝飾器，使 key_func 內未鑑權 IP fallback 成為死碼；僅用 request.headers.get('x-forwarded-for') 會被多重 XFF 標頭繞過；普通 dict 的 FIFO 驅逐會在滿表時將活躍攻擊 IP 計數歸零；UUID 大小寫未 .lower() 會拆成兩個 SlowAPI 分桶。必須以獨立前置 OrderedDict LRU 依賴 + getlist('x-forwarded-for') 逆序尾部解析 + uid.lower() 根治。
+
 - **Secret Manager 尾端換行空白導致派生主密鑰分裂與 Vault 解密失敗陷阱 (FP-096)**: 以未經 .strip() 的原始密鑰位元組作為 PBKDF2/SHA-256 派生輸入時，GCP Secret Manager 版本若含尾端換行 (\r\n) 或空白會分裂產生多個 H1/H2 衍生金鑰版本（實測曾致 10/120 保險庫密文解不開）。密鑰派生與遷移驗證必須顯式考量 raw/strip 候選並原地統一重封裝單一乾淨主鑰。
 
 - **google-genai 3.4+ v1 預設偏移與 Speakeasy 退避卡死陷阱 (FP-092)**: google-genai>=3.4.0 將預設 API 版本由 v1beta 變更為 v1 並切換至 httpx2。呼叫 gemini-decision-1 (client.aio.decisions.create) 必須顯式指定 api_version='v1beta' 且停用 SDK 內建 Speakeasy 4 次指數退避 (retry_config={'strategy':'none','max_retries':0})；呼叫 gemini-4-hydrogen 必須過濾 minimal 思考等級（改用 low/medium/high/xhigh）並清空 temperature/top_p/top_k/thinking_budget，且因 Free Tier 尾延遲達 12s–44s，同步路由維持 Flash-Lite 優先。

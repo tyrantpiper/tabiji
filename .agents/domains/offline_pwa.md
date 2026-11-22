@@ -3,6 +3,8 @@
 > **所屬領域**: Service Worker (Serwist), IndexedDB (idb-keyval), Cache Storage, PWA Standalone
 
 ## 🏛️ 架構決策 (Decisions)
+- **跨頁共用外部封面 <Image unoptimized> 對稱與 SW StaleWhileRevalidate 守則 (AD-242)**: 凡首頁 (TabijiHomeDashboard/TripList) 已以直連 URL + unoptimized 渲染並快取之外部封面圖，次級視圖 (TripSettingsView、TripDialogs) 必須對稱加上 unoptimized，避免產生 /_next/image?url=... 異質請求造成 Vercel 額度雙耗與離線設定頁破圖。同時 sw.ts 之 trip-external-images 應維持 StaleWhileRevalidate，禁止貿然改為 CacheFirst 以免破壞無 CORS 外部圖離線快取或觸發 Safari 7MB Opaque 配額膨脹。
+
 - **官方展示頁（/official/*）隔離 PWA 安裝提示與即時聊天助手**: 官方入口頁面採同源子路徑部署時，必須依 usePathname() 嚴格隔離 PWA 安裝橫幅與即時聊天懸浮鈕，兼顧渲染層與 Effect 層雙重防守。Next.js 16 下使用 usePathname() 的客戶端元件外層必須以 Suspense fallback={null} 包裹以確保靜態編譯合規。
 
 - **SW 網域白名單精確比對與推播導引安全淨化**: 網域白名單比對嚴禁使用 .hostname.includes()，必須採用 host === domain || host.endsWith('.' + domain) 以防禦次級域名偽造（CWE-20）。Web Push 導引連結必須封鎖反斜線、ASCII 控制字元與跨源跳轉，非安全路徑強制 fallback 至 /。

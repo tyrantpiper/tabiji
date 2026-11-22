@@ -36,6 +36,7 @@ out/
 build/
 dist/
 .vercel/
+supabase/.temp/
 *.tsbuildinfo
 *.pem
 

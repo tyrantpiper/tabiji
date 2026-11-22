@@ -3,6 +3,10 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **五雲零停機密鑰輪換、Secret 版號鎖定與 MCP/CLI 權限邊界契約 (AD-243)**: GCP Secret Manager 寫入憑證必須為純 UTF-8 無尾端換行並於 Cloud Run 顯式鎖定版號 (如 :2 而非不支援熱重載之 :latest)；Supabase Edge Function 輪換密鑰透過授權 CLI --env-file 寫入後立即銷毀暫存檔，撤銷舊 Key 前必實測 cleanup-cloudinary 200 並 unset 殘留舊鍵。@mcp:vercel (8 工具) 與 @mcp:supabase (官方零明文架構) 不具改刪密鑰能力，必須走本機官方 CLI 授權或 Dashboard，嚴禁以 Chrome 自動化或讀取 MCP 設定檔方式處理生產密鑰。
+
+- **Cloudflare cloudinary-proxy 精確預覽白名單、SVG 415 攔截與零 404 快取契約 (AD-241)**: cloudflare/cloudinary-proxy/worker.js 必須僅允許 GET/HEAD/OPTIONS (其餘 405)、以 new URL() 精確比對 ALLOWED_EXACT_HOSTS (含 travel-pwa-five.vercel.app) 與專案持有者預覽正則 /^travel-[a-z0-9-]+-tyrantpipers-projects\.vercel\.app$/、嚴格路徑正則阻斷轉換參數注入並強制注入 c_limit、以 RFC prefersAvif() (尊重 q=0) 與 ?fmt= 隔離 Cache Key、剝除上游 cdn-cache-control/cloudflare-cdn-cache-control/vary/set-cookie/x-cld-error/access-control-expose-headers/server-timing、攔截 image/svg* 及非圖片 200 回 415 + CSP: sandbox + no-store，並僅對 GET 200 image/* 設 1 年 immutable 與寫入 cache.put()，非 200 一律 Cache-Control: no-store。
+
 - **前端 Worktree 沙盒建置降級與雙層 i18n/Sentinel 契約對齊守則 (AD-237)**: Security Sentinel adversarial_team.py (--mode duel) 僅內建 pytest 而不支援 Vitest；前端變更於隔離 Git Worktree（frontend/node_modules NTFS Junction）須手動執行 Vitest Red->Green PoC + npx next build --webpack（Turbopack 不相容指向根目錄外之 NTFS Junction），套用 Live 後再補跑預設 Turbopack npx next build 與 --start_line/--end_line 切片之 runner.py --mode fast。同時須守衛 remaining.ts 與 legacy translations.ts 雙語對稱，並於 landing_recovery_placeholder 保留 tbj_rec_xxxxxxxx_ 相容現有正則測試。
 
 - **CI 單元測試零即時外網社群依賴與非同步 DOM 查詢不變量 (INV-CI-TEST-DETERMINISM-01)**: 所有單元測試（Vitest 與 Pytest）嚴禁在未經 mock 的狀態下直連外部防爬蟲社群網站（應使用 httpx.Response mock 夾具驗證解析與降級邏輯）；前端 RTL 對非同步請求後的 DOM 更新必須使用 async findBy* / waitFor 查詢。另於整理提交前若因本機 predev 觸發 build-sw.mjs 僅更新 public/sw.js 之 HEAD short SHA，應還原該非程式碼建置雜訊後再送出。
@@ -98,6 +102,12 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Windows 隔離 Git Worktree 殘留目錄引發 VS Code TS Server 假紅字陷阱 (FP-111)**: 在 Windows 進行隔離 Git Worktree 沙盒測試時，若刪除 worktree 期間編輯器或 tsserver 鎖住檔案，會殘留無 .ts 檔的空殼目錄導致 VS Code Problems 顯示 No inputs were found in config file 假紅字。清理沙盒必須先以 rmdir 安全卸載 NTFS Junction，再徹底 Remove-Item 確認目錄不存在並執行 git worktree prune。
+
+- **cloudinary-proxy 四重失真：workers.dev 無快取、上游 no-store、404 一年毒丸與預覽正則寫錯 (FP-109)**: cloudinary-proxy 除 *.workers.dev 不啟用 caches.default 外，Cloudinary 上游亦回傳優先權更高的 cdn-cache-control: no-store 與 Vary: Save-Data；對 404 寫入 max-age=31536000, immutable 實證造成真實 Chrome 磁碟快取中毒 3 天；Vercel 預覽正則若誤寫 travel-pwa-*.vercel.app 會同時 403 誤封真實部署網址 travel-<hash>-tyrantpipers-projects.vercel.app 並 200 放過外部 travel-pwa-evil.vercel.app。
+
+- **GCP Secret 尾端換行損毀與雙網域遮蔽 .vercel.app 孤兒未鑑權路由陷阱 (FP-107)**: GCP Secret Manager v1 曾存入 26 碼殘缺且含尾端換行之密鑰導致 Cloud Run 頭貼替換與 GDPR 刪圖長期靜默 401；同時主網域 www.tabijiapp.com 經 Edge Shield 回 404 會長期遮蔽 travel-pwa-five.vercel.app 上仍存活的無認證孤兒 Next.js API Route (/api/sign-cloudinary、/api/parse-receipt)。凡資安與路由稽核必須四網域穿透實測並於刪除舊路由後驗證 .vercel.app 實測回 404。
+
 - **雙層缺陷遮蔽效應與雙網域 Edge Shield 暴露假象陷阱 (FP-099)**: 主網域邊緣閘道（Edge Shield）轉發錯誤或覆寫路徑（例如 www 回傳 404 或 401）常完全掩蓋下層應用漏洞：包含原生網域 (.vercel.app) /api/cloudinary-test 回傳 200 暴露資訊、或外部圖資未接備援之單點故障，及內部 Cloudflare Service Binding Worker 未明確設置 workers_dev: false / preview_urls: false 留下的 BOLA 公網後門。安全驗證必須穿透所有對外網域（含 .vercel.app 與 *.workers.dev）逐層實測，且 Edge Geocode Cache v2 須隔離 locale/座標並繞過帶 AI Key 請求。
 
 - **Supabase 舊制 JWT 前 110 碼相同誤貼與公開公式派生總管密鑰陷阱 (FP-094)**: Supabase Legacy anon (208 chars) 與 service_role (219 chars) 前 110 個字元完全相同，人工複製極易將 service_role 誤貼入 Vercel NEXT_PUBLIC_SUPABASE_ANON_KEY 並經 Next.js 前端 JS bundle 公開暴露；若 Cloud Run 同時未設獨立 SESSION_SECRET_KEY / VAULT_MASTER_KEY / RECOVERY_PEPPER 與 ENV=production，公開倉庫內的預設字串與派生公式會使外洩的 SUPABASE_KEY 連環推算出 JWT 印章與保險庫密鑰。生產環境必須強制獨立注入三把隨機母鑰並採用 sb_publishable_/sb_secret_ 格式。
