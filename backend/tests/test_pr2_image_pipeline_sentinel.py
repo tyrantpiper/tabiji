@@ -101,9 +101,28 @@ def test_parse_receipt_rejects_invalid_base64_and_svg_mime():
     )
     assert res_svg.status_code == 400
 
+    # Spoofed JPEG/PDF MIME carrying raw SVG bytes MUST be rejected with 400 before calling Gemini
+    spoof_headers = {**HEADERS, "X-Gemini-API-Key": "AIzaSyPR2SentinelTestKey" + "2" * 16}
+    with patch("routers.ai.call_extraction", new_callable=AsyncMock) as mock_extract:
+        res_spoof_jpg = client.post(
+            "/api/ai/parse-receipt",
+            json={"image": f"data:image/jpeg;base64,{svg_b64}", "locale": "en"},
+            headers=spoof_headers,
+        )
+        assert res_spoof_jpg.status_code == 400
+
+        res_spoof_pdf = client.post(
+            "/api/ai/parse-receipt",
+            json={"image": f"data:application/pdf;base64,{svg_b64}", "locale": "en"},
+            headers=spoof_headers,
+        )
+        assert res_spoof_pdf.status_code == 400
+        assert mock_extract.await_count == 0
+
 
 def test_benign_parse_receipt_direct_image_skips_download_and_falls_back_when_b64_corrupt():
     """Mantis Block G Benign Control: Direct base64 skips safe_download_image; corrupt base64 with imageUrl falls back cleanly."""
+    benign_headers = {**HEADERS, "X-Gemini-API-Key": "AIzaSyPR2SentinelTestKey" + "3" * 16}
     ai_json = json.dumps({
         "title": "FamilyMart",
         "date": "2026-11-22",
@@ -126,7 +145,7 @@ def test_benign_parse_receipt_direct_image_skips_download_and_falls_back_when_b6
                 "imageUrl": "https://res.cloudinary.com/dnpcnwrcu/image/upload/v1/ryan_travel/receipts/r1.jpg",
                 "locale": "zh",
             },
-            headers=HEADERS,
+            headers=benign_headers,
         )
         assert res.status_code == 200
         assert mock_dl.await_count == 0
@@ -143,7 +162,25 @@ def test_benign_parse_receipt_direct_image_skips_download_and_falls_back_when_b6
                 "imageUrl": "https://res.cloudinary.com/dnpcnwrcu/image/upload/v1/ryan_travel/receipts/r1.jpg",
                 "locale": "zh",
             },
-            headers=HEADERS,
+            headers=benign_headers,
+        )
+        assert res.status_code == 200
+        assert mock_dl.await_count == 1
+
+    # 3. Syntactically valid base64 of corrupt/non-image bytes WITH imageUrl -> strict decode fails & falls back cleanly
+    corrupt_b64 = base64.b64encode(b"<svg></svg>").decode("ascii")
+    with (
+        patch("routers.ai.safe_download_image", new_callable=AsyncMock, return_value=(tiny_png, "image/png")) as mock_dl,
+        patch("routers.ai.call_extraction", new_callable=AsyncMock, return_value=ai_json),
+    ):
+        res = client.post(
+            "/api/ai/parse-receipt",
+            json={
+                "image": f"data:image/jpeg;base64,{corrupt_b64}",
+                "imageUrl": "https://res.cloudinary.com/dnpcnwrcu/image/upload/v1/ryan_travel/receipts/r1.jpg",
+                "locale": "zh",
+            },
+            headers=benign_headers,
         )
         assert res.status_code == 200
         assert mock_dl.await_count == 1
@@ -278,6 +315,14 @@ def test_parse_md_rejects_svg_octet_stream_invalid_base64_and_oversized_image():
                 headers=HEADERS,
             )
             assert res_big.status_code == 400
+
+            # Spoofed image/jpeg MIME carrying SVG/corrupt bytes MUST fail strict Pillow check with 400 before Gemini
+            res_spoof = client.post(
+                "/api/ai/parse-md",
+                json={"markdown_text": "", "user_id": "u1", "image_base64": f"data:image/jpeg;base64,{svg_b64}", "locale": "en"},
+                headers=HEADERS,
+            )
+            assert res_spoof.status_code == 400
             assert mock_extract.await_count == 0
     finally:
         if prev_override is None:

@@ -467,5 +467,22 @@ describe('🛡️ PR 2 ExpenseDialog Direct-Pass Receipt & Upload Hardening Sent
             return img!
         })
         expect(previewImg.src).toMatch(/^data:image\/heic;base64,/)
+
+        // Pasting an SVG from clipboard must show toast.error and MUST NOT emit toast.success
+        vi.mocked(toast.error).mockClear()
+        vi.mocked(toast.success).mockClear()
+        const svgFile = new File(['<svg/>'], 'evil.svg', { type: 'image/svg+xml' })
+        const pasteEvent = new Event('paste') as Event & {
+            clipboardData?: { items: Array<{ type: string; getAsFile: () => File }> }
+        }
+        pasteEvent.clipboardData = {
+            items: [{ type: 'image/svg+xml', getAsFile: () => svgFile }],
+        }
+        await act(async () => {
+            window.dispatchEvent(pasteEvent)
+            await Promise.resolve()
+        })
+        expect(toast.error).toHaveBeenCalledTimes(1)
+        expect(toast.success).not.toHaveBeenCalled()
     })
 })

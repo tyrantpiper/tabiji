@@ -421,10 +421,21 @@ describe('🛡️ PR 2 Image Utils Sentinel (Geometry, EXIF, Safari WebP Fallbac
         const hugeIccJpeg = new File([bigHeader], 'display-p3.jpg', { type: 'image/jpeg' })
         expect(await hasJpegExifMetadata(hugeIccJpeg)).toBe(true)
 
-        // readImageFileAsDataUrl normalizes empty-MIME .HEIC / .HEIF so backend MIME allowlist accepts them
+        // readImageFileAsDataUrl normalizes empty/octet-stream MIME for HEIC/HEIF AND standard raster extensions
         const heic = new File([new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70])], 'IMG_0001.HEIC', { type: '' })
         const heif = new File([new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70])], 'IMG_0002.heif', { type: 'application/octet-stream' })
+        const jpgOctet = new File([makeJpegBytes({ fakeExifInScan: true })], 'clean.JPG', { type: 'application/octet-stream' })
+        const pngEmpty = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: '' })
+        const webpOctet = new File([new Uint8Array([82, 73, 70, 70])], 'shot.webp', { type: 'application/octet-stream' })
+        const gifEmpty = new File([new Uint8Array([71, 73, 70, 56])], 'anim.gif', { type: '' })
+        const unknownBin = new File([new Uint8Array([1, 2, 3])], 'payload.bin', { type: 'application/octet-stream' })
+
         expect(await readImageFileAsDataUrl(heic)).toMatch(/^data:image\/heic;base64,/)
         expect(await readImageFileAsDataUrl(heif)).toMatch(/^data:image\/heif;base64,/)
+        expect(await readImageFileAsDataUrl(jpgOctet)).toMatch(/^data:image\/jpeg;base64,/)
+        expect(await readImageFileAsDataUrl(pngEmpty)).toMatch(/^data:image\/png;base64,/)
+        expect(await readImageFileAsDataUrl(webpOctet)).toMatch(/^data:image\/webp;base64,/)
+        expect(await readImageFileAsDataUrl(gifEmpty)).toMatch(/^data:image\/gif;base64,/)
+        expect(await readImageFileAsDataUrl(unknownBin)).toMatch(/^data:application\/octet-stream;base64,/)
     })
 })

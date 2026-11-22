@@ -98,21 +98,33 @@ function isJpegFile(file: File | Blob | null | undefined): boolean {
     return false;
 }
 
+function inferStandardImageMimeFromName(file: File | Blob): string | null {
+    const name = "name" in file && typeof file.name === "string" ? file.name.trim() : "";
+    if (!name) return null;
+    if (/\.heif$/i.test(name)) return "image/heif";
+    if (/\.heic$/i.test(name)) return "image/heic";
+    if (/\.jpe?g$/i.test(name)) return "image/jpeg";
+    if (/\.png$/i.test(name)) return "image/png";
+    if (/\.webp$/i.test(name)) return "image/webp";
+    if (/\.gif$/i.test(name)) return "image/gif";
+    return null;
+}
+
 /**
  * Reads an image File/Blob as a Data URL while normalizing empty-MIME / octet-stream
- * HEIC/HEIF files to `data:image/heic;base64,...` (or `image/heif`) so backend MIME
- * allowlists and `pillow-heif` decoders accept them cleanly across Windows/Android Chrome.
+ * standard raster & HEIC/HEIF files (e.g. `.heic`, `.jpg`, `.png`, `.webp`, `.gif`)
+ * so backend MIME allowlists and `pillow-heif` decoders accept them cleanly across Windows/Android Chrome.
  */
 export function readImageFileAsDataUrl(file: File | Blob): Promise<string> {
     const normalizedMime = (file.type || "").trim().toLowerCase();
-    const isHeic = isHeicFile(file);
     let targetBlob: Blob = file;
     let forcedMime: string | null = null;
 
-    if (isHeic && (!normalizedMime || normalizedMime === "application/octet-stream")) {
-        const name = "name" in file && typeof file.name === "string" ? file.name : "";
-        forcedMime = /\.heif$/i.test(name) ? "image/heif" : "image/heic";
-        targetBlob = new Blob([file], { type: forcedMime });
+    if (!normalizedMime || normalizedMime === "application/octet-stream") {
+        forcedMime = inferStandardImageMimeFromName(file);
+        if (forcedMime) {
+            targetBlob = new Blob([file], { type: forcedMime });
+        }
     }
 
     return new Promise<string>((resolve, reject) => {

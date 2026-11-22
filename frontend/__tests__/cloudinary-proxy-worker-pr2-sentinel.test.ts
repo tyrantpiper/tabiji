@@ -42,19 +42,23 @@ describe('🛡️ PR 2 Cloudflare cloudinary-proxy Worker Hardening Sentinel', (
     })
 
     it('isOriginAllowed enforces strict new URL() hostname matching while preserving iOS Standalone PWA empty headers', () => {
-        // Malicious spoofing blocked
+        // Malicious spoofing blocked (including arbitrary third-party travel-pwa-*.vercel.app projects)
         expect(isOriginAllowed('https://tabijiapp.com.evil.com/page', '')).toBe(false)
         expect(isOriginAllowed('', 'https://evil-tabijiapp.com')).toBe(false)
         expect(isOriginAllowed('https://attacker.vercel.app/', '')).toBe(false)
+        expect(isOriginAllowed('https://travel-pwa-evil.vercel.app/', '')).toBe(false)
+        expect(isOriginAllowed('', 'https://evil-tyrantpipers-projects.vercel.app')).toBe(false)
         expect(isOriginAllowed('https://www.tabijiapp.com/', 'https://evil.com')).toBe(false)
         expect(isOriginAllowed('not-a-valid-url', '')).toBe(false)
         expect(isOriginAllowed('javascript:alert(1)', '')).toBe(false)
 
-        // Benign controls allowed
+        // Benign controls allowed (including actual tyrantpipers-projects Vercel deployment/preview URLs)
         expect(isOriginAllowed('', '')).toBe(true) // iOS Standalone PWA
         expect(isOriginAllowed('https://www.tabijiapp.com/trips/123', '')).toBe(true)
         expect(isOriginAllowed('https://tabijiapp.com/', '')).toBe(true)
         expect(isOriginAllowed('', 'https://travel-pwa-five.vercel.app')).toBe(true)
+        expect(isOriginAllowed('https://travel-na6m8zk52-tyrantpipers-projects.vercel.app/', '')).toBe(true)
+        expect(isOriginAllowed('https://travel-pwa-git-feat-tyrantpipers-projects.vercel.app/trip/1', '')).toBe(true)
         expect(isOriginAllowed('http://localhost:3000/', '')).toBe(true)
     })
 
@@ -213,7 +217,7 @@ describe('🛡️ PR 2 Cloudflare cloudinary-proxy Worker Hardening Sentinel', (
         expect(prefersAvif('image/avif;q=0, image/webp')).toBe(false)
         expect(prefersAvif('image/avif; q=0.0, image/webp')).toBe(false)
 
-        // 2. Upstream 200 image/svg+xml MUST be blocked with 415 sandbox no-store and NEVER cached
+        // 2. Upstream 200 image/svg+xml & 200 text/html MUST be blocked with 415 sandbox no-store and NEVER cached
         fetchSpy.mockResolvedValueOnce(
             new Response('<svg onload="alert(1)"/>', {
                 status: 200,
@@ -228,6 +232,22 @@ describe('🛡️ PR 2 Cloudflare cloudinary-proxy Worker Hardening Sentinel', (
         expect(svgRes.status).toBe(415)
         expect(svgRes.headers.get('Cache-Control')).toBe('no-store')
         expect(svgRes.headers.get('Content-Security-Policy')).toBe('sandbox')
+        expect(cachePutSpy).not.toHaveBeenCalled()
+
+        fetchSpy.mockResolvedValueOnce(
+            new Response('<html><script>alert(1)</script></html>', {
+                status: 200,
+                headers: { 'Content-Type': 'text/html; charset=utf-8' },
+            })
+        )
+        const htmlRes = await worker.fetch(
+            new Request('https://cloudinary-proxy.ryanpig228.workers.dev/w_320/v1/tabidachi_capsules/x.jpg'),
+            {},
+            ctx
+        )
+        expect(htmlRes.status).toBe(415)
+        expect(htmlRes.headers.get('Cache-Control')).toBe('no-store')
+        expect(htmlRes.headers.get('Content-Security-Policy')).toBe('sandbox')
         expect(cachePutSpy).not.toHaveBeenCalled()
 
         // 3. Accept: image/avif;q=0, image/webp selects f_webp, sends canonical Accept, and strips expose/server-timing headers
@@ -249,8 +269,8 @@ describe('🛡️ PR 2 Cloudflare cloudinary-proxy Worker Hardening Sentinel', (
             ctx
         )
         expect(q0Res.status).toBe(200)
-        expect(fetchSpy.mock.calls[1][0]).toContain('w_640,c_limit,f_webp,q_auto')
-        expect((fetchSpy.mock.calls[1][1] as RequestInit).headers).toEqual({ Accept: 'image/webp,*/*' })
+        expect(fetchSpy.mock.calls[2][0]).toContain('w_640,c_limit,f_webp,q_auto')
+        expect((fetchSpy.mock.calls[2][1] as RequestInit).headers).toEqual({ Accept: 'image/webp,*/*' })
         expect(q0Res.headers.get('Access-Control-Expose-Headers')).toBeNull()
         expect(q0Res.headers.get('Server-Timing')).toBeNull()
 

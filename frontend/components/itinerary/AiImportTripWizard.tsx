@@ -255,16 +255,16 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
     const containerRef = useRef<HTMLDivElement>(null)
     const compressingRef = useRef(false)
 
-    const handleFileSelected = useCallback(async (file: File) => {
-        if (!isImageFile(file) || (file.type || "").toLowerCase() === "image/svg+xml") {
+    const handleFileSelected = useCallback(async (file: File): Promise<boolean> => {
+        if (!isImageFile(file) || (file.type || "").trim().toLowerCase().startsWith("image/svg")) {
             toast.error(zh ? "請上傳圖片檔案 (PNG, JPG, WEBP, HEIC)" : "Please upload an image file (PNG, JPG, WEBP, HEIC)")
-            return
+            return false
         }
         if (file.size > 25 * 1024 * 1024) {
             toast.error(zh ? "原始圖片檔案請小於 25MB" : "Raw image size must be under 25MB")
-            return
+            return false
         }
-        if (compressingRef.current) return
+        if (compressingRef.current) return false
 
         compressingRef.current = true
         setIsCompressing(true)
@@ -272,16 +272,18 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
             const compressed = await compressImage(file, "ai_input")
             if (compressed.size > 10 * 1024 * 1024) {
                 toast.error(zh ? "壓縮後圖片檔案仍超過 10MB，請選擇較小的圖片" : "Compressed image size still exceeds 10MB")
-                return
+                return false
             }
 
             const b64 = await readImageFileAsDataUrl(compressed)
             setImagePreviewError(false)
             setImagePreview(b64)
             haptic.selection()
+            return true
         } catch (err) {
             console.error("[AiImportTripWizard] Image compression failed:", err)
             toast.error(zh ? "圖片處理失敗，請重試" : "Failed to process image")
+            return false
         } finally {
             compressingRef.current = false
             setIsCompressing(false)
@@ -299,9 +301,12 @@ export function AiImportTripWizard({ userId, itineraryId, onComplete }: AiImport
                 if (item.type.startsWith("image/")) {
                     const file = item.getAsFile()
                     if (file) {
-                        handleFileSelected(file)
-                        haptic.success()
-                        toast.success(zh ? "已從剪貼簿貼上行程圖片！" : "Pasted itinerary image from clipboard!")
+                        void handleFileSelected(file).then((ok) => {
+                            if (ok) {
+                                haptic.success()
+                                toast.success(zh ? "已從剪貼簿貼上行程圖片！" : "Pasted itinerary image from clipboard!")
+                            }
+                        })
                         break
                     }
                 }

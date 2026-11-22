@@ -17,7 +17,7 @@ const ALLOWED_EXACT_HOSTS = new Set([
   'localhost',
   '127.0.0.1',
 ]);
-const ALLOWED_VERCEL_PREVIEW_HOST_RE = /^travel-pwa-[a-z0-9-]+\.vercel\.app$/;
+const ALLOWED_VERCEL_PREVIEW_HOST_RE = /^travel-[a-z0-9-]+-tyrantpipers-projects\.vercel\.app$/;
 const STRICT_PROXY_PATH_RE = /^\/w_(320|640|768|1024|1280)\/(v\d+\/[a-zA-Z0-9_./-]+)$/;
 const WIDTH_PREFIX_RE = /^\/w_(\d+)\//;
 
@@ -217,9 +217,12 @@ export default {
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('X-Content-Type-Options', 'nosniff');
 
-    const contentType = (headers.get('content-type') || '').toLowerCase();
-    // Never serve or cache SVG payloads on the proxy origin (prevents Stored SVG XSS)
-    if (contentType.startsWith('image/svg')) {
+    const contentType = (headers.get('content-type') || '').trim().toLowerCase();
+    // Never serve or cache SVG or non-image 200 payloads on the proxy origin (prevents Stored SVG/HTML XSS)
+    if (
+      contentType.startsWith('image/svg') ||
+      (upstreamResponse.status === 200 && !contentType.startsWith('image/'))
+    ) {
       return makeNoStoreResponse('Unsupported Media Type', 415, {
         'Content-Security-Policy': 'sandbox',
         'X-Content-Type-Options': 'nosniff',
@@ -232,6 +235,7 @@ export default {
       headers.set('Cache-Control', 'public, s-maxage=31536000, max-age=31536000, immutable');
     } else {
       headers.set('Cache-Control', 'no-store');
+      headers.set('Content-Security-Policy', 'sandbox');
     }
 
     const finalResponse = new Response(method === 'HEAD' ? null : upstreamResponse.body, {

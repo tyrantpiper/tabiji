@@ -14,7 +14,7 @@ import uuid
 import httpx
 import io
 from urllib.parse import urlparse
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 from utils.url_safety import is_safe_url
 try:
     from pillow_heif import register_heif_opener
@@ -142,6 +142,7 @@ def process_and_optimize_image_sync(
     data: bytes,
     max_dimension: int = 2048,
     strict: bool = False,
+    reject_unidentified: bool = False,
 ) -> tuple[bytes, str]:
     """
     🛡️ 生產級同步圖片消毒器 (在獨立線程池中執行，防禦 OOM 與 Event Loop 阻塞)
@@ -150,8 +151,12 @@ def process_and_optimize_image_sync(
     - RGBA/LA/P 透明背景以「純白底」平滑合成，防轉 JPEG 崩潰
     - 與前端位元一致之 LANCZOS 縮放（長條收據保留短邊清晰度，一般圖片壓制至 2048px）
     """
+    detected_mime: Optional[str] = None
     try:
         with Image.open(io.BytesIO(data)) as img:
+            if img.format:
+                detected_mime = Image.MIME.get(img.format)
+
             # 1. 依 EXIF 自動旋轉
             img = ImageOps.exif_transpose(img)
 
@@ -176,11 +181,16 @@ def process_and_optimize_image_sync(
 
     except Image.DecompressionBombError:
         raise HTTPException(status_code=400, detail="圖片像素過大，觸發防護閾值")
+    except UnidentifiedImageError as e:
+        if strict or reject_unidentified:
+            raise ValueError(f"Unidentified or spoofed image payload: {e}") from e
+        print(f"⚠️ [Image Optimization Fallback] {e}")
+        return data, "image/jpeg"
     except Exception as e:
         if strict:
             raise ValueError(f"Invalid or corrupt image payload: {e}") from e
         print(f"⚠️ [Image Optimization Fallback] {e}")
-        return data, "image/jpeg"
+        return data, detected_mime or "image/jpeg"
 
 def convert_heic_to_jpeg(data: bytes) -> bytes:
     """Fallback: Convert HEIC/HEIF to JPEG using Pillow."""
@@ -499,9 +509,15 @@ async def parse_markdown(
                     detail=f"Image too large (exceeds {limit_mb}MB limit)" if is_en_md else f"圖片超過 {limit_mb}MB 上限",
                 )
 
-            image_bytes, mime_type = await asyncio.to_thread(
-                process_and_optimize_image_sync, image_bytes, 2048
-            )
+            try:
+                image_bytes, mime_type = await asyncio.to_thread(
+                    process_and_optimize_image_sync, image_bytes, 2048, False, True
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid or corrupt image payload" if is_en_md else "無效或損毀的圖片資料",
+                )
             img_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
             payload_parts = [img_part, prompt_text]
             raw_text = await call_extraction(api_key, payload_parts, intent_type="PARSE_MD", system_instruction=sys_inst)
@@ -1088,6 +1104,7 @@ async def parse_receipt(
         allowed_receipt_mimes = set(ALLOWED_MIME_TYPES)
 
         # 1. Source Determination (Direct base64 preferred; resilient fallback to imageUrl if base64 fails)
+        used_direct_image = False
         if body.image:
             raw_image = body.image.strip()
             b64_payload = raw_image
@@ -1117,6 +1134,7 @@ async def parse_receipt(
                 if candidate_bytes:
                     image_bytes = candidate_bytes
                     decoded_ok = True
+                    used_direct_image = True
             except (binascii.Error, ValueError):
                 decoded_ok = False
 
@@ -1124,6 +1142,7 @@ async def parse_receipt(
                 if body.imageUrl:
                     print("⚠️ [parse_receipt] Invalid base64 image payload; falling back to safe_download_image(imageUrl)")
                     image_bytes, mime_type = await safe_download_image(body.imageUrl)
+                    used_direct_image = False
                 else:
                     raise HTTPException(
                         status_code=400,
@@ -1141,11 +1160,34 @@ async def parse_receipt(
         else:
             raise HTTPException(status_code=400, detail="Missing source")
 
-        # 2. 格式分流與記憶體物理防禦 (PDF 直通，圖片透過 asyncio.to_thread 拋至線程池)
-        if mime_type != "application/pdf":
-            image_bytes, mime_type = await asyncio.to_thread(
-                process_and_optimize_image_sync, image_bytes, 2048
+        # 2. 格式分流與記憶體物理防禦 (PDF 驗魔術位元組直通，圖片透過 asyncio.to_thread strict=True 嚴格驗圖與縮放)
+        async def _validate_and_optimize_receipt(raw_bytes: bytes, declared_mime: str) -> tuple[bytes, str]:
+            if declared_mime == "application/pdf":
+                if not raw_bytes.startswith(b"%PDF-"):
+                    raise ValueError("Invalid or corrupt PDF payload")
+                return raw_bytes, declared_mime
+            return await asyncio.to_thread(
+                process_and_optimize_image_sync, raw_bytes, 2048, False, True
             )
+
+        try:
+            image_bytes, mime_type = await _validate_and_optimize_receipt(image_bytes, mime_type)
+        except ValueError:
+            if used_direct_image and body.imageUrl:
+                print("⚠️ [parse_receipt] Corrupt direct payload; falling back to safe_download_image(imageUrl)")
+                image_bytes, mime_type = await safe_download_image(body.imageUrl)
+                try:
+                    image_bytes, mime_type = await _validate_and_optimize_receipt(image_bytes, mime_type)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid or corrupt image payload" if is_en else "無效或損毀的圖片資料",
+                    )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid or corrupt image payload" if is_en else "無效或損毀的圖片資料",
+                )
 
         # 3. Extraction Attempt
         current_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)

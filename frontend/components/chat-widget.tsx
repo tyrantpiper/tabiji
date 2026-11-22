@@ -1159,7 +1159,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
         e.target.value = ""
         if (!file || compressingImageRef.current) return
 
-        if (!isImageFile(file) || (file.type || "").toLowerCase() === "image/svg+xml") {
+        if (!isImageFile(file) || (file.type || "").trim().toLowerCase().startsWith("image/svg")) {
             toast.error(zh ? "請選擇圖片檔案 (JPG, PNG, WEBP, HEIC)" : "Please select an image file (JPG, PNG, WEBP, HEIC)")
             return
         }
