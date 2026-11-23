@@ -520,3 +520,115 @@ async def test_explicit_city_nominatim_fallback_locks_country_and_retries_admin_
     assert all(p.get("countrycodes") == "jp" for p in captured_oki_params)
     assert res_oki["results"][0]["name"] == "沖縄県"
     assert res_oki["results"][0]["type"] == "province"
+
+
+@pytest.mark.asyncio
+async def test_live_production_adversarial_fixes_landmarks_homonyms_brands_and_trip_bias():
+    """
+    Live Production Adversarial Review Regression Guards (2026-11-23 Round 2):
+    1) Pass 1a exact key/display MUST win over Pass 1b longer-entry alias ('嵐山', '景福宮', '明洞', '弘大', 'teamLab Planets').
+    2) Soft coord_country='TW' MUST NOT block unambiguous non-homonym LANDMARKS_DB entries ('晴空塔', '關西機場', '明治神宮', '白川鄉'),
+       while explicit country='Taiwan' lock MUST still block them.
+    3) Multi-country theme parks ('迪士尼', '環球影城') MUST NOT pollute LOCATION_KEYWORDS ('巴黎迪士尼' -> FR, not JP)
+       and MUST translate/rerank to local park in HK / Paris / Osaka / Singapore / LA.
+    4) Exact BRANDS_DB match strips generic OSM tail tokens FIRST ('一蘭拉麵' -> '一蘭', '松本清' -> 'マツモトキヨシ').
+    5) Parenthetical / schedule-prefix queries ('晴空塔（夜景拍照）', '10:00 築地市場（海鮮早餐）') instant-return clean landmark.
+    6) TripTitle without lat/lng ('大阪五日遊' + '大阪燒') derives Osaka bias coordinates.
+    7) Taiwan vernacular '市政廳' at Taipei expands to '臺北市政府' / '市政府' and ranks townhall/government over stop.
+    """
+    # 1. Exact key beats longer alias
+    for q_key, expected_disp in [
+        ("嵐山", "嵐山"),
+        ("景福宮", "景福宮"),
+        ("明洞", "明洞"),
+        ("弘大", "弘大"),
+        ("teamLab Planets", "teamLab Planets 豐洲"),
+    ]:
+        _, disp, lm = translate_famous_landmark(q_key, country_code="TW", strict_country=False)
+        assert disp == expected_disp, f"Expected '{q_key}' -> '{expected_disp}', got '{disp}'"
+        assert lm is not None
+
+    # 2. Unambiguous non-homonym landmarks succeed from Taipei map, while explicit country='Taiwan' still blocks
+    for q_lm, expected_disp in [
+        ("晴空塔", "東京晴空塔"),
+        ("關西機場", "關西國際機場"),
+        ("明治神宮", "明治神宮"),
+        ("白川鄉", "白川鄉合掌村"),
+    ]:
+        res = await smart_geocode_logic(q_lm, limit=None, lat=25.033, lng=121.565)
+        assert res["source"] == "landmarks_db", f"Expected instant return for '{q_lm}' from Taipei"
+        assert res["results"][0]["name"] == expected_disp
+
+    with patch("services.geocode_service.geocode_with_photon", new=AsyncMock(return_value=[
+        {"lat": 25.1927, "lng": 121.4347, "name": "晴空23", "type": "apartments", "country": "臺灣", "osm_id": 11001}
+    ])), patch("httpx.AsyncClient.get", new=AsyncMock(return_value=MagicMock(status_code=200, json=lambda: []))):
+        res_locked = await smart_geocode_logic("晴空塔", limit=None, lat=25.033, lng=121.565, country="Taiwan")
+    assert res_locked["source"] != "landmarks_db"
+    assert res_locked["results"][0]["name"] == "晴空23"
+
+    # 3. Global homonym theme parks: LOCATION_KEYWORDS & micro-dict & rerank
+    assert gs.detect_country_from_keywords("巴黎迪士尼") == "FR"
+    assert gs.detect_country_from_keywords("香港迪士尼") == "HK"
+    assert gs.detect_country_from_keywords("新加坡環球影城") == "SG"
+    assert gs.detect_country_from_keywords("迪士尼") is None
+    assert gs.detect_country_from_keywords("環球影城") is None
+    assert "Disneyland Paris" in _translate_via_micro_dict("巴黎迪士尼", "FR")
+    assert "Hong Kong Disneyland" in _translate_via_micro_dict("迪士尼", "HK", lat=22.3193, lng=114.1694)
+    assert "Disneyland Paris" in _translate_via_micro_dict("迪士尼", "FR", lat=48.8566, lng=2.3522)
+    assert "Universal Studios Japan" in _translate_via_micro_dict("環球影城", "JP", lat=34.6937, lng=135.5023)
+    assert "Universal Studios Hollywood" in _translate_via_micro_dict("環球影城", "US", lat=34.0522, lng=-118.2437)
+
+    # Theme park rerank beats pet shop (HK) and adjacent hotel (Osaka)
+    hk_cands = [
+        {"lat": 22.3233, "lng": 114.1699, "name": "迪士尼水族", "type": "pet", "source": "photon_speculative", "_batch_rank": 0},
+        {"lat": 22.3131, "lng": 114.0410, "name": "香港迪士尼樂園 Hong Kong Disneyland", "type": "theme_park", "osm_key": "tourism", "source": "photon", "_batch_rank": 0},
+    ]
+    ranked_hk = rerank_top_k(hk_cands, "迪士尼", bias_lat=22.3193, bias_lng=114.1694, target_country="HK", limit=None, query_variants=["Hong Kong Disneyland", "香港迪士尼樂園", "迪士尼"])
+    assert ranked_hk[0]["type"] == "theme_park"
+
+    usj_cands = [
+        {"lat": 34.6678, "lng": 135.4372, "name": "ザ パーク フロント ホテル アット ユニバーサル・スタジオ・ジャパン", "type": "hotel", "osm_key": "tourism", "source": "photon", "_batch_rank": 0},
+        {"lat": 34.6656, "lng": 135.4325, "name": "ユニバーサル・スタジオ・ジャパン", "type": "commercial", "source": "photon", "_batch_rank": 1},
+    ]
+    ranked_usj = rerank_top_k(usj_cands, "環球影城", bias_lat=34.6937, bias_lng=135.5023, target_country="JP", limit=None, query_variants=["Universal Studios Japan", "ユニバーサル・スタジオ・ジャパン", "環球影城"])
+    assert ranked_usj[0]["name"] == "ユニバーサル・スタジオ・ジャパン"
+
+    # 4. Exact BRANDS_DB strips generic tail tokens FIRST while retaining full search_term
+    ichiran_terms, ichiran_disp, ichiran_lm = translate_famous_landmark("一蘭拉麵", country_code="JP")
+    assert ichiran_lm is None and ichiran_disp is not None
+    assert ichiran_terms[0] == "一蘭" and "一蘭 ラーメン" in ichiran_terms
+    matsukiyo_terms, _, matsukiyo_lm = translate_famous_landmark("松本清", country_code="JP")
+    assert matsukiyo_lm is None and matsukiyo_terms[0] == "マツモトキヨシ"
+
+    # 5. Parenthetical / schedule-prefix exact landmarks instant-return without Nominatim/Overpass
+    mock_nom = AsyncMock(return_value=MagicMock(status_code=200, json=lambda: []))
+    with patch("services.geocode_service.geocode_with_photon", new=AsyncMock(return_value=[])), \
+         patch("httpx.AsyncClient.get", new=mock_nom):
+        res_sky = await smart_geocode_logic("晴空塔（夜景拍照）", limit=None, lat=25.033, lng=121.565)
+        res_tsukiji = await smart_geocode_logic("10:00 築地市場（海鮮早餐）", limit=None, lat=25.033, lng=121.565)
+    assert res_sky["source"] == "landmarks_db" and res_sky["results"][0]["name"] == "東京晴空塔"
+    assert res_tsukiji["source"] == "landmarks_db" and res_tsukiji["results"][0]["name"] == "築地市場"
+    assert mock_nom.call_count == 0
+
+    # 6. TripTitle bias coords when lat/lng omitted ('大阪五日遊' + '大阪燒')
+    captured_osaka = []
+
+    async def fake_photon_osaka(q, limit=25, lat=None, lng=None, zoom=None, location_bias_scale=None, osm_tag=None, country_code=None, bbox=None):
+        captured_osaka.append((q, lat, lng))
+        return [{"lat": 34.7024, "lng": 135.4959, "name": "お好み焼き", "type": "restaurant", "country": "日本", "osm_id": 12001}]
+
+    with patch("services.geocode_service.geocode_with_photon", side_effect=fake_photon_osaka), \
+         patch("services.geocode_service._translate_via_wikipedia_langlinks", new=AsyncMock(return_value=["お好み焼き"])), \
+         patch("httpx.AsyncClient.get", new=AsyncMock(return_value=MagicMock(status_code=200, json=lambda: []))):
+        res_osaka = await smart_geocode_logic("大阪燒", limit=None, trip_title="大阪五日遊")
+    assert res_osaka["results"]
+    assert any(c_lat is not None and abs(c_lat - 34.6937) < 0.05 for _, c_lat, _ in captured_osaka)
+
+    # 7. Taiwan vernacular '市政廳' at Taipei
+    assert _translate_via_micro_dict("市政廳", "TW", lat=25.033, lng=121.565) == ["臺北市政府", "市政府"]
+    tw_civic = [
+        {"lat": 25.0410, "lng": 121.5661, "name": "市政府", "type": "stop", "source": "photon", "_batch_rank": 0},
+        {"lat": 25.0375, "lng": 121.5645, "name": "臺北市政府", "type": "townhall", "source": "photon", "_batch_rank": 1},
+    ]
+    ranked_tw_civic = rerank_top_k(tw_civic, "市政廳", bias_lat=25.033, bias_lng=121.565, target_country="TW", limit=None, query_variants=["臺北市政府", "市政府", "市政廳"])
+    assert ranked_tw_civic[0]["name"] == "臺北市政府"

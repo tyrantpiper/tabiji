@@ -173,9 +173,9 @@ export default {
         // zoom 11..18 共享城市/街景分桶以維持既有 T3 契約 (zoom 11.2 與 15.8 共享快取鍵，避免城市內縮放抖動導致快取雪崩)
         const isMacroZoom = hasZoom && Math.round(Number(rawZoom)) <= 10;
 
-        // 構造專屬虛擬 GET Cache Key v2.1 (隔離全球宏觀 round(zoom)<=10 與城市/街景縮放，忽略城市內 zoom 抖動並刷新舊 v=2 快取)
+        // 構造專屬虛擬 GET Cache Key v2.2 (隔離全球宏觀 round(zoom)<=10 與城市/街景縮放，刷新舊 v=2 / v=2.1 快取)
         const cacheKeyUrl = new URL(`https://cache.tabijiapp.com/api/geocode/search`);
-        cacheKeyUrl.searchParams.set('v', '2.1');
+        cacheKeyUrl.searchParams.set('v', '2.2');
         cacheKeyUrl.searchParams.set('q', query);
         if (quantizedBbox) cacheKeyUrl.searchParams.set('bbox', quantizedBbox);
         if (hasCoords) {
