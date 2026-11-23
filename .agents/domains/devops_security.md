@@ -35,7 +35,7 @@
 
 - **pytest-mock Fixture Lifecycle Hygiene**: Mocks created via pytest-mock fixture (mocker.patch) MUST NOT be wrapped in 'with' context manager statements. Use direct assignment and modify 'mock.return_value' across test branches.
 
-- **Dual-Track Spec DAG Engine & Approval Gate Precedence**: In idea-to-spec skill, specification generation supports Fast-Track (single-turn) and Deep-DAG (5-node pipeline). In Deep-DAG, automated adversarial red-team audit and property-based test invariant assertions MUST occur strictly BEFORE Gate 5 Human Approval Gate, guaranteeing that human confirmation is the sole irreversible handover boundary to @dev.
+- **Dual-Track Spec DAG Engine & Approval Gate Precedence**: In `pwa-idea-to-spec` skill (`.agents/skills/pwa-idea-to-spec/SKILL.md`), specification generation supports Fast-Track (single-turn) and Deep-DAG (5-node pipeline). In Deep-DAG, automated adversarial red-team audit and property-based test invariant assertions MUST occur strictly BEFORE Gate 5 Human Approval Gate, guaranteeing that human confirmation is the sole irreversible handover boundary to @dev.
 
 - **Unified Dual-Core CLI Adversarial Duel Integration (--mode duel)**: Security Sentinel CLI (runner.py) supports --mode {adaptive,duel,fast}. In --mode duel, runner.py dynamically acquires an isolated GitWorktreePool and executes orchestrate_adversarial_duel across 4 phases: (1) Attacker pytest PoC generation; (2) Physical Red Check with pytest -k 'not benign' (exit code 1); (3) Defender Chesterton's Fence archaeology evaluation (DISMISSED if proven intentional design); (4) Block replacement patch synthesis with Mantis Block G Benign Control green check (exit code 0).
 

@@ -65,6 +65,7 @@ blob-report/
 !/.agents/skills/test/
 !/.agents/skills/ui-optimize/
 !/.agents/skills/verify-e2e/
+!/.agents/skills/pwa-idea-to-spec/
 /.agents/workflows/*
 
 backend/migrations/20260308_security_hardening.sql
