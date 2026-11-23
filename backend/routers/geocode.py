@@ -12,7 +12,10 @@ from services.geocode_service import (
     reverse_geocode_with_ai_enhancement,  # 🆕 AI 增強版
     log_debug,
     geocode_place, # 🆕 用於 Tier 3 Fallback
-    resolve_address_pipeline
+    resolve_address_pipeline,
+    resolve_fusion_anchor_coords,
+    haversine_km,
+    normalize_cjk_chars,
 )
 from services.link_resolver import resolve_google_maps_link # 🆕 Link-to-Pin 核心
 from models.base import ResolveAddressRequest, ResolveAddressErrorResponse
@@ -79,18 +82,31 @@ async def geocode_search(
         body.bbox
     ))
     
-    # Task B: 智慧意圖挖掘 (僅在偵測到意圖且有 API Key 時，受獨立 8.0s 逾時保護)
-    trigger_smart = bool(is_poi_query(body.query) and resolved_gemini_key)
+    # Task B: 智慧意圖挖掘（僅在偵測到意圖、有 API Key 且具備真實/城市/國別錨點時啟動，嚴禁無座標盲灌東京）
+    fusion_lat, fusion_lng = resolve_fusion_anchor_coords(
+        lat=body.lat,
+        lng=body.lng,
+        query=body.query,
+        region=body.region,
+        trip_title=body.tripTitle,
+        country=body.country,
+    )
+    trigger_smart = bool(
+        is_poi_query(body.query)
+        and resolved_gemini_key
+        and fusion_lat is not None
+        and fusion_lng is not None
+    )
     if trigger_smart:
-        log_debug(f"🧠 [Fusion] POI Intent Detected: '{body.query}' -> Triggering Smart Search")
+        log_debug(f"🧠 [Fusion] POI Intent Detected: '{body.query}' @ ({fusion_lat:.4f}, {fusion_lng:.4f}) -> Triggering Smart Search")
         search_tasks.append(_timed_smart_search(
             api_key=resolved_gemini_key,
             query=body.query,
-            lat=body.lat or 35.6895, # 預設東京 or 傳入座標
-            lng=body.lng or 139.6917,
+            lat=fusion_lat,
+            lng=fusion_lng,
             region=body.region or body.tripTitle,
             trip_title=body.tripTitle,
-            max_results=body.limit,
+            max_results=min(body.limit, 20) if (body.limit and body.limit > 0) else 10,
             locale=locale,
         ))
     
@@ -152,9 +168,34 @@ async def geocode_search(
                 "source": "smart_fusion"
             })
         if fusion_pois:
-            # 決定混合策略：POI 置頂，地理定位置後（這讓「搜拉麵」能直接看到店）
+            # 決定混合策略：保留 Task A 既有智慧排序不二次重排，改以「同正規化名＋<50m」安全去重合併並嚴格遵守 body.limit
             base_list = geocode_results.get("results", []) if isinstance(geocode_results, dict) else (geocode_results if isinstance(geocode_results, list) else [])
-            return {"results": fusion_pois + base_list, "source": "smart_fusion"}
+            merged: list = []
+
+            def _is_same_place(a: dict, b: dict) -> bool:
+                na = re.sub(r"\s+", "", normalize_cjk_chars(str(a.get("name") or "")))
+                nb = re.sub(r"\s+", "", normalize_cjk_chars(str(b.get("name") or "")))
+                if not na or na != nb:
+                    return False
+                a_lat, a_lng = a.get("lat"), a.get("lng")
+                b_lat, b_lng = b.get("lat"), b.get("lng")
+                if a_lat is None or a_lng is None or b_lat is None or b_lng is None:
+                    return False
+                try:
+                    return haversine_km(float(a_lat), float(a_lng), float(b_lat), float(b_lng)) < 0.05
+                except (TypeError, ValueError):
+                    return False
+
+            for item in [*fusion_pois, *base_list]:
+                if not isinstance(item, dict):
+                    continue
+                if any(_is_same_place(item, existing) for existing in merged):
+                    continue
+                merged.append(item)
+
+            if body.limit is not None and body.limit > 0:
+                merged = merged[:body.limit]
+            return {"results": merged, "source": "smart_fusion"}
         
     return geocode_results
 

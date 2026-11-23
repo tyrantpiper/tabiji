@@ -200,9 +200,9 @@ class ResolveAddressErrorResponse(BaseModel):
 
 
 class GeocodeSearchRequest(BaseModel):
-    """地理編碼搜尋請求"""
+    """地理編碼搜尋請求（limit 為 None 或 <=0 時回傳上游取得並智慧排序之全部去重結果）"""
     query: str
-    limit: int = 5
+    limit: Optional[int] = None
     tripTitle: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None

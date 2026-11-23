@@ -211,9 +211,9 @@ export function POISearch({ centerLat, centerLng, onSelectPOI, className }: POIS
                             {/* AI 推薦結果 */}
                             {aiRecommendation && (
                                 <Card className="p-3 mb-3 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/30 border-amber-200 dark:border-amber-800/60">
-                                    <div className="flex items-start gap-2">
-                                        <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
-                                        <p className="text-sm text-slate-700 dark:text-amber-100">{aiRecommendation}</p>
+                                    <div className="flex items-start gap-2 min-w-0">
+                                        <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                                        <p className="min-w-0 flex-1 text-sm text-slate-700 dark:text-amber-100 wrap-break-word [word-break:break-word] whitespace-normal">{aiRecommendation}</p>
                                     </div>
                                 </Card>
                             )}
@@ -228,18 +228,18 @@ export function POISearch({ centerLat, centerLng, onSelectPOI, className }: POIS
                                     {pois.map((poi) => (
                                         <div
                                             key={poi.id}
-                                            className="p-3 bg-card rounded-lg border border-border hover:border-amber-300 hover:shadow-sm transition-all cursor-pointer"
+                                            className="p-3 bg-card rounded-lg border border-border hover:border-amber-300 hover:shadow-sm transition-all cursor-pointer min-w-0 max-w-full overflow-hidden"
                                             onClick={() => onSelectPOI?.(poi)}
                                         >
-                                            <div className="flex justify-between items-start">
+                                            <div className="flex justify-between items-start gap-2 min-w-0">
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2 min-w-0">
-                                                        <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                                                        <span className="font-medium text-slate-800 dark:text-slate-100 text-sm truncate">
+                                                    <div className="flex items-start gap-2 min-w-0">
+                                                        <MapPin className="w-3.5 h-3.5 mt-0.5 text-slate-400 shrink-0" />
+                                                        <span className="min-w-0 flex-1 font-medium text-slate-800 dark:text-slate-100 text-sm wrap-break-word [word-break:break-word] whitespace-normal leading-snug">
                                                             {poi.name}
                                                         </span>
                                                     </div>
-                                                    <div className="flex items-center gap-3 mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-slate-500 dark:text-slate-400">
                                                         <span>{poi.distance}m</span>
                                                         {poi.rating && (
                                                             <span>{getRatingStars(poi.rating)}</span>
@@ -256,7 +256,7 @@ export function POISearch({ centerLat, centerLng, onSelectPOI, className }: POIS
                                                         type="button"
                                                         variant="ghost"
                                                         size="sm"
-                                                        className="h-7 w-7 p-0 text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                                                        className="h-7 w-7 p-0 shrink-0 text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/40"
                                                         onClick={(e) => {
                                                             e.stopPropagation()
                                                             onSelectPOI(poi)

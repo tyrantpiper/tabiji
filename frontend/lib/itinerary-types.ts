@@ -13,6 +13,8 @@ export interface LocationInfo extends Coordinate {
     admin2?: string
     source?: string
     osm_id?: number | string
+    osm_type?: string | null
+    extent?: number[] | null
 }
 
 export interface PreviewMetadata {
@@ -233,6 +235,8 @@ export interface GeocodeResult {
     source?: string
     results?: GeocodeResult[]
     osm_id?: number | string
+    osm_type?: string | null
+    extent?: number[] | null
 }
 
 // 🆕 Shared Search Result Type
@@ -244,6 +248,7 @@ export interface SearchResult {
     type?: string
     source?: string
     osm_id?: number | string
+    osm_type?: string | null
     city?: string
     country?: string
     wikipedia?: string

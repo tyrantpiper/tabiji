@@ -281,8 +281,8 @@ export const TimelineCard = memo(function TimelineCard({
                 <div className="flex items-start justify-between gap-3">
                     {/* 左側資訊區 */}
                     <div className="flex-1 min-w-0 pr-1">
-                        <div className="flex items-center gap-2 mb-1">
-                            <h3 className={cn("font-bold text-slate-900 dark:text-white leading-tight truncate", isHeader ? "text-xl" : "text-base")}>
+                        <div className="flex items-start gap-2 mb-1 min-w-0">
+                            <h3 className={cn("min-w-0 flex-1 font-bold text-slate-900 dark:text-white leading-snug wrap-break-word [word-break:break-word] whitespace-normal", isHeader ? "text-xl" : "text-base")}>
                                 <span>{activity.place || (isHeader ? "Notice" : "Unknown Place")}</span>
                             </h3>
                             {syncMeta && <SyncStatusBadge status={syncMeta.status} errorMessage={syncMeta.errorMessage} />}
@@ -300,7 +300,7 @@ export const TimelineCard = memo(function TimelineCard({
                         )}
 
                         <p className={cn(
-                            "text-slate-600 dark:text-slate-300 leading-relaxed font-light whitespace-pre-wrap",
+                            "text-slate-600 dark:text-slate-300 leading-relaxed font-light whitespace-pre-wrap wrap-break-word [word-break:break-word]",
                             isHeader ? "text-sm mb-3" : "text-xs mb-2.5 line-clamp-2"
                         )}>
                             {activity.desc || t('tc_add_memo_hint')}
@@ -602,9 +602,9 @@ function DetailDialog({ open, onOpenChange, activity, onUpdateActivity }: Detail
                 <div className="w-full flex justify-center pt-3 pb-1 sm:hidden shrink-0 select-none">
                     <div className="w-10 h-1 bg-slate-300 dark:bg-slate-600 rounded-full" />
                 </div>
-                <div className="px-6 py-4 sm:p-6 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 shrink-0 pr-12">
+                <div className="px-6 py-4 sm:p-6 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 shrink-0 pr-12 min-w-0">
                     <DialogHeader>
-                        <DialogTitle className="text-xl sm:text-2xl font-serif font-bold text-slate-900 dark:text-white truncate">
+                        <DialogTitle className="text-xl sm:text-2xl font-serif font-bold text-slate-900 dark:text-white wrap-break-word [word-break:break-word] whitespace-normal leading-snug text-left">
                             {activity.place || "Details"}
                         </DialogTitle>
                         <DialogDescription className="sr-only">
@@ -612,15 +612,15 @@ function DetailDialog({ open, onOpenChange, activity, onUpdateActivity }: Detail
                         </DialogDescription>
                     </DialogHeader>
                 </div>
-                <ScrollArea className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-                    <div className="p-6 pb-12 sm:pb-6 space-y-6">
+                <ScrollArea className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain">
+                    <div className="p-6 pb-12 sm:pb-6 space-y-6 min-w-0">
 
                         {/* 1. 攻略/簡介 (唯讀) */}
                         <div className="space-y-2">
                             <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-2">
                                 <Info className="w-3.5 h-3.5 text-slate-400" /> {zh ? "景點簡介與攻略" : "Info & Guide"}
                             </h4>
-                            <div className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-100 dark:border-slate-700 shadow-2xs whitespace-pre-wrap">
+                            <div className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-100 dark:border-slate-700 shadow-2xs whitespace-pre-wrap wrap-break-word [word-break:break-word]">
                                 {activity.desc || t('tc_no_desc')}
                             </div>
                         </div>

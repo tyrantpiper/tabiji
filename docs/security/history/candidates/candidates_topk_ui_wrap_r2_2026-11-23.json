@@ -1,0 +1,56 @@
+[
+  {
+    "id": "backend/services/geocode_service.py:topk_landmark_exact_gate_and_homonym",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 2540,
+    "end_line": 2675,
+    "attack_vector": "logic_boundary",
+    "severity": "medium",
+    "hypothesis": "Attack translate_famous_landmark Step 2b generic tail stripping (_BRAND_GENERIC_TAIL_TOKENS): can stripping the trailing token corrupt multi-word brand names, leave empty search terms, bypass chain-brand exclusion, or alter Step 2a exact-match display_name contracts?"
+  },
+  {
+    "id": "backend/services/geocode_service.py:topk_cjk_similarity_and_rerank",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 3055,
+    "end_line": 3305,
+    "attack_vector": "logic_boundary",
+    "severity": "medium",
+    "hypothesis": "Attack rerank_top_k subdistrict half_life=5.0, prefix-address similarity credit (capped at 0.76), and wants_hotel bus_stop penalty: can crafted address/city strings spoof prefix_label credit above exact branch names, crash on None/non-string address fields, or break zoom<=10 macro decay?"
+  },
+  {
+    "id": "backend/services/geocode_service.py:topk_paren_fallback_and_city_anchor",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 1610,
+    "end_line": 1945,
+    "attack_vector": "input_sanitization",
+    "severity": "medium",
+    "hypothesis": "Attack _match_landmark_facility_prefix, _detect_city_prefix_anchor, resolve_fusion_anchor_coords dish guard, and _translate_via_micro_dict Branches 2b/2c: can homonym landmarks or chain brands leak into landmark-facility anchoring, can dish queries bypass the dish guard to hijack coordinates, or can None/malformed dict entries throw unhandled exceptions?"
+  },
+  {
+    "id": "backend/services/geocode_service.py:topk_instant_return_and_single_pass_fallback",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 4844,
+    "end_line": 5165,
+    "attack_vector": "dos_recursion_and_state_leak",
+    "severity": "medium",
+    "hypothesis": "Attack smart_geocode_logic fast parenthetical fallback: can nested/malformed parenthetical strings trigger infinite recursion, bypass _allow_paren_fallback=False, drop real OSM parenthesized POIs that Photon returns, or leak polluted search terms across fallback invocations?"
+  },
+  {
+    "id": "cloudflare/edge-shield/worker.js:topk_edge_cache_key_and_header_sanitization",
+    "file_path": "cloudflare/edge-shield/worker.js",
+    "start_line": 1,
+    "end_line": 265,
+    "attack_vector": "edge_cache_isolation",
+    "severity": "medium",
+    "hypothesis": "Verify Edge Shield /api/geocode/search dynamic Origin allowlist handling on cache HIT: confirm GEOCODE_ALLOWED_ORIGINS uses strict exact Set membership rather than prefix/substring matching, never writes Access-Control-Allow-Origin, Set-Cookie, or Content-Encoding into shared cache storage, and sets Vary: Origin and X-Content-Type-Options: nosniff on HIT responses."
+  },
+  {
+    "id": "frontend/components/itinerary/LocationEditDialog.tsx:topk_location_dialog_day_switch_race_guard",
+    "file_path": "frontend/components/itinerary/LocationEditDialog.tsx",
+    "start_line": 27,
+    "end_line": 115,
+    "attack_vector": "race_condition",
+    "severity": "medium",
+    "hypothesis": "Attack LocationEditDialog [isOpen, day] cleanup effect and async handleSearchLocation: can a slow in-flight geocode response from Day 1 resolve after switching to Day 2 or closing the dialog, overwriting locSearchResults or leaving isLocSearching stuck true?"
+  }
+]

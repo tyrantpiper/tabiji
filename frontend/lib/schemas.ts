@@ -153,6 +153,14 @@ export const GeocodeResultSchema = z.object({
     source: z.string().optional().nullable(),
     admin_level: z.coerce.number().optional().nullable(),
     osm_key: z.string().optional().nullable(),
+    osm_id: z.union([z.string(), z.number()]).optional().nullable(),
+    osm_type: z.string().optional().nullable(),
+    city: z.string().optional().nullable(),
+    country: z.string().optional().nullable(),
+    state: z.string().optional().nullable(),
+    display_name: z.string().optional().nullable(),
+    original_name: z.string().optional().nullable(),
+    importance: z.number().optional().nullable(),
     extent: z.array(z.number()).optional().nullable(),
     _score: z.number().optional().nullable(),
     _dist_km: z.number().optional().nullable(),
@@ -160,6 +168,7 @@ export const GeocodeResultSchema = z.object({
 
 export const GeocodeResponseSchema = z.object({
     results: z.array(GeocodeResultSchema).default([]),
+    source: z.string().optional().nullable(),
 });
 
 // === AI Schemas ===

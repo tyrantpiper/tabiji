@@ -413,11 +413,11 @@ export default function POIDetailDrawer({
                                 className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain px-5 pb-6 space-y-4"
                                 style={{ touchAction: "pan-y" }}
                             >
-                                <div className="flex items-center gap-2 mb-2">
-                                    <div className="w-1.5 h-6 bg-indigo-500 rounded-full" />
-                                    <h3 className="text-lg font-black text-slate-900 dark:text-white">{poi.name}</h3>
+                                <div className="flex items-start gap-2 mb-2 min-w-0">
+                                    <div className="w-1.5 h-6 bg-indigo-500 rounded-full shrink-0 mt-0.5" />
+                                    <h3 className="min-w-0 flex-1 text-lg font-black text-slate-900 dark:text-white wrap-break-word [word-break:break-word] whitespace-normal leading-snug">{poi.name}</h3>
                                 </div>
-                                <div className="grid gap-2 pr-1">
+                                <div className="grid grid-cols-1 gap-2 pr-1">
                                     {poi.clusterItems?.map((item, idx) => (
                                         <button
                                             key={item.id || idx}
@@ -435,19 +435,19 @@ export default function POIDetailDrawer({
                                                     }, item.time || "10:00");
                                                 }
                                             }}
-                                            className="w-full text-left p-4 bg-slate-50 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 rounded-2xl border border-slate-100 dark:border-slate-800 transition-all active:scale-[0.98] group"
+                                            className="w-full max-w-full min-w-0 overflow-hidden text-left p-4 bg-slate-50 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 rounded-2xl border border-slate-100 dark:border-slate-800 transition-all active:scale-[0.98] group"
                                         >
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center text-xs font-black shadow-lg shadow-indigo-500/20">
+                                            <div className="flex items-center justify-between gap-2 min-w-0">
+                                                <div className="flex items-start gap-3 min-w-0 flex-1">
+                                                    <div className="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center text-xs font-black shadow-lg shadow-indigo-500/20 shrink-0">
                                                         {item.number}
                                                     </div>
-                                                    <div>
-                                                        <div className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 transition-colors truncate">{item.place}</div>
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 transition-colors wrap-break-word [word-break:break-word] whitespace-normal leading-snug">{item.place}</div>
                                                         <div className="text-[10px] text-slate-400 font-mono mt-0.5">{item.time || item.time_slot || '--:--'}</div>
                                                     </div>
                                                 </div>
-                                                <div className="text-slate-300 group-hover:translate-x-1 transition-transform">→</div>
+                                                <div className="text-slate-300 group-hover:translate-x-1 transition-transform shrink-0">→</div>
                                             </div>
                                         </button>
                                     ))}
@@ -463,16 +463,16 @@ export default function POIDetailDrawer({
                                 {/* ========== Layer 1: OSM 骨架層 ========== */}
 
                                 {/* Header */}
-                                <div className="flex items-start gap-3">
+                                <div className="flex items-start gap-3 min-w-0">
                                     {poi.number ? (
                                         <div className="w-10 h-10 rounded-full bg-indigo-500 text-white flex items-center justify-center text-sm font-black shadow-lg shadow-indigo-500/20 shrink-0">
                                             {poi.number}
                                         </div>
                                     ) : (
-                                        <span className="text-3xl">{getTypeIcon(poi.type)}</span>
+                                        <span className="text-3xl shrink-0">{getTypeIcon(poi.type)}</span>
                                     )}
                                     <div className="flex-1 min-w-0">
-                                        <h2 className="text-xl font-bold text-slate-900 dark:text-white truncate">
+                                        <h2 className="text-xl font-bold text-slate-900 dark:text-white wrap-break-word [word-break:break-word] whitespace-normal leading-snug">
                                             {poi.name}
                                         </h2>
                                         <p className="text-sm text-slate-500 dark:text-slate-400 capitalize">
@@ -482,20 +482,20 @@ export default function POIDetailDrawer({
                                 </div>
 
                                 {/* 基礎資訊 (具備視覺呼吸感) */}
-                                <div className="space-y-2.5 text-sm">
+                                <div className="space-y-2.5 text-sm min-w-0">
                                     {poi.address && (
-                                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                                            <MapPin className="w-4 h-4 shrink-0 text-slate-400" />
-                                            <span className="line-clamp-2">{poi.address}</span>
+                                        <div className="flex items-start gap-2 text-slate-600 dark:text-slate-300 min-w-0">
+                                            <MapPin className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
+                                            <span className="min-w-0 flex-1 wrap-break-word [word-break:break-word] whitespace-normal line-clamp-3 leading-snug">{poi.address}</span>
                                         </div>
                                     )}
                                     {poi.phone && (
                                         <a
                                             href={`tel:${poi.phone}`}
-                                            className="flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:underline"
+                                            className="flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:underline min-w-0"
                                         >
                                             <Phone className="w-4 h-4 shrink-0" />
-                                            <span>{poi.phone}</span>
+                                            <span className="min-w-0 flex-1 wrap-break-word [word-break:break-word]">{poi.phone}</span>
                                         </a>
                                     )}
                                     {poi.website && (
@@ -510,9 +510,9 @@ export default function POIDetailDrawer({
                                         </button>
                                     )}
                                     {poi.opening_hours && (
-                                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                                            <Clock className="w-4 h-4 shrink-0 text-slate-400" />
-                                            <span>{poi.opening_hours}</span>
+                                        <div className="flex items-start gap-2 text-slate-600 dark:text-slate-300 min-w-0">
+                                            <Clock className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
+                                            <span className="min-w-0 flex-1 wrap-break-word [word-break:break-word] whitespace-normal leading-snug">{poi.opening_hours}</span>
                                         </div>
                                     )}
                                 </div>

@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-22T05:15:00Z",
+  "last_audit_date": "2026-11-23T08:30:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 428,
-    "audited_targets": 428,
+    "total_targets": 439,
+    "audited_targets": 439,
     "verified_vulnerabilities": 53,
-    "remediated_vulnerabilities": 200,
-    "dismissed_hypotheses": 175
+    "remediated_vulnerabilities": 201,
+    "dismissed_hypotheses": 185
   },
   "targets": [
     {
@@ -5516,6 +5516,129 @@
       "validator_details": "Verified by PR 2 sandbox unit/PoC suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static analysis confirms that worker.js correctly fulfills all edge proxy, origin validation, path sanitization, and cache hygiene requirements: (1) resolveCloudName sanitizes the environment variable and falls back to DEFAULT_CLOUDINARY_CLOUD_NAME if REDACTED or empty; (2) Methods are strictly restricted to OPTIONS (204 CORS preflight) and GET/HEAD (others rejected with 405 Method Not Allowed); (3) isOriginAllowed safely permits empty Referer/Origin for iOS PWA standalone mode while strictly validating non-empty headers with new URL() against protocol and hostname allowlists; (4) parseProxyPath blocks path traversal, encoded characters (%), and transform injection (colons, commas, double slashes) via STRICT_PROXY_PATH_RE, segment checks, and ALLOWED_WIDTHS; (5) prefersAvif parses q-value tokens and respects q=0; (6) format is appended to the cacheKey URL (?fmt=f_avif|f_webp) ensuring complete cache isolation; (7) upstream network errors are handled in a try/catch returning 502 no-store; (8) SVG responses are rejected with 415 Unsupported Media Type and CSP sandbox; (9) sensitive and cache-control upstream headers are stripped; and (10) only GET 200 raster image/* responses are cached.",
       "remediated_at": "2026-11-22T05:15:00Z",
       "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-22_pr2_image_pipeline.md"
+    },
+    {
+      "id": "backend/services/geocode_service.py:topk_landmark_exact_gate_and_homonym",
+      "target_type": "backend_geocode_service",
+      "trust_boundary": "public_to_internal",
+      "vectors_checked": [
+        "landmark_exact_gate_and_chain_brand_isolation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Re-verified in Round 2 (Security Sentinel runner.py --mode adaptive -> DISMISSED): Static inspection verifies that Step 2b generic tail stripping (_BRAND_GENERIC_TAIL_TOKENS) in translate_famous_landmark is defensively designed and cannot cause search term corruption, empty queries, chain-brand bypass, or contract alteration: 1) Tail stripping strictly requires len(st_parts) >= 2, st_parts[-1] in _BRAND_GENERIC_TAIL_TOKENS, and len(' '.join(st_parts[:-1]).strip()) >= 2, preventing multi-word brands from being stripped to empty or single-character strings; 2) terms always retains query_clean via list(dict.fromkeys([combined, query_clean])), guaranteeing a valid non-empty fallback; 3) Step 2b explicitly returns (terms, None, None), strictly maintaining landmark_data=None and display_name=None to avoid single-point landmark hijacking and preserve branch search delegation; 4) Step 2a executes and returns early before Step 2b, completely isolating Step 2a's exact-match display_name contract."
+    },
+    {
+      "id": "backend/services/geocode_service.py:topk_cjk_similarity_and_rerank",
+      "target_type": "backend_geocode_reranker",
+      "trust_boundary": "public_to_internal",
+      "vectors_checked": [
+        "cjk_similarity_and_rerank_monotonicity"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Re-verified in Round 2 (Security Sentinel runner.py --mode adaptive -> DISMISSED): Static audit confirms that rerank_top_k safely implements subdistrict spatial decay, prefix-address boosting, and category-specific penalties without vulnerabilities: (1) Prefix credit cap: Prefix-address score reinforcement is strictly bounded by `min(0.76, prefixed_sim * 0.90)`, mathematically guaranteeing that boosted candidate similarity cannot exceed 0.76, preserving precedence for explicit branch names which score >= 0.79. (2) Type safety on address fields: `addr_blob` is constructed using `str(item.get(f) or \"\")` across ('address', 'display_name', 'city', 'state'), safely coercing None, missing keys, and non-string types to empty strings without raising AttributeError or TypeError. (3) Macro decay integrity: The condition `is_subdistrict_anchor and (zoom is None or float(zoom) > 10.0)` explicitly prevents the aggressive 5.0 km half-life from triggering at macro zoom levels (zoom <= 10.0), correctly falling back to `half_life = 150.0`. (4) Hotel category scoring: `wants_hotel` intentionally penalizes `is_minor_transit` (including 'bus_stop') with -0.08 to prevent bus stops named after hotels from outranking actual lodging POIs."
+    },
+    {
+      "id": "backend/services/geocode_service.py:topk_paren_fallback_and_city_anchor",
+      "target_type": "backend_geocode_sanitizer",
+      "trust_boundary": "public_to_internal",
+      "vectors_checked": [
+        "regex_redos_and_coordinate_anchor_bounds"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Re-verified in Round 2 (Security Sentinel runner.py --mode adaptive -> DISMISSED): Static audit confirms that all hypothesized attack vectors are rigorously mitigated by existing defensive architecture: (1) Homonym & Chain Brand Defense: _match_landmark_facility_prefix filters normalized prefixes against _HOMONYM_GUARD_NORM and enforces _is_chain_brand_entry rejection before returning any landmark match. (2) Dish Query Protection: Both _detect_city_prefix_anchor and resolve_fusion_anchor_coords explicitly invoke _is_city_dish_query on extracted suffixes, preventing dish names (e.g., '大阪燒') from being hijacked into geographic anchors. (3) Exception & Type Safety: Dictionary lookups in Branches 2b and 2c of _translate_via_micro_dict strictly check truthiness and list length before indexing ([0]), handle missing/None attributes via .get() with safe defaults, and guard coordinate parsing with isfinite() and range boundary checks."
+    },
+    {
+      "id": "backend/services/geocode_service.py:topk_instant_return_and_single_pass_fallback",
+      "target_type": "backend_geocode_orchestrator",
+      "trust_boundary": "public_to_internal",
+      "vectors_checked": [
+        "homonym_guard_and_search_terms_isolation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Re-verified in Round 2 (Security Sentinel runner.py --mode adaptive -> DISMISSED): Static audit confirms the fast parenthetical fallback mechanism is safe against DoS recursion, state leaks, and false-positive query drops: (1) Bounded Single-Pass Recursion: `has_paren_or_prefix_noise` is explicitly gated on `_allow_paren_fallback`. When the fallback occurs, `smart_geocode_logic` is called with `_allow_paren_fallback=False`. In the subsequent invocation, `has_paren_or_prefix_noise` evaluates to `False`, strictly capping recursion depth to at most 1 regardless of nested or malformed brackets. (2) Preservation of Legitimate OSM POIs: The fallback is conditioned on `has_paren_or_prefix_noise and not all_results`. Speculative Photon search always executes on the original query first; if an official OSM POI contains parentheses and returns results, `all_results` is non-empty, bypassing the fallback entirely. (3) No State Pollution: All query variants and task collections (`search_terms`, `search_queries`, `tasks`, `all_results`) are local variables bound to the coroutine stack frame; calling `smart_geocode_logic` with `cleaned_paren_query` instantiates a clean activation record with zero shared mutable state leakage.",
+      "remediated_at": "2026-11-23T07:45:00Z",
+      "resolution": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md"
+    },
+    {
+      "id": "backend/routers/geocode.py:topk_fusion_anchor_dedup_and_limit",
+      "target_type": "fastapi_geocode_router",
+      "trust_boundary": "public_to_internal",
+      "vectors_checked": [
+        "fusion_anchor_dedup_and_limit_bounds"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Verified by Top-K & UI Wrapping sandbox suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static review confirms all targeted defensive logic is already correctly implemented: (1) trigger_smart requires both fusion_lat is not None and fusion_lng is not None, ensuring smart_search fusion is skipped when resolve_fusion_anchor_coords yields (None, None); (2) raw_smart_items filters out items with missing coordinates (lat_val is None or lng_val is None) and _is_same_place catches malformed coordinates safely via try-except (TypeError, ValueError); (3) merged results are deduplicated using normalized CJK whitespace-stripped name equality and haversine_km < 0.05 (<50m) preserving base_list order without invoking rerank_top_k; (4) body.limit is verified to be positive (> 0) both when determining max_results for _timed_smart_search and when slicing final merged results."
+    },
+    {
+      "id": "backend/services/smart_search_service.py:topk_overpass_soft_filter",
+      "target_type": "backend_smart_search_service",
+      "trust_boundary": "public_to_internal",
+      "vectors_checked": [
+        "overpass_soft_filter_null_safety"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Verified by Top-K & UI Wrapping sandbox suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static analysis confirms that `_soft_filter_overpass_pois` is defensively designed and safely handles all specified edge cases: 1) `keywords or []` and `str(kw or '').strip().lower()` prevent `TypeError` or `AttributeError` when `keywords` is `None`, empty, or contains non-string/`None` elements; 2) `(food_type or '').strip().lower()` and `(location or '').strip().lower()` safely guard `None` arguments; 3) POI attributes are safely extracted using `str(poi.get(...) or '')`, converting `None` and non-string field values to strings without raising exceptions; 4) When terms are empty (`if not dedup_terms: return pois`) or when all entries are unmatched (`return filtered if filtered else pois`), it gracefully falls back to returning the original `pois` list without unexpectedly returning an empty list."
+    },
+    {
+      "id": "cloudflare/edge-shield/worker.js:topk_edge_cache_key_and_header_sanitization",
+      "target_type": "cloudflare_edge_worker",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "edge_cache_key_and_header_sanitization"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Re-verified in Round 2 (Security Sentinel runner.py --mode adaptive -> DISMISSED): Static inspection confirms that all defensive caching, isolation, and sanitization requirements are properly implemented: (1) GEOCODE_ALLOWED_ORIGINS is instantiated as a Set and evaluated via exact membership check `GEOCODE_ALLOWED_ORIGINS.has(reqOrigin)`, completely preventing prefix, suffix, or substring spoofing; (2) Shared cache writes in `cache.put` use a newly constructed isolated Headers instance containing only Content-Type and Cache-Control, ensuring Access-Control-Allow-Origin, Set-Cookie, and Content-Encoding are never written to shared cache storage; (3) On cache HIT, `X-Content-Type-Options: nosniff` is unconditionally attached, and for valid allowed origins, `Access-Control-Allow-Origin` and `Vary: Origin` are dynamically injected into the outgoing response headers without contaminating the cached body."
+    },
+    {
+      "id": "frontend/lib/location-utils.ts:topk_clean_query_regex_and_osm_dedup",
+      "target_type": "frontend_location_utils",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "regex_redos_statefulness_and_osm_dedup"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Verified by Top-K & UI Wrapping sandbox suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection verifies that all four defensive requirements are satisfied: 1) PAREN_REMARK_GLOBAL_RE uses a bounded non-overlapping character class ([^()（）[\\]【】]{1,80}) and LEADING_ACTIVITY_PREFIX_RE uses anchored distinct alternation branches without nested quantifiers, eliminating catastrophic backtracking (ReDoS); 2) extractPlaceParentheticalNote creates a fresh local RegExp instance via `new RegExp(PAREN_REMARK_GLOBAL_RE.source, 'g')` for its while-exec loop, preventing module-level shared RegExp.lastIndex mutation across concurrent calls; 3) isDuplicateGeocodeResult validates typeof === 'number' and Number.isFinite() on latA, lngA, latB, and lngB, safely rejecting NaN, Infinity, and missing coordinates before distance computation; 4) isDuplicateGeocodeResult normalizes osm_type ('n'/'node', 'w'/'way', 'r'/'relation') and only allows duplicate match when osm_types match or at least one is absent, properly distinguishing identical osm_ids across different OSM entity types."
+    },
+    {
+      "id": "frontend/components/itinerary/ActivityEditModal.tsx:topk_modal_race_guard_and_paren_desc",
+      "target_type": "frontend_itinerary_modal",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "async_race_condition_and_state_isolation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Verified by Top-K & UI Wrapping sandbox suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection confirms that the defensive architecture and race-guard specifications are correctly and comprehensively implemented in the provided code snippet. The cleanup useEffect strictly depends on [isOpen, editItem?.id], aborting pending geocode requests on modal close, item switch, and unmount, while clearing obsolete results. The geocodeApi.search invocations strictly omit the limit parameter to allow backend top-k smart ranking. Both primary and fallback queries guard against stale responses by checking sequence freshness (seq !== requestSeqRef.current), controller abort status, and card ID identity (activeItemIdRef.current !== targetId) at all post-await checkpoints, catch blocks, and finally clauses."
+    },
+    {
+      "id": "frontend/components/views/itinerary-view.tsx:topk_save_bias_and_abort_timeout",
+      "target_type": "frontend_itinerary_view",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "abort_timeout_timer_lifecycle"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Verified by Top-K & UI Wrapping sandbox suites and Security Sentinel runner.py --mode adaptive (DISMISSED): Static inspection verifies that handleSaveEdit adheres to all defensive and resource lifecycle requirements: 1) calculateBiasLocation(day) is computed and passed as lat/lng coordinates to geocodeApi.search; 2) an AbortController with a 3500ms setTimeout is used and safely cleared via clearTimeout(timeoutId) inside a guaranteed finally block, preventing timer leaks; 3) geocoding exceptions (including aborts and network errors) are caught with console.warn without rethrowing or returning early, allowing activity persistence to continue unblocked."
+    },
+    {
+      "id": "frontend/components/itinerary/LocationEditDialog.tsx:topk_location_dialog_day_switch_race_guard",
+      "target_type": "frontend_itinerary_dialog",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "async_race_condition_and_day_switch_state_isolation"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
+      "validator_details": "Verified in Round 2 (Security Sentinel runner.py --mode adaptive -> DISMISSED): The code snippet implements a comprehensive dual-guard pattern against async race conditions. When 'isOpen' or 'day' changes, the useEffect hook immediately calls abortControllerRef.current?.abort(), increments requestSeqRef.current, clears locSearchResults, and sets isLocSearching to false. When any in-flight geocodeApi.search resolves or rejects, it checks both (seq !== requestSeqRef.current || controller.signal.aborted). Since the effect has already aborted the controller and incremented requestSeqRef, any stale response is discarded before calling setLocSearchResults. Furthermore, in the finally block, setIsLocSearching(false) is gated by (seq === requestSeqRef.current && !controller.signal.aborted), preventing stale completions from tampering with loading states established by subsequent searches or the cleanup effect."
     }
   ],
   "known_design_intents": {

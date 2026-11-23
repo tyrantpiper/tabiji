@@ -497,7 +497,7 @@ LOW_THINKING_SUPPRESSED_INTENTS = {
 }
 INTENTS_ALLOW_GEMMA_LAST_RESORT = {
     "PLANNING", "PARSE_MD", "SUMMARIZE", "POI_ENRICH", "POI_RECOMMEND",
-    "MEMORY_EXTRACT", "DIAGNOSIS", "DAY_REVIEW", "CHAT", "GEOCODE",
+    "MEMORY_EXTRACT", "DIAGNOSIS", "DAY_REVIEW", "CHAT",
     "ITINERARY", "REMOVE_ITINERARY", "EXPENSE", "COMPOSITE", "INTENT_PARSE", "SEARCH"
 }
 
@@ -552,6 +552,7 @@ def get_tools_for_model(model_name: str, intent_type: str = "CHAT") -> Optional[
 
 MAX_CLIENT_CACHE_SIZE = 32
 MODEL_CALL_TIMEOUT = 45.0
+GEOCODE_CALL_TIMEOUT = 0.9
 GEMMA_CALL_TIMEOUT = 35.0
 HYDROGEN_CALL_TIMEOUT = 25.0
 PLANNING_CALL_TIMEOUT = 90.0
@@ -582,7 +583,7 @@ def call_timeout_scope(scope_or_seconds: Optional[Union[str, float]]) -> Iterato
 
 
 def _get_call_timeout(intent_type: str, model_name: Optional[str] = None) -> float:
-    """雙軌逾時分級：SSE PLANNING=120s、非串流 PLANNING/PARSE_MD=90s、Gemma 4 上限 35s、其餘快速意圖=45s。"""
+    """多軌逾時分級：SSE PLANNING=120s、非串流 PLANNING/PARSE_MD=90s、Gemma 4 上限 35s、GEOCODE=0.9s、其餘快速意圖=45s。"""
     override = _TIMEOUT_OVERRIDE_CTX.get()
     if isinstance(override, (int, float)) and override > 0:
         return float(override)
@@ -590,6 +591,8 @@ def _get_call_timeout(intent_type: str, model_name: Optional[str] = None) -> flo
         base_timeout = PLANNING_SSE_TIMEOUT
     elif intent_type in ("PLANNING", "PARSE_MD"):
         base_timeout = PLANNING_CALL_TIMEOUT
+    elif intent_type == "GEOCODE":
+        base_timeout = GEOCODE_CALL_TIMEOUT
     else:
         base_timeout = MODEL_CALL_TIMEOUT
 
@@ -1850,6 +1853,7 @@ async def _execute_with_transient_retry(
     retried_5xx = False
     retried_config = False
     current_config = config
+    fast_fail = (timeout_sec <= 3.0) or ("GEOCODE" in str(tag).upper())
 
     while True:
         try:
@@ -1864,7 +1868,7 @@ async def _execute_with_transient_retry(
                 current_config = build_degraded_config_on_400(current_config, e)
                 continue
 
-            if code == 429 and not retried_429:
+            if not fast_fail and code == 429 and not retried_429:
                 meta = parse_429_metadata(e)
                 retry_delay = meta.get("retry_delay", 0.0)
                 is_daily = meta.get("is_daily", False)
@@ -1875,7 +1879,7 @@ async def _execute_with_transient_retry(
                     await asyncio.sleep(sleep_sec)
                     continue
 
-            if code in (500, 502, 503, 504) and not retried_5xx:
+            if not fast_fail and code in (500, 502, 503, 504) and not retried_5xx:
                 retried_5xx = True
                 sleep_sec = 0.8 + random.uniform(0.05, 0.25)
                 print(f"⏳ [{tag} {code} Short Retry] {model_name} transient server error, waiting {sleep_sec:.2f}s before retry...")
@@ -2110,8 +2114,8 @@ async def call_extraction(
                 attempts.append({"model": model_name, "decision": "skip_strict_extraction_prevention"})
                 continue
             
-            # 對於其餘任務，遵循 INTENTS_ALLOW_GEMMA_LAST_RESORT 白名單
-            if intent_type not in INTENTS_ALLOW_GEMMA_LAST_RESORT:
+            # 對於其餘任務，遵循 INTENTS_ALLOW_GEMMA_LAST_RESORT 白名單（呼叫端顯式指定 routing_strategy 除外）
+            if intent_type not in INTENTS_ALLOW_GEMMA_LAST_RESORT and not (routing_strategy and model_name in routing_strategy):
                 attempts.append({"model": model_name, "decision": "skip_intent_not_allowed_for_gemma"})
                 continue
 
@@ -2133,7 +2137,7 @@ async def call_extraction(
                 )
 
             response = await _execute_with_transient_retry(
-                _extract, model_name, config, timeout_sec, "Extraction"
+                _extract, model_name, config, timeout_sec, f"Extraction:{intent_type}"
             )
 
             text = extract_clean_response_text(response)
@@ -2173,7 +2177,7 @@ async def call_extraction(
             if kind == "bad_request":
                 raise NonRetryableRequestError(f"Bad Request: {err_msg}")
 
-            if is_429:
+            if is_429 and intent_type != "GEOCODE":
                 await asyncio.sleep(0.15 + random.uniform(0.01, 0.05))
             continue
 
@@ -2237,7 +2241,7 @@ async def call_extraction_stream(
             if intent_type == "EXTRACTION" and not caps.allow_extraction_fallback:
                 attempts.append({"model": model_name, "decision": "skip_strict_extraction_prevention"})
                 continue
-            if intent_type not in INTENTS_ALLOW_GEMMA_LAST_RESORT:
+            if intent_type not in INTENTS_ALLOW_GEMMA_LAST_RESORT and not (routing_strategy and model_name in routing_strategy):
                 attempts.append({"model": model_name, "decision": "skip_intent_not_allowed_for_gemma"})
                 continue
 

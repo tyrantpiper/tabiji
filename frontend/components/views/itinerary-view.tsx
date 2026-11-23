@@ -1240,14 +1240,20 @@ export function ItineraryView() {
         let finalLat = editItem?.lat !== undefined ? editItem.lat : null
         let finalLng = editItem?.lng !== undefined ? editItem.lng : null
 
-        // 🧠 JIT 救援守衛：如果經緯度真的是空的 (例如新增活動時)，才嘗試用名稱執行最後攔截
+        // 🧠 JIT 救援守衛：如果經緯度真的是空的 (例如新增活動時)，才嘗試用名稱執行最後攔截（補傳當日軌跡錨點 + 3500ms 硬逾時，括號降級由後端單次完成）
         if (!editItem?.isManualCoords && editItem?.place && (finalLat === null || finalLng === null)) {
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), 3500)
             try {
+                const saveBias = calculateBiasLocation(day)
                 const data = await geocodeApi.search({
                     query: editItem.place,
                     limit: 1,
                     tripTitle: currentTrip?.title,
-                    locale: lang
+                    lat: saveBias?.lat,
+                    lng: saveBias?.lng,
+                    locale: lang,
+                    signal: controller.signal
                 })
                 if (data.results && data.results.length > 0) {
                     finalLat = data.results[0].lat
@@ -1255,6 +1261,8 @@ export function ItineraryView() {
                 }
             } catch (e) {
                 console.warn("⚠️ Geocoding during save failed:", e)
+            } finally {
+                clearTimeout(timeoutId)
             }
         }
 

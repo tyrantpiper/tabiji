@@ -79,13 +79,13 @@ export const TimelineCardOverlay = memo(function TimelineCardOverlay({
             </div>
 
             {/* 2. 主內容與縮圖 */}
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start justify-between gap-3 min-w-0">
                 <div className="flex-1 min-w-0">
-                    <h3 className="font-bold text-slate-900 dark:text-white truncate text-base">
+                    <h3 className="font-bold text-slate-900 dark:text-white wrap-break-word [word-break:break-word] whitespace-normal leading-snug text-base">
                         {activity.place || activity.place_name || "未命名"}
                     </h3>
                     {activity.desc && (
-                        <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1">
+                        <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 wrap-break-word [word-break:break-word] mt-1">
                             {activity.desc}
                         </p>
                     )}

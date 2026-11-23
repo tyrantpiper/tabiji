@@ -4,6 +4,16 @@
  */
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// 允許於 /api/geocode/search 邊緣快取 HIT 時動態回寫 CORS 的嚴格白名單（與 backend/main.py ALLOWED_ORIGINS 對齊，不寫入共享快取本體）
+const GEOCODE_ALLOWED_ORIGINS = new Set([
+  'https://tabijiapp.com',
+  'https://www.tabijiapp.com',
+  'https://travel-pwa-five.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+]);
+
 // Web Crypto API helper to verify HS256 JWT in Cloudflare Worker
 async function verifyJwtSub(authHeader, secret) {
   if (!authHeader || !authHeader.startsWith("Bearer ") || !secret) {
@@ -156,17 +166,23 @@ export default {
         );
 
         const rawLimit = bodyJson.limit;
-        const hasLimit = rawLimit !== null && rawLimit !== undefined && rawLimit !== '' && Number.isFinite(Number(rawLimit));
+        const hasLimit = rawLimit !== null && rawLimit !== undefined && rawLimit !== '' && Number.isFinite(Number(rawLimit)) && Number(rawLimit) > 0;
+        const rawZoom = bodyJson.zoom;
+        const hasZoom = rawZoom !== null && rawZoom !== undefined && rawZoom !== '' && Number.isFinite(Number(rawZoom));
+        // 對齊後端 geocode_with_photon 之 int_zoom <= 10 (location_bias_scale=0.7) 宏觀邊界；
+        // zoom 11..18 共享城市/街景分桶以維持既有 T3 契約 (zoom 11.2 與 15.8 共享快取鍵，避免城市內縮放抖動導致快取雪崩)
+        const isMacroZoom = hasZoom && Math.round(Number(rawZoom)) <= 10;
 
-        // 構造專屬虛擬 GET Cache Key v2 (排除高噪 zoom，防禦 AI Key 個人化與語系/座標跨區快取污染)
+        // 構造專屬虛擬 GET Cache Key v2.1 (隔離全球宏觀 round(zoom)<=10 與城市/街景縮放，忽略城市內 zoom 抖動並刷新舊 v=2 快取)
         const cacheKeyUrl = new URL(`https://cache.tabijiapp.com/api/geocode/search`);
-        cacheKeyUrl.searchParams.set('v', '2');
+        cacheKeyUrl.searchParams.set('v', '2.1');
         cacheKeyUrl.searchParams.set('q', query);
         if (quantizedBbox) cacheKeyUrl.searchParams.set('bbox', quantizedBbox);
         if (hasCoords) {
           cacheKeyUrl.searchParams.set('lat', Number(rawLat).toFixed(2));
           cacheKeyUrl.searchParams.set('lng', Number(rawLng).toFixed(2));
         }
+        if (isMacroZoom) cacheKeyUrl.searchParams.set('zb', 'macro');
         if (country) cacheKeyUrl.searchParams.set('country', country);
         if (region) cacheKeyUrl.searchParams.set('region', region);
         if (trip) cacheKeyUrl.searchParams.set('trip', trip);
@@ -185,6 +201,13 @@ export default {
             const hitHeaders = new Headers(cachedResp.headers);
             hitHeaders.set('X-Edge-Cache', 'HIT');
             hitHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
+            hitHeaders.set('X-Content-Type-Options', 'nosniff');
+            const reqOrigin = request.headers.get('Origin');
+            if (reqOrigin && GEOCODE_ALLOWED_ORIGINS.has(reqOrigin)) {
+              hitHeaders.set('Access-Control-Allow-Origin', reqOrigin);
+              hitHeaders.set('Access-Control-Allow-Credentials', 'true');
+              hitHeaders.set('Vary', 'Origin');
+            }
             return new Response(cachedResp.body, {
               status: cachedResp.status,
               headers: hitHeaders,
@@ -192,8 +215,10 @@ export default {
           }
         }
 
-        // 未命中或 BYPASS：帶入邊緣地理標頭並安全轉發（使用 JSON.stringify 避免消耗原始 Stream）
+        // 未命中或 BYPASS：帶入邊緣地理標頭並安全轉發（重新序列化 JSON 前刪除舊 Content-Length / Content-Encoding 防長度與編碼不符）
         const originHeaders = new Headers(request.headers);
+        originHeaders.delete('Content-Length');
+        originHeaders.delete('Content-Encoding');
         originHeaders.set('Host', TARGET_HOST);
         originHeaders.set('X-Forwarded-Host', url.hostname);
         originHeaders.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
@@ -209,13 +234,21 @@ export default {
           body: JSON.stringify(bodyJson),
         });
 
-        // 僅對無 Gemini Key 且成功具有內容的公共結果寫入 7 天邊緣快取
+        // 僅對無 Gemini Key、成功有內容、且非 ArcGIS 來源的公共結果以純淨標頭寫入 7 天邊緣快取（杜絕殘留 Content-Encoding: gzip 解碼損壞）
         if (!hasGeminiKey && backendResp.ok) {
           const cloneResp = backendResp.clone();
           const data = await cloneResp.json().catch(() => null);
-          if (data && Array.isArray(data.results) && data.results.length > 0) {
-            const cacheHeaders = new Headers(backendResp.headers);
-            cacheHeaders.set('Cache-Control', 'public, max-age=604800, s-maxage=604800');
+          const isArcgisResult = Boolean(
+            data && (
+              String(data.source || '').toLowerCase() === 'arcgis' ||
+              (Array.isArray(data.results) && data.results.some(r => r && String(r.source || '').toLowerCase() === 'arcgis'))
+            )
+          );
+          if (data && Array.isArray(data.results) && data.results.length > 0 && !isArcgisResult) {
+            const cacheHeaders = new Headers({
+              'Content-Type': 'application/json; charset=utf-8',
+              'Cache-Control': 'public, max-age=604800, s-maxage=604800',
+            });
             const respToCache = new Response(JSON.stringify(data), {
               status: backendResp.status,
               headers: cacheHeaders,

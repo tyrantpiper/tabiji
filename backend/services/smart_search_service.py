@@ -93,6 +93,70 @@ def _is_en_locale(locale: Optional[str]) -> bool:
     return bool(locale and str(locale).strip().lower().startswith("en"))
 
 
+_FOOD_TYPE_SYNONYMS: Dict[str, Tuple[str, ...]] = {
+    "ramen": ("ramen", "拉麵", "拉面", "ラーメン", "らーめん", "noodle", "麵", "面"),
+    "sushi": ("sushi", "壽司", "寿司", "すし", "回転寿司"),
+    "cafe": ("cafe", "coffee", "咖啡", "カフェ", "珈琲", "tea", "抹茶", "matcha"),
+    "curry": ("curry", "咖哩", "咖喱", "カレー"),
+    "izakaya": ("izakaya", "居酒屋", "燒鳥", "焼鳥", "yakitori"),
+    "yakiniku": ("yakiniku", "燒肉", "焼肉", "bbq", "牛角", "敘敘苑"),
+    "udon": ("udon", "烏龍", "うどん"),
+    "tempura": ("tempura", "天婦羅", "天ぷら"),
+    "steak": ("steak", "牛排", "ステーキ"),
+    "burger": ("burger", "漢堡", "ハンバーガー"),
+}
+
+_GENERIC_SEARCH_STOPWORDS = {
+    "附近", "周邊", "好吃", "好吃的", "推薦", "必吃", "美食", "餐廳", "店家", "景點",
+    "nearby", "near", "around", "best", "good", "recommended", "food", "restaurant",
+    "restaurants", "eat", "dining", "place", "places", "shop", "shopping",
+}
+
+
+def _soft_filter_overpass_pois(
+    pois: List[Dict],
+    food_type: Optional[str],
+    keywords: Optional[List[str]],
+    location: Optional[str],
+) -> List[Dict]:
+    """對 Overpass 泛用類別結果以 food_type/keywords 做軟過濾；若全數濾空則優雅退回原清單。"""
+    if not pois:
+        return pois
+
+    loc_low = (location or "").strip().lower()
+    terms: List[str] = []
+    ft_low = (food_type or "").strip().lower()
+    if ft_low:
+        terms.extend(_FOOD_TYPE_SYNONYMS.get(ft_low, (ft_low,)))
+    for kw in (keywords or []):
+        kw_s = str(kw or "").strip().lower()
+        if not kw_s or kw_s in _GENERIC_SEARCH_STOPWORDS or (loc_low and kw_s == loc_low):
+            continue
+        # 若關鍵字含地點前綴或泛詞，嘗試拆出具體食物/品牌詞
+        for ft_key, syns in _FOOD_TYPE_SYNONYMS.items():
+            if any(s in kw_s for s in syns):
+                terms.extend(syns)
+        if len(kw_s) >= 2 and kw_s not in terms:
+            terms.append(kw_s)
+
+    dedup_terms = list(dict.fromkeys(t for t in terms if t and t not in _GENERIC_SEARCH_STOPWORDS))
+    if not dedup_terms:
+        return pois
+
+    filtered = []
+    for poi in pois:
+        haystack = " ".join([
+            str(poi.get("name") or ""),
+            str(poi.get("cuisine") or ""),
+            str(poi.get("category") or ""),
+            str(poi.get("address") or ""),
+        ]).lower()
+        if any(term in haystack for term in dedup_terms):
+            filtered.append(poi)
+
+    return filtered if filtered else pois
+
+
 async def parse_intent(
     api_key: str,
     query: str,
@@ -288,8 +352,9 @@ async def get_poi_candidates(
             else:
                 valid_pois.append(poi)
         if valid_pois:
-            print(f"✅ Found {len(valid_pois)} POIs via Overpass within 3.0s")
-            return valid_pois, target_coords
+            refined_pois = _soft_filter_overpass_pois(valid_pois, food_type, keywords, location)
+            print(f"✅ Found {len(refined_pois)} POIs via Overpass within 3.0s (raw={len(valid_pois)})")
+            return refined_pois, target_coords
     except Exception as e:
         print(f"⚠️ Overpass bounded search failed/timed out, switching to Photon fallback: {e}")
 

@@ -270,6 +270,7 @@ async def search_overpass(
                     "phone": tags.get("phone", ""),
                     "website": tags.get("website", ""),
                     "opening_hours": tags.get("opening_hours", ""),
+                    "cuisine": tags.get("cuisine", ""),
                     "wikidata_id": tags.get("wikidata", ""),
                     "source": "osm"
                 })

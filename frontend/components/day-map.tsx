@@ -30,12 +30,13 @@ import { motion, AnimatePresence } from "framer-motion"
 import { toast } from "sonner"
 import POIDetailDrawer, { POIBasicData } from "@/components/POIDetailDrawer"
 import { useLocalGeocode } from "@/hooks/useLocalGeocode"
-import { useCityBias } from "@/hooks/useCityBias"
 import { cn } from "@/lib/utils"
 import { debugLog, debugWarn } from "@/lib/debug"
 import { useLanguage } from "@/lib/LanguageContext"
 import { SearchResult } from "@/lib/itinerary-types"
-import { getDistanceKm, getSmartZoomConfig } from "@/lib/location-utils"
+import { getDistanceKm, getSmartZoomConfig, isMacroGeoResult, isUsableMacroExtent, dedupeGeocodeResults } from "@/lib/location-utils"
+
+const INCOMPLETE_ZHUYIN_RE = /[\u3100-\u312F\u31A0-\u31BF]/
 
 // Activity 類型定義
 interface Activity {
@@ -243,11 +244,15 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
     const [isSearchOpen, setIsSearchOpen] = useState(false)
     const [isSearchMinimized, setIsSearchMinimized] = useState(false)  // 🆕 最小化狀態
     const [query, setQuery] = useState("")
+    const [selectedQuery, setSelectedQuery] = useState<string | null>(null)
     const [results, setResults] = useState<SearchResult[]>([])
     const [isTyping, setIsTyping] = useState(false)     // 🆕 輸入中（debounce 期間）
     const [isSearching, setIsSearching] = useState(false)
     const { history, addToHistory, clearHistory } = useSearchHistory()
     const inputRef = useRef<HTMLInputElement>(null)
+    const abortControllerRef = useRef<AbortController | null>(null)
+    const requestSeqRef = useRef(0)
+    const isComposingRef = useRef(false)
     const touchStartPosRef = useRef<{ x: number; y: number } | null>(null)
     const longPressTimerRef = useRef<NodeJS.Timeout | null>(null)
     const isMoveDetectedRef = useRef(false)
@@ -255,12 +260,15 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
     // 🆕 輸入變更處理（立即回饋）
     const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const value = e.target.value
+        setSelectedQuery(null)
         setQuery(value)
-        if (value.length >= 2) {
+        if (value.length >= 2 && !INCOMPLETE_ZHUYIN_RE.test(value)) {
             setIsTyping(true)
         } else {
             setIsTyping(false)
-            setResults([])
+            if (value.length < 2) {
+                setResults([])
+            }
         }
     }
 
@@ -352,31 +360,45 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
     // 🏕️ Local Geocode Hook (L1 本地秒回)
     const { search: localSearch, isLoaded: localDataLoaded } = useLocalGeocode()
 
-    // 🏙️ City Bias Hook (智能 Location Bias)
-    const { findNearestCity } = useCityBias()
-
-    // Debounced 搜尋 (L1 本地 + L2 API)
+    // Debounced 搜尋 (L1 本地 + L2 API，AbortController + requestSeq 防競態 + 保留後端智慧排序全量顯示)
     useEffect(() => {
-        if (!isSearchOpen || query.length < 2) {
+        if (query.length < 2) {
+            abortControllerRef.current?.abort()
+            requestSeqRef.current += 1
             setResults([])
             setIsTyping(false)
+            setIsSearching(false)
             return
         }
 
-        const currentQuery = query  // 🆕 快照防止競態
-        let localMapped: typeof results = []
+        // 關閉搜尋面板或剛點選某筆結果重開時，不重複發送 L2 API 請求（保留既有結果列表）
+        if (!isSearchOpen || selectedQuery === query) {
+            abortControllerRef.current?.abort()
+            requestSeqRef.current += 1
+            setIsTyping(false)
+            setIsSearching(false)
+            return
+        }
 
-        // 🏕️ L1: 本地即時搜尋 (毫秒級)
+        // 進入新防抖週期前中止舊請求並清掉舊 loading 態，避免鍵入新字時舊 spinner 殘留
+        abortControllerRef.current?.abort()
+        setIsSearching(false)
+
+        const currentQuery = query  // 🆕 快照防止競態
+        let localMapped: SearchResult[] = []
+
+        // 🏕️ L1: 本地即時搜尋 (毫秒級，全量回傳精準匹配結果)
         if (localDataLoaded) {
-            const localResults = localSearch(currentQuery, 5)
+            const localResults = localSearch(currentQuery)
             if (localResults.length > 0) {
-                const mapped = localResults
+                const mapped: SearchResult[] = localResults
                     .filter(r => r.lat && r.lng)  // 只取有座標的
                     .map(r => ({
                         name: r.display,
                         lat: r.lat!,
                         lng: r.lng!,
                         address: r.country || '',
+                        country: r.country,
                         type: r.type,
                         source: 'local' as const
                     }))
@@ -385,84 +407,85 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                     setResults(localMapped)
                     setIsTyping(false)
                     debugLog(`🏕️ L1 本地秒回: ${mapped.length} 筆結果`)
-                    // 🆕 不再 return，讓 L2 仍可補充結果
                 }
             }
         }
 
+        // 🛡️ 未完成注音符號早退：僅呈現 L1 本地結果，重設輸入/搜尋狀態，不消耗 L2 API（不阻斷 Android Gboard 英文輸入）
+        if (INCOMPLETE_ZHUYIN_RE.test(currentQuery)) {
+            abortControllerRef.current?.abort()
+            requestSeqRef.current += 1
+            setIsTyping(false)
+            setIsSearching(false)
+            setResults(localMapped)
+            return
+        }
+
         // 🌐 L2: API 搜尋 (300ms debounce)
         const timer = setTimeout(async () => {
+            abortControllerRef.current?.abort()
+            const controller = new AbortController()
+            abortControllerRef.current = controller
+            const seq = ++requestSeqRef.current
+
             setIsTyping(false)    // debounce 結束
             setIsSearching(true)
             setResults(localMapped)  // 保留 L1 本地結果，僅清空舊的過期雲端結果
             try {
                 const center = mapRef.current?.getCenter()
-                const bounds = mapRef.current?.getBounds?.()
-                const bbox = bounds
-                    ? `${bounds.getWest().toFixed(5)},${bounds.getSouth().toFixed(5)},${bounds.getEast().toFixed(5)},${bounds.getNorth().toFixed(5)}`
-                    : undefined
                 const currentZoom = mapRef.current?.getZoom()
-
-                // 🏙️ 智能 Location Bias: 根據地圖中心找最近城市
-                const nearestCity = center ? findNearestCity(center.lat, center.lng) : null
 
                 const data = await geocodeApi.search({
                     query: currentQuery,
-                    limit: 5,
                     tripTitle,
-                    lat: nearestCity?.lat ?? center?.lat,
-                    lng: nearestCity?.lng ?? center?.lng,
+                    lat: center?.lat ?? dailyLoc?.lat,
+                    lng: center?.lng ?? dailyLoc?.lng,
                     zoom: currentZoom,
-                    bbox,
-                    locale: lang
+                    locale: lang,
+                    signal: controller.signal
                 })
-                // 🆕 只在 query 仍然匹配時更新
-                if (currentQuery === query) {
-                    const rawResults = data.results || []
 
-                    setResults(prev => {
-                        const combined = [...prev]
-                        for (const r of rawResults) {
-                            const isDup = combined.some(existing =>
-                                // 🆕 優先用 osm_id 精準去重，無 osm_id 才用 50m 座標
-                                (r.osm_id && existing.osm_id && String(r.osm_id) === String(existing.osm_id)) ||
-                                (getDistanceKm(existing.lat ?? 0, existing.lng ?? 0, r.lat ?? 0, r.lng ?? 0) < 0.05)
-                            )
-                            if (!isDup) combined.push(r)
-                        }
-
-                        // 🆕 加入距離計算與排序 (優先以用戶位置排序，若無則按地圖中心)
-                        const center = mapRef.current?.getCenter()
-                        const targetLat = userLocation?.lat ?? center?.lat ?? dailyLoc?.lat ?? 0
-                        const targetLng = userLocation?.lng ?? center?.lng ?? dailyLoc?.lng ?? 0
-
-                        const withDistance = combined.map(r => ({
-                            ...r,
-                            _distKm: getDistanceKm(targetLat, targetLng, r.lat, r.lng)
-                        }))
-
-                        // 宏觀層級（國家/省州）豁免純距離排序，維持語意精確置頂
-                        return withDistance.sort((a, b) => {
-                            const aIsMacro = (a.admin_level && a.admin_level <= 4) || a.type === "country"
-                            const bIsMacro = (b.admin_level && b.admin_level <= 4) || b.type === "country"
-                            if (aIsMacro && !bIsMacro) return -1
-                            if (!aIsMacro && bIsMacro) return 1
-                            return (a._distKm ?? 999) - (b._distKm ?? 999)
-                        })
-                    })
+                // 🛡️ 嚴格序號與中止守衛：僅允許最新且未取消的請求寫入狀態
+                if (seq !== requestSeqRef.current || controller.signal.aborted) {
+                    return
                 }
-            } catch {
-                if (currentQuery === query) {
+
+                const rawResults: SearchResult[] = data.results || []
+                // 優先保留後端智慧排序 ([...rawResults])，再併入未重複之 L1 本地結果（(normOsmType, osm_id) + 同名 50m 全域去重）
+                const combined: SearchResult[] = dedupeGeocodeResults([...rawResults, ...localMapped])
+
+                // 計算距離標籤供 UI 顯示（尊重後端 _score 智慧排序，不再以純距離覆寫遠方城市/國家順位）
+                const latestCenter = mapRef.current?.getCenter()
+                const targetLat = userLocation?.lat ?? latestCenter?.lat ?? dailyLoc?.lat
+                const targetLng = userLocation?.lng ?? latestCenter?.lng ?? dailyLoc?.lng
+                const hasRefCoord = typeof targetLat === 'number' && typeof targetLng === 'number'
+
+                const withDistance = combined.map(r => ({
+                    ...r,
+                    _distKm: hasRefCoord ? getDistanceKm(targetLat, targetLng, r.lat, r.lng) : null
+                }))
+
+                setResults(withDistance)
+            } catch (e) {
+                if (e instanceof Error && e.name === 'AbortError') {
+                    return
+                }
+                if (seq === requestSeqRef.current && !controller.signal.aborted) {
                     setResults(localMapped)
                 }
             } finally {
-                setIsSearching(false)
+                if (seq === requestSeqRef.current && !controller.signal.aborted) {
+                    setIsSearching(false)
+                }
             }
         }, 300)
 
-        return () => clearTimeout(timer)
+        return () => {
+            clearTimeout(timer)
+            abortControllerRef.current?.abort()
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [query, isSearchOpen, tripTitle, localDataLoaded, localSearch])
+    }, [query, selectedQuery, isSearchOpen, tripTitle, localDataLoaded, localSearch])
 
     // 自動 focus
     useEffect(() => {
@@ -471,10 +494,11 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
         }
     }, [isSearchOpen])
 
-    // 飛到指定位置
+    // 飛到指定位置（L2-1 智慧分流：宏觀行政區僅 fitBounds/flyTo 展開視野不開抽屜；具體 POI 插紅針並開抽屜）
     const flyTo = useCallback((result: SearchResult) => {
         debugLog("✈️ FlyTo triggered:", result)
         addToHistory(result)
+        setSelectedQuery(result.name)
         setQuery(result.name)
         setIsSearchOpen(false)
 
@@ -492,6 +516,34 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
         }
 
         const zoomConfig = getSmartZoomConfig(result)
+
+        if (isMacroGeoResult(result)) {
+            setSearchResultMarker(null)
+            setPoiDrawerOpen(false)
+            if (isUsableMacroExtent(result.extent)) {
+                const [minLon, minLat, maxLon, maxLat] = result.extent
+                mapRef.current.fitBounds(
+                    [[minLon, minLat], [maxLon, maxLat]],
+                    {
+                        padding: 48,
+                        duration: zoomConfig.duration,
+                        maxZoom: zoomConfig.zoom,
+                        bearing: 0,
+                        pitch: 0,
+                    }
+                )
+            } else {
+                mapRef.current.flyTo({
+                    center: [lng, lat],
+                    zoom: zoomConfig.zoom,
+                    duration: zoomConfig.duration,
+                    bearing: 0,
+                    pitch: 0,
+                })
+            }
+            return
+        }
+
         mapRef.current.flyTo({
             center: [lng, lat],
             zoom: zoomConfig.zoom,
@@ -1253,6 +1305,16 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                                         ref={inputRef}
                                         value={query}
                                         onChange={handleQueryChange}
+                                        onCompositionStart={() => { isComposingRef.current = true }}
+                                        onCompositionEnd={() => { setTimeout(() => { isComposingRef.current = false }, 0) }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                if (e.nativeEvent.isComposing || isComposingRef.current || e.nativeEvent.keyCode === 229) return
+                                                if (results.length > 0 && !isTyping && !isSearching) {
+                                                    flyTo(results[0])
+                                                }
+                                            }
+                                        }}
                                         placeholder={t('map_search_placeholder')}
                                         className="h-9 pl-9 pr-8 text-base shadow-none border-slate-200 focus-visible:ring-1"
                                         onFocus={() => setIsSearchMinimized(false)}
@@ -1260,6 +1322,7 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                                     {query && (
                                         <button
                                             onClick={() => {
+                                                setSelectedQuery(null)
                                                 setQuery("")
                                                 setIsTyping(false)
                                                 setResults([])
@@ -1278,9 +1341,12 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                                 </button>
                             </div>
 
-                            {/* 結果列表 (可滾動，防止連鎖捲動) */}
+                            {/* 結果列表 (四重軸向鎖定，防止水平溢位與連鎖捲動) */}
                             {!isSearchMinimized && (
-                                <div className="flex-1 overflow-y-auto overscroll-contain touch-pan-y">
+                                <div
+                                    className="flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none overscroll-y-contain touch-pan-y"
+                                    style={{ touchAction: "pan-y" }}
+                                >
                                     {/* 歷史 */}
                                     {query.length === 0 && history.length > 0 && (
                                         <>
@@ -1304,10 +1370,10 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                                                 <button
                                                     key={i}
                                                     onClick={() => flyTo(h)}
-                                                    className="w-full px-4 py-3 text-left hover:bg-slate-50 flex items-center gap-3 border-b border-slate-50"
+                                                    className="w-full max-w-full min-w-0 overflow-hidden px-4 py-3 text-left hover:bg-slate-50 flex items-start gap-3 border-b border-slate-50"
                                                 >
-                                                    <Clock className="w-4 h-4 text-slate-400" />
-                                                    <span className="text-sm line-clamp-1">{h.name}</span>
+                                                    <Clock className="w-4 h-4 mt-0.5 text-slate-400 shrink-0" />
+                                                    <span className="min-w-0 flex-1 text-sm wrap-break-word [word-break:break-word] whitespace-normal line-clamp-2 leading-snug">{h.name}</span>
                                                 </button>
                                             ))}
                                         </>
@@ -1329,25 +1395,31 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                                         </div>
                                     )}
 
-                                    {/* 🆕 統一搜尋完成狀態 */}
+                                    {/* 🆕 統一搜尋完成狀態（排除未完成注音與剛點選結果重開狀態，避免誤閃「無結果」） */}
                                     {(() => {
-                                        const searchDone = query.length >= 2 && !isTyping && !isSearching
-                                        const hasResults = results.length > 0
-                                        const noResults = results.length === 0
+                                        const hasIncompleteZhuyin = INCOMPLETE_ZHUYIN_RE.test(query)
+                                        const searchDone = query.length >= 2 && !hasIncompleteZhuyin && selectedQuery !== query && !isTyping && !isSearching
+                                        const showList = query.length >= 2 && !isTyping && results.length > 0
+                                        const noResults = searchDone && results.length === 0
 
                                         return (
                                             <>
-                                                {/* 結果 */}
-                                                {searchDone && hasResults && results.map((r, i) => (
+                                                {/* 結果（全量智慧排序顯示於可滾動容器，長地名自動換行不撐寬） */}
+                                                {showList && results.map((r, i) => (
                                                     <button
-                                                        key={i}
+                                                        key={r.osm_id ? `${r.osm_type || 'x'}-${r.osm_id}-${i}` : i}
                                                         onClick={() => flyTo(r)}
-                                                        className="w-full px-4 py-3 text-left hover:bg-slate-50 flex items-start gap-3 border-b border-slate-50"
+                                                        className="w-full max-w-full min-w-0 overflow-hidden px-4 py-3 text-left hover:bg-slate-50 flex items-start gap-3 border-b border-slate-50"
                                                     >
                                                         <MapPin className="w-4 h-4 mt-0.5 text-slate-400 shrink-0" />
-                                                        <div className="min-w-0">
-                                                            <div className="text-sm font-medium truncate">{r.name}</div>
-                                                            {r.address && <div className="text-xs text-slate-500 truncate">{r.address}</div>}
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="text-sm font-medium wrap-break-word [word-break:break-word] whitespace-normal leading-snug">{r.name}</div>
+                                                            {r.address && <div className="text-xs text-slate-500 wrap-break-word [word-break:break-word] whitespace-normal line-clamp-2 leading-snug">{r.address}</div>}
+                                                            {(r.city || r.country) && !r.address && (
+                                                                <div className="text-[11px] text-slate-400 wrap-break-word [word-break:break-word] whitespace-normal leading-snug">
+                                                                    {[r.city, r.country].filter(Boolean).join(" · ")}
+                                                                </div>
+                                                            )}
                                                             {r._distKm != null && (
                                                                 <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
                                                                     <span className="bg-slate-100 px-1.5 py-0.5 rounded-md font-medium">
@@ -1360,7 +1432,7 @@ export default function DayMap({ activities, onAddPOI, dailyLoc, tripTitle }: Da
                                                 ))}
 
                                                 {/* 無結果提示 */}
-                                                {searchDone && noResults && (
+                                                {noResults && (
                                                     <div className="px-4 py-4 text-center text-slate-500 text-sm">
                                                         {t('map_no_results', { query })}
                                                     </div>

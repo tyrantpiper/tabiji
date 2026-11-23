@@ -16,7 +16,15 @@ import { useHaptic } from "@/lib/hooks"
 import { useLanguage } from "@/lib/LanguageContext"
 import { X, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, StickyNote } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
-import { extractCoordsFromUrl, isGoogleMapsUrl } from "../../lib/location-utils"
+import {
+    extractCoordsFromUrl,
+    isGoogleMapsUrl,
+    extractCleanPlaceQuery,
+    extractPlaceParentheticalNote,
+    dedupeGeocodeResults,
+} from "../../lib/location-utils"
+
+const INCOMPLETE_ZHUYIN_RE = /[\u3100-\u312F\u31A0-\u31BF]/
 
 const ACTIVITY_CATEGORIES = [
     { id: 'sightseeing', icon: '🎯', label: '景點', labelEn: 'Sightseeing' },
@@ -79,10 +87,26 @@ export function ActivityEditModal({
     const editItemRef = useRef(editItem)
     editItemRef.current = editItem
     const activeItemIdRef = useRef<string | undefined>(editItem?.id)
+    const isComposingRef = useRef(false)
+    const searchAbortRef = useRef<AbortController | null>(null)
+    const requestSeqRef = useRef(0)
+    const pendingParenNoteRef = useRef<string>("")
 
     useEffect(() => {
         activeItemIdRef.current = editItem?.id
     }, [editItem?.id])
+
+    // 🛡️ 開關或切換卡片時立即作廢在途搜尋並清空舊列表（嚴格鎖定 [isOpen, editItem?.id]，防止每次打字誤清結果）
+    useEffect(() => {
+        searchAbortRef.current?.abort()
+        requestSeqRef.current += 1
+        pendingParenNoteRef.current = ""
+        setPlaceSearchResults([])
+        setIsSearching(false)
+        return () => {
+            searchAbortRef.current?.abort()
+        }
+    }, [isOpen, editItem?.id])
 
     // 🕵️ 奈米級追蹤：掛載時捕獲原始網址，並重置人工狀態
     useEffect(() => {
@@ -96,35 +120,81 @@ export function ActivityEditModal({
     }, [isOpen, editItem, setEditItem])
 
     const handleSearchPlace = async () => {
-        if (!editItem?.place?.trim()) return
+        const rawQuery = editItem?.place?.trim() || ""
+        if (!rawQuery || INCOMPLETE_ZHUYIN_RE.test(rawQuery)) return
+
+        searchAbortRef.current?.abort()
+        const controller = new AbortController()
+        searchAbortRef.current = controller
+        const seq = ++requestSeqRef.current
+        const targetId = editItem?.id
+        pendingParenNoteRef.current = extractPlaceParentheticalNote(rawQuery)
+
         setIsSearching(true)
         try {
             // 🧠 決定位置權重 (Location Bias)
             // 優先順序: 1. 當前編輯項目的座標 (若是修改) 2. 外部傳入的偏差座標 (Sequential) 3. 當日位置
-            const targetLat = (editItem.lat ? Number(editItem.lat) : undefined) || biasLoc?.lat || dailyLoc?.lat
-            const targetLng = (editItem.lng ? Number(editItem.lng) : undefined) || biasLoc?.lng || dailyLoc?.lng
+            const targetLat = (editItem?.lat ? Number(editItem.lat) : undefined) || biasLoc?.lat || dailyLoc?.lat
+            const targetLng = (editItem?.lng ? Number(editItem.lng) : undefined) || biasLoc?.lng || dailyLoc?.lng
 
-            // 🆕 使用結構化參數（取代字串拼接）
-            const data = await geocodeApi.search({
-                query: editItem.place.trim(),       // 純淨的搜尋字串
-                limit: 5,
+            // 🆕 省略 limit 以啟用後端全量智慧排序（嚴禁傳入 limit: 5 或 limit: null）
+            let data = await geocodeApi.search({
+                query: rawQuery,
                 tripTitle,
                 lat: targetLat,
                 lng: targetLng,
-                country: searchCountry || undefined,  // 🆕 結構化國家過濾
-                region: searchRegion || undefined,    // 🆕 結構化區域過濾
-                locale: lang
+                country: searchCountry || undefined,
+                region: searchRegion || undefined,
+                locale: lang,
+                signal: controller.signal,
             })
-            setPlaceSearchResults((data.results || []).map((item: GeocodeResult) => ({
+            if (seq !== requestSeqRef.current || controller.signal.aborted || activeItemIdRef.current !== targetId) return
+
+            // 🧹 雙重保險：若後端或離線 mock 回傳 0 筆且含括號/前綴，才以清洗後純地名重試一次
+            let rawResults: GeocodeResult[] = data.results || []
+            if (rawResults.length === 0) {
+                const cleanedQuery = extractCleanPlaceQuery(rawQuery)
+                if (cleanedQuery && cleanedQuery !== rawQuery) {
+                    data = await geocodeApi.search({
+                        query: cleanedQuery,
+                        tripTitle,
+                        lat: targetLat,
+                        lng: targetLng,
+                        country: searchCountry || undefined,
+                        region: searchRegion || undefined,
+                        locale: lang,
+                        signal: controller.signal,
+                    })
+                    if (seq !== requestSeqRef.current || controller.signal.aborted || activeItemIdRef.current !== targetId) return
+                    rawResults = data.results || []
+                }
+            }
+
+            const mapped: LocationInfo[] = rawResults.map((item: GeocodeResult) => ({
                 name: item.name,
-                display_name: item.address || item.name,
+                display_name: item.display_name || item.address || item.name,
+                address: item.address || item.display_name,
                 lat: item.lat,
                 lng: item.lng,
                 type: item.type || "place",
-                source: item.source
-            })))
-        } catch { toast.error(zh ? '搜尋失敗' : 'Search failed') }
-        finally { setIsSearching(false) }
+                country: item.country,
+                admin1: item.admin1,
+                admin2: item.admin2,
+                source: item.source,
+                osm_id: item.osm_id,
+                osm_type: item.osm_type,
+                extent: item.extent,
+            }))
+            setPlaceSearchResults(dedupeGeocodeResults(mapped))
+        } catch (err) {
+            if (err instanceof Error && err.name === 'AbortError') return
+            if (seq !== requestSeqRef.current || activeItemIdRef.current !== targetId) return
+            toast.error(zh ? '搜尋失敗' : 'Search failed')
+        } finally {
+            if (seq === requestSeqRef.current && !controller.signal.aborted) {
+                setIsSearching(false)
+            }
+        }
     }
 
     // 🧠 Heuristic Dual-Link Engine (Split-Field)
@@ -267,18 +337,22 @@ export function ActivityEditModal({
     }
 
     const handleSelectLocation = (loc: LocationInfo) => {
-        if (editItem) {
-            setEditItem({
-                ...editItem,
-                place: loc.name,
-                address: loc.address || loc.display_name, // 順向自動帶入
-                lat: loc.lat,
-                lng: loc.lng,
-                isManualCoords: true, // 🚩 手動選擇地點視同人工座標
-                link_url: editItem.link_url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.name)}`
-            })
-            setPlaceSearchResults([])
-        }
+        const latest = editItemRef.current
+        if (!latest) return
+        const parenNote = extractPlaceParentheticalNote(latest.place || "") || pendingParenNoteRef.current
+        const preservedDesc = !latest.desc?.trim() && parenNote ? parenNote : latest.desc
+        setEditItem({
+            ...latest,
+            place: loc.name,
+            address: loc.address || loc.display_name, // 順向自動帶入
+            desc: preservedDesc,
+            lat: loc.lat,
+            lng: loc.lng,
+            isManualCoords: true, // 🚩 手動選擇地點視同人工座標
+            link_url: latest.link_url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.name)}`
+        })
+        pendingParenNoteRef.current = ""
+        setPlaceSearchResults([])
     }
 
     const handleAddTag = (inputId: string) => {
@@ -348,8 +422,11 @@ export function ActivityEditModal({
                     </Button>
                 </SheetHeader>
 
-                {/* iOS Inset Grouped Scroll Content */}
-                <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 overscroll-contain">
+                {/* iOS Inset Grouped Scroll Content (四重軸向硬鎖定，根除長地名水平晃動) */}
+                <div
+                    className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain px-4 py-4 space-y-4"
+                    style={{ touchAction: "pan-y" }}
+                >
                     {/* Media Header: MultiImageUpload */}
                     <div className="flex justify-center py-1">
                         <MultiImageUpload
@@ -453,13 +530,20 @@ export function ActivityEditModal({
                                 </div>
 
                                 {/* 2. 地點名稱輸入與搜尋按鈕 */}
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 min-w-0">
                                     <Input
                                         value={editItem.place || ""}
                                         onChange={(e) => setEditItem({ ...editItem, place: e.target.value })}
                                         placeholder={zh ? "輸入商家或景點名稱..." : "Search place name..."}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleSearchPlace()}
-                                        className="text-[16px] sm:text-sm h-10 flex-1 bg-slate-50/50 dark:bg-slate-800/40"
+                                        onCompositionStart={() => { isComposingRef.current = true }}
+                                        onCompositionEnd={() => { setTimeout(() => { isComposingRef.current = false }, 0) }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                if (e.nativeEvent.isComposing || isComposingRef.current || e.nativeEvent.keyCode === 229) return
+                                                handleSearchPlace()
+                                            }
+                                        }}
+                                        className="text-[16px] sm:text-sm h-10 flex-1 min-w-0 bg-slate-50/50 dark:bg-slate-800/40"
                                     />
                                     <Button
                                         type="button"
@@ -467,34 +551,39 @@ export function ActivityEditModal({
                                         size="sm"
                                         disabled={isSearching}
                                         onClick={handleSearchPlace}
-                                        className="h-10 px-3.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-medium"
+                                        className="h-10 px-3.5 shrink-0 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-medium"
                                     >
                                         {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : '🔍'}
                                     </Button>
                                 </div>
 
-                                {/* 3. 地點搜尋結果列表 */}
+                                {/* 3. 地點搜尋結果列表 (四重軸向鎖定 + 長地名自動換行) */}
                                 {placeSearchResults.length > 0 && (
-                                    <div className="space-y-1 max-h-44 overflow-y-auto border border-slate-200/80 dark:border-slate-700/80 rounded-xl p-2 bg-slate-50 dark:bg-slate-800/60 mt-1">
+                                    <div
+                                        className="space-y-1 max-h-52 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain border border-slate-200/80 dark:border-slate-700/80 rounded-xl p-2 bg-slate-50 dark:bg-slate-800/60 mt-1"
+                                        style={{ touchAction: "pan-y" }}
+                                    >
                                         {placeSearchResults.map((loc, idx) => {
                                             const icon = TYPE_LABELS[loc.type || ''] || '📍'
                                             return (
                                                 <button
-                                                    key={idx}
+                                                    key={loc.osm_id ? `${loc.osm_type || 'x'}-${loc.osm_id}-${idx}` : idx}
                                                     type="button"
-                                                    className="w-full text-left p-2.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
+                                                    className="w-full max-w-full min-w-0 overflow-hidden text-left p-2.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
                                                     onClick={() => handleSelectLocation(loc)}
                                                 >
-                                                    <div className="flex items-center gap-2 mb-0.5 min-w-0">
-                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-700 text-slate-700 dark:text-slate-200 shrink-0">
+                                                    <div className="flex items-start gap-2 mb-0.5 min-w-0">
+                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-700 text-slate-700 dark:text-slate-200 shrink-0 mt-0.5">
                                                             {icon} {loc.type || (zh ? '地點' : 'Place')}
                                                         </span>
-                                                        <span className="font-bold text-xs text-slate-800 dark:text-slate-200 truncate">{loc.name}</span>
+                                                        <span className="min-w-0 flex-1 font-bold text-xs text-slate-800 dark:text-slate-200 wrap-break-word [word-break:break-word] whitespace-normal leading-snug">
+                                                            {loc.name}
+                                                        </span>
                                                     </div>
-                                                    <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                                                    <div className="text-[10px] text-slate-500 dark:text-slate-400 wrap-break-word [word-break:break-word] whitespace-normal line-clamp-2 leading-snug">
                                                         {loc.display_name}
                                                     </div>
-                                                    <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                                    <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
                                                         {loc.lat?.toFixed(6)}, {loc.lng?.toFixed(6)}
                                                     </div>
                                                 </button>
@@ -862,11 +951,11 @@ export function ActivityEditModal({
                                                             tags: (editItem.tags || []).filter((_: string, idx: number) => idx !== i)
                                                         })
                                                     }}
-                                                    className="bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800/70 px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all active:scale-95 group"
+                                                    className="max-w-full min-w-0 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800/70 px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all active:scale-95 group"
                                                     title={zh ? "點擊移除" : "Click to remove"}
                                                 >
-                                                    <span>{tag}</span>
-                                                    <span className="w-3.5 h-3.5 rounded-full flex items-center justify-center font-bold text-indigo-400 group-hover:text-red-500 text-[11px] leading-none">
+                                                    <span className="min-w-0 wrap-break-word [word-break:break-word] whitespace-normal text-left">{tag}</span>
+                                                    <span className="w-3.5 h-3.5 shrink-0 rounded-full flex items-center justify-center font-bold text-indigo-400 group-hover:text-red-500 text-[11px] leading-none">
                                                         ×
                                                     </span>
                                                 </button>

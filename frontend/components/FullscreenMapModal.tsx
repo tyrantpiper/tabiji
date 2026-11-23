@@ -16,43 +16,18 @@ import { MAP_STYLES, MAP_LOCALIZATION } from "@/lib/constants"
 import { geocodeApi } from "@/lib/api"
 import POIDetailDrawer, { POIBasicData } from "@/components/POIDetailDrawer"
 import { useLocalGeocode } from "@/hooks/useLocalGeocode"
-import { useCityBias } from "@/hooks/useCityBias"
 import { debugLog } from "@/lib/debug"
 import { useLanguage } from "@/lib/LanguageContext"
 import { SearchResult } from "@/lib/itinerary-types"
-import { getDistanceKm, getSmartZoomConfig } from "@/lib/location-utils"
+import { getDistanceKm, getSmartZoomConfig, isMacroGeoResult, isUsableMacroExtent, dedupeGeocodeResults } from "@/lib/location-utils"
+
+const INCOMPLETE_ZHUYIN_RE = /[\u3100-\u312F\u31A0-\u31BF]/
 
 // ViewState 類型
 interface ViewState {
     longitude: number
     latitude: number
     zoom: number
-}
-
-// 🆕 P6: 二次排序 (Re-ranking)
-function rerankResults(
-    results: SearchResult[],
-    query: string,
-    centerLat: number,
-    centerLng: number
-): SearchResult[] {
-
-    const queryLower = query.toLowerCase()
-
-    return results
-        .map(r => {
-            const dist = getDistanceKm(centerLat, centerLng, r.lat, r.lng)
-            const nameMatch = r.name.toLowerCase().includes(queryLower) ? 50 : 0
-            const exactMatch = r.name.toLowerCase() === queryLower ? 100 : 0
-            const isMacro = (r.admin_level && r.admin_level <= 4) || r.type === "country" || r.type === "state"
-            const macroBonus = isMacro && exactMatch ? 300 : (isMacro && nameMatch ? 150 : 0)
-            // 分數 = 宏觀加成 + 完全匹配 + 部分匹配 + 距離分 (越近分越高)
-            const reScore = macroBonus + exactMatch + nameMatch + Math.max(0, 100 - dist)
-            return { ...r, reScore }
-        })
-        .sort((a, b) => (b.reScore ?? 0) - (a.reScore ?? 0))
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        .map(({ reScore: _reScore, ...r }) => r)  // 移除 reScore 欄位
 }
 
 // 活動類型
@@ -108,6 +83,8 @@ export default function FullscreenMapModal({
     const mapRef = useRef<MapRef>(null)
     const inputRef = useRef<HTMLInputElement>(null)
     const abortControllerRef = useRef<AbortController | null>(null)  // 🆕 P5: 取消前一個請求
+    const requestSeqRef = useRef(0)
+    const isComposingRef = useRef(false)
     const touchStartPosRef = useRef<{ x: number; y: number } | null>(null)
     const longPressTimerRef = useRef<NodeJS.Timeout | null>(null)
     const isMoveDetectedRef = useRef(false)
@@ -116,6 +93,7 @@ export default function FullscreenMapModal({
 
     // 搜尋狀態
     const [query, setQuery] = useState("")
+    const [selectedQuery, setSelectedQuery] = useState<string | null>(null)
     const [results, setResults] = useState<SearchResult[]>([])
     const [isTyping, setIsTyping] = useState(false)     // 🆕 輸入中（debounce 期間）
     const [isSearching, setIsSearching] = useState(false) // 搜尋中（API 調用中）
@@ -137,43 +115,60 @@ export default function FullscreenMapModal({
     // 🆕 輸入變更處理（立即回饋）
     const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const value = e.target.value
+        setSelectedQuery(null)
         setQuery(value)
-        if (value.length >= 2) {
+        if (value.length >= 2 && !INCOMPLETE_ZHUYIN_RE.test(value)) {
             setIsTyping(true)  // 立即顯示「準備中」
         } else {
             setIsTyping(false)
-            setResults([])
+            if (value.length < 2) {
+                setResults([])
+            }
         }
     }
 
     // 🏕️ Local Geocode Hook (L1 本地秒回)
     const { search: localSearch, isLoaded: localDataLoaded } = useLocalGeocode()
 
-    // 🏙️ City Bias Hook (智能 Location Bias)
-    const { findNearestCity } = useCityBias()
-
-    // Debounced 搜尋 (L1 本地 + L2 API)
+    // Debounced 搜尋 (L1 本地 + L2 API，AbortController + requestSeq 防競態 + 保留後端智慧排序全量顯示)
     useEffect(() => {
         if (query.length < 2) {
+            abortControllerRef.current?.abort()
+            requestSeqRef.current += 1
             setResults([])
             setIsTyping(false)
+            setIsSearching(false)
             return
         }
 
-        const currentQuery = query  // 🆕 快照防止競態
-        let localMapped: typeof results = []
+        // 關閉搜尋面板或剛點選某筆結果時不發送多餘 L2 API 請求（保留結果列表供重新開啟）
+        if (!showSearch || selectedQuery === query) {
+            abortControllerRef.current?.abort()
+            requestSeqRef.current += 1
+            setIsTyping(false)
+            setIsSearching(false)
+            return
+        }
 
-        // 🏕️ L1: 本地即時搜尋 (毫秒級)
+        // 進入新防抖週期前中止舊請求並清掉舊 loading 態，避免鍵入新字時舊 spinner 殘留
+        abortControllerRef.current?.abort()
+        setIsSearching(false)
+
+        const currentQuery = query  // 🆕 快照防止競態
+        let localMapped: SearchResult[] = []
+
+        // 🏕️ L1: 本地即時搜尋 (毫秒級，全量回傳精準匹配結果)
         if (localDataLoaded) {
-            const localResults = localSearch(currentQuery, 5)
+            const localResults = localSearch(currentQuery)
             if (localResults.length > 0) {
-                const mapped = localResults
+                const mapped: SearchResult[] = localResults
                     .filter(r => r.lat && r.lng)
                     .map(r => ({
                         name: r.display,
                         lat: r.lat!,
                         lng: r.lng!,
                         address: r.country || '',
+                        country: r.country,
                         type: r.type,
                         source: 'local' as const
                     }))
@@ -182,90 +177,76 @@ export default function FullscreenMapModal({
                     setResults(localMapped)
                     setIsTyping(false)
                     debugLog(`🏕️ L1 本地秒回: ${mapped.length} 筆結果`)
-                    // 🆕 不再 return，讓 L2 仍可補充結果
                 }
             }
         }
 
+        // 🛡️ 未完成注音符號早退：僅呈現 L1 本地結果，重設輸入/搜尋狀態，不消耗 L2 API
+        if (INCOMPLETE_ZHUYIN_RE.test(currentQuery)) {
+            abortControllerRef.current?.abort()
+            requestSeqRef.current += 1
+            setIsTyping(false)
+            setIsSearching(false)
+            setResults(localMapped)
+            return
+        }
+
         // 🆕 API 搜尋 (300ms debounce)
         const timer = setTimeout(async () => {
-
             // 🆕 P5: 取消前一個尚未完成的請求
             abortControllerRef.current?.abort()
-            abortControllerRef.current = new AbortController()
-            const signal = abortControllerRef.current.signal
+            const controller = new AbortController()
+            abortControllerRef.current = controller
+            const signal = controller.signal
+            const seq = ++requestSeqRef.current
 
             setIsTyping(false)
             setIsSearching(true)
+            setResults(localMapped)
             try {
-                // 🏙️ 智能 Location Bias: 根據地圖中心找最近城市
-                const nearestCity = findNearestCity(initialViewState.latitude, initialViewState.longitude)
-                const currentZoom = mapRef.current?.getZoom() ?? initialViewState.zoom ?? 12  // 🆕 P1: 取得地圖縮放
-                const bounds = mapRef.current?.getBounds?.()
-                const bbox = bounds
-                    ? `${bounds.getWest().toFixed(5)},${bounds.getSouth().toFixed(5)},${bounds.getEast().toFixed(5)},${bounds.getNorth().toFixed(5)}`
-                    : undefined
+                const center = mapRef.current?.getCenter()
+                const currentZoom = mapRef.current?.getZoom() ?? initialViewState.zoom ?? 12
 
                 const data = await geocodeApi.search({
                     query: currentQuery,
-                    limit: 5,
                     tripTitle,
-                    lat: nearestCity?.lat ?? initialViewState.latitude,
-                    lng: nearestCity?.lng ?? initialViewState.longitude,
-                    zoom: currentZoom,  // 🆕 P1: 傳遞縮放層級
-                    bbox,
+                    lat: center?.lat ?? initialViewState.latitude,
+                    lng: center?.lng ?? initialViewState.longitude,
+                    zoom: currentZoom,
                     locale: lang,
-                    signal  // 🆕 P5: 傳遞 AbortSignal
+                    signal
                 })
-                if (currentQuery === query && !signal.aborted) {
-                    // 🆕 P6: 二次排序並合併 (優先顯示精確匹配 + 距離近的結果，去重 50m)
-                    const reranked = rerankResults(
-                        data.results || [],
-                        currentQuery,
-                        initialViewState.latitude,
-                        initialViewState.longitude
-                    )
-                    setResults(prev => {
-                        const combined = [...prev]
-                        for (const r of reranked) {
-                            const isDup = combined.some(existing =>
-                                // 🆕 優先用 osm_id 精準去重，無 osm_id 才用 50m 座標
-                                (r.osm_id && existing.osm_id && String(r.osm_id) === String(existing.osm_id)) ||
-                                (getDistanceKm(existing.lat ?? 0, existing.lng ?? 0, r.lat ?? 0, r.lng ?? 0) < 0.05)
-                            )
-                            if (!isDup) combined.push(r)
-                        }
-
-                        // 🆕 Step B: 加入距離計算與排序 (優先以用戶位置排序，若無則按地圖中心)
-                        const withDistance = combined.map(r => ({
-                            ...r,
-                            _distKm: userLocation
-                                ? getDistanceKm(userLocation.lat, userLocation.lng, r.lat, r.lng)
-                                : null
-                        }))
-
-                        const sorted = userLocation
-                            ? [...withDistance].sort((a, b) => (a._distKm ?? 999) - (b._distKm ?? 999))
-                            : [...withDistance].sort((a, b) =>
-                                getDistanceKm(initialViewState.latitude, initialViewState.longitude, a.lat, a.lng) -
-                                getDistanceKm(initialViewState.latitude, initialViewState.longitude, b.lat, b.lng)
-                            )
-
-                        return sorted
-                    })
-                    debugLog(`🔄 P6 Merged ${reranked.length} results (Deduped)`)
+                if (seq !== requestSeqRef.current || signal.aborted) {
+                    return
                 }
+
+                const rawResults: SearchResult[] = data.results || []
+                // 優先保留後端智慧排序 ([...rawResults])，再併入未重複之 L1 本地結果（(normOsmType, osm_id) + 同名 50m 全域去重）
+                const combined: SearchResult[] = dedupeGeocodeResults([...rawResults, ...localMapped])
+
+                const latestCenter = mapRef.current?.getCenter()
+                const refLat = userLocation?.lat ?? latestCenter?.lat ?? initialViewState.latitude
+                const refLng = userLocation?.lng ?? latestCenter?.lng ?? initialViewState.longitude
+                const withDistance = combined.map(r => ({
+                    ...r,
+                    _distKm: getDistanceKm(refLat, refLng, r.lat, r.lng)
+                }))
+
+                setResults(withDistance)
+                debugLog(`🔄 Merged ${rawResults.length} cloud + ${localMapped.length} local results`)
             } catch (e) {
                 // 🆕 P5: 忽略 AbortError (正常取消行為)
                 if (e instanceof Error && e.name === 'AbortError') {
                     debugLog(`🚫 L2 請求已取消: ${currentQuery}`)
                     return
                 }
-                if (currentQuery === query) {
+                if (seq === requestSeqRef.current && !signal.aborted) {
                     setResults(localMapped)
                 }
             } finally {
-                setIsSearching(false)
+                if (seq === requestSeqRef.current && !signal.aborted) {
+                    setIsSearching(false)
+                }
             }
         }, 300)
 
@@ -274,7 +255,7 @@ export default function FullscreenMapModal({
             abortControllerRef.current?.abort()  // 🆕 cleanup 時也取消
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [query, tripTitle, initialViewState.latitude, initialViewState.longitude, localDataLoaded, localSearch])
+    }, [query, selectedQuery, showSearch, tripTitle, initialViewState.latitude, initialViewState.longitude, localDataLoaded, localSearch])
 
     // Esc 鍵退出
     useEffect(() => {
@@ -298,12 +279,41 @@ export default function FullscreenMapModal({
         }
     }, [showSearch])
 
-    // 飛到指定位置
+    // 飛到指定位置（L2-1 智慧分流：宏觀行政區僅 fitBounds/flyTo 展開視野不開抽屜；具體 POI 插紅針並開抽屜）
     const flyTo = useCallback((result: SearchResult) => {
         addToHistory(result)
+        setSelectedQuery(result.name)
         setQuery(result.name)
         setShowSearch(false)
         const zoomConfig = getSmartZoomConfig(result)
+
+        if (isMacroGeoResult(result)) {
+            setSearchResultMarker(null)
+            setPoiDrawerOpen(false)
+            if (isUsableMacroExtent(result.extent)) {
+                const [minLon, minLat, maxLon, maxLat] = result.extent
+                mapRef.current?.fitBounds(
+                    [[minLon, minLat], [maxLon, maxLat]],
+                    {
+                        padding: 48,
+                        duration: zoomConfig.duration,
+                        maxZoom: zoomConfig.zoom,
+                        bearing: 0,
+                        pitch: 0,
+                    }
+                )
+            } else {
+                mapRef.current?.flyTo({
+                    center: [result.lng, result.lat],
+                    zoom: zoomConfig.zoom,
+                    duration: zoomConfig.duration,
+                    bearing: 0,
+                    pitch: 0,
+                })
+            }
+            return
+        }
+
         mapRef.current?.flyTo({
             center: [result.lng, result.lat],
             zoom: zoomConfig.zoom,
@@ -524,9 +534,10 @@ export default function FullscreenMapModal({
     if (!isOpen) return null
 
     const showHistory = query.length === 0 && history.length > 0
-    // 🆕 統一「搜尋完成」狀態：不在輸入、不在搜尋、query 長度足夠
-    const searchDone = query.length >= 2 && !isTyping && !isSearching
-    const showResults = searchDone && results.length > 0
+    // 🆕 統一「搜尋完成」狀態：排除未完成注音與剛點選結果重開狀態，避免誤閃「無結果」
+    const hasIncompleteZhuyin = INCOMPLETE_ZHUYIN_RE.test(query)
+    const searchDone = query.length >= 2 && !hasIncompleteZhuyin && selectedQuery !== query && !isTyping && !isSearching
+    const showResults = query.length >= 2 && !isTyping && results.length > 0
     const showNoResults = searchDone && results.length === 0
 
     return (
@@ -722,12 +733,23 @@ export default function FullscreenMapModal({
                                         ref={inputRef}
                                         value={query}
                                         onChange={handleQueryChange}
+                                        onCompositionStart={() => { isComposingRef.current = true }}
+                                        onCompositionEnd={() => { setTimeout(() => { isComposingRef.current = false }, 0) }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                if (e.nativeEvent.isComposing || isComposingRef.current || e.nativeEvent.keyCode === 229) return
+                                                if (results.length > 0 && !isTyping && !isSearching) {
+                                                    flyTo(results[0])
+                                                }
+                                            }
+                                        }}
                                         placeholder={t('map_search_ai')}
                                         className="h-12 pl-12 pr-10 rounded-xl border-slate-200 text-base"
                                     />
                                     {query && (
                                         <button
                                             onClick={() => {
+                                                setSelectedQuery(null)
                                                 setQuery("")
                                                 setIsTyping(false)
                                                 setResults([])
@@ -740,8 +762,11 @@ export default function FullscreenMapModal({
                                 </div>
                             </div>
 
-                            {/* 結果列表 */}
-                            <div className="max-h-72 overflow-y-auto">
+                            {/* 結果列表（四重軸向鎖定，可滾動顯示全量智慧排序結果與長地名自動換行） */}
+                            <div
+                                className="max-h-[55vh] overflow-y-auto overflow-x-hidden overscroll-x-none overscroll-y-contain touch-pan-y"
+                                style={{ touchAction: "pan-y" }}
+                            >
                                 {/* 歷史紀錄 */}
                                 {showHistory && (
                                     <>
@@ -750,10 +775,10 @@ export default function FullscreenMapModal({
                                             <button
                                                 key={i}
                                                 onClick={() => flyTo(h)}
-                                                className="w-full px-4 py-3 text-left hover:bg-slate-50 flex items-center gap-3"
+                                                className="w-full max-w-full min-w-0 overflow-hidden px-4 py-3 text-left hover:bg-slate-50 flex items-start gap-3"
                                             >
-                                                <Clock className="w-4 h-4 text-slate-400" />
-                                                <span>{h.name}</span>
+                                                <Clock className="w-4 h-4 mt-0.5 text-slate-400 shrink-0" />
+                                                <span className="min-w-0 flex-1 wrap-break-word [word-break:break-word] whitespace-normal line-clamp-2 leading-snug">{h.name}</span>
                                             </button>
                                         ))}
                                     </>
@@ -778,23 +803,23 @@ export default function FullscreenMapModal({
                                 {/* 搜尋結果 */}
                                 {showResults && results.map((r, i) => (
                                     <button
-                                        key={i}
+                                        key={r.osm_id ? `${r.osm_type || 'x'}-${r.osm_id}-${i}` : i}
                                         onClick={() => flyTo(r)}
-                                        className="w-full px-4 py-3 text-left hover:bg-slate-50 flex items-start gap-3"
+                                        className="w-full max-w-full min-w-0 overflow-hidden px-4 py-3 text-left hover:bg-slate-50 flex items-start gap-3"
                                     >
                                         <MapPin className="w-4 h-4 mt-0.5 text-slate-400 shrink-0" />
-                                        <div className="min-w-0">
-                                            <div className="font-medium truncate">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="font-medium wrap-break-word [word-break:break-word] whitespace-normal leading-snug">
                                                 {r.name}
                                                 {r.cross_country && (
                                                     <span className="text-[10px] text-amber-500 ml-1 font-medium">🌍</span>
                                                 )}
                                             </div>
                                             {r.address && (
-                                                <div className="text-xs text-slate-500 truncate">{r.address}</div>
+                                                <div className="text-xs text-slate-500 wrap-break-word [word-break:break-word] whitespace-normal line-clamp-2 leading-snug">{r.address}</div>
                                             )}
                                             {(r.city || r.country) && (
-                                                <p className="text-[11px] text-slate-400 mt-0.5">
+                                                <p className="text-[11px] text-slate-400 mt-0.5 wrap-break-word [word-break:break-word] whitespace-normal leading-snug">
                                                     {[r.city, r.country].filter(Boolean).join(" · ")}
                                                 </p>
                                             )}

@@ -29,7 +29,7 @@ import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { FlightCard } from "./info/FlightCard"
 import { BookingTab } from "./info/BookingTab"
 import { buildTripContext } from "@/lib/affiliate-utils"
-import { extractCoordsFromUrl, isGoogleMapsShortlink, getDistanceKm } from "@/lib/location-utils"
+import { extractCoordsFromUrl, isGoogleMapsShortlink, dedupeGeocodeResults } from "@/lib/location-utils"
 
 // --- 🛡️ Step 1: Type Infrastructure ---
 import type { FlightData as FlightSegment } from "./info/FlightCard"
@@ -80,11 +80,13 @@ type Hotel = typeof DEFAULT_HOTEL
 interface PlaceSearchResult {
     name: string
     display_name?: string
+    address?: string
     lat?: number
     lng?: number
     latitude?: number
     longitude?: number
     osm_id?: number | string
+    osm_type?: string | null
 }
 
 export function InfoView() {
@@ -110,7 +112,16 @@ export function InfoView() {
 
     // 🏨 飯店地點搜尋狀態
     const [hotelSearchQuery, setHotelSearchQuery] = useState("")
+    const hotelSearchComposingRef = useRef(false)
+    const hotelSearchAbortRef = useRef<AbortController | null>(null)
+    const hotelSearchSeqRef = useRef(0)
     const [hotelSearchCountry, setHotelSearchCountry] = useState("")
+
+    useEffect(() => {
+        return () => {
+            hotelSearchAbortRef.current?.abort()
+        }
+    }, [])
     const [hotelSearchRegion, setHotelSearchRegion] = useState("")
     const [hotelSearchResults, setHotelSearchResults] = useState<PlaceSearchResult[]>([])
     const [isHotelSearching, setIsHotelSearching] = useState(false)
@@ -313,7 +324,12 @@ export function InfoView() {
 
     // 🔍 飯店地點搜尋
     const handleSearchHotelPlace = async (hotelIdx: number) => {
-        if (!hotelSearchQuery.trim()) return
+        const trimmed = hotelSearchQuery.trim()
+        if (!trimmed || /[\u3100-\u312F\u31A0-\u31BF]/.test(trimmed)) return
+        hotelSearchAbortRef.current?.abort()
+        const controller = new AbortController()
+        hotelSearchAbortRef.current = controller
+        const seq = ++hotelSearchSeqRef.current
         setIsHotelSearching(true)
         setSearchingHotelIdx(hotelIdx)
         try {
@@ -325,36 +341,30 @@ export function InfoView() {
                 biasLng = hotels[hotelIdx - 1].lng!
             }
 
-            // 🆕 使用結構化參數（取代字串拼接）
+            // 🆕 使用結構化參數（取代字串拼接，省略 limit 回傳全量智慧排序結果）
             const data = await geocodeApi.search({
-                query: hotelSearchQuery.trim(),  // 純淨的搜尋字串
-                limit: 5,
+                query: trimmed,  // 純淨的搜尋字串
                 tripTitle: activeTrip?.title,
                 lat: biasLat,
                 lng: biasLng,
                 country: hotelSearchCountry || undefined,  // 🆕 結構化國家過濾
                 region: hotelSearchRegion || undefined,    // 🆕 結構化區域過濾
-                locale: lang
+                locale: lang,
+                signal: controller.signal
             })
-            const rawResults = data.results || []
-            const deduped = rawResults.filter((r: PlaceSearchResult, idx: number, self: PlaceSearchResult[]) => {
-                if (r.osm_id) {
-                    return self.findIndex(x => x.osm_id && String(x.osm_id) === String(r.osm_id)) === idx
-                }
-                return !self.slice(0, idx).some(existing => {
-                    const eLat = existing.lat ?? 0;
-                    const eLng = existing.lng ?? 0;
-                    const rLat = r.lat ?? 0;
-                    const rLng = r.lng ?? 0;
-                    return getDistanceKm(eLat, eLng, rLat, rLng) < 0.05;
-                })
-            })
+            if (seq !== hotelSearchSeqRef.current || controller.signal.aborted) return
+            const rawResults: PlaceSearchResult[] = data.results || []
+            const deduped = dedupeGeocodeResults(rawResults)
             setHotelSearchResults(deduped)
         } catch (e) {
+            if (e instanceof Error && e.name === 'AbortError') return
+            if (seq !== hotelSearchSeqRef.current) return
             console.error("Hotel search failed:", e)
             toast.error(t('info_search_failed'))
         } finally {
-            setIsHotelSearching(false)
+            if (seq === hotelSearchSeqRef.current && !controller.signal.aborted) {
+                setIsHotelSearching(false)
+            }
         }
     }
 
@@ -743,7 +753,14 @@ export function InfoView() {
                                                                                         placeholder={t('info_search_hotel_ph')}
                                                                                         value={hotelSearchQuery}
                                                                                         onChange={e => setHotelSearchQuery(e.target.value)}
-                                                                                        onKeyDown={e => e.key === 'Enter' && handleSearchHotelPlace(idx)}
+                                                                                        onCompositionStart={() => { hotelSearchComposingRef.current = true }}
+                                                                                        onCompositionEnd={() => { setTimeout(() => { hotelSearchComposingRef.current = false }, 0) }}
+                                                                                        onKeyDown={e => {
+                                                                                            if (e.key === 'Enter') {
+                                                                                                if (e.nativeEvent.isComposing || hotelSearchComposingRef.current || e.nativeEvent.keyCode === 229) return
+                                                                                                handleSearchHotelPlace(idx)
+                                                                                            }
+                                                                                        }}
                                                                                     />
                                                                                     <Button
                                                                                         size="sm"
@@ -757,24 +774,27 @@ export function InfoView() {
                                                                                 </div>
                                                                                 {/* 搜尋結果 */}
                                                                                 {searchingHotelIdx === idx && hotelSearchResults.length > 0 && (
-                                                                                    <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 space-y-1 max-h-40 overflow-y-auto border border-slate-200 dark:border-slate-700">
+                                                                                    <div
+                                                                                        className="bg-slate-50 dark:bg-slate-800 rounded-lg p-2 space-y-1 max-h-56 overflow-y-auto overflow-x-hidden touch-pan-y overscroll-x-none overscroll-y-contain border border-slate-200 dark:border-slate-700"
+                                                                                        style={{ touchAction: "pan-y" }}
+                                                                                    >
                                                                                         {hotelSearchResults.map((place, pIdx) => (
                                                                                             <button
-                                                                                                key={pIdx}
-                                                                                                className="w-full text-left p-2 text-xs rounded hover:bg-indigo-50 transition-colors"
+                                                                                                key={place.osm_id ? `${place.osm_type || 'x'}-${place.osm_id}-${pIdx}` : pIdx}
+                                                                                                className="w-full max-w-full min-w-0 overflow-hidden text-left p-2 text-xs rounded hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
                                                                                                 onClick={() => handleSelectHotelPlace(idx, place)}
                                                                                             >
-                                                                                                <div className="font-bold text-slate-700">{place.name}</div>
-                                                                                                <div className="text-slate-400 text-[10px] line-clamp-2">{place.display_name}</div>
+                                                                                                <div className="font-bold text-slate-700 dark:text-slate-200 wrap-break-word [word-break:break-word] whitespace-normal leading-snug">{place.name}</div>
+                                                                                                <div className="text-slate-400 text-[10px] wrap-break-word [word-break:break-word] whitespace-normal line-clamp-2 leading-snug">{place.display_name || place.address}</div>
                                                                                             </button>
                                                                                         ))}
                                                                                     </div>
                                                                                 )}
                                                                                 {/* 已選擇的地點 - 顯示商家名稱（不是經緯度）*/}
                                                                                 {(item.address || (item.lat && item.lng)) && (
-                                                                                    <div className="text-sm text-slate-700 bg-green-50 p-2.5 rounded-lg flex items-center gap-2 border border-green-200">
-                                                                                        <MapPin className="w-4 h-4 text-green-600 shrink-0" />
-                                                                                        <span className="font-medium">
+                                                                                    <div className="text-sm text-slate-700 bg-green-50 p-2.5 rounded-lg flex items-start gap-2 border border-green-200 min-w-0 overflow-hidden">
+                                                                                        <MapPin className="w-4 h-4 mt-0.5 text-green-600 shrink-0" />
+                                                                                        <span className="font-medium min-w-0 flex-1 wrap-break-word [word-break:break-word] whitespace-normal leading-snug">
                                                                                             {/* 優先顯示地址/名稱，沒有才顯示經緯度 */}
                                                                                             {item.address || item.name || `${item.lat?.toFixed(4)}, ${item.lng?.toFixed(4)}`}
                                                                                         </span>

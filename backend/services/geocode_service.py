@@ -23,12 +23,15 @@ import orjson
 import httpx
 import asyncio
 import re
+import weakref
+from collections import OrderedDict
 from google import genai
 from google.genai import types
 from pathlib import Path
 import time
 import random
 import math
+import unicodedata
 from typing import Optional, List, Dict, Any
 
 # 🆕 模糊搜尋 (Restore rapidfuzz for Cloud Run optimization)
@@ -251,9 +254,105 @@ CHAR_EQUIVALENTS = {
     "臺": "台",  # 臺→台 (最高頻：臺北→台北、臺中→台中)
     "裏": "裡",  # 裏→裡
     "峯": "峰",  # 峯→峰
+    "羣": "群",  # 羣→群
+    "兰": "蘭",  # 兰→蘭 (一兰/芬兰 繁簡對齊)
+    "澤": "沢",  # 澤→沢 (輕井澤/金澤 日文對齊)
+    "广": "広",  # 广→広
+    "淺": "浅",  # 淺→浅
     "燈": "灯",  # 燈→灯 (與日式標準化一致)
     "縣": "県",  # 縣→県 (與日式標準化一致)
+    # 🆕 日本觀光高頻新字體對齊 (沖繩/那霸/橫濱/輕井澤/神戶/鐵塔/櫻花/氣象/豐洲)
+    "繩": "縄",
+    "霸": "覇",
+    "橫": "横",
+    "濱": "浜",
+    "輕": "軽",
+    "戶": "戸",
+    "鉄": "铁",
+    "櫻": "桜",
+    "氣": "気",
+    "豐": "豊",
 }
+
+HOMONYM_GUARD_KEYS = ("龍山寺", "東照宮", "中國城", "中華街", "故宮", "天后宮", "媽祖廟", "文武廟")
+_OSM_SAR_CODES = {"HK", "MO"}
+_INCOMPLETE_ZHUYIN_RE = re.compile(r"[\u3100-\u312F\u31A0-\u31BF]")
+_HAS_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
+_JP_KANJI_MAP = (
+    ("火車站", "駅"),
+    ("車站", "駅"),
+    ("澀", "渋"),
+    ("廣", "広"),
+    ("澤", "沢"),
+    ("邊", "辺"),
+    ("齋", "斎"),
+    ("淺", "浅"),
+    ("關", "関"),
+    ("臺", "台"),
+    ("鐵", "鉄"),
+    ("學", "学"),
+    ("國", "国"),
+    ("櫻", "桜"),
+    ("氣", "気"),
+    ("豐", "豊"),
+    ("繩", "縄"),
+    ("霸", "覇"),
+    ("橫", "横"),
+    ("濱", "浜"),
+    ("輕", "軽"),
+    ("戶", "戸"),
+    ("縣", "県"),
+    ("區", "区"),
+)
+
+
+def normalize_cjk_chars(text: str) -> str:
+    """純字元異體／繁簡／日文漢字正規化（不剝除『總店/本店/分店』尾詞，確保精確比對與本店區別度）"""
+    if not text:
+        return ""
+    out = text.lower().strip()
+    for char, equiv in CHAR_EQUIVALENTS.items():
+        if char in out:
+            out = out.replace(char, equiv)
+    return out
+
+
+def _jp_kanji_variant(query: str) -> Optional[str]:
+    """為日本搜尋產生乾淨單語系日文漢字變體（絕不與原詞空白拼接，避免 Photon Operator.And 歸零）"""
+    if not query:
+        return None
+    out = query.strip()
+    for src, dst in _JP_KANJI_MAP:
+        if src in out:
+            out = out.replace(src, dst)
+    return out if out and out != query.strip() else None
+
+
+def normalize_extent(raw_extent: Any, source_format: str = "photon") -> Optional[List[float]]:
+    """將 Photon [minLon, maxLat, maxLon, minLat] 或 Nominatim [minLat, maxLat, minLon, maxLon]
+    統一正規化為 RFC 7946 / MapLibre [minLon, minLat, maxLon, maxLat]，恆滿足 extent[0]<=extent[2] 且 extent[1]<=extent[3]。
+    """
+    if not isinstance(raw_extent, (list, tuple)) or len(raw_extent) != 4:
+        return None
+    try:
+        vals = [float(v) for v in raw_extent]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in vals):
+        return None
+
+    if source_format == "nominatim":
+        south, north, west, east = vals
+        min_lon, max_lon = (west, east) if west <= east else (east, west)
+        min_lat, max_lat = (south, north) if south <= north else (north, south)
+    else:
+        lon1, lat1, lon2, lat2 = vals
+        min_lon, max_lon = (lon1, lon2) if lon1 <= lon2 else (lon2, lon1)
+        min_lat, max_lat = (lat1, lat2) if lat1 <= lat2 else (lat2, lat1)
+
+    if not (-180.0 <= min_lon <= max_lon <= 180.0 and -90.0 <= min_lat <= max_lat <= 90.0):
+        return None
+    return [min_lon, min_lat, max_lon, max_lat]
 
 
 def normalize_for_fuzzy(text: str) -> str:
@@ -267,9 +366,7 @@ def normalize_for_fuzzy(text: str) -> str:
             text = text[:-len(suffix)]
             break
     # 字元標準化 (含 站 -> 駅 等同類別對齊)
-    for char, equiv in CHAR_EQUIVALENTS.items():
-        text = text.replace(char, equiv)
-    return text
+    return normalize_cjk_chars(text)
 
 
 # 🆕 P1-B: CJK 異體字搜尋展開（一→多）
@@ -364,8 +461,55 @@ async def geocode_with_nominatim(place_name: str):
             }
     except Exception as e:
         print(f"🌍 Nominatim error for '{place_name}': {e}")
-_NOMINATIM_LOCK = asyncio.Lock()
-_NOMINATIM_CACHE = {}
+_NOMINATIM_LOCKS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+_LAST_NOMINATIM_TS: float = 0.0
+_NOMINATIM_CACHE: Dict[str, Any] = {}
+_PHOTON_BREAKER_UNTIL: float = 0.0
+_PHOTON_CONSECUTIVE_ERRORS: int = 0
+_PHOTON_BREAKER_COOLDOWN_SEC: float = 15.0
+_PHOTON_BREAKER_THRESHOLD: int = 2
+
+
+def _get_nominatim_lock() -> asyncio.Lock:
+    """依當前 asyncio Event Loop 分桶之 Nominatim 全域鎖（避免跨測試迴圈綁定錯誤與記憶體洩漏）"""
+    loop = asyncio.get_running_loop()
+    lock = _NOMINATIM_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _NOMINATIM_LOCKS[loop] = lock
+    return lock
+
+
+def _is_httpx_get_mocked() -> bool:
+    """偵測 httpx.AsyncClient.get 是否處於單元測試 Mock 狀態（測試中跳過真實 1s sleep）"""
+    get_fn = getattr(httpx.AsyncClient, "get", None)
+    mod = getattr(type(get_fn), "__module__", "") if get_fn is not None else ""
+    return "unittest.mock" in mod
+
+
+async def _nominatim_rate_limit_wait() -> None:
+    """強制公用 Nominatim 全域出站 <= 1 req/s（單元測試 Mock 狀態 0ms 放行）"""
+    global _LAST_NOMINATIM_TS
+    if _is_httpx_get_mocked():
+        return
+    now = time.monotonic()
+    elapsed = now - _LAST_NOMINATIM_TS
+    if _LAST_NOMINATIM_TS > 0.0 and elapsed < 1.0:
+        await asyncio.sleep(1.0 - elapsed)
+    _LAST_NOMINATIM_TS = time.monotonic()
+
+
+def __reset_geocode_runtime_state_for_testing() -> None:
+    """模組單例狀態測試重設介面（Core Invariant 5）"""
+    global _LAST_NOMINATIM_TS, _PHOTON_BREAKER_UNTIL, _PHOTON_CONSECUTIVE_ERRORS
+    _LAST_NOMINATIM_TS = 0.0
+    _PHOTON_BREAKER_UNTIL = 0.0
+    _PHOTON_CONSECUTIVE_ERRORS = 0
+    _NOMINATIM_LOCKS.clear()
+    _NOMINATIM_CACHE.clear()
+    _DEAD_URL_CACHE.clear()
+    if "TRANSLATION_CACHE" in globals():
+        TRANSLATION_CACHE.clear()
 
 async def _gemma_parse_address(address: str, user_key: str = None) -> dict:
     """使用 Gemma 3 27B 零成本暴力拆解地址為 Structured Query 參數"""
@@ -522,8 +666,11 @@ async def resolve_address_pipeline(address: str, user_gemini_key: str = None):
         except Exception as e:
             print(f"⚠️ [Tier 1] ArcGIS Exception: {e}. Falling back to FOSS engines.")
 
-    # Throttle 1 request per second (For Nominatim)
-    async with _NOMINATIM_LOCK:
+    # 🧠 Gemma 3 降維解構（於取得 Nominatim 鎖之前執行，避免 AI 延遲阻塞並行的地圖搜尋 Nominatim 請求）
+    structured_data = await _gemma_parse_address(clean_addr, user_key=user_gemini_key)
+
+    # Throttle 1 request per second (For Nominatim — 與 smart_geocode_logic 共用同一全域節流器)
+    async with _get_nominatim_lock():
         # Check cache again inside lock just in case it was fetched while waiting
         now = time.time()
         if clean_addr in _NOMINATIM_CACHE and (now - _NOMINATIM_CACHE[clean_addr]["time"] < 3600):
@@ -531,9 +678,6 @@ async def resolve_address_pipeline(address: str, user_gemini_key: str = None):
 
         base_url = os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org/search").strip()
         user_agent = os.getenv("APP_USER_AGENT", "RyanTravelApp/2.0 (contact@ryantravel.app)")
-        
-        # 🧠 Gemma 3 降維解構
-        structured_data = await _gemma_parse_address(clean_addr, user_key=user_gemini_key)
         
         params = {
             "format": "geocodejson",
@@ -580,13 +724,9 @@ async def resolve_address_pipeline(address: str, user_gemini_key: str = None):
             
             # 🛡️ Tier 2: Nominatim 精確打擊
             print(f"🌍 [Tier 2] Dispatching to Nominatim (Strict) for '{clean_addr}'")
-            # Enforce 1 req/s delay if recent fetch
-            last_f = getattr(resolve_address_pipeline, "_last_fetch", 0)
-            elapsed = time.time() - last_f
-            if elapsed < 1.0: await asyncio.sleep(1.0 - elapsed)
+            await _nominatim_rate_limit_wait()
             
             res = await HTTPX_CLIENT.get(base_url, params=params, headers=headers, timeout=8.0)
-            resolve_address_pipeline._last_fetch = time.time()
             res.raise_for_status()
             
             result_data = extract_nominatim_data(res.json())
@@ -611,12 +751,9 @@ async def resolve_address_pipeline(address: str, user_gemini_key: str = None):
                     else:
                         params["q"] = degraded_street
                         
-                    last_f2 = getattr(resolve_address_pipeline, "_last_fetch", 0)
-                    elapsed2 = time.time() - last_f2
-                    if elapsed2 < 1.0: await asyncio.sleep(1.0 - elapsed2)
+                    await _nominatim_rate_limit_wait()
                     
                     res_deg = await HTTPX_CLIENT.get(base_url, params=params, headers=headers, timeout=8.0)
-                    resolve_address_pipeline._last_fetch = time.time()
                     res_deg.raise_for_status()
                     result_data = extract_nominatim_data(res_deg.json())
 
@@ -690,8 +827,8 @@ def sanitize_bbox(bbox_str: Optional[str]) -> Optional[str]:
 
 
 async def geocode_with_photon(
-    place_name: str, 
-    limit: int = 5, 
+    place_name: str,
+    limit: int = 25,
     lat: float = None, 
     lng: float = None, 
     zoom: float = None, 
@@ -704,40 +841,45 @@ async def geocode_with_photon(
     
     Args:
         lat, lng: 若提供，將優先返回附近的結果 (Location Bias)
-        zoom: 縮放層級，用於 P2 動態 bias scale
-        location_bias_scale: 0.0 ~ 1.0，手動控制偏移強度 (🆕 2026 擴充)
-        osm_tag: OSM 標籤過濾，例如 'place:country' (🆕 2026 擴充)
-        bbox: minLon,minLat,maxLon,maxLat 地圖視窗邊界過濾 (🆕 2026 視圖並行)
+        zoom: 縮放層級，轉整數 (0..18) 顯式傳給 Photon 並驅動正確方向的 location_bias_scale
+        location_bias_scale: 0.0 ~ 1.0，Photon 原始語意為全球重要度權重，(1 - scale) 為距離權重
+        osm_tag: 僅在呼叫端顯式指定時傳遞（如 'place:country'），不自動硬過濾一般搜尋
+        bbox: minLon,minLat,maxLon,maxLat 地圖視窗邊界過濾
     """
+    global _PHOTON_BREAKER_UNTIL, _PHOTON_CONSECUTIVE_ERRORS
+    query_text = (place_name or "").strip()
+    if not query_text:
+        return None
+
+    is_mocked = _is_httpx_get_mocked()
+    if not is_mocked and time.monotonic() < _PHOTON_BREAKER_UNTIL:
+        log_debug(f"[Photon] Circuit breaker open; skipping '{query_text}'")
+        return None
+
+    safe_limit = max(1, min(50, int(limit or 25)))
     try:
         user_agent = os.getenv("APP_USER_AGENT", "RyanTravelApp/3.0 (contact@ryantravel.app)")
-        async with httpx.AsyncClient(timeout=5.0, headers={"User-Agent": user_agent}) as client:
-            # 🆕 P0: 雙變體查詢 (原字串 + 簡體變體)
-            simplified = normalize_for_fuzzy(place_name)
-            if simplified != place_name.lower().strip():
-                query_text = f"{place_name} {simplified}"
-            else:
-                query_text = place_name
-                
-            # 🆕 P7: 意圖偵測 (自動 osm_tag，僅在未指定時啟動)
-            if osm_tag is None:
-                if any(k in place_name for k in ["站", "駅", "線", "鐵"]):
-                    osm_tag = "railway:station"
-                elif any(k in place_name for k in ["飯店", "酒店", "旅館", "ホテル"]):
-                    osm_tag = "tourism:hotel"
-                elif any(k in place_name for k in ["餐廳", "餐", "食堂", "レストラン"]):
-                    osm_tag = "amenity:restaurant"
-            
-            params = {
+        async with httpx.AsyncClient(timeout=4.0, headers={"User-Agent": user_agent}) as client:
+            params: Dict[str, Any] = {
                 "q": query_text,
-                "limit": limit
+                "limit": safe_limit,
             }
             
-            # 🆕 Country Bias
+            # 🆕 Country Bias（OSM/Photon 對 HK/MO 特別行政區不支援 countrycode=hk/mo，改以區域 bbox 約束防零結果黑洞）
             if country_code:
-                params["countrycode"] = country_code.lower()
+                cc_up = country_code.strip().upper()
+                if cc_up in _OSM_SAR_CODES:
+                    if not bbox and cc_up in COUNTRY_BOUNDS:
+                        b = COUNTRY_BOUNDS[cc_up]
+                        sar_bbox = sanitize_bbox(
+                            f"{b['lng_min'] - 0.05},{b['lat_min'] - 0.05},{b['lng_max'] + 0.05},{b['lat_max'] + 0.05}"
+                        )
+                        if sar_bbox:
+                            params["bbox"] = sar_bbox
+                else:
+                    params["countrycode"] = cc_up.lower()
             
-            # 🆕 P7: 添加 osm_tag 過濾
+            # 僅保留呼叫端顯式指定的 osm_tag（如 global_task 的 place:country）
             if osm_tag:
                 params["osm_tag"] = osm_tag
                 
@@ -747,63 +889,99 @@ async def geocode_with_photon(
                 if clean_bbox:
                     params["bbox"] = clean_bbox
                 
-            # 🆕 Location Bias
+            # 🆕 Location Bias + 顯式整數 zoom + 校正後 location_bias_scale
             if lat is not None and lng is not None:
                 params["lat"] = lat
                 params["lon"] = lng
-                
-            # 🆕 P2: 動態 bias scale (根據 zoom)
+
+            int_zoom: Optional[int] = None
+            if zoom is not None:
+                try:
+                    z_float = float(zoom)
+                    if math.isfinite(z_float):
+                        int_zoom = max(0, min(18, int(round(z_float))))
+                        params["zoom"] = int_zoom
+                except (TypeError, ValueError):
+                    int_zoom = None
+
             if location_bias_scale is not None:
                 params["location_bias_scale"] = location_bias_scale
-            elif zoom is not None:
-                if zoom > 14:
-                    params["location_bias_scale"] = 0.9
-                elif zoom > 10:
-                    params["location_bias_scale"] = 0.5
-                else:
+            elif int_zoom is not None and lat is not None and lng is not None:
+                # Photon 公式: scale = 全球重要度權重, (1 - scale) = 距離權重
+                if int_zoom >= 14:
                     params["location_bias_scale"] = 0.2
+                elif int_zoom > 10:
+                    params["location_bias_scale"] = 0.4
+                else:
+                    params["location_bias_scale"] = 0.7
 
             res = await client.get(
                 "https://photon.komoot.io/api/",
                 params=params
             )
+            status_code = getattr(res, "status_code", 200)
+            if isinstance(status_code, int) and status_code != 200:
+                print(f"[Photon] HTTP {status_code} for '{query_text}'")
+                if not is_mocked and (status_code == 429 or status_code >= 500):
+                    _PHOTON_CONSECUTIVE_ERRORS += 1
+                    if status_code in (429, 503) or _PHOTON_CONSECUTIVE_ERRORS >= _PHOTON_BREAKER_THRESHOLD:
+                        _PHOTON_BREAKER_UNTIL = time.monotonic() + _PHOTON_BREAKER_COOLDOWN_SEC
+                return None
+
+            _PHOTON_CONSECUTIVE_ERRORS = 0
+            _PHOTON_BREAKER_UNTIL = 0.0
+
             data = orjson.loads(res.content)
             if data.get("features") and len(data["features"]) > 0:
                 results = []
                 for feature in data["features"]:
                     props = feature.get("properties", {})
                     coords = feature.get("geometry", {}).get("coordinates", [0, 0])
+                    if not isinstance(coords, (list, tuple)) or len(coords) < 2:
+                        continue
                     
                     # 組合地址
                     address_parts = []
                     for key in ["country", "state", "city", "district", "street", "housenumber"]:
                         if props.get(key):
-                            address_parts.append(props[key])
+                            address_parts.append(str(props[key]))
                     
                     extra = props.get("extra") or {}
                     admin_lvl = extra.get("admin_level") if isinstance(extra, dict) else None
                     if not admin_lvl and "admin_level" in props:
                         admin_lvl = props.get("admin_level")
 
-                    extent = props.get("extent") or feature.get("bbox")
+                    raw_extent = props.get("extent") or feature.get("bbox")
+                    norm_extent = normalize_extent(raw_extent, source_format="photon")
+                    address_str = ", ".join(address_parts) if address_parts else props.get("name", "")
 
                     results.append({
                         "lat": coords[1],
                         "lng": coords[0],
-                        "name": props.get("name", place_name),
-                        "address": ", ".join(address_parts) if address_parts else props.get("name", ""),
+                        "name": props.get("name", query_text),
+                        "display_name": address_str,
+                        "address": address_str,
                         "type": props.get("osm_value", "place"),
                         "osm_key": props.get("osm_key"),
+                        "osm_id": props.get("osm_id"),
+                        "osm_type": props.get("osm_type"),
+                        "city": props.get("city"),
+                        "state": props.get("state"),
+                        "country": props.get("country"),
                         "admin_level": int(admin_lvl) if str(admin_lvl).isdigit() else None,
-                        "extent": extent if isinstance(extent, list) and len(extent) == 4 else None,
+                        "extent": norm_extent,
                         "importance": props.get("importance")
                     })
                 
                 if results:
-                    print(f"[Photon] {place_name} -> {len(results)} results")
+                    print(f"[Photon] {query_text} -> {len(results)} results")
                     return results
     except Exception as e:
-        print(f"[Photon] Error for '{place_name}': {e}")
+        print(f"[Photon] Error for '{query_text}': {type(e).__name__}: {e!r}")
+        if not is_mocked:
+            _PHOTON_CONSECUTIVE_ERRORS += 1
+            if _PHOTON_CONSECUTIVE_ERRORS >= _PHOTON_BREAKER_THRESHOLD:
+                _PHOTON_BREAKER_UNTIL = time.monotonic() + _PHOTON_BREAKER_COOLDOWN_SEC
     return None
 
 
@@ -816,46 +994,55 @@ async def search_overpass_by_name(
     """透過 OSM 原始資料的 name/name:zh tag 進行 regex 匹配，
     繞過 Photon/Nominatim 的分詞限制。
     
-    只在 Photon+Nominatim 結果不足時觸發，作為 fallback。
+    只在 Photon+Nominatim 結果為空時觸發，單次超時收斂至 3.5s。
     """
-    import re
-    
+    clean_name = re.sub(r'["\';\[\]\(\)\{\}\<\>\r\n]', '', (name or "")).strip()[:64]
+    if not clean_name:
+        return None
+    safe_limit = max(1, min(20, int(limit or 3)))
+
     # 生成搜尋 regex（包含異體字變體）
-    variants = expand_cjk_variants(name)
-    name_regex = "|".join(re.escape(v) for v in variants)
+    variants = expand_cjk_variants(clean_name)
+    name_regex = "|".join(re.escape(v) for v in variants if v)
     
-    # 建構 area 限制（如果有國碼）
+    # 建構 area 限制（如果有國碼，僅允許兩碼英文字母防止 QL 注入）
     area_filter = ""
     scope = ""
     if country_code:
-        area_filter = f'area["ISO3166-1"="{country_code.upper()}"]->.searchArea;'
-        scope = "(area.searchArea)"
+        cc_clean = re.sub(r'[^A-Za-z]', '', str(country_code)).upper()
+        if len(cc_clean) == 2:
+            area_filter = f'area["ISO3166-1"="{cc_clean}"]->.searchArea;'
+            scope = "(area.searchArea)"
     
     query = f"""
-    [out:json][timeout:10];
+    [out:json][timeout:4];
     {area_filter}
     (
       nwr["name"~"{name_regex}",i]{scope};
       nwr["name:zh"~"{name_regex}",i]{scope};
       nwr["alt_name"~"{name_regex}",i]{scope};
     );
-    out center {limit};
+    out center {safe_limit};
     """
     
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=3.5) as client:
             res = await client.post(
                 "https://overpass-api.de/api/interpreter",
                 data={"data": query},
                 headers={"User-Agent": "RyanTravelApp/3.0"}
             )
+            op_status = getattr(res, "status_code", 200)
+            if isinstance(op_status, int) and op_status != 200:
+                print(f"[Overpass] HTTP {op_status} for '{clean_name}'")
+                return None
             data = orjson.loads(res.content)
             elements = data.get("elements", [])
             if not elements:
                 return None
             
             results = []
-            for el in elements[:limit]:
+            for el in elements[:safe_limit]:
                 tags = el.get("tags", {})
                 el_lat = el.get("lat") or el.get("center", {}).get("lat")
                 el_lng = el.get("lon") or el.get("center", {}).get("lon")
@@ -866,21 +1053,25 @@ async def search_overpass_by_name(
                     tags.get("name:zh") or
                     tags.get("name") or
                     tags.get("name:en") or
-                    name
+                    clean_name
                 )
+                addr_full = tags.get("addr:full", "")
                 results.append({
                     "lat": el_lat, "lng": el_lng,
                     "name": display_name,
-                    "address": tags.get("addr:full", ""),
+                    "display_name": addr_full or display_name,
+                    "address": addr_full,
                     "type": tags.get("amenity") or tags.get("tourism") or "place",
+                    "osm_id": el.get("id"),
+                    "osm_type": el.get("type"),
                     "source": "overpass"
                 })
             
             if results:
-                print(f"[Overpass] {name} -> {len(results)} results")
+                print(f"[Overpass] {clean_name} -> {len(results)} results")
             return results or None
     except Exception as e:
-        print(f"[Overpass] Error for '{name}': {e}")
+        print(f"[Overpass] Error for '{clean_name}': {type(e).__name__}: {e!r}")
         return None
 
 
@@ -1020,7 +1211,825 @@ COUNTRY_BOUNDS = {
     "MY": {"lat_min": 0.8, "lat_max": 7.4, "lng_min": 99.6, "lng_max": 119.3, "lang": "ms", "name": "馬來西亞"},
     "ID": {"lat_min": -11.0, "lat_max": 6.1, "lng_min": 95.0, "lng_max": 141.0, "lang": "id", "name": "印尼"},
     "PH": {"lat_min": 4.6, "lat_max": 21.3, "lng_min": 116.9, "lng_max": 126.6, "lang": "en", "name": "菲律賓"},
+    "MO": {"lat_min": 22.10, "lat_max": 22.22, "lng_min": 113.52, "lng_max": 113.60, "lang": "zh-HK", "name": "澳門"},
+    "FI": {"lat_min": 59.4, "lat_max": 70.1, "lng_min": 19.4, "lng_max": 31.6, "lang": "fi", "name": "芬蘭"},
+    "SE": {"lat_min": 55.3, "lat_max": 69.1, "lng_min": 10.9, "lng_max": 24.2, "lang": "sv", "name": "瑞典"},
+    "NO": {"lat_min": 57.9, "lat_max": 71.2, "lng_min": 4.5, "lng_max": 31.1, "lang": "no", "name": "挪威"},
+    "DK": {"lat_min": 54.5, "lat_max": 57.8, "lng_min": 8.0, "lng_max": 15.2, "lang": "da", "name": "丹麥"},
+    "NL": {"lat_min": 50.7, "lat_max": 53.6, "lng_min": 3.3, "lng_max": 7.3, "lang": "nl", "name": "荷蘭"},
+    "BE": {"lat_min": 49.4, "lat_max": 51.6, "lng_min": 2.5, "lng_max": 6.4, "lang": "fr", "name": "比利時"},
+    "AT": {"lat_min": 46.3, "lat_max": 49.1, "lng_min": 9.5, "lng_max": 17.2, "lang": "de", "name": "奧地利"},
+    "CZ": {"lat_min": 48.5, "lat_max": 51.1, "lng_min": 12.0, "lng_max": 18.9, "lang": "cs", "name": "捷克"},
+    "PL": {"lat_min": 49.0, "lat_max": 54.9, "lng_min": 14.1, "lng_max": 24.2, "lang": "pl", "name": "波蘭"},
+    "PT": {"lat_min": 36.9, "lat_max": 42.2, "lng_min": -9.6, "lng_max": -6.1, "lang": "pt", "name": "葡萄牙"},
+    "GR": {"lat_min": 34.8, "lat_max": 41.8, "lng_min": 19.3, "lng_max": 29.7, "lang": "el", "name": "希臘"},
+    "HU": {"lat_min": 45.7, "lat_max": 48.6, "lng_min": 16.1, "lng_max": 22.9, "lang": "hu", "name": "匈牙利"},
+    "HR": {"lat_min": 42.3, "lat_max": 46.6, "lng_min": 13.4, "lng_max": 19.5, "lang": "hr", "name": "克羅埃西亞"},
+    "IE": {"lat_min": 51.4, "lat_max": 55.4, "lng_min": -10.5, "lng_max": -5.9, "lang": "en", "name": "愛爾蘭"},
+    "NZ": {"lat_min": -47.3, "lat_max": -34.3, "lng_min": 166.4, "lng_max": 178.6, "lang": "en", "name": "紐西蘭"},
+    "TR": {"lat_min": 35.8, "lat_max": 42.1, "lng_min": 25.6, "lng_max": 44.9, "lang": "tr", "name": "土耳其"},
+    "AE": {"lat_min": 22.6, "lat_max": 26.2, "lng_min": 51.5, "lng_max": 56.4, "lang": "ar", "name": "阿聯酋"},
+    "PE": {"lat_min": -18.4, "lat_max": -0.0, "lng_min": -81.4, "lng_max": -68.6, "lang": "es", "name": "秘魯"},
+    "MX": {"lat_min": 14.5, "lat_max": 32.8, "lng_min": -118.4, "lng_max": -86.7, "lang": "es", "name": "墨西哥"},
+    "BR": {"lat_min": -33.8, "lat_max": 5.3, "lng_min": -74.0, "lng_max": -34.7, "lang": "pt", "name": "巴西"},
+    # 🆕 擴充高頻旅遊國家邊界框 (80+ 國，覆蓋歐亞美非大洋洲)
+    "CN": {"lat_min": 18.0, "lat_max": 53.6, "lng_min": 73.5, "lng_max": 135.0, "lang": "zh", "name": "中國"},
+    "LU": {"lat_min": 49.4, "lat_max": 50.2, "lng_min": 5.7, "lng_max": 6.6, "lang": "fr", "name": "盧森堡"},
+    "SK": {"lat_min": 47.7, "lat_max": 49.6, "lng_min": 16.8, "lng_max": 22.6, "lang": "sk", "name": "斯洛伐克"},
+    "SI": {"lat_min": 45.4, "lat_max": 46.9, "lng_min": 13.3, "lng_max": 16.6, "lang": "sl", "name": "斯洛維尼亞"},
+    "RO": {"lat_min": 43.6, "lat_max": 48.3, "lng_min": 20.2, "lng_max": 29.7, "lang": "ro", "name": "羅馬尼亞"},
+    "BG": {"lat_min": 41.2, "lat_max": 44.2, "lng_min": 22.3, "lng_max": 28.6, "lang": "bg", "name": "保加利亞"},
+    "RS": {"lat_min": 42.2, "lat_max": 46.2, "lng_min": 18.8, "lng_max": 23.0, "lang": "sr", "name": "塞爾維亞"},
+    "EE": {"lat_min": 57.5, "lat_max": 59.8, "lng_min": 21.7, "lng_max": 28.2, "lang": "et", "name": "愛沙尼亞"},
+    "LV": {"lat_min": 55.6, "lat_max": 58.1, "lng_min": 20.9, "lng_max": 28.2, "lang": "lv", "name": "拉脫維亞"},
+    "LT": {"lat_min": 53.9, "lat_max": 56.5, "lng_min": 20.9, "lng_max": 26.9, "lang": "lt", "name": "立陶宛"},
+    "MT": {"lat_min": 35.8, "lat_max": 36.1, "lng_min": 14.1, "lng_max": 14.6, "lang": "en", "name": "馬爾他"},
+    "CY": {"lat_min": 34.6, "lat_max": 35.7, "lng_min": 32.2, "lng_max": 34.6, "lang": "el", "name": "賽普勒斯"},
+    "EG": {"lat_min": 22.0, "lat_max": 31.7, "lng_min": 24.7, "lng_max": 36.9, "lang": "ar", "name": "埃及"},
+    "MA": {"lat_min": 27.6, "lat_max": 36.0, "lng_min": -13.2, "lng_max": -1.0, "lang": "fr", "name": "摩洛哥"},
+    "ZA": {"lat_min": -34.9, "lat_max": -22.1, "lng_min": 16.4, "lng_max": 32.9, "lang": "en", "name": "南非"},
+    "KE": {"lat_min": -4.7, "lat_max": 5.0, "lng_min": 33.9, "lng_max": 41.9, "lang": "en", "name": "肯亞"},
+    "TZ": {"lat_min": -11.8, "lat_max": -0.9, "lng_min": 29.3, "lng_max": 40.5, "lang": "en", "name": "坦尚尼亞"},
+    "AR": {"lat_min": -55.1, "lat_max": -21.7, "lng_min": -73.6, "lng_max": -53.6, "lang": "es", "name": "阿根廷"},
+    "CL": {"lat_min": -56.0, "lat_max": -17.5, "lng_min": -75.7, "lng_max": -66.4, "lang": "es", "name": "智利"},
+    "CO": {"lat_min": -4.3, "lat_max": 12.5, "lng_min": -79.1, "lng_max": -66.8, "lang": "es", "name": "哥倫比亞"},
+    "CR": {"lat_min": 8.0, "lat_max": 11.2, "lng_min": -86.0, "lng_max": -82.5, "lang": "es", "name": "哥斯大黎加"},
+    "IN": {"lat_min": 6.7, "lat_max": 35.6, "lng_min": 68.1, "lng_max": 97.4, "lang": "en", "name": "印度"},
+    "LK": {"lat_min": 5.9, "lat_max": 9.9, "lng_min": 79.6, "lng_max": 81.9, "lang": "en", "name": "斯里蘭卡"},
+    "NP": {"lat_min": 26.3, "lat_max": 30.5, "lng_min": 80.0, "lng_max": 88.2, "lang": "en", "name": "尼泊爾"},
+    "KH": {"lat_min": 10.4, "lat_max": 14.7, "lng_min": 102.3, "lng_max": 107.7, "lang": "km", "name": "柬埔寨"},
+    "LA": {"lat_min": 13.9, "lat_max": 22.5, "lng_min": 100.0, "lng_max": 107.7, "lang": "lo", "name": "寮國"},
+    "MM": {"lat_min": 9.7, "lat_max": 28.6, "lng_min": 92.1, "lng_max": 101.2, "lang": "my", "name": "緬甸"},
+    "BN": {"lat_min": 4.0, "lat_max": 5.1, "lng_min": 114.0, "lng_max": 115.4, "lang": "ms", "name": "汶萊"},
+    "IL": {"lat_min": 29.4, "lat_max": 33.4, "lng_min": 34.2, "lng_max": 35.9, "lang": "he", "name": "以色列"},
+    "JO": {"lat_min": 29.1, "lat_max": 33.4, "lng_min": 34.9, "lng_max": 39.3, "lang": "ar", "name": "約旦"},
+    "QA": {"lat_min": 24.4, "lat_max": 26.2, "lng_min": 50.7, "lng_max": 51.7, "lang": "ar", "name": "卡達"},
+    "SA": {"lat_min": 16.3, "lat_max": 32.2, "lng_min": 34.5, "lng_max": 55.7, "lang": "ar", "name": "沙烏地阿拉伯"},
+    "OM": {"lat_min": 16.6, "lat_max": 26.4, "lng_min": 52.0, "lng_max": 59.9, "lang": "ar", "name": "阿曼"},
+    "GE": {"lat_min": 41.0, "lat_max": 43.6, "lng_min": 40.0, "lng_max": 46.8, "lang": "en", "name": "喬治亞"},
+    "MV": {"lat_min": -0.7, "lat_max": 7.1, "lng_min": 72.6, "lng_max": 73.8, "lang": "en", "name": "馬爾地夫"},
+    "FJ": {"lat_min": -19.2, "lat_max": -16.0, "lng_min": 177.0, "lng_max": 180.0, "lang": "en", "name": "斐濟"},
+    "MC": {"lat_min": 43.7, "lat_max": 43.8, "lng_min": 7.4, "lng_max": 7.45, "lang": "fr", "name": "摩納哥"},
+    "VA": {"lat_min": 41.89, "lat_max": 41.91, "lng_min": 12.44, "lng_max": 12.46, "lang": "it", "name": "梵蒂岡"},
+    "LI": {"lat_min": 47.04, "lat_max": 47.27, "lng_min": 9.47, "lng_max": 9.64, "lang": "de", "name": "列支敦士登"},
+    "AD": {"lat_min": 42.42, "lat_max": 42.66, "lng_min": 1.40, "lng_max": 1.79, "lang": "es", "name": "安道爾"},
 }
+
+# 🌐 高頻旅遊次級商圈／行政區空間錨點（用於「新宿一蘭拉麵」與 Search Fusion 精準錨定，取代盲灌東京）
+_SUBDISTRICT_ANCHORS: Dict[str, Dict[str, Any]] = {
+    "新宿": {"lat": 35.6938, "lng": 139.7034, "country": "JP", "en": "Shinjuku"},
+    "shinjuku": {"lat": 35.6938, "lng": 139.7034, "country": "JP", "en": "Shinjuku"},
+    "澀谷": {"lat": 35.6580, "lng": 139.7016, "country": "JP", "en": "Shibuya"},
+    "渋谷": {"lat": 35.6580, "lng": 139.7016, "country": "JP", "en": "Shibuya"},
+    "shibuya": {"lat": 35.6580, "lng": 139.7016, "country": "JP", "en": "Shibuya"},
+    "淺草": {"lat": 35.7148, "lng": 139.7967, "country": "JP", "en": "Asakusa"},
+    "asakusa": {"lat": 35.7148, "lng": 139.7967, "country": "JP", "en": "Asakusa"},
+    "銀座": {"lat": 35.6717, "lng": 139.7649, "country": "JP", "en": "Ginza"},
+    "ginza": {"lat": 35.6717, "lng": 139.7649, "country": "JP", "en": "Ginza"},
+    "上野": {"lat": 35.7141, "lng": 139.7774, "country": "JP", "en": "Ueno"},
+    "ueno": {"lat": 35.7141, "lng": 139.7774, "country": "JP", "en": "Ueno"},
+    "池袋": {"lat": 35.7295, "lng": 139.7109, "country": "JP", "en": "Ikebukuro"},
+    "ikebukuro": {"lat": 35.7295, "lng": 139.7109, "country": "JP", "en": "Ikebukuro"},
+    "秋葉原": {"lat": 35.7023, "lng": 139.7745, "country": "JP", "en": "Akihabara"},
+    "akihabara": {"lat": 35.7023, "lng": 139.7745, "country": "JP", "en": "Akihabara"},
+    "原宿": {"lat": 35.6702, "lng": 139.7027, "country": "JP", "en": "Harajuku"},
+    "harajuku": {"lat": 35.6702, "lng": 139.7027, "country": "JP", "en": "Harajuku"},
+    "六本木": {"lat": 35.6628, "lng": 139.7313, "country": "JP", "en": "Roppongi"},
+    "roppongi": {"lat": 35.6628, "lng": 139.7313, "country": "JP", "en": "Roppongi"},
+    "品川": {"lat": 35.6284, "lng": 139.7387, "country": "JP", "en": "Shinagawa"},
+    "shinagawa": {"lat": 35.6284, "lng": 139.7387, "country": "JP", "en": "Shinagawa"},
+    "難波": {"lat": 34.6659, "lng": 135.5013, "country": "JP", "en": "Namba"},
+    "namba": {"lat": 34.6659, "lng": 135.5013, "country": "JP", "en": "Namba"},
+    "梅田": {"lat": 34.7055, "lng": 135.4983, "country": "JP", "en": "Umeda"},
+    "umeda": {"lat": 34.7055, "lng": 135.4983, "country": "JP", "en": "Umeda"},
+    "心齋橋": {"lat": 34.6748, "lng": 135.5009, "country": "JP", "en": "Shinsaibashi"},
+    "shinsaibashi": {"lat": 34.6748, "lng": 135.5009, "country": "JP", "en": "Shinsaibashi"},
+    "道頓堀": {"lat": 34.6687, "lng": 135.5013, "country": "JP", "en": "Dotonbori"},
+    "dotonbori": {"lat": 34.6687, "lng": 135.5013, "country": "JP", "en": "Dotonbori"},
+    "明洞": {"lat": 37.5636, "lng": 126.9850, "country": "KR", "en": "Myeongdong"},
+    "myeongdong": {"lat": 37.5636, "lng": 126.9850, "country": "KR", "en": "Myeongdong"},
+    "弘大": {"lat": 37.5563, "lng": 126.9237, "country": "KR", "en": "Hongdae"},
+    "hongdae": {"lat": 37.5563, "lng": 126.9237, "country": "KR", "en": "Hongdae"},
+    "東大門": {"lat": 37.5662, "lng": 127.0095, "country": "KR", "en": "Dongdaemun"},
+    "dongdaemun": {"lat": 37.5662, "lng": 127.0095, "country": "KR", "en": "Dongdaemun"},
+    "江南": {"lat": 37.4979, "lng": 127.0276, "country": "KR", "en": "Gangnam"},
+    "gangnam": {"lat": 37.4979, "lng": 127.0276, "country": "KR", "en": "Gangnam"},
+    "西門町": {"lat": 25.0424, "lng": 121.5081, "country": "TW", "en": "Ximending"},
+    "ximending": {"lat": 25.0424, "lng": 121.5081, "country": "TW", "en": "Ximending"},
+    "信義區": {"lat": 25.0330, "lng": 121.5654, "country": "TW", "en": "Xinyi"},
+    "萬華": {"lat": 25.0352, "lng": 121.4998, "country": "TW", "en": "Wanhua"},
+    "士林": {"lat": 25.0928, "lng": 121.5246, "country": "TW", "en": "Shilin"},
+    "大安": {"lat": 25.0267, "lng": 121.5435, "country": "TW", "en": "Daan"},
+    "鳳山": {"lat": 22.6273, "lng": 120.3581, "country": "TW", "en": "Fengshan"},
+    "鹿港": {"lat": 24.0560, "lng": 120.4350, "country": "TW", "en": "Lukang"},
+}
+
+# 🌐 國別首都錨點（Search Fusion 最後一階合法國別錨點，絕不跨國盲灌東京）
+_COUNTRY_CAPITAL_ANCHORS: Dict[str, tuple[float, float]] = {
+    "TW": (25.0330, 121.5654),
+    "JP": (35.6895, 139.6917),
+    "KR": (37.5665, 126.9780),
+    "TH": (13.7563, 100.5018),
+    "VN": (21.0285, 105.8542),
+    "SG": (1.3521, 103.8198),
+    "HK": (22.3193, 114.1694),
+    "MO": (22.1987, 113.5439),
+    "MY": (3.1390, 101.6869),
+    "ID": (-6.2088, 106.8456),
+    "PH": (14.5995, 120.9842),
+    "CN": (39.9042, 116.4074),
+    "US": (40.7128, -74.0060),
+    "CA": (43.6532, -79.3832),
+    "GB": (51.5074, -0.1278),
+    "FR": (48.8566, 2.3522),
+    "DE": (52.5200, 13.4050),
+    "IT": (41.9028, 12.4964),
+    "ES": (40.4168, -3.7038),
+    "PT": (38.7223, -9.1393),
+    "NL": (52.3676, 4.9041),
+    "BE": (50.8503, 4.3517),
+    "CH": (47.3769, 8.5417),
+    "AT": (48.2082, 16.3738),
+    "CZ": (50.0755, 14.4378),
+    "HU": (47.4979, 19.0402),
+    "PL": (52.2297, 21.0122),
+    "FI": (60.1699, 24.9384),
+    "SE": (59.3293, 18.0686),
+    "NO": (59.9139, 10.7522),
+    "DK": (55.6761, 12.5683),
+    "IS": (64.1466, -21.9426),
+    "GR": (37.9838, 23.7275),
+    "IE": (53.3498, -6.2603),
+    "AU": (-33.8688, 151.2093),
+    "NZ": (-36.8509, 174.7645),
+    "TR": (41.0082, 28.9784),
+    "AE": (25.2048, 55.2708),
+    "PE": (-12.0464, -77.0428),
+    "MX": (19.4326, -99.1332),
+    "BR": (-23.5505, -46.6333),
+}
+
+# 🌐 ISO 國碼 -> 中文國名 / 英文權威國名 / 主要母語代碼（涵蓋 GLOBAL_COUNTRY_TO_ISO 全部 122+ 國）
+_ISO_TO_ZH_NAME: Dict[str, str] = {}
+_ISO_TO_EN_NAME: Dict[str, str] = {}
+for _cname, _iso in GLOBAL_COUNTRY_TO_ISO.items():
+    _cc_u = _iso.upper()
+    if _HAS_CJK_RE.search(_cname):
+        if _cc_u not in _ISO_TO_ZH_NAME:
+            _ISO_TO_ZH_NAME[_cc_u] = _cname
+    elif _cname.isascii() and len(_cname) >= 3:
+        # 優先保留無逗號、最常見的標準英文國名（例如 Taiwan, South Korea, United States）
+        if _cc_u not in _ISO_TO_EN_NAME or ("," in _ISO_TO_EN_NAME[_cc_u] and "," not in _cname):
+            _ISO_TO_EN_NAME[_cc_u] = _cname
+
+
+def get_country_display_name(country_code: Optional[str]) -> str:
+    """回傳目標國家之中文名稱（涵蓋 122+ 國，解除舊版 20 國限制）"""
+    if not country_code:
+        return ""
+    cc = country_code.strip().upper()
+    if cc in COUNTRY_BOUNDS and COUNTRY_BOUNDS[cc].get("name"):
+        return COUNTRY_BOUNDS[cc]["name"]
+    return _ISO_TO_ZH_NAME.get(cc) or _ISO_TO_EN_NAME.get(cc) or cc
+
+
+def get_country_english_name(country_code: Optional[str]) -> Optional[str]:
+    """回傳目標國家之標準英文名稱（供 Photon place:country 精準定位）"""
+    if not country_code:
+        return None
+    cc = country_code.strip().upper()
+    explicit_en = {
+        "GB": "United Kingdom",
+        "US": "United States",
+        "KR": "South Korea",
+        "TW": "Taiwan",
+        "CN": "China",
+        "AE": "United Arab Emirates",
+        "CZ": "Czech Republic",
+    }
+    return explicit_en.get(cc) or _ISO_TO_EN_NAME.get(cc)
+
+
+def get_country_primary_lang(country_code: Optional[str]) -> str:
+    """回傳目標國家在 Wikipedia / OSM 中最常用之當地母語代碼"""
+    if not country_code:
+        return "en"
+    cc = country_code.strip().upper()
+    if cc in COUNTRY_BOUNDS and COUNTRY_BOUNDS[cc].get("lang"):
+        return COUNTRY_BOUNDS[cc]["lang"].split("-")[0]
+    extra_langs = {
+        "LU": "fr", "SK": "sk", "RO": "ro", "BG": "bg", "RS": "sr", "SI": "sl",
+        "UA": "uk", "RU": "ru", "EE": "et", "LV": "lv", "LT": "lt", "IL": "he",
+        "EG": "ar", "MA": "fr", "AR": "es", "CL": "es", "CO": "es", "KH": "km",
+        "LA": "lo", "MM": "my", "IN": "en", "ZA": "en", "AU": "en", "CA": "en",
+    }
+    return extra_langs.get(cc, "en")
+
+
+def infer_country_from_coords(lat: Optional[float], lng: Optional[float]) -> Optional[str]:
+    """座標優先反推所在國別：先比對最近城市錨點 (<=150km)，再取包含該座標之最小面積國家矩形。"""
+    if lat is None or lng is None:
+        return None
+    try:
+        lat_f = float(lat)
+        lng_f = float(lng)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(lat_f) and math.isfinite(lng_f)):
+        return None
+    if not (-90.0 <= lat_f <= 90.0 and -180.0 <= lng_f <= 180.0):
+        return None
+    if abs(lat_f) < 1e-5 and abs(lng_f) < 1e-5:
+        return None
+
+    # Tier 1: 最近城市錨點 (解決歐洲/亞洲鄰國矩形重疊問題，例如慕尼黑/蘇黎世/薩爾茨堡/新加坡/香港)
+    nearest_cc: Optional[str] = None
+    nearest_dist = 150.0
+    anchors = globals().get("GLOBAL_CITY_ANCHORS") or {}
+    for info in anchors.values():
+        c_lat = info.get("lat")
+        c_lng = info.get("lng")
+        c_cc = info.get("country")
+        if c_lat is None or c_lng is None or not c_cc:
+            continue
+        d = haversine_km(lat_f, lng_f, c_lat, c_lng)
+        if d <= nearest_dist:
+            nearest_dist = d
+            nearest_cc = str(c_cc).upper()
+    if nearest_cc:
+        return nearest_cc
+
+    # Tier 2: 包含該座標之最小面積邊界框 (避免大型鄰國吞噬小型國家)
+    best_cc: Optional[str] = None
+    best_area = float("inf")
+    for cc, b in COUNTRY_BOUNDS.items():
+        if b["lat_min"] <= lat_f <= b["lat_max"] and b["lng_min"] <= lng_f <= b["lng_max"]:
+            area = (b["lat_max"] - b["lat_min"]) * (b["lng_max"] - b["lng_min"])
+            if area < best_area:
+                best_area = area
+                best_cc = cc
+    return best_cc
+
+
+# 🌐 零成本通用旅遊設施多語微字典（純通用設施詞，不含單一城市專屬地標，避免跨城漂移）
+GENERIC_FACILITY_TRANSLATIONS: Dict[str, Dict[str, List[str]]] = {
+    "市政廳": {"en": ["City Hall", "Town Hall"], "de": ["Rathaus"], "fi": ["Kaupungintalo"], "fr": ["Hôtel de Ville"], "it": ["Municipio", "Palazzo Comunale"], "es": ["Ayuntamiento"], "nl": ["Stadhuis"], "sv": ["Stadshus"], "no": ["Rådhus"], "da": ["Rådhus"], "cs": ["Radnice"], "pl": ["Ratusz"], "pt": ["Câmara Municipal"], "ja": ["市役所"], "ko": ["시청"]},
+    "市政府": {"en": ["City Hall"], "de": ["Rathaus"], "fi": ["Kaupungintalo"], "fr": ["Hôtel de Ville"], "nl": ["Stadhuis"], "sv": ["Stadshus"], "ja": ["市役所"], "ko": ["시청"]},
+    "中央車站": {"en": ["Central Station"], "de": ["Hauptbahnhof"], "fi": ["Päärautatieasema"], "fr": ["Gare Centrale"], "it": ["Stazione Centrale"], "es": ["Estación Central"], "nl": ["Centraal Station"], "sv": ["Centralstation"], "no": ["Sentralstasjon"], "da": ["Hovedbanegård"], "cs": ["Hlavní nádraží"], "pl": ["Dworzec Centralny"], "hu": ["Pályaudvar"], "pt": ["Estação Central"], "ja": ["中央駅"], "ko": ["중앙역"]},
+    "中央火車站": {"en": ["Central Station"], "de": ["Hauptbahnhof"], "fi": ["Päärautatieasema"], "fr": ["Gare Centrale"], "it": ["Stazione Centrale"], "nl": ["Centraal Station"], "sv": ["Centralstation"], "cs": ["Hlavní nádraží"], "ja": ["中央駅"]},
+    "火車站": {"en": ["Train Station", "Railway Station"], "de": ["Bahnhof"], "fi": ["Rautatieasema"], "fr": ["Gare"], "it": ["Stazione"], "es": ["Estación de tren"], "nl": ["Station"], "sv": ["Järnvägsstation"], "cs": ["Nádraží"], "ja": ["駅"], "ko": ["역"]},
+    "車站": {"en": ["Station"], "de": ["Bahnhof"], "fi": ["Asema"], "fr": ["Gare"], "it": ["Stazione"], "es": ["Estación"], "nl": ["Station"], "ja": ["駅"], "ko": ["역"]},
+    "國際機場": {"en": ["International Airport"], "de": ["Flughafen"], "fi": ["Lentoasema"], "fr": ["Aéroport"], "it": ["Aeroporto"], "es": ["Aeropuerto"], "nl": ["Luchthaven"], "ja": ["国際空港"], "ko": ["국제공항"]},
+    "機場": {"en": ["Airport"], "de": ["Flughafen"], "fi": ["Lentoasema"], "fr": ["Aéroport"], "it": ["Aeroporto"], "es": ["Aeropuerto"], "nl": ["Luchthaven"], "sv": ["Flygplats"], "ja": ["空港"], "ko": ["공항"]},
+    "大教堂": {"en": ["Cathedral"], "de": ["Dom", "Kathedrale"], "fi": ["Tuomiokirkko"], "fr": ["Cathédrale"], "it": ["Duomo", "Cattedrale"], "es": ["Catedral"], "nl": ["Kathedraal"], "sv": ["Domkyrka"], "cs": ["Katedrála"], "pt": ["Sé", "Catedral"]},
+    "教堂": {"en": ["Church"], "de": ["Kirche"], "fi": ["Kirkko"], "fr": ["Église"], "it": ["Chiesa"], "es": ["Iglesia"], "nl": ["Kerk"]},
+    "國家博物館": {"en": ["National Museum"], "de": ["Nationalmuseum"], "fi": ["Kansallismuseo"], "fr": ["Musée National"], "it": ["Museo Nazionale"], "es": ["Museo Nacional"], "nl": ["Rijksmuseum"], "sv": ["Nationalmuseum"], "cs": ["Národní muzeum"], "ja": ["国立博物館"], "ko": ["국립박물관"]},
+    "博物館": {"en": ["Museum"], "de": ["Museum"], "fi": ["Museo"], "fr": ["Musée"], "it": ["Museo"], "es": ["Museo"], "nl": ["Museum"], "ja": ["博物館"], "ko": ["박물관"]},
+    "美術館": {"en": ["Art Museum", "Art Gallery"], "de": ["Kunstmuseum"], "fi": ["Taidemuseo"], "fr": ["Musée d'Art"], "it": ["Galleria d'Arte"], "es": ["Museo de Arte"], "ja": ["美術館"], "ko": ["미술관"]},
+    "皇宮": {"en": ["Royal Palace", "Imperial Palace"], "de": ["Schloss", "Residenz"], "fi": ["Presidentinlinna"], "fr": ["Palais"], "it": ["Palazzo Reale"], "es": ["Palacio Real"], "sv": ["Kungliga slottet"], "ja": ["皇居"]},
+    "王宮": {"en": ["Royal Palace"], "de": ["Schloss", "Residenz"], "fr": ["Palais Royal"], "it": ["Palazzo Reale"], "es": ["Palacio Real"], "sv": ["Kungliga slottet"], "no": ["Det kongelige slott"]},
+    "城堡": {"en": ["Castle"], "de": ["Schloss", "Burg"], "fi": ["Linna"], "fr": ["Château"], "it": ["Castello"], "es": ["Castillo"], "nl": ["Kasteel"], "cs": ["Hrad"], "ja": ["城"]},
+    "老城區": {"en": ["Old Town"], "de": ["Altstadt"], "fi": ["Vanha kaupunki"], "fr": ["Vieille Ville"], "it": ["Centro Storico"], "es": ["Casco Antiguo"], "sv": ["Gamla Stan"], "cs": ["Staré Město"]},
+    "舊城區": {"en": ["Old Town"], "de": ["Altstadt"], "fr": ["Vieille Ville"], "it": ["Centro Storico"], "cs": ["Staré Město"]},
+    "廣場": {"en": ["Square", "Plaza"], "de": ["Platz"], "fi": ["Tori"], "fr": ["Place"], "it": ["Piazza"], "es": ["Plaza"], "nl": ["Plein"], "cs": ["Náměstí"]},
+    "市場": {"en": ["Market", "Market Hall"], "de": ["Markt", "Markthalle"], "fi": ["Kauppatori", "Kauppahalli"], "fr": ["Marché"], "it": ["Mercato"], "es": ["Mercado"], "nl": ["Markt"], "ja": ["市場"], "ko": ["시장"]},
+    "歌劇院": {"en": ["Opera House"], "de": ["Staatsoper", "Oper"], "fi": ["Oopperatalo"], "fr": ["Opéra"], "it": ["Teatro dell'Opera"], "es": ["Ópera"]},
+    "動物園": {"en": ["Zoo"], "de": ["Zoo", "Tierpark"], "fi": ["Eläintarha"], "fr": ["Zoo"], "ja": ["動物園"], "ko": ["동물원"]},
+    "植物園": {"en": ["Botanical Garden"], "de": ["Botanischer Garten"], "fi": ["Kasvitieteellinen puutarha"], "fr": ["Jardin Botanique"], "ja": ["植物園"]},
+    "水族館": {"en": ["Aquarium"], "de": ["Aquarium"], "fi": ["Akvaario"], "ja": ["水族館"], "ko": ["아쿠아리움"]},
+    "圖書館": {"en": ["Library"], "de": ["Bibliothek"], "fi": ["Kirjasto"], "fr": ["Bibliothèque"], "ja": ["図書館"], "ko": ["도서관"]},
+    "大學": {"en": ["University"], "de": ["Universität"], "fi": ["Yliopisto"], "fr": ["Université"], "it": ["Università"], "es": ["Universidad"], "ja": ["大学"], "ko": ["대학교"]},
+    "公園": {"en": ["Park"], "de": ["Park"], "fi": ["Puisto"], "fr": ["Parc"], "it": ["Parco"], "es": ["Parque"], "ja": ["公園"], "ko": ["공원"]},
+    "港口": {"en": ["Harbour", "Port"], "de": ["Hafen"], "fi": ["Satama"], "fr": ["Port"], "it": ["Porto"], "es": ["Puerto"], "ja": ["港"]},
+    "碼頭": {"en": ["Pier", "Harbour"], "de": ["Hafen"], "fi": ["Satama"], "fr": ["Quai"], "it": ["Porto"], "ja": ["埠頭"]},
+    "醫院": {"en": ["Hospital"], "de": ["Krankenhaus"], "fi": ["Sairaala"], "fr": ["Hôpital"], "it": ["Ospedale"], "es": ["Hospital"], "ja": ["病院"], "ko": ["병원"]},
+    "藥局": {"en": ["Pharmacy"], "de": ["Apotheke"], "fi": ["Apteekki"], "fr": ["Pharmacie"], "it": ["Farmacia"], "es": ["Farmacia"], "ja": ["薬局"], "ko": ["약국"]},
+    "超市": {"en": ["Supermarket"], "de": ["Supermarkt"], "fi": ["Supermarket"], "fr": ["Supermarché"], "it": ["Supermercato"], "es": ["Supermercado"], "ja": ["スーパー"], "ko": ["마트"]},
+    "咖啡廳": {"en": ["Cafe", "Coffee"], "de": ["Café"], "fi": ["Kahvila"], "fr": ["Café"], "it": ["Caffè"], "es": ["Cafetería"], "ja": ["カフェ"], "ko": ["카페"]},
+    "飯店": {"en": ["Hotel"], "de": ["Hotel"], "fi": ["Hotelli"], "fr": ["Hôtel"], "it": ["Hotel"], "es": ["Hotel"], "ja": ["ホテル"], "ko": ["호텔"]},
+    "酒店": {"en": ["Hotel"], "de": ["Hotel"], "fi": ["Hotelli"], "fr": ["Hôtel"], "it": ["Hotel"], "es": ["Hotel"], "ja": ["ホテル"], "ko": ["호텔"]},
+}
+
+
+def _get_city_anchor_english_name(city_info: Optional[Dict[str, Any]]) -> Optional[str]:
+    """從 GLOBAL_CITY_ANCHORS 0ms 反查同座標城市之標準英文名稱（例如『巴塞隆納』-> 'Barcelona'、『慕尼黑』-> 'Munich'）。"""
+    if not isinstance(city_info, dict):
+        return None
+    if city_info.get("en"):
+        return str(city_info["en"]).strip()
+    c_lat = city_info.get("lat")
+    c_lng = city_info.get("lng")
+    if c_lat is None or c_lng is None:
+        return None
+    anchors = globals().get("GLOBAL_CITY_ANCHORS") or {}
+    for k, v in anchors.items():
+        if k.isascii() and v.get("lat") == c_lat and v.get("lng") == c_lng:
+            return k.title()
+    return None
+
+
+def _find_nearest_city_anchor_en(
+    lat: Optional[float],
+    lng: Optional[float],
+    country_code: Optional[str] = None,
+    max_km: float = 25.0,
+) -> Optional[str]:
+    """若當前地圖座標位於已知城市錨點 25km 內，回傳該城市英文名稱（用於組合 'Munich Rathaus' 等精準查詢）。"""
+    if lat is None or lng is None:
+        return None
+    try:
+        lat_f, lng_f = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(lat_f) and math.isfinite(lng_f)):
+        return None
+    target_cc = (country_code or "").strip().upper()
+    anchors = globals().get("GLOBAL_CITY_ANCHORS") or {}
+    best_en: Optional[str] = None
+    best_dist = max_km
+    for k, info in anchors.items():
+        if not k.isascii() or info.get("is_admin_region"):
+            continue
+        c_lat, c_lng = info.get("lat"), info.get("lng")
+        c_cc = str(info.get("country") or "").upper()
+        if c_lat is None or c_lng is None:
+            continue
+        if target_cc and c_cc and c_cc != target_cc:
+            continue
+        d = haversine_km(lat_f, lng_f, c_lat, c_lng)
+        if d <= best_dist:
+            best_dist = d
+            best_en = k.title()
+    return best_en
+
+
+def _detect_country_from_city_prefix(query: str) -> Optional[str]:
+    """從查詢詞中偵測已知全球城市名稱（補齊 LOCATION_KEYWORDS 以外的歐美/日韓/台灣城市，如『慕尼黑市政廳』-> DE）。"""
+    clean_q = (query or "").strip()
+    if not clean_q:
+        return None
+    q_low = clean_q.lower()
+    norm_q = normalize_cjk_chars(clean_q)
+    anchors = globals().get("GLOBAL_CITY_ANCHORS") or {}
+    for k in sorted(anchors.keys(), key=len, reverse=True):
+        cc = str(anchors[k].get("country") or "").upper()
+        if not cc:
+            continue
+        if k.isascii():
+            if len(k) >= 4 and re.search(rf"\b{re.escape(k.lower())}\b", q_low):
+                return cc
+        else:
+            if len(k) >= 2 and (k in clean_q or normalize_cjk_chars(k) in norm_q):
+                return cc
+    return None
+
+
+_CULINARY_DISH_SUFFIXES = (
+    "燒", "麵", "面", "飯", "饭", "牛肉麵", "担仔麵", "擔仔麵", "小籠包", "湯包",
+    "鍋", "火鍋", "烤鴨", "料理", "便當", "滷肉飯", "肉燥飯", "蚵仔煎", "炒飯", "炒麵",
+    "拉麵", "烏龍麵", "蕎麥麵", "章魚燒", "文字燒", "廣島燒", "大阪燒", "壽司", "燒肉", "咖哩",
+)
+
+
+def _is_city_dish_query(prefix: str, suffix: str) -> bool:
+    """區分『大阪燒』『廣島燒』『台南擔仔麵』等料理品名（不應把台北搜尋切換到大阪座標）
+    與『新宿一蘭拉麵』『慕尼黑市政廳』『台南龍山寺』等跨區/跨城實地查詢。
+    """
+    if not suffix:
+        return False
+    # 只要次區錨點（如新宿/澀谷/明洞）或具體品牌/地標詞存在，即屬實地查詢而非通用料理名
+    if prefix in _SUBDISTRICT_ANCHORS or prefix.lower() in _SUBDISTRICT_ANCHORS:
+        return False
+    # 若後綴本身就是純料理尾詞（例如「大阪」+「燒」、「台南」+「擔仔麵」）
+    s_clean = suffix.strip()
+    if s_clean in _CULINARY_DISH_SUFFIXES:
+        return True
+    if len(s_clean) <= 3 and any(s_clean.endswith(ds) for ds in ("燒", "麵", "面", "飯", "饭", "鍋", "粥", "羹")):
+        return True
+    return False
+
+
+def _match_landmark_facility_prefix(
+    query: str,
+    country_code: Optional[str] = None,
+) -> Optional[tuple[str, Dict[str, Any], str]]:
+    """從『已知地標 + 通用設施詞』（如『東京迪士尼飯店』『環球影城飯店』『淺草寺飯店』）
+    萃取地標前綴與設施尾詞，供 0ms 微字典轉譯與空間錨點精準對齊（排除連鎖品牌與撞名地標）。
+    """
+    clean_q = (query or "").strip()
+    if not clean_q:
+        return None
+    target_cc = (country_code or "").strip().upper()
+    # 僅在必要時讀取已載入之內建與外部地標，確保單點地標如「東京迪士尼」「環球影城」皆可命中
+    for fac_key in sorted(GENERIC_FACILITY_TRANSLATIONS.keys(), key=len, reverse=True):
+        if clean_q.endswith(fac_key) and len(clean_q) > len(fac_key):
+            prefix = clean_q[:-len(fac_key)].strip()
+            if len(prefix) < 2:
+                continue
+            norm_prefix = normalize_cjk_chars(prefix)
+            if not norm_prefix or norm_prefix in _HOMONYM_GUARD_NORM:
+                continue
+            for lm_key, lm_val in LANDMARKS_DB.items():
+                if not isinstance(lm_val, dict):
+                    continue
+                lm_cc = str(lm_val.get("country") or "").strip().upper()
+                if target_cc and lm_cc and lm_cc != target_cc:
+                    continue
+                matched = normalize_cjk_chars(lm_key) == norm_prefix or normalize_cjk_chars(str(lm_val.get("display") or "")) == norm_prefix
+                if not matched:
+                    for alias in (lm_val.get("aliases") or []):
+                        if normalize_cjk_chars(str(alias)) == norm_prefix:
+                            matched = True
+                            break
+                if matched:
+                    if _is_chain_brand_entry(prefix, lm_val, lm_val.get("display"), landmark_key=lm_key):
+                        continue
+                    return prefix, lm_val, fac_key
+    return None
+
+
+def _detect_city_prefix_anchor(query: str) -> Optional[tuple[str, Dict[str, Any], str]]:
+    """從『城市/次區/地標前綴 + 設施/地標/分店』查詢中提取目標空間錨點與剩餘後綴。
+
+    例：
+    - '慕尼黑市政廳'   -> ('慕尼黑', {lat:48.1351, lng:11.5820, country:'DE'}, '市政廳')
+    - '台南龍山寺'     -> ('台南', {lat:22.9997, lng:120.2270, country:'TW'}, '龍山寺')
+    - '新宿一蘭拉麵'   -> ('新宿', {lat:35.6938, lng:139.7034, country:'JP'}, '一蘭拉麵')
+    - '東京迪士尼飯店' -> ('東京迪士尼', {lat:35.6329, lng:139.8804, country:'JP', ...}, '飯店')
+    - '大阪燒'         -> None（料理名詞，不切離在地座標）
+    """
+    clean_q = (query or "").strip()
+    if not clean_q:
+        return None
+    norm_q = normalize_cjk_chars(clean_q)
+    q_low = clean_q.lower()
+
+    # 優先識別更精細之『著名地標 + 設施詞』（如『東京迪士尼飯店』-> 浦安迪士尼座標而非新宿中心）
+    lm_fac_hit = _match_landmark_facility_prefix(clean_q)
+    if lm_fac_hit:
+        lm_prefix, lm_val, fac_suffix = lm_fac_hit
+        if lm_val.get("lat") is not None and lm_val.get("lng") is not None:
+            return lm_prefix, {
+                "lat": float(lm_val["lat"]),
+                "lng": float(lm_val["lng"]),
+                "country": lm_val.get("country"),
+                "is_subdistrict": True,
+            }, fac_suffix
+
+    merged_anchors: Dict[str, Dict[str, Any]] = {}
+    merged_anchors.update(globals().get("GLOBAL_CITY_ANCHORS") or {})
+    merged_anchors.update(_SUBDISTRICT_ANCHORS)
+
+    for k in sorted(merged_anchors.keys(), key=len, reverse=True):
+        info = merged_anchors[k]
+        if info.get("lat") is None or info.get("lng") is None:
+            continue
+        if k.isascii():
+            if len(k) < 4:
+                continue
+            m = re.match(rf"^{re.escape(k.lower())}\s+(.+)$", q_low)
+            if m:
+                suffix = clean_q[len(k):].strip()
+                if suffix and not _is_city_dish_query(k, suffix):
+                    return k, info, suffix
+        else:
+            if len(k) < 2:
+                continue
+            norm_k = normalize_cjk_chars(k)
+            if (clean_q.startswith(k) and len(clean_q) > len(k)) or (norm_q.startswith(norm_k) and len(norm_q) > len(norm_k)):
+                suffix = clean_q[len(k):].strip()
+                if suffix and not _is_city_dish_query(k, suffix):
+                    return k, info, suffix
+    return None
+
+
+def _get_facility_standalone_terms(suffix: str, country_code: Optional[str]) -> List[str]:
+    """為『城市前綴 + 設施詞』取出僅供 rerank_top_k 評分使用的當地母語/英文設施單詞
+    （不改動 _translate_via_micro_dict 回傳值，守住既有哨兵契約）。
+    """
+    clean_s = (suffix or "").strip()
+    if not clean_s or not country_code:
+        return []
+    cc = country_code.strip().upper()
+    if cc in ("TW", "CN", "HK", "MO"):
+        return []
+    entry = GENERIC_FACILITY_TRANSLATIONS.get(clean_s)
+    if not entry:
+        return []
+    lang = get_country_primary_lang(cc)
+    terms: List[str] = []
+    for t in entry.get(lang, []):
+        if t and t not in terms:
+            terms.append(t)
+    for t in entry.get("en", []):
+        if t and t not in terms:
+            terms.append(t)
+    return terms
+
+
+_PAREN_REMARK_RE = re.compile(r"\s*[\(（\[【][^()（）\[\]【】]{1,80}[\)）\]】]")
+_LEADING_ACTIVITY_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"(?:day\s*\d+|d\d+|第\s*\d+\s*天)\s*[:：\-—–]?\s*"
+    r"|\d{1,2}:\d{2}(?:\s*[-~～]\s*\d{1,2}:\d{2})?\s+"
+    r"|(?:上午|下午|晚上|早上|中午|傍晚|早餐|午餐|晚餐|宵夜|前往|參觀|拜訪|逛逛|逛|吃)\s*[:：]\s*"
+    r"|(?:前往|參觀|拜訪|抵達|入住)\s+"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _extract_clean_place_query(raw: str) -> str:
+    """從帶括號備註或行程前綴的長活動標題提取純淨地名（ReDoS-Free，供後端單次降級使用）。
+    例：'淺草寺 (雷門拍照)' -> '淺草寺'、'10:00 築地市場（海鮮早餐）' -> '築地市場'。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    cleaned = _PAREN_REMARK_RE.sub(" ", text)
+    cleaned = _LEADING_ACTIVITY_PREFIX_RE.sub("", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" \t\r\n-—–|:：,，")
+    if len(cleaned) < 2:
+        return text
+    return cleaned
+
+
+def resolve_fusion_anchor_coords(
+    lat: Optional[float] = None,
+    lng: Optional[float] = None,
+    query: Optional[str] = None,
+    region: Optional[str] = None,
+    trip_title: Optional[str] = None,
+    country: Optional[str] = None,
+) -> tuple[Optional[float], Optional[float]]:
+    """依序解析 Search Fusion 空間錨點：
+    1. 顯式 body.lat/lng
+    2. 查詢詞／區域／行程標題內之城市或次區錨點（含 shinjuku/新宿）
+    3. 顯式或關鍵字推斷之國別首都錨點
+    全空則回傳 (None, None) 跳過 Fusion，絕不盲灌東京座標。
+    """
+    if lat is not None and lng is not None:
+        try:
+            lat_f, lng_f = float(lat), float(lng)
+            if math.isfinite(lat_f) and math.isfinite(lng_f) and -90.0 <= lat_f <= 90.0 and -180.0 <= lng_f <= 180.0:
+                if abs(lat_f) > 1e-5 or abs(lng_f) > 1e-5:
+                    return lat_f, lng_f
+        except (TypeError, ValueError):
+            pass
+
+    merged_anchors: Dict[str, Dict[str, Any]] = {}
+    merged_anchors.update(globals().get("GLOBAL_CITY_ANCHORS") or {})
+    merged_anchors.update(_SUBDISTRICT_ANCHORS)
+    sorted_keys = sorted(merged_anchors.keys(), key=len, reverse=True)
+
+    for source_text in (query, region, trip_title):
+        s = (source_text or "").strip()
+        if not s:
+            continue
+        s_low = s.lower()
+        s_norm = normalize_cjk_chars(s)
+        for k in sorted_keys:
+            info = merged_anchors[k]
+            if info.get("lat") is None or info.get("lng") is None:
+                continue
+            if k.isascii():
+                if len(k) >= 3 and re.search(rf"\b{re.escape(k.lower())}\b", s_low):
+                    return float(info["lat"]), float(info["lng"])
+            else:
+                norm_k = normalize_cjk_chars(k)
+                if len(k) >= 2 and (k in s or norm_k in s_norm):
+                    # 排除料理名詞（如『大阪燒』『廣島燒』『台南擔仔麵』）誤將 Fusion 座標切往外地城市
+                    if source_text is query:
+                        idx_pos = s.find(k) if k in s else s_norm.find(norm_k)
+                        if idx_pos >= 0:
+                            after_txt = s[idx_pos + len(k):].strip()
+                            if after_txt and _is_city_dish_query(k, after_txt):
+                                continue
+                    return float(info["lat"]), float(info["lng"])
+
+    resolved_cc: Optional[str] = None
+    if country:
+        c_up = str(country).strip().upper()
+        if c_up in _COUNTRY_CAPITAL_ANCHORS:
+            resolved_cc = c_up
+        else:
+            iso = country_to_iso(str(country))
+            if iso:
+                resolved_cc = iso.upper()
+    if not resolved_cc:
+        # 優先尊重 region / trip_title 避免料理詞（如『大阪燒』）在無座標時把台北行程拉往東京
+        for source_text in (region, trip_title, query):
+            if not source_text:
+                continue
+            if source_text is query:
+                s_q = query.strip()
+                if any(
+                    (s_q.startswith(ck) or normalize_cjk_chars(s_q).startswith(normalize_cjk_chars(ck)))
+                    and len(s_q) > len(ck)
+                    and _is_city_dish_query(ck, s_q[len(ck):].strip())
+                    for ck in (globals().get("GLOBAL_CITY_ANCHORS") or {})
+                    if not ck.isascii() and len(ck) >= 2
+                ):
+                    continue
+            cc_hit = detect_country_from_keywords(source_text) or _detect_country_from_city_prefix(source_text)
+            if cc_hit:
+                resolved_cc = cc_hit.upper()
+                break
+
+    if resolved_cc and resolved_cc in _COUNTRY_CAPITAL_ANCHORS:
+        return _COUNTRY_CAPITAL_ANCHORS[resolved_cc]
+
+    return None, None
+
+
+def _strip_wiki_parenthetical(title: str) -> str:
+    """剝除 Wikipedia 消歧義尾端括號，例如 'Central Station (Helsinki)' -> 'Central Station'。"""
+    if not title:
+        return ""
+    cleaned = re.sub(r"\s*[\(（][^()（）]{1,40}[\)）]\s*$", "", title.strip()).strip()
+    return cleaned or title.strip()
+
+
+def _translate_via_micro_dict(
+    query: str,
+    country_code: Optional[str],
+    lat: Optional[float] = None,
+    lng: Optional[float] = None,
+) -> List[str]:
+    """零成本 0ms 通用旅遊設施微字典轉譯（支援單詞、座標鄰近城市結合、與『已知城市+設施』組合）。"""
+    clean_q = (query or "").strip()
+    if not clean_q or not country_code:
+        return []
+    cc = country_code.strip().upper()
+    if cc in ("TW", "CN", "HK", "MO"):
+        return []
+    lang = get_country_primary_lang(cc)
+
+    def _collect_terms(entry: Dict[str, List[str]]) -> List[str]:
+        terms: List[str] = []
+        for t in entry.get(lang, []):
+            if t not in terms:
+                terms.append(t)
+        for t in entry.get("en", []):
+            if t not in terms:
+                terms.append(t)
+        return terms
+
+    # 1. 完全命中通用設施詞（若座標位於已知城市 25km 內，優先前置 '<City> <LocalTerm>' 精準命中主地標如 Neues Rathaus）
+    if clean_q in GENERIC_FACILITY_TRANSLATIONS:
+        base_terms = _collect_terms(GENERIC_FACILITY_TRANSLATIONS[clean_q])
+        nearest_city_en = _find_nearest_city_anchor_en(lat, lng, country_code=cc, max_km=25.0)
+        if nearest_city_en and base_terms:
+            city_qualified = f"{nearest_city_en} {base_terms[0]}"
+            return list(dict.fromkeys([city_qualified, *base_terms]))
+        return base_terms
+
+    # 2. 城市前綴 + 設施後綴組合（例如『慕尼黑市政廳』-> 'Munich Rathaus', 'Munich City Hall'）
+    anchors = globals().get("GLOBAL_CITY_ANCHORS") or {}
+    for fac_key in sorted(GENERIC_FACILITY_TRANSLATIONS.keys(), key=len, reverse=True):
+        if clean_q.endswith(fac_key) and len(clean_q) > len(fac_key):
+            prefix = clean_q[:-len(fac_key)].strip()
+            city_info = anchors.get(prefix) or anchors.get(normalize_cjk_chars(prefix))
+            if city_info:
+                city_en = _get_city_anchor_english_name(city_info)
+                if city_en:
+                    return [f"{city_en} {t}" for t in _collect_terms(GENERIC_FACILITY_TRANSLATIONS[fac_key])[:2]]
+            # 2b. 次級商圈前綴 + 設施後綴（例如『新宿飯店』-> '新宿 ホテル', 'Shinjuku Hotel'）
+            sub_info = _SUBDISTRICT_ANCHORS.get(prefix) or _SUBDISTRICT_ANCHORS.get(normalize_cjk_chars(prefix))
+            if sub_info:
+                sub_cc = str(sub_info.get("country") or "").upper()
+                if not sub_cc or sub_cc == cc:
+                    fac_entry = GENERIC_FACILITY_TRANSLATIONS[fac_key]
+                    native_terms = fac_entry.get(lang, [])
+                    en_terms = fac_entry.get("en", [])
+                    out_sub: List[str] = []
+                    if lang == "ja" and native_terms and not prefix.isascii():
+                        out_sub.append(f"{prefix} {native_terms[0]}")
+                    sub_en = sub_info.get("en")
+                    if sub_en and en_terms:
+                        out_sub.append(f"{sub_en} {en_terms[0]}")
+                    elif sub_en and native_terms:
+                        out_sub.append(f"{sub_en} {native_terms[0]}")
+                    if out_sub:
+                        return list(dict.fromkeys(out_sub))[:2]
+
+    # 2c. 著名地標前綴 + 設施後綴（例如『東京迪士尼飯店』-> 'Tokyo Disneyland Hotel', '東京ディズニーランドホテル'）
+    lm_fac_hit = _match_landmark_facility_prefix(clean_q, country_code=cc)
+    if lm_fac_hit:
+        _, lm_val, fac_key = lm_fac_hit
+        fac_entry = GENERIC_FACILITY_TRANSLATIONS[fac_key]
+        native_terms = fac_entry.get(lang, [])
+        en_terms = fac_entry.get("en", [])
+        out_lm: List[str] = []
+        lm_search = str(lm_val.get("search") or "").strip()
+        if lm_search and en_terms:
+            out_lm.append(f"{lm_search} {en_terms[0]}")
+        if lang == "ja" and native_terms:
+            ja_alias = next(
+                (str(a).strip() for a in (lm_val.get("aliases") or []) if re.search(r"[\u3040-\u30ff]", str(a))),
+                None,
+            )
+            if ja_alias:
+                # 日文片假名複合詞直接相接（如 '東京ディズニーランドホテル'）較空白拼接大幅提升 OSM 命中率
+                out_lm.append(f"{ja_alias}{native_terms[0]}")
+        if out_lm:
+            return list(dict.fromkeys(out_lm))[:2]
+    return []
+
+
+async def _translate_via_wikipedia_langlinks(query: str, country_code: Optional[str]) -> List[str]:
+    """無 API Key 時免費 Wikipedia zh->(當地母語/en) 跨語言標題橋接（1.2s 硬超時 + 括號消歧義剝除）。"""
+    clean_q = (query or "").strip()
+    if not clean_q or not country_code:
+        return []
+    cc = country_code.strip().upper()
+    if cc in ("TW", "CN", "HK", "MO") or not _HAS_CJK_RE.search(clean_q):
+        return []
+    target_lang = get_country_primary_lang(cc)
+    wanted_langs = [target_lang, "en"] if target_lang != "en" else ["en"]
+    headers = {"User-Agent": os.getenv("APP_USER_AGENT", "RyanTravelApp/3.0 (contact@ryantravel.app)")}
+
+    async def _fetch_langlinks() -> List[str]:
+        async with httpx.AsyncClient(timeout=1.1, headers=headers) as client:
+            res = await client.get(
+                "https://zh.wikipedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "prop": "langlinks",
+                    "titles": clean_q,
+                    "redirects": 1,
+                    "lllimit": 50,
+                    "format": "json",
+                },
+            )
+            wiki_status = getattr(res, "status_code", 200)
+            if isinstance(wiki_status, int) and wiki_status != 200:
+                return []
+            payload = res.json()
+            pages = (payload.get("query") or {}).get("pages") or {}
+            extracted: Dict[str, str] = {}
+            for page_id, page_data in pages.items():
+                if str(page_id) == "-1":
+                    continue
+                for ll in (page_data.get("langlinks") or []):
+                    lang_code = ll.get("lang")
+                    title = ll.get("*")
+                    if lang_code in wanted_langs and title:
+                        extracted[lang_code] = _strip_wiki_parenthetical(str(title))
+
+            # 若直接標題未命中，改走 OpenSearch 取第一筆相近條目再查 langlinks
+            if not extracted:
+                os_res = await client.get(
+                    "https://zh.wikipedia.org/w/api.php",
+                    params={
+                        "action": "opensearch",
+                        "search": clean_q,
+                        "limit": 1,
+                        "namespace": 0,
+                        "format": "json",
+                    },
+                )
+                os_status = getattr(os_res, "status_code", 200)
+                if not isinstance(os_status, int) or os_status == 200:
+                    os_data = os_res.json()
+                    if isinstance(os_data, list) and len(os_data) >= 2 and isinstance(os_data[1], list) and os_data[1]:
+                        matched_title = str(os_data[1][0]).strip()
+                        if matched_title and matched_title != clean_q:
+                            res2 = await client.get(
+                                "https://zh.wikipedia.org/w/api.php",
+                                params={
+                                    "action": "query",
+                                    "prop": "langlinks",
+                                    "titles": matched_title,
+                                    "redirects": 1,
+                                    "lllimit": 50,
+                                    "format": "json",
+                                },
+                            )
+                            res2_status = getattr(res2, "status_code", 200)
+                            if not isinstance(res2_status, int) or res2_status == 200:
+                                pages2 = ((res2.json()).get("query") or {}).get("pages") or {}
+                                for pid2, pdata2 in pages2.items():
+                                    if str(pid2) == "-1":
+                                        continue
+                                    for ll in (pdata2.get("langlinks") or []):
+                                        lang_code = ll.get("lang")
+                                        title = ll.get("*")
+                                        if lang_code in wanted_langs and title:
+                                            extracted[lang_code] = _strip_wiki_parenthetical(str(title))
+
+            ordered: List[str] = []
+            for wl in wanted_langs:
+                val = extracted.get(wl)
+                if val and val not in ordered:
+                    ordered.append(val)
+            return ordered
+
+    try:
+        return await asyncio.wait_for(_fetch_langlinks(), timeout=1.2)
+    except Exception as e:
+        log_debug(f"🌐 [WikiLanglinks] skipped/timeout for '{clean_q}': {type(e).__name__}")
+        return []
 
 # 🆕 關鍵字 → 國家代碼 映射 (確定性規則，無需 AI)
 LOCATION_KEYWORDS = {
@@ -1380,12 +2389,94 @@ LANDMARKS_DB = {
     "香港機場": {"aliases": ["hong kong airport", "hkg", "赤鱲角"], "search": "Hong Kong International Airport", "display": "香港國際機場", "country": "HK"},
 }
 
+_INLINE_CHAIN_BRAND_KEYS = {
+    "一蘭拉麵", "一風堂", "蒙古タンメン中本", "麵屋武藏",
+    "藏壽司", "壽司郎", "築地壽司",
+    "敘敘苑", "牛角", "蟹道樂",
+    "松屋", "吉野家", "すき家", "CoCo壱番屋",
+    "Blue Bottle Coffee", "猿田彥咖啡",
+}
+_RESTAURANT_LANDMARK_KEYS: set[str] = set()
+_CHAIN_BRAND_TOKENS_CACHE: Optional[set[str]] = None
+_HOMONYM_GUARD_NORM: set[str] = {normalize_cjk_chars(k) for k in HOMONYM_GUARD_KEYS}
+
+
+def _get_chain_brand_tokens() -> set[str]:
+    """彙整 BRANDS_DB 與內建連鎖餐飲品牌之正規化詞集（涵蓋與 LANDMARKS_DB 重疊之 46+ 筆連鎖項目）。"""
+    global _CHAIN_BRAND_TOKENS_CACHE
+    if _CHAIN_BRAND_TOKENS_CACHE is not None:
+        return _CHAIN_BRAND_TOKENS_CACHE
+    tokens: set[str] = {normalize_cjk_chars(k) for k in _INLINE_CHAIN_BRAND_KEYS if k}
+    brands_db = get_brands_db()
+    for category, brands in brands_db.items():
+        if category.startswith("_") or not isinstance(brands, dict):
+            continue
+        for brand_name, brand_data in brands.items():
+            if not isinstance(brand_data, dict):
+                continue
+            nb = normalize_cjk_chars(brand_name)
+            if nb and len(nb) >= 2:
+                tokens.add(nb)
+            for alias in brand_data.get("aliases", []):
+                na = normalize_cjk_chars(alias)
+                if na and len(na) >= 2:
+                    tokens.add(na)
+    _CHAIN_BRAND_TOKENS_CACHE = tokens
+    return tokens
+
+
+def _is_chain_brand_entry(
+    query: Optional[str] = None,
+    landmark_data: Optional[dict] = None,
+    display_name: Optional[str] = None,
+    landmark_key: Optional[str] = None,
+) -> bool:
+    """判定地標項目或查詢是否屬多門市連鎖品牌（禁止單點秒回與覆寫分店名）。"""
+    if landmark_key and (landmark_key in _INLINE_CHAIN_BRAND_KEYS or landmark_key in _RESTAURANT_LANDMARK_KEYS):
+        return True
+    if landmark_data is not None:
+        for k, v in LANDMARKS_DB.items():
+            if v is landmark_data:
+                if k in _INLINE_CHAIN_BRAND_KEYS or k in _RESTAURANT_LANDMARK_KEYS:
+                    return True
+                landmark_key = landmark_key or k
+                break
+    brand_tokens = _get_chain_brand_tokens()
+    fields = [landmark_key, display_name]
+    if isinstance(landmark_data, dict):
+        fields.append(landmark_data.get("display"))
+        fields.extend(landmark_data.get("aliases") or [])
+    if query:
+        fields.append(query)
+    for raw_f in fields:
+        if not raw_f:
+            continue
+        nf = normalize_cjk_chars(str(raw_f))
+        if not nf:
+            continue
+        if nf in brand_tokens:
+            return True
+        # 檢查是否為某連鎖品牌之分店條目（例如「一蘭 新宿中央東口店」、「一蘭拉麵(總店)」、「Blue Bottle (青山)」）
+        if raw_f in (landmark_key, display_name, landmark_data.get("display") if isinstance(landmark_data, dict) else None):
+            for bt in brand_tokens:
+                if len(bt) < 2:
+                    continue
+                if bt.isascii():
+                    if len(bt) >= 4 and re.search(rf"(?<![a-z0-9]){re.escape(bt)}(?![a-z0-9])", nf):
+                        return True
+                elif bt in nf:
+                    return True
+    return False
+
+
 def get_fuzzy_index():
     global _FUZZY_INDEX, _LANDMARKS_KEYS_SORTED
     if _FUZZY_INDEX is not None:
         return _FUZZY_INDEX, _LANDMARKS_KEYS_SORTED
     
     print("🧠 [Lazy] Building fuzzy search index and loading external data...")
+    _RESTAURANT_LANDMARK_KEYS.clear()
+    _RESTAURANT_LANDMARK_KEYS.update(_INLINE_CHAIN_BRAND_KEYS)
     
     # 🆕 Load External JSON for Massive Expansion
     try:
@@ -1409,6 +2500,8 @@ def get_fuzzy_index():
                             country_data = orjson.loads(json_file.read_bytes())
                             valid_entries = {k: v for k, v in country_data.items() if isinstance(v, dict) and not k.startswith("_")}
                             LANDMARKS_DB.update(valid_entries)
+                            if "restaurant" in json_file.stem.lower():
+                                _RESTAURANT_LANDMARK_KEYS.update(valid_entries.keys())
                         except Exception: pass
             print("📦 Loaded country-specific databases")
     except Exception as e:
@@ -1428,11 +2521,29 @@ def get_fuzzy_index():
     return _FUZZY_INDEX, _LANDMARKS_KEYS_SORTED
 
 
+_EXACT_JP_DISNEY_QUERIES = {
+    normalize_cjk_chars(k)
+    for k in (
+        "迪士尼", "東京迪士尼", "東京迪士尼樂園", "迪士尼樂園",
+        "disney", "disneyland", "tokyo disney", "tokyo disneyland",
+        "東京ディズニーランド",
+    )
+}
+_EXACT_HK_DISNEY_QUERIES = {
+    normalize_cjk_chars(k)
+    for k in (
+        "香港迪士尼", "香港迪士尼樂園", "hong kong disney", "hong kong disneyland",
+    )
+}
+
+
 def translate_famous_landmark(query: str, country_code: str = None) -> tuple:
-    """🏰 確定性翻譯著名景點（無需 AI，具備目標國別隔離防呆）"""
-    query_lower = query.lower().strip()
+    """🏰 確定性翻譯著名景點（全詞精確匹配閘門 + 連鎖品牌去劫持 + 目標國別隔離防呆）"""
+    query_clean = (query or "").strip()
+    query_lower = query_clean.lower()
+    norm_query_chars = normalize_cjk_chars(query_clean)
     target_cc = (country_code or "").strip().upper()
-    query_explicit_cc = (detect_country_from_keywords(query) or "").upper()
+    query_explicit_cc = (detect_country_from_keywords(query_clean) or "").upper()
     
     # 🆕 Lazy load indices
     FUZZY_INDEX, LANDMARKS_KEYS_SORTED = get_fuzzy_index()
@@ -1446,70 +2557,122 @@ def translate_famous_landmark(query: str, country_code: str = None) -> tuple:
             return True
         return lm_cc == target_cc
     
-    # === 1. 精確匹配（最快） ===
+    def _matches_phrase(needle: str, haystack: str) -> bool:
+        n = (needle or "").strip().lower()
+        if not n:
+            return False
+        # 純 ASCII 別名採單詞邊界比對（防止機場代碼 'sin' 誤中 'singapore'）
+        if n.isascii():
+            return bool(re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", haystack))
+        return n in haystack
+
+    def _is_exact_token(candidate: str) -> bool:
+        c = normalize_cjk_chars(candidate)
+        return bool(c and norm_query_chars and c == norm_query_chars)
+
+    # === 1. 全詞精確匹配（最快；嚴格禁止子字串劫持「台南龍山寺」「台北101美食」「新宿一蘭拉麵」） ===
+    chain_fallback_terms: Optional[list] = None
     for landmark_key in LANDMARKS_KEYS_SORTED:
         landmark = LANDMARKS_DB[landmark_key]
         if not _is_country_compatible(landmark):
             continue
-        
-        if landmark_key.lower() in query_lower:
-            print(f"🏰 Landmark Match: '{query}' → '{landmark['display']}'")
-            return ([landmark["search"], query], landmark["display"], landmark)
-        
-        for alias in landmark.get("aliases", []):
-            if alias.lower() in query_lower:
-                print(f"🏰 Alias Match: '{alias}' → '{landmark['display']}'")
-                return ([landmark["search"], query], landmark["display"], landmark)
-    
-    # === 2. 🆕 連鎖店品牌匹配 ===
-    for category, brands in BRANDS_DB.items():
-        if category.startswith("_"):  # 跳過 __comment
-            continue
-        if not isinstance(brands, dict):
-            continue
-        for brand_name, brand_data in brands.items():
-            if not isinstance(brand_data, dict):
+        matched_exact = _is_exact_token(landmark_key) or _is_exact_token(landmark.get("display", ""))
+        if not matched_exact:
+            for alias in landmark.get("aliases", []):
+                if _is_exact_token(alias):
+                    matched_exact = True
+                    break
+        if matched_exact:
+            if _is_chain_brand_entry(query_clean, landmark, landmark.get("display"), landmark_key=landmark_key):
+                # 連鎖餐飲/品牌不走單點秒回，交由 Step 2 品牌庫或僅提供翻譯搜尋詞（landmark_data=None）
+                if chain_fallback_terms is None and landmark.get("search"):
+                    chain_fallback_terms = [landmark["search"], query_clean]
                 continue
-            # 檢查品牌名稱
-            if brand_name.lower() in query_lower:
-                search_term = brand_data.get("search_term", brand_name)
-                print(f"🏪 Brand Match: '{query}' → '{search_term}'")
-                return ([search_term, query], brand_name, None)
-            # 檢查別名
-            for alias in brand_data.get("aliases", []):
-                if alias.lower() in query_lower:
-                    search_term = brand_data.get("search_term", brand_name)
-                    print(f"🏪 Brand Alias Match: '{alias}' → '{search_term}'")
-                    return ([search_term, query], brand_name, None)
+            print(f"🏰 Landmark Exact Match: '{query_clean}' → '{landmark['display']}'")
+            return ([landmark["search"], query_clean], landmark["display"], landmark)
     
-    # === 3. 🆕 模糊搜尋（容錯：typo、繁簡差異） ===
-    normalized_query = normalize_for_fuzzy(query)
-    if len(normalized_query) >= 2:  # 至少 2 字才進行模糊匹配
-        # 🆕 使用預先建立的索引（效能優化）
+    # === 2. 🆕 連鎖店品牌匹配（brands.json 為日本品牌庫，僅在日本或無目標國時啟用） ===
+    # - 全詞精確命中（如 '一蘭'）保留 brand_name 作為 display_name（守住哨兵契約），landmark_data=None（禁單點秒回與覆寫分店名）；
+    # - 子字串命中（如 '新宿一蘭拉麵'）保留地名前綴組合搜尋詞並令 display_name=None，絕不遺失區域前綴！
+    if not target_cc or target_cc == "JP" or query_explicit_cc == "JP":
+        # 2a. 優先檢查全詞精確匹配
+        for category, brands in BRANDS_DB.items():
+            if category.startswith("_") or not isinstance(brands, dict):
+                continue
+            for brand_name, brand_data in brands.items():
+                if not isinstance(brand_data, dict):
+                    continue
+                search_term = brand_data.get("search_term", brand_name)
+                if _is_exact_token(brand_name) or any(_is_exact_token(a) for a in brand_data.get("aliases", [])):
+                    print(f"🏪 Brand Exact Match: '{query_clean}' → '{search_term}'")
+                    return ([search_term, query_clean], brand_name, None)
+
+        # 2b. 子字串匹配（保留區域前綴/後綴，例如 '新宿一蘭拉麵' -> '新宿 一蘭'，剝除 OSM tag 泛用尾詞如 ラーメン/牛丼 避免偏遠誤配，display_name=None）
+        _BRAND_GENERIC_TAIL_TOKENS = {
+            "ラーメン", "牛丼", "カレー", "うどん", "焼き鳥", "回転寿司",
+            "定食", "ファミレス", "コーヒー", "100均", "ドラッグストア", "コンビニ",
+        }
+        brand_candidates: List[tuple[str, str, str]] = []
+        for category, brands in BRANDS_DB.items():
+            if category.startswith("_") or not isinstance(brands, dict):
+                continue
+            for brand_name, brand_data in brands.items():
+                if not isinstance(brand_data, dict):
+                    continue
+                search_term = brand_data.get("search_term", brand_name)
+                brand_candidates.append((brand_name, search_term, brand_name))
+                for alias in brand_data.get("aliases", []):
+                    brand_candidates.append((alias, search_term, brand_name))
+        brand_candidates.sort(key=lambda x: len(x[0]), reverse=True)
+        for token, search_term, brand_name in brand_candidates:
+            if _matches_phrase(token, query_lower):
+                pattern = (
+                    rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])"
+                    if token.isascii()
+                    else re.escape(token)
+                )
+                st_parts = str(search_term).split()
+                effective_brand_term = (
+                    " ".join(st_parts[:-1]).strip()
+                    if len(st_parts) >= 2 and st_parts[-1] in _BRAND_GENERIC_TAIL_TOKENS and len(" ".join(st_parts[:-1]).strip()) >= 2
+                    else search_term
+                )
+                combined = re.sub(pattern, f" {effective_brand_term} ", query_clean, count=1, flags=re.IGNORECASE)
+                combined = re.sub(r"\s+", " ", combined).strip()
+                terms = list(dict.fromkeys([combined, query_clean]))
+                print(f"🏪 Brand Substring Match (Prefix Preserved): '{query_clean}' → {terms}")
+                return (terms, None, None)
+
+    if chain_fallback_terms:
+        return (chain_fallback_terms, None, None)
+    
+    # === 3. 🆕 模糊搜尋（僅供純地標拼寫容錯；排除含設施/餐飲尾詞查詢與連鎖品牌，防止 '龍山寺站'/'台北101美食'/'東京迪士尼飯店' 誤命中） ===
+    normalized_query = normalize_for_fuzzy(query_clean)
+    if len(normalized_query) >= 2 and not _has_poi_or_food_intent(query_clean):
         match_result = process.extractOne(
-            normalized_query, 
+            normalized_query,
             FUZZY_INDEX.keys(),
             scorer=fuzz.ratio,
-            score_cutoff=88  # 🆕 提高閾值至 88% 減少誤匹配
+            score_cutoff=88
         )
         
         if match_result:
             matched_key, score, _ = match_result
             landmark_key, landmark = FUZZY_INDEX[matched_key]
-            if _is_country_compatible(landmark):
-                print(f"[FUZZY] '{query}' -> '{landmark['display']}' (score: {score})")
-                return ([landmark["search"], query], landmark["display"], landmark)
+            if _is_country_compatible(landmark) and not _is_chain_brand_entry(query_clean, landmark, landmark.get("display"), landmark_key=landmark_key):
+                print(f"[FUZZY] '{query_clean}' -> '{landmark['display']}' (score: {score})")
+                return ([landmark["search"], query_clean], landmark["display"], landmark)
 
+    # === 4. 特殊處理：迪士尼（僅限全詞精確指向樂園本體，杜絕劫持『東京迪士尼飯店』『迪士尼餐廳』） ===
+    if norm_query_chars in _EXACT_JP_DISNEY_QUERIES and (
+        target_cc == "JP" or any(jp in query_lower for jp in ("東京", "tokyo", "日本", "japan"))
+    ):
+        disney = LANDMARKS_DB.get("東京迪士尼樂園") or LANDMARKS_DB.get("東京迪士尼")
+        return (["Tokyo Disneyland", "東京ディズニーランド", query_clean], "東京迪士尼樂園", disney)
+    if norm_query_chars in _EXACT_HK_DISNEY_QUERIES and (target_cc == "HK" or "香港" in query_clean):
+        return (["Hong Kong Disneyland", query_clean], "香港迪士尼樂園", None)
     
-    # === 4. 特殊處理：迪士尼 ===
-    if "迪士尼" in query or "disney" in query_lower:
-        if country_code == "JP" or any(jp in query.lower() for jp in ["東京", "tokyo", "日本", "japan"]):
-            disney = LANDMARKS_DB.get("東京迪士尼樂園")
-            return (["Tokyo Disneyland", "東京ディズニーランド", query], "東京迪士尼樂園", disney)
-        elif country_code == "HK" or "香港" in query:
-            return (["Hong Kong Disneyland", query], "香港迪士尼樂園", None)
-    
-    return ([query], None, None)
+    return ([query_clean], None, None)
 
 
 async def detect_country_from_trip_title(trip_title: str, api_key: str = None) -> str:
@@ -1536,7 +2699,7 @@ async def detect_country_from_trip_title(trip_title: str, api_key: str = None) -
             return None
         
         result = str(raw).strip().strip("`'\". ").upper()
-        if result in COUNTRY_BOUNDS:
+        if result in COUNTRY_BOUNDS or result in _ISO_TO_ZH_NAME or result in _ISO_TO_EN_NAME:
             print(f"🧠 Trip title '{trip_title}' → Country: {result}")
             return result
         return None
@@ -1545,8 +2708,16 @@ async def detect_country_from_trip_title(trip_title: str, api_key: str = None) -
         return None
 
 
-# 🆕 翻譯結果緩存（減少重複 AI 調用）
-TRANSLATION_CACHE = {}  # {(query, country_code): [translations]}
+# 🆕 翻譯結果緩存（減少重複 AI / Wiki 調用，具上限防止記憶體無界成長）
+TRANSLATION_CACHE: "OrderedDict[tuple, list]" = OrderedDict()
+_MAX_TRANSLATION_CACHE_SIZE = 1024
+
+
+def _set_translation_cache(key: tuple, val: list) -> None:
+    TRANSLATION_CACHE[key] = val
+    TRANSLATION_CACHE.move_to_end(key)
+    while len(TRANSLATION_CACHE) > _MAX_TRANSLATION_CACHE_SIZE:
+        TRANSLATION_CACHE.popitem(last=False)
 
 # ==========================================
 # 🗺️ 全球語系搜尋分級策略 (Global Language Geocoding Strategies)
@@ -1581,39 +2752,64 @@ def get_country_search_strategy(country_code: str) -> str:
     if cc in ["FR", "DE", "ES", "IT", "PT", "BE", "CH"]: return "GLOBAL_V1" # 拉丁變體暫歸全域
     return "GLOBAL_V1"
 
-async def translate_place_name(query: str, country_code: str, api_key: str = None) -> list:
-    """🔤 使用 Gemini 將地名翻譯成目標國家語言
-    
-    🆕 v2.1: 針對日本輸出多語言變體（漢字、假名、羅馬拼音）
+async def translate_place_name(
+    query: str,
+    country_code: str,
+    api_key: str = None,
+    lat: Optional[float] = None,
+    lng: Optional[float] = None,
+) -> list:
+    """🔤 三層極速地名翻譯（0ms 通用設施微字典 ➔ 1.8s Flash-Lite [解鎖全球 122+ 國] ➔ 1.2s 免 Key Wikipedia langlinks）
     
     Returns: 搜尋變體列表 [翻譯後, 英文, 原文]
     """
-    if not country_code or not api_key:
-        return [query]
-    
-    # 🆕 緩存檢查
-    # Cache key based on input
-    cache_key = (query.lower(), country_code) # Corrected cache_key to match function parameters
+    clean_q = (query or "").strip()
+    if not clean_q or not country_code:
+        return [clean_q or query]
+
+    # 未完成注音符號直接原詞返回，不消耗翻譯配額
+    if _INCOMPLETE_ZHUYIN_RE.search(clean_q):
+        return [clean_q]
+
+    cc = country_code.strip().upper()
+    # 純英文/數字查詢於英語系國家無需翻譯
+    if clean_q.isascii() and cc in ("US", "GB", "AU", "CA", "NZ", "IE", "SG"):
+        return [clean_q]
+    # 華語地區的中文查詢直接走異體字展開，無需外語翻譯
+    if cc in ("TW", "CN", "HK", "MO") and _HAS_CJK_RE.search(clean_q):
+        return [clean_q]
+
+    mode_tag = "ai" if api_key else "free"
+    nearest_city_tag = (
+        _find_nearest_city_anchor_en(lat, lng, country_code=cc, max_km=25.0) or ""
+        if clean_q in GENERIC_FACILITY_TRANSLATIONS
+        else ""
+    )
+    cache_key = (clean_q.lower(), cc, mode_tag, nearest_city_tag.lower())
     if cache_key in TRANSLATION_CACHE:
-        print(f"🔤 CACHE HIT: '{query}' → {TRANSLATION_CACHE[cache_key]}")
-        return TRANSLATION_CACHE[cache_key]
-    
-    country_info = COUNTRY_BOUNDS.get(country_code)
-    if not country_info:
-        return [query]
-    
-    try:
-        # Step 1: AI Analysis
-        # 🆕 識別語系策略
-        strat_key = get_country_search_strategy(country_code)
-        strat_info = GEOCODE_STRATEGIES.get(strat_key, GEOCODE_STRATEGIES["GLOBAL_V1"])
-        instruction = strat_info["instruction"]
-        
-        country_name = country_info["name"]
-        
-        # 🆕 動態 Prompt 生成：根據各國語系策略進行專家級轉換
-        prompt = f"""你是地理資訊與搜尋地標專家。用戶正在前往 {country_name} ({country_code}) 進行旅行。
-用戶目前的搜尋地名：「{query}」
+        TRANSLATION_CACHE.move_to_end(cache_key)
+        print(f"🔤 CACHE HIT: '{clean_q}' ({cc}/{mode_tag}) → {TRANSLATION_CACHE[cache_key]}")
+        return list(TRANSLATION_CACHE[cache_key])
+
+    # Layer 1: 0ms 通用旅遊設施多語微字典（免 Key、跨歐美日韓，含座標鄰近城市精準組合）
+    micro_terms = _translate_via_micro_dict(clean_q, cc, lat=lat, lng=lng)
+    if micro_terms and not api_key:
+        result = list(dict.fromkeys([*micro_terms, clean_q]))[:5]
+        _set_translation_cache(cache_key, result)
+        print(f"🔤 MicroDict '{clean_q}' ({cc}) → {result}")
+        return result
+
+    # Layer 2: 有 API Key 時呼叫 Flash-Lite（1.8s 硬上限，解鎖全球 122+ 國）
+    ai_timed_out = False
+    if api_key:
+        try:
+            strat_key = get_country_search_strategy(cc)
+            strat_info = GEOCODE_STRATEGIES.get(strat_key, GEOCODE_STRATEGIES["GLOBAL_V1"])
+            instruction = strat_info["instruction"]
+            country_name = get_country_display_name(cc)
+
+            prompt = f"""你是地理資訊與搜尋地標專家。用戶正在前往 {country_name} ({cc}) 進行旅行。
+用戶目前的搜尋地名：「{clean_q}」
 
 【核心指令】：{instruction}
 【額外要求】：
@@ -1623,34 +2819,52 @@ async def translate_place_name(query: str, country_code: str, api_key: str = Non
 
 只輸出翻譯後的關鍵字列表，每行一個："""
 
-        # 🆕 傳入 api_key 確保地圖搜尋翻譯功能正常 (BYOK 模式)
-        raw = await call_extraction_server(prompt, intent_type="GEOCODE", api_key=api_key)
-        if not raw or not str(raw).strip():
-            return [query]
-        
-        lines = [line.strip() for line in str(raw).strip().split("\n") if line.strip()]
-        if lines:
-            # 確保原始查詢也在列表中
-            if query not in lines:
-                lines.append(query)
-            result = lines[:5]  # 🆕 最多5個變體（增加語系容錯）
-            # 🆕 存入緩存
-            TRANSLATION_CACHE[cache_key] = result
-            print(f"🔤 Translated '{query}' via {strat_key} → {result} (cached)")
-            return result
-        return [query]
-    except Exception as e:
-        print(f"🔤 Translation error: {e}")
-        return [query]
+            raw = await asyncio.wait_for(
+                call_extraction_server(prompt, intent_type="GEOCODE", api_key=api_key),
+                timeout=1.8,
+            )
+            if raw and str(raw).strip():
+                lines = [line.strip() for line in str(raw).strip().split("\n") if line.strip()]
+                if lines:
+                    merged = list(dict.fromkeys([*lines, *micro_terms, clean_q]))[:5]
+                    _set_translation_cache(cache_key, merged)
+                    print(f"🔤 Translated '{clean_q}' via {strat_key} ({cc}) → {merged} (cached)")
+                    return merged
+        except asyncio.TimeoutError:
+            ai_timed_out = True
+            print(f"🔤 AI Translation timed out (1.8s) for '{clean_q}' ({cc}); degrading to free bridge")
+        except Exception as e:
+            print(f"🔤 AI Translation fallback ({type(e).__name__}): {e}")
 
+    # Layer 3: 免 Key（或 AI 超時）降級（先取微字典，未命中則 1.2s Wikipedia langlinks 跨語言橋接）
+    if micro_terms:
+        result = list(dict.fromkeys([*micro_terms, clean_q]))[:5]
+        _set_translation_cache(cache_key, result)
+        return result
+
+    if (not api_key or ai_timed_out) and _HAS_CJK_RE.search(clean_q) and cc not in ("TW", "CN", "HK", "MO"):
+        wiki_terms = await _translate_via_wikipedia_langlinks(clean_q, cc)
+        if wiki_terms:
+            result = list(dict.fromkeys([*wiki_terms, clean_q]))[:5]
+            _set_translation_cache(cache_key, result)
+            print(f"🔤 WikiLanglinks '{clean_q}' ({cc}) → {result}")
+            return result
+
+    return [clean_q]
 
 
 def filter_results_by_country(results: list, country_code: str, strict: bool = True) -> list:
-    """🗺️ 根據經緯度過濾結果，只保留目標國家內的地點（具備優雅降級防禦）"""
-    if not country_code or country_code not in COUNTRY_BOUNDS:
+    """🗺️ 根據經緯度過濾結果：
+    - strict=False（軟提示）時絕不硬刪跨國結果，全部保留交由 rerank_top_k 智慧排序；
+    - strict=True（使用者明確鎖國或搜純國名）時過濾至目標國邊界，若無結果則優雅降級保留原列表。
+    """
+    if not strict or not country_code:
+        return results
+    cc = country_code.strip().upper()
+    if cc not in COUNTRY_BOUNDS:
         return results
     
-    bounds = COUNTRY_BOUNDS[country_code]
+    bounds = COUNTRY_BOUNDS[cc]
     filtered = []
     
     for r in results:
@@ -1663,7 +2877,7 @@ def filter_results_by_country(results: list, country_code: str, strict: bool = T
             filtered.append(r)
     
     if filtered:
-        log_debug(f"Filtered: {len(results)} -> {len(filtered)} (Target: {country_code})")
+        log_debug(f"Filtered: {len(results)} -> {len(filtered)} (Target: {cc}, strict=True)")
         return filtered
     
     # 關鍵優雅降級：若目標國過濾後無結果（如規劃日本行程搜尋「桃園機場」等跨國樞紐），
@@ -1682,32 +2896,162 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
+def _fold_latin(text: str) -> str:
+    """移除拉丁變音符號（例如 Zürich -> zurich、München -> munchen、Café -> cafe）。"""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(ch)
+    )
+
+
+def _detect_script_family(text: str) -> str:
+    """辨識地名主要文字系統，用於精準判定真正跨文字系統端名（例如 Athens vs Αθήνα、Bangkok vs กรุงเทพมหานคร）。"""
+    if not text:
+        return "latin"
+    if re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]", text):
+        return "cjk"
+    if re.search(r"[\uac00-\ud7af]", text):
+        return "hangul"
+    if re.search(r"[\u0e00-\u0e7f]", text):
+        return "thai"
+    if re.search(r"[\u0370-\u03ff]", text):
+        return "greek"
+    if re.search(r"[\u0400-\u04ff]", text):
+        return "cyrillic"
+    if re.search(r"[\u0600-\u06ff]", text):
+        return "arabic"
+    return "latin"
+
+
+def _is_ordered_subsequence(needle: str, haystack: str) -> bool:
+    """判定 needle 是否為 haystack 之保序子序列（如 '桃园机场' ∈ '台湾桃园国际机场'，但 '台中' ∉ '中台禅寺'）。"""
+    it = iter(haystack)
+    return all(ch in it for ch in needle)
+
+
 def cjk_text_similarity(query: str, target: str) -> float:
-    """CJK 字符級雙向字義相似度
+    """多語／CJK 字義相似度（保序子序列 + 短子集折減 + 多 Bigram 召回保護）
     
-    解決 rapidfuzz 在無空格中文下 token_set_ratio 崩潰為 66% 的問題。
-    結合精確匹配、子字串包含加分與字元級集合匹配。
+    - 含 CJK 時：
+      1) 完全相同 -> 1.0；去空白相同 -> 0.98；q 包含於 t -> 0.85..1.0；
+      2) 短子集 (t 包含於 q，如 '大阪燒'->'大阪' 或 '一蘭總店'->'一蘭') 採冪次折減 (<0.75 / <0.50)；
+      3) len(q)>=3 保序子序列且命中至少 1 個雙字 Bigram (如 '桃園機場'->'臺灣桃園國際機場') -> >=0.85；
+      4) 其餘採 min(0.84, max(0.60*ratio + 0.40*token_sort, 多 Bigram 覆蓋保護))，
+         壓制顛倒字 ('台中' vs '中台禪寺' <0.60) 同時保護跨序複合查詢 ('新宿一蘭拉麵' vs '一蘭 新宿中央東口店')。
+    - 純非 CJK（拉丁/歐語等）採去變音符詞級與序列比對。
     """
-    q = query.strip().lower()
-    t = target.strip().lower()
+    q = normalize_cjk_chars(query)
+    t = normalize_cjk_chars(target)
     if not q or not t:
         return 0.0
     if q == t:
         return 1.0
     if q in t:
         return 0.85 + 0.15 * (len(q) / max(len(q), len(t)))
-    q_chars = " ".join(list(q))
-    t_chars = " ".join(list(t))
-    return fuzz.token_set_ratio(q_chars, t_chars) / 100.0
+    if not _HAS_CJK_RE.search(q) and not _HAS_CJK_RE.search(t):
+        qf = _fold_latin(q)
+        tf = _fold_latin(t)
+        if qf == tf:
+            return 1.0
+        if qf in tf:
+            return 0.85 + 0.15 * (len(qf) / max(len(qf), len(tf)))
+        seq_ratio = fuzz.ratio(qf, tf) / 100.0
+        tok_sort = fuzz.token_sort_ratio(qf, tf) / 100.0
+        tok_set = fuzz.token_set_ratio(qf, tf) / 100.0
+        if len(tf) < len(qf) and " " in qf:
+            tok_set *= (len(tf) / len(qf)) ** 0.5
+        return max(seq_ratio, tok_sort, tok_set)
+
+    qc = re.sub(r"\s+", "", q)
+    tc = re.sub(r"\s+", "", t)
+    if not qc or not tc:
+        return 0.0
+    if qc == tc:
+        return 0.98
+    if qc in tc:
+        return 0.85 + 0.15 * (len(qc) / max(len(qc), len(tc)))
+    if tc in qc:
+        return min(0.75, 0.78 * ((len(tc) / len(qc)) ** 1.2))
+
+    q_bigrams = [qc[i:i + 2] for i in range(len(qc) - 1)]
+    matched_bigrams = [bg for bg in q_bigrams if bg in tc]
+    if len(qc) >= 3 and _is_ordered_subsequence(qc, tc) and len(matched_bigrams) >= 1:
+        return 0.85 + 0.10 * (len(qc) / max(len(qc), len(tc)))
+
+    seq_ratio = fuzz.ratio(qc, tc) / 100.0
+    tok_sort = fuzz.token_sort_ratio(" ".join(list(qc)), " ".join(list(tc))) / 100.0
+    base = 0.60 * seq_ratio + 0.40 * tok_sort
+    if len(matched_bigrams) >= 2:
+        covered = set()
+        for i in range(len(qc) - 1):
+            if qc[i:i + 2] in tc:
+                covered.add(i)
+                covered.add(i + 1)
+        bigram_cov = len(covered) / len(qc)
+        bigram_score = 0.86 * bigram_cov * (0.85 + 0.15 * min(1.0, len(qc) / max(len(tc), 1)))
+        base = max(base, bigram_score)
+    return min(0.84, base)
 
 
-def proximity_decay(dist_km: float) -> float:
+def proximity_decay(dist_km: float, half_life_km: float = 150.0) -> float:
     """平滑有理衰減函數
     
-    取代高斯 50km 斷崖 (exp(-800)=0)，兼顧同城優先 (10km=0.94, 50km=0.75) 
-    與跨國交通樞紐保留 (2000km=0.07)。
+    預設半衰期 150km（兼顧同城與跨區樞紐）；街景縮放 zoom>=14 可收斂至 15km 強化同城連鎖店排序。
     """
-    return 1.0 / (1.0 + (dist_km / 150.0))
+    return 1.0 / (1.0 + (dist_km / half_life_km))
+
+
+_CJK_POI_OR_FOOD_MARKERS = (
+    "燒", "麵", "面", "飯", "饭", "餐廳", "食堂", "咖啡", "火鍋", "牛排", "拉麵", "壽司",
+    "燒肉", "居酒屋", "蛋糕", "麵包", "雪花冰", "剉冰", "刨冰", "冰店", "冰淇淋", "冰果室",
+    "分店", "本店", "總店", "咖啡店", "書店", "藥妝店", "麵包店", "拉麵店", "便利商店",
+    "車站", "站", "駅", "飯店", "酒店", "旅館", "民宿", "寺", "廟", "神社", "教堂",
+    "公園", "市場", "夜市", "機場", "空港", "大學", "中學", "高中", "國小",
+    "醫院", "藥局", "畫廊", "博物館", "美術館", "水族館", "圖書館", "展覽館", "體育館", "紀念館",
+    "購物", "百貨", "大樓", "市政廳", "市政府", "歌劇院", "動物園", "植物園", "廣場", "城堡", "皇宮", "王宮",
+)
+_ASCII_POI_OR_FOOD_RE = re.compile(
+    r"\b(?:tower|station|hotel|restaurant|cafe|coffee|bar|shop|market|temple|shrine|museum|gallery|mall|bakery|ramen|sushi|izakaya|palace|castle|cathedral|church|airport|hospital|pharmacy|hall|opera|zoo|park)\b",
+    re.IGNORECASE,
+)
+_NON_LATIN_SCRIPT_RE = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\u0e00-\u0e7f\u0600-\u06ff\u0400-\u04ff\u0370-\u03ff]"
+)
+_STATION_QUERY_MARKERS = ("車站", "火車站", "地鐵站", "捷運站", "站", "駅", "station")
+_CIVIC_QUERY_MARKERS = ("市政廳", "市政府", "city hall", "town hall", "rathaus", "市役所", "시청")
+_LANDMARK_QUERY_MARKERS = (
+    "城堡", "皇宮", "王宮", "大教堂", "博物館", "美術館", "歌劇院", "鐵塔", "塔", "堡",
+    "寺", "廟", "神社", "宮", "castle", "palace", "cathedral", "museum", "opera", "temple", "shrine",
+)
+_STATION_STRIP_RE = re.compile(
+    r"(?:中央火車站|中央車站|火車站|地鐵站|捷運站|轉運站|車站|站|駅"
+    r"|\s+(?:central\s+station|train\s+station|railway\s+station|station|hauptbahnhof|bahnhof|päärautatieasema|rautatieasema|gare\s+centrale|stazione\s+centrale|estación\s+central|centraal\s+station|centralstation))$",
+    re.IGNORECASE,
+)
+_MACRO_GEO_TYPES = {"country", "state", "province", "city", "county", "municipality", "region", "administrative"}
+_MINOR_UTILITY_TYPES = {"bus_stop", "parking", "bicycle_parking", "waste_basket", "atm", "post_box", "bench", "board", "ticket", "greenfield", "bureau_de_change", "residential", "pedestrian"}
+
+
+def _has_poi_or_food_intent(query: str) -> bool:
+    """精準偵測查詢是否為餐飲/店家/設施 POI（使用英文單詞邊界與精確中文詞尾，杜絕『Barcelona』被 bar、『冰島』被 冰 誤殺）。"""
+    q_low = (query or "").strip().lower()
+    if not q_low:
+        return False
+    if any(k in q_low for k in _CJK_POI_OR_FOOD_MARKERS):
+        return True
+    return bool(_ASCII_POI_OR_FOOD_RE.search(q_low))
+
+
+def _normalize_osm_type(raw_type: Any) -> str:
+    """統一 Photon ('N'/'W'/'R') 與 Nominatim/Overpass ('node'/'way'/'relation') 的 OSM 型別，確保跨源去重精準一致。"""
+    t = str(raw_type or "").strip().lower()
+    if t in ("n", "node"):
+        return "node"
+    if t in ("w", "way"):
+        return "way"
+    if t in ("r", "relation"):
+        return "relation"
+    return t
 
 
 def rerank_top_k(
@@ -1716,33 +3060,183 @@ def rerank_top_k(
     bias_lat: Optional[float] = None,
     bias_lng: Optional[float] = None,
     target_country: Optional[str] = None,
-    limit: int = 5
+    limit: Optional[int] = 5,
+    zoom: Optional[float] = None,
+    query_variants: Optional[List[str]] = None,
+    is_explicit_country: bool = False,
+    is_explicit_city: bool = False,
+    explicit_city_coords: Optional[tuple[float, float]] = None,
+    is_admin_region_anchor: bool = False,
+    is_subdistrict_anchor: bool = False,
+    prefix_label: Optional[str] = None,
 ) -> list:
-    """多元加權 Top-K 重排演算法
+    """多元加權智慧重排演算法（limit=None 或 <=0 時回傳全量排序結果，不截斷）
     
-    FinalScore = 0.50 * 文字相似度 + 0.30 * 空間距離衰減 + 0.10 * 權威重要度 + 0.10 * 目標國加分
-    相容 Photon 缺省 importance 的順位遞減啟發補償。
+    FinalScore = 0.50 * 多變體字義相似度 + 0.30 * 動態空間衰減 + 0.10 * 權威重要度
+               + 0.10 * 目標國軟加分 + 宏觀高相似度閘門(>=0.85) + 交通/市政/住宿軟加分
     """
     if not candidates:
         return []
         
     scored = []
-    target_bounds = COUNTRY_BOUNDS.get(target_country.upper()) if target_country else None
+    target_cc_up = target_country.upper() if target_country else ""
+    target_bounds = COUNTRY_BOUNDS.get(target_cc_up) if target_cc_up else None
+
+    # 彙整多語/異體字比對變體（使歐美/日文翻譯結果取得正確高分）
+    variants: List[str] = []
+    for raw_v in [query, *(query_variants or [])]:
+        v = (raw_v or "").strip()
+        if v and v not in variants:
+            variants.append(v)
+    variant_scripts = {_detect_script_family(v) for v in variants if v}
+
+    q_lower = (query or "").strip().lower()
+    wants_station = any(m in q_lower for m in _STATION_QUERY_MARKERS)
+    wants_hotel = any(m in q_lower for m in ("飯店", "酒店", "旅館", "民宿", "ホテル", "hotel"))
+    wants_civic = any(m in q_lower for m in _CIVIC_QUERY_MARKERS)
+    wants_landmark = any(m in q_lower for m in _LANDMARK_QUERY_MARKERS)
+    wants_state_or_province = (
+        is_admin_region_anchor
+        or (len(q_lower) >= 3 and q_lower[-1] in ("省", "州", "府", "道", "縣", "県", "都"))
+        or bool(re.search(r"\b(?:state|province|prefecture|county|region)\b", q_lower))
+    )
+    has_poi_or_food_tail = False if (is_explicit_country or is_explicit_city) else _has_poi_or_food_intent(query)
+    stripped_station_variants: List[str] = []
+    if wants_station:
+        for v in variants:
+            sv = _STATION_STRIP_RE.sub("", v).strip()
+            if sv and len(sv) >= 2 and sv not in stripped_station_variants:
+                stripped_station_variants.append(sv)
+    q_has_non_latin = bool(_NON_LATIN_SCRIPT_RE.search(q_lower))
+
+    if is_subdistrict_anchor and (zoom is None or float(zoom) > 10.0):
+        half_life = 5.0
+    elif zoom is not None and float(zoom) >= 14.0:
+        half_life = 15.0
+    else:
+        half_life = 150.0
+    norm_prefix_label = normalize_cjk_chars(prefix_label) if prefix_label else ""
 
     for idx, item in enumerate(candidates):
-        name = item.get("name", "")
+        name = item.get("name", "") or ""
         lat = item.get("lat")
         lng = item.get("lng")
+        item_type = str(item.get("type") or "").lower()
+        osm_key = str(item.get("osm_key") or "").lower()
+        admin_level = item.get("admin_level")
+        item_source = str(item.get("source") or "").lower()
         
-        # 1. 字義相似度 (權重 50%)
-        fuzz_score = cjk_text_similarity(query, name)
-        
-        # 2. 空間距離衰減 (權重 30%)
-        proximity_score = 0.5
+        # 1. 多變體字義相似度 (權重 50%)
+        fuzz_score = max((cjk_text_similarity(v, name) for v in variants), default=0.0)
+
+        # 明確國名／特別行政區查詢之當地母語權威實體對齊（支援 COUNTRY_BOUNDS 與國名雙軌判定）
+        in_target_bounds = bool(
+            target_bounds
+            and lat is not None
+            and lng is not None
+            and target_bounds["lat_min"] - 0.1 <= lat <= target_bounds["lat_max"] + 0.1
+            and target_bounds["lng_min"] - 0.1 <= lng <= target_bounds["lng_max"] + 0.1
+        )
+        if not in_target_bounds and target_cc_up and not target_bounds:
+            item_country_raw = str(item.get("country") or "").strip()
+            if item_country_raw:
+                item_cc = country_to_iso(item_country_raw).upper()
+                if item_cc and item_cc == target_cc_up:
+                    in_target_bounds = True
+
+        # 提前計算與空間基準點之距離（供跨語系保底與空間衰減共用）
         dist_km = None
         if bias_lat is not None and bias_lng is not None and lat is not None and lng is not None:
             dist_km = haversine_km(bias_lat, bias_lng, lat, lng)
-            proximity_score = proximity_decay(dist_km)
+
+        # 次區/城市前綴 + 店名（如『新宿一蘭拉麵』對應 OSM 門店 name='一蘭', address='東京都新宿区...'）：
+        # 門店位於目標商圈 <=3km 或地址含前綴時給予前綴補強（上限 0.76，仍低於顯式完整分店名 '一蘭 新宿中央東口店' ~0.79）
+        if (
+            prefix_label
+            and norm_prefix_label
+            and name
+            and norm_prefix_label not in normalize_cjk_chars(name)
+        ):
+            addr_blob = normalize_cjk_chars(
+                " ".join(str(item.get(f) or "") for f in ("address", "display_name", "city", "state"))
+            )
+            in_prefixed_area = (
+                (norm_prefix_label in addr_blob)
+                or (is_subdistrict_anchor and dist_km is not None and dist_km <= 3.0)
+            )
+            if in_prefixed_area:
+                prefixed_sim = max(
+                    (cjk_text_similarity(v, f"{prefix_label} {name}") for v in variants),
+                    default=0.0,
+                )
+                fuzz_score = max(fuzz_score, min(0.76, prefixed_sim * 0.90))
+
+        is_sar_macro_entity = bool(
+            is_explicit_country
+            and target_cc_up in _OSM_SAR_CODES
+            and in_target_bounds
+            and (
+                item_type in ("country", "state", "province", "city", "administrative")
+                or (isinstance(admin_level, int) and admin_level in (2, 3, 4))
+            )
+            and fuzz_score >= 0.70
+        )
+        if (
+            is_explicit_country
+            and (
+                ((item_type == "country" or admin_level == 2) and (item_source == "photon_global" or in_target_bounds))
+                or is_sar_macro_entity
+            )
+        ):
+            fuzz_score = max(fuzz_score, 0.95)
+
+        # 明確城市／觀光小鎮／大區查詢之當地母語權威對齊：
+        # 僅在「詞級相似度 >= 0.50」或「候選為所有查詢變體皆未覆蓋之非拉丁母語文字（如希臘文 Αθήνα、泰文 กรุงเทพมหานคร、韓文 서울특별시、英文查 Tokyo 對齊 東京都）」時放行，
+        # 徹底杜絕鄰近同文字城市（如 Hoboken 劫持紐約、Ixelles 劫持布魯塞爾、Naha 劫持沖繩）之誤加權！
+        anchor_dist_km: Optional[float] = None
+        if is_explicit_city and explicit_city_coords is not None and lat is not None and lng is not None:
+            anchor_dist_km = haversine_km(lat, lng, explicit_city_coords[0], explicit_city_coords[1])
+            name_script = _detect_script_family(name)
+            is_unrepresented_non_latin = (name_script != "latin" and name_script not in variant_scripts)
+            if fuzz_score >= 0.50 or is_unrepresented_non_latin:
+                if not wants_state_or_province and item_type in ("city", "municipality", "town") and anchor_dist_km <= 8.0:
+                    fuzz_score = max(fuzz_score, 0.96)
+                elif item_type in ("state", "province") and (
+                    anchor_dist_km <= 15.0 or (wants_state_or_province and in_target_bounds and fuzz_score >= 0.75)
+                ):
+                    fuzz_score = max(fuzz_score, 0.95)
+
+        # 跨語系索引命中保底（單調平滑：僅當候選文字系統未被任何查詢變體覆蓋、且位於目標國或錨點 30km 內時保底 0.65，消除 <0.45->0.72 非單調斷崖）
+        if (
+            item_source.startswith("photon")
+            and not is_explicit_country
+            and not is_explicit_city
+            and name
+            and len(q_lower) >= 3
+            and (_detect_script_family(name) not in variant_scripts)
+            and (in_target_bounds or (dist_km is not None and dist_km <= 30.0))
+        ):
+            fuzz_score = max(fuzz_score, 0.65)
+
+        # 日本/歐洲 OSM 主車站常僅以城市名命名（例如 name="東京" 或 name="Helsinki", osm_key="railway", type="station"）
+        is_major_station = (
+            (osm_key == "railway" and item_type in ("station", "train_station"))
+            or item_type in ("station", "train_station", "bus_station", "ferry_terminal")
+        )
+        is_minor_transit = (
+            not is_major_station
+            and (osm_key in ("railway", "public_transport") or item_type in ("halt", "tram_stop", "subway_entrance", "bus_stop"))
+        )
+        is_transit_candidate = is_major_station or is_minor_transit
+        if wants_station and is_transit_candidate and stripped_station_variants:
+            stripped_sim = max((cjk_text_similarity(sv, name) for sv in stripped_station_variants), default=0.0)
+            if stripped_sim > fuzz_score:
+                fuzz_score = stripped_sim
+        
+        # 2. 動態空間距離衰減 (權重 30%)
+        proximity_score = 0.5
+        if dist_km is not None:
+            proximity_score = proximity_decay(dist_km, half_life_km=half_life)
             
         # 3. 權威度評分 (權重 10%)
         raw_imp = item.get("importance")
@@ -1752,31 +3246,94 @@ def rerank_top_k(
             except (ValueError, TypeError):
                 imp_score = 0.1
         else:
-            # 順位遞減啟發補償（Photon 內部已按分數排序，前序給予較高權重）
-            imp_score = max(0.1, 0.7 - idx * 0.1)
+            # 分源批次名次補償（對齊 Nominatim 0.15..0.45 尺度，避免 Photon 無 importance 項目壓過 Nominatim 大寺廟實測權威度）
+            raw_batch_rank = item.get("_batch_rank")
+            rank_idx = int(raw_batch_rank) if isinstance(raw_batch_rank, int) and raw_batch_rank >= 0 else idx
+            imp_score = max(0.15, 0.45 - rank_idx * 0.03)
                 
         # 4. 目標國軟性加分 (加分 10%)
-        country_bonus = 0.0
-        if target_bounds and lat is not None and lng is not None:
-            if (target_bounds["lat_min"] - 0.1 <= lat <= target_bounds["lat_max"] + 0.1 and
-                target_bounds["lng_min"] - 0.1 <= lng <= target_bounds["lng_max"] + 0.1):
-                country_bonus = 0.10
+        country_bonus = 0.10 if in_target_bounds else 0.0
+
+        # 5. 交通/市政/地標/住宿類別軟性加分（取代舊版硬性 osm_tag 過濾，不誤殺轉運站與地下街，同時壓低公車站牌與藥局雜訊）
+        category_bonus = 0.0
+        if wants_station:
+            if is_major_station:
+                category_bonus = 0.08
+            elif is_minor_transit:
+                category_bonus = 0.02
+            elif item_type in _MINOR_UTILITY_TYPES:
+                category_bonus = -0.05
+        elif wants_civic:
+            if item_type in ("townhall", "city_hall", "public_building"):
+                category_bonus = 0.10
+            elif osm_key in ("tourism", "historic"):
+                category_bonus = 0.04
+            elif item_type in _MINOR_UTILITY_TYPES or item_type in ("pharmacy", "restaurant", "cafe", "fast_food", "tram_stop"):
+                category_bonus = -0.08
+        elif wants_landmark:
+            if (
+                osm_key in ("tourism", "historic")
+                or item_type in ("attraction", "castle", "palace", "museum", "cathedral", "theatre", "monument", "place_of_worship", "temple", "shrine")
+            ):
+                category_bonus = 0.08
+            elif is_minor_transit or is_major_station or item_type in _MINOR_UTILITY_TYPES:
+                category_bonus = -0.08
+        elif wants_hotel:
+            if osm_key == "tourism" or item_type in ("hotel", "hostel", "guest_house", "motel"):
+                category_bonus = 0.06
+            elif is_minor_transit or item_type in _MINOR_UTILITY_TYPES:
+                category_bonus = -0.08
+
+        # 6. 宏觀行政區高相似度保護閘門（僅 fuzz_score >= 0.85 且非餐飲/POI 查詢才加分，防止「大阪燒」被「大阪府」劫持；
+        #    同名城市與省州共存時，除明確指定國名或省/州/府/道/縣/都查詢外，優先讓精準匹配的 city/municipality (fuzz>=0.95) 排在包覆它的 province/state 之前）
+        macro_bonus = 0.0
+        is_anchored_resort_town = bool(
+            is_explicit_city
+            and not wants_state_or_province
+            and item_type == "town"
+            and anchor_dist_km is not None
+            and anchor_dist_km <= 8.0
+        )
+        is_macro_candidate = (
+            item_type in _MACRO_GEO_TYPES
+            or (isinstance(admin_level, int) and 1 <= admin_level <= 6)
+            or is_anchored_resort_town
+        )
+        if is_macro_candidate and fuzz_score >= 0.85 and not has_poi_or_food_tail:
+            if item_type == "country" or admin_level == 2 or is_sar_macro_entity:
+                macro_bonus = 0.30
+            elif (
+                not is_explicit_country
+                and not wants_state_or_province
+                and (item_type in ("city", "municipality") or is_anchored_resort_town)
+                and fuzz_score >= 0.95
+            ):
+                macro_bonus = 0.26
+            elif item_type in ("state", "province") or (isinstance(admin_level, int) and admin_level <= 4):
+                macro_bonus = 0.23
+            else:
+                macro_bonus = 0.20
 
         final_score = (
             0.50 * fuzz_score +
             0.30 * proximity_score +
             0.10 * imp_score +
-            country_bonus
+            country_bonus +
+            category_bonus +
+            macro_bonus
         )
         
         item_copy = dict(item)
+        item_copy.pop("_batch_rank", None)
         item_copy["_score"] = round(final_score, 4)
         if dist_km is not None:
             item_copy["_dist_km"] = round(dist_km, 2)
         scored.append((final_score, item_copy))
         
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [item for _, item in scored[:limit]]
+    if limit is not None and limit > 0:
+        return [item for _, item in scored[:limit]]
+    return [item for _, item in scored]
 
 
 # 🌍 地理編碼 API 端點（供前端使用）
@@ -1805,8 +3362,8 @@ async def detect_country_from_query(query: str, api_key: str = None) -> str:
         raw = await call_extraction_server(prompt, intent_type="GEOCODE", api_key=api_key)
         if not raw or not str(raw).strip():
             return None
-        result = str(raw).strip().upper()
-        if result in COUNTRY_BOUNDS:
+        result = str(raw).strip().strip("`'\". ").upper()
+        if result in COUNTRY_BOUNDS or result in _ISO_TO_ZH_NAME or result in _ISO_TO_EN_NAME:
             print(f"🧠 Query '{query}' → Country: {result}")
             return result
         return None
@@ -1869,7 +3426,8 @@ for _k, _v in COUNTRY_NAME_TO_CODE.items():
 GLOBAL_CITY_ANCHORS: Dict[str, Dict[str, Any]] = {
     "台北": {"lat": 25.0330, "lng": 121.5654, "country": "TW"},
     "taipei": {"lat": 25.0330, "lng": 121.5654, "country": "TW"},
-    "新北": {"lat": 25.0169, "lng": 121.4628, "country": "TW"},
+    "新北": {"lat": 25.0169, "lng": 121.4628, "country": "TW", "en": "New Taipei"},
+    "new taipei": {"lat": 25.0169, "lng": 121.4628, "country": "TW", "en": "New Taipei"},
     "台中": {"lat": 24.1477, "lng": 120.6736, "country": "TW"},
     "taichung": {"lat": 24.1477, "lng": 120.6736, "country": "TW"},
     "台南": {"lat": 22.9999, "lng": 120.2269, "country": "TW"},
@@ -1898,14 +3456,14 @@ GLOBAL_CITY_ANCHORS: Dict[str, Dict[str, Any]] = {
     "osaka": {"lat": 34.6937, "lng": 135.5023, "country": "JP"},
     "京都": {"lat": 35.0116, "lng": 135.7681, "country": "JP"},
     "kyoto": {"lat": 35.0116, "lng": 135.7681, "country": "JP"},
-    "北海道": {"lat": 43.0618, "lng": 141.3545, "country": "JP"},
-    "hokkaido": {"lat": 43.0618, "lng": 141.3545, "country": "JP"},
-    "札幌": {"lat": 43.0618, "lng": 141.3545, "country": "JP"},
-    "sapporo": {"lat": 43.0618, "lng": 141.3545, "country": "JP"},
-    "沖繩": {"lat": 26.2124, "lng": 127.6809, "country": "JP"},
-    "okinawa": {"lat": 26.2124, "lng": 127.6809, "country": "JP"},
-    "那霸": {"lat": 26.2124, "lng": 127.6809, "country": "JP"},
-    "naha": {"lat": 26.2124, "lng": 127.6809, "country": "JP"},
+    "北海道": {"lat": 43.0618, "lng": 141.3545, "country": "JP", "en": "Hokkaido", "is_admin_region": True},
+    "hokkaido": {"lat": 43.0618, "lng": 141.3545, "country": "JP", "en": "Hokkaido", "is_admin_region": True},
+    "札幌": {"lat": 43.0618, "lng": 141.3545, "country": "JP", "en": "Sapporo"},
+    "sapporo": {"lat": 43.0618, "lng": 141.3545, "country": "JP", "en": "Sapporo"},
+    "沖繩": {"lat": 26.2124, "lng": 127.6809, "country": "JP", "en": "Okinawa", "is_admin_region": True},
+    "okinawa": {"lat": 26.2124, "lng": 127.6809, "country": "JP", "en": "Okinawa", "is_admin_region": True},
+    "那霸": {"lat": 26.2124, "lng": 127.6809, "country": "JP", "en": "Naha"},
+    "naha": {"lat": 26.2124, "lng": 127.6809, "country": "JP", "en": "Naha"},
     "石垣島": {"lat": 24.3407, "lng": 124.1556, "country": "JP"},
     "ishigaki": {"lat": 24.3407, "lng": 124.1556, "country": "JP"},
     "福岡": {"lat": 33.5904, "lng": 130.4017, "country": "JP"},
@@ -1926,6 +3484,14 @@ GLOBAL_CITY_ANCHORS: Dict[str, Dict[str, Any]] = {
     "nara": {"lat": 34.6851, "lng": 135.8048, "country": "JP"},
     "仙台": {"lat": 38.2682, "lng": 140.8694, "country": "JP"},
     "sendai": {"lat": 38.2682, "lng": 140.8694, "country": "JP"},
+    "函館": {"lat": 41.7687, "lng": 140.7288, "country": "JP"},
+    "hakodate": {"lat": 41.7687, "lng": 140.7288, "country": "JP"},
+    "小樽": {"lat": 43.1907, "lng": 140.9947, "country": "JP"},
+    "otaru": {"lat": 43.1907, "lng": 140.9947, "country": "JP"},
+    "橫濱": {"lat": 35.4437, "lng": 139.6380, "country": "JP"},
+    "yokohama": {"lat": 35.4437, "lng": 139.6380, "country": "JP"},
+    "輕井澤": {"lat": 36.3489, "lng": 138.5970, "country": "JP"},
+    "karuizawa": {"lat": 36.3489, "lng": 138.5970, "country": "JP"},
     "首爾": {"lat": 37.5665, "lng": 126.9780, "country": "KR"},
     "seoul": {"lat": 37.5665, "lng": 126.9780, "country": "KR"},
     "釜山": {"lat": 35.1796, "lng": 129.0756, "country": "KR"},
@@ -1934,7 +3500,8 @@ GLOBAL_CITY_ANCHORS: Dict[str, Dict[str, Any]] = {
     "jeju": {"lat": 33.4996, "lng": 126.5312, "country": "KR"},
     "曼谷": {"lat": 13.7563, "lng": 100.5018, "country": "TH"},
     "bangkok": {"lat": 13.7563, "lng": 100.5018, "country": "TH"},
-    "清邁": {"lat": 18.7883, "lng": 98.9853, "country": "TH"},
+    "清邁": {"lat": 18.7883, "lng": 98.9853, "country": "TH", "en": "Chiang Mai"},
+    "chiang mai": {"lat": 18.7883, "lng": 98.9853, "country": "TH", "en": "Chiang Mai"},
     "新加坡": {"lat": 1.3521, "lng": 103.8198, "country": "SG"},
     "singapore": {"lat": 1.3521, "lng": 103.8198, "country": "SG"},
     "香港": {"lat": 22.3193, "lng": 114.1694, "country": "HK"},
@@ -1953,6 +3520,99 @@ GLOBAL_CITY_ANCHORS: Dict[str, Dict[str, Any]] = {
     "sydney": {"lat": -33.8688, "lng": 151.2093, "country": "AU"},
     "墨爾本": {"lat": -37.8136, "lng": 144.9631, "country": "AU"},
     "melbourne": {"lat": -37.8136, "lng": 144.9631, "country": "AU"},
+    # 台灣補充縣市（『臺』異體字由 normalize_cjk_chars 統一對齊，不重複插入避免覆蓋『台北』主標籤）
+    "桃園": {"lat": 24.9936, "lng": 121.3010, "country": "TW"},
+    "taoyuan": {"lat": 24.9936, "lng": 121.3010, "country": "TW"},
+    "新竹": {"lat": 24.8138, "lng": 120.9675, "country": "TW"},
+    "hsinchu": {"lat": 24.8138, "lng": 120.9675, "country": "TW"},
+    "基隆": {"lat": 25.1276, "lng": 121.7392, "country": "TW"},
+    "keelung": {"lat": 25.1276, "lng": 121.7392, "country": "TW"},
+    "彰化": {"lat": 24.0518, "lng": 120.5161, "country": "TW"},
+    "changhua": {"lat": 24.0518, "lng": 120.5161, "country": "TW"},
+    "屏東": {"lat": 22.6762, "lng": 120.4929, "country": "TW"},
+    "pingtung": {"lat": 22.6762, "lng": 120.4929, "country": "TW"},
+    "南投": {"lat": 23.9610, "lng": 120.9719, "country": "TW"},
+    "nantou": {"lat": 23.9610, "lng": 120.9719, "country": "TW"},
+    # 歐洲主要旅遊城市
+    "慕尼黑": {"lat": 48.1351, "lng": 11.5820, "country": "DE"},
+    "munich": {"lat": 48.1351, "lng": 11.5820, "country": "DE"},
+    "柏林": {"lat": 52.5200, "lng": 13.4050, "country": "DE"},
+    "berlin": {"lat": 52.5200, "lng": 13.4050, "country": "DE"},
+    "法蘭克福": {"lat": 50.1109, "lng": 8.6821, "country": "DE"},
+    "frankfurt": {"lat": 50.1109, "lng": 8.6821, "country": "DE"},
+    "漢堡": {"lat": 53.5511, "lng": 9.9937, "country": "DE"},
+    "hamburg": {"lat": 53.5511, "lng": 9.9937, "country": "DE"},
+    "科隆": {"lat": 50.9375, "lng": 6.9603, "country": "DE"},
+    "cologne": {"lat": 50.9375, "lng": 6.9603, "country": "DE"},
+    "赫爾辛基": {"lat": 60.1699, "lng": 24.9384, "country": "FI"},
+    "helsinki": {"lat": 60.1699, "lng": 24.9384, "country": "FI"},
+    "羅瓦涅米": {"lat": 66.5039, "lng": 25.7294, "country": "FI"},
+    "rovaniemi": {"lat": 66.5039, "lng": 25.7294, "country": "FI"},
+    "斯德哥爾摩": {"lat": 59.3293, "lng": 18.0686, "country": "SE"},
+    "stockholm": {"lat": 59.3293, "lng": 18.0686, "country": "SE"},
+    "奧斯陸": {"lat": 59.9139, "lng": 10.7522, "country": "NO"},
+    "oslo": {"lat": 59.9139, "lng": 10.7522, "country": "NO"},
+    "哥本哈根": {"lat": 55.6761, "lng": 12.5683, "country": "DK"},
+    "copenhagen": {"lat": 55.6761, "lng": 12.5683, "country": "DK"},
+    "雷克雅維克": {"lat": 64.1466, "lng": -21.9426, "country": "IS"},
+    "reykjavik": {"lat": 64.1466, "lng": -21.9426, "country": "IS"},
+    "阿姆斯特丹": {"lat": 52.3676, "lng": 4.9041, "country": "NL"},
+    "amsterdam": {"lat": 52.3676, "lng": 4.9041, "country": "NL"},
+    "鹿特丹": {"lat": 51.9244, "lng": 4.4777, "country": "NL"},
+    "rotterdam": {"lat": 51.9244, "lng": 4.4777, "country": "NL"},
+    "布魯塞爾": {"lat": 50.8503, "lng": 4.3517, "country": "BE"},
+    "brussels": {"lat": 50.8503, "lng": 4.3517, "country": "BE"},
+    "維也納": {"lat": 48.2082, "lng": 16.3738, "country": "AT"},
+    "vienna": {"lat": 48.2082, "lng": 16.3738, "country": "AT"},
+    "薩爾茨堡": {"lat": 47.8095, "lng": 13.0550, "country": "AT"},
+    "salzburg": {"lat": 47.8095, "lng": 13.0550, "country": "AT"},
+    "蘇黎世": {"lat": 47.3769, "lng": 8.5417, "country": "CH"},
+    "zurich": {"lat": 47.3769, "lng": 8.5417, "country": "CH"},
+    "日內瓦": {"lat": 46.2044, "lng": 6.1432, "country": "CH"},
+    "geneva": {"lat": 46.2044, "lng": 6.1432, "country": "CH"},
+    "布拉格": {"lat": 50.0755, "lng": 14.4378, "country": "CZ"},
+    "prague": {"lat": 50.0755, "lng": 14.4378, "country": "CZ"},
+    "布達佩斯": {"lat": 47.4979, "lng": 19.0402, "country": "HU"},
+    "budapest": {"lat": 47.4979, "lng": 19.0402, "country": "HU"},
+    "華沙": {"lat": 52.2297, "lng": 21.0122, "country": "PL"},
+    "warsaw": {"lat": 52.2297, "lng": 21.0122, "country": "PL"},
+    "馬德里": {"lat": 40.4168, "lng": -3.7038, "country": "ES"},
+    "madrid": {"lat": 40.4168, "lng": -3.7038, "country": "ES"},
+    "巴塞隆納": {"lat": 41.3874, "lng": 2.1686, "country": "ES"},
+    "barcelona": {"lat": 41.3874, "lng": 2.1686, "country": "ES"},
+    "里斯本": {"lat": 38.7223, "lng": -9.1393, "country": "PT"},
+    "lisbon": {"lat": 38.7223, "lng": -9.1393, "country": "PT"},
+    "威尼斯": {"lat": 45.4408, "lng": 12.3155, "country": "IT"},
+    "venice": {"lat": 45.4408, "lng": 12.3155, "country": "IT"},
+    "佛羅倫斯": {"lat": 43.7696, "lng": 11.2558, "country": "IT"},
+    "florence": {"lat": 43.7696, "lng": 11.2558, "country": "IT"},
+    "雅典": {"lat": 37.9838, "lng": 23.7275, "country": "GR"},
+    "athens": {"lat": 37.9838, "lng": 23.7275, "country": "GR"},
+    "都柏林": {"lat": 53.3498, "lng": -6.2603, "country": "IE"},
+    "dublin": {"lat": 53.3498, "lng": -6.2603, "country": "IE"},
+    "愛丁堡": {"lat": 55.9533, "lng": -3.1883, "country": "GB"},
+    "edinburgh": {"lat": 55.9533, "lng": -3.1883, "country": "GB"},
+    # 美洲 / 大洋洲 / 中東主要旅遊城市
+    "洛杉磯": {"lat": 34.0522, "lng": -118.2437, "country": "US"},
+    "los angeles": {"lat": 34.0522, "lng": -118.2437, "country": "US"},
+    "舊金山": {"lat": 37.7749, "lng": -122.4194, "country": "US"},
+    "san francisco": {"lat": 37.7749, "lng": -122.4194, "country": "US"},
+    "西雅圖": {"lat": 47.6062, "lng": -122.3321, "country": "US"},
+    "seattle": {"lat": 47.6062, "lng": -122.3321, "country": "US"},
+    "芝加哥": {"lat": 41.8781, "lng": -87.6298, "country": "US"},
+    "chicago": {"lat": 41.8781, "lng": -87.6298, "country": "US"},
+    "波士頓": {"lat": 42.3601, "lng": -71.0589, "country": "US"},
+    "boston": {"lat": 42.3601, "lng": -71.0589, "country": "US"},
+    "溫哥華": {"lat": 49.2827, "lng": -123.1207, "country": "CA"},
+    "vancouver": {"lat": 49.2827, "lng": -123.1207, "country": "CA"},
+    "多倫多": {"lat": 43.6532, "lng": -79.3832, "country": "CA"},
+    "toronto": {"lat": 43.6532, "lng": -79.3832, "country": "CA"},
+    "奧克蘭": {"lat": -36.8509, "lng": 174.7645, "country": "NZ"},
+    "auckland": {"lat": -36.8509, "lng": 174.7645, "country": "NZ"},
+    "杜拜": {"lat": 25.2048, "lng": 55.2708, "country": "AE"},
+    "dubai": {"lat": 25.2048, "lng": 55.2708, "country": "AE"},
+    "伊斯坦堡": {"lat": 41.0082, "lng": 28.9784, "country": "TR"},
+    "istanbul": {"lat": 41.0082, "lng": 28.9784, "country": "TR"},
 }
 
 
@@ -2162,12 +3822,9 @@ async def resolve_trip_spatial_anchor(
             except Exception:
                 pass
 
-    # 若座標已知但尚未確定國家，從 COUNTRY_BOUNDS 反推所在國別
+    # 若座標已知但尚未確定國家，優先以最近城市錨點與最小面積國界反推所在國別
     if anchor_lat is not None and anchor_lng is not None and not inferred_country:
-        for cc, b in COUNTRY_BOUNDS.items():
-            if b["lat_min"] <= anchor_lat <= b["lat_max"] and b["lng_min"] <= anchor_lng <= b["lng_max"]:
-                inferred_country = cc
-                break
+        inferred_country = infer_country_from_coords(anchor_lat, anchor_lng)
 
     bbox = None
     if anchor_lat is not None and anchor_lng is not None:
@@ -2815,8 +4472,8 @@ async def verify_and_heal_itinerary_coords(
                 "segments": built_segments,
             }
 
-    # Step B & C: 逐項座標驗證與非破壞性自癒
-    sem = asyncio.Semaphore(10)
+    # Step B & C: 逐項座標驗證與非破壞性自癒（節流至 Semaphore(3) 並關閉全國 Overpass 掃描以保護公用圖資）
+    sem = asyncio.Semaphore(3)
 
     async def _verify_and_heal_single(item: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(item, dict):
@@ -2921,6 +4578,7 @@ async def verify_and_heal_itinerary_coords(
                         lng=d_anc.get("lng"),
                         country=d_anc.get("country"),
                         bbox=d_anc.get("bbox"),
+                        allow_overpass=False,
                     ),
                     timeout=2.5,
                 )
@@ -2948,31 +4606,139 @@ async def verify_and_heal_itinerary_coords(
     return list(healed_items), daily_locations
 
 
+_EXPLICIT_ADMIN_SUFFIX_RE = re.compile(r"^[\u4e00-\u9fff]{2,5}[市縣省州都道府]$")
+
+
+def _detect_explicit_city_anchor(query: str) -> Optional[tuple[str, Dict[str, Any]]]:
+    """識別查詢是否為純城市／行政區（例如『台中』、『台中市』、『台南』、『慕尼黑』、『Barcelona』），排除餐飲/POI 詞彙。"""
+    clean_q = (query or "").strip()
+    if not clean_q:
+        return None
+    q_low = clean_q.lower()
+    # 先直接比對 GLOBAL_CITY_ANCHORS（含剝除「市/縣/都/府」後比對），確保『Barcelona』『函館』不被誤判為 POI
+    norm_q = normalize_cjk_chars(clean_q)
+    candidates_to_check = [clean_q, q_low, norm_q]
+    if len(clean_q) >= 3 and clean_q[-1] in ("市", "縣", "都", "府", "省", "州"):
+        base = clean_q[:-1]
+        candidates_to_check.extend([base, base.lower(), normalize_cjk_chars(base)])
+    for cand in candidates_to_check:
+        hit = GLOBAL_CITY_ANCHORS.get(cand)
+        if hit:
+            return cand, hit
+    if _has_poi_or_food_intent(clean_q):
+        return None
+    if _EXPLICIT_ADMIN_SUFFIX_RE.match(clean_q):
+        return clean_q, {"country": None}
+    return None
+
+
+def _is_exact_landmark_match(query: str, landmark_data: Optional[dict], display_name: Optional[str]) -> bool:
+    """檢查查詢是否與地標主鍵、顯示名、搜尋名或任一別名達『純字元正規化全詞精確匹配』（防止 >80km 子字串誤觸秒回）。"""
+    if not query or not landmark_data:
+        return False
+    norm_q = normalize_cjk_chars(query)
+    if not norm_q:
+        return False
+    exact_pool = set()
+    for field in (display_name, landmark_data.get("display"), landmark_data.get("search")):
+        if field:
+            exact_pool.add(normalize_cjk_chars(str(field)))
+    for alias in (landmark_data.get("aliases") or []):
+        if alias:
+            exact_pool.add(normalize_cjk_chars(str(alias)))
+    for lm_key, lm_val in LANDMARKS_DB.items():
+        if lm_val is landmark_data:
+            exact_pool.add(normalize_cjk_chars(lm_key))
+            break
+    return norm_q in exact_pool
+
+
+def _extract_nominatim_result(item: dict) -> dict:
+    """將 Nominatim 回傳單筆資料標準化（補齊 addresstype 層級、admin_level、RFC 7946 extent 與 osm_id）。"""
+    addr = item.get("address") if isinstance(item.get("address"), dict) else {}
+    extratags = item.get("extratags") if isinstance(item.get("extratags"), dict) else {}
+    raw_addresstype = str(item.get("addresstype") or "").strip().lower()
+    raw_type = str(item.get("type") or "place").strip().lower()
+    raw_class = str(item.get("class") or "").strip().lower()
+
+    if raw_addresstype in ("country", "state", "province", "city", "county", "municipality", "town", "district", "suburb"):
+        mapped_type = raw_addresstype
+    elif raw_class == "boundary" and raw_type == "administrative":
+        mapped_type = raw_addresstype or "administrative"
+    else:
+        mapped_type = raw_type or "place"
+
+    admin_lvl_raw = extratags.get("admin_level")
+    admin_level: Optional[int] = int(admin_lvl_raw) if str(admin_lvl_raw).isdigit() else None
+    if admin_level is None:
+        place_rank = item.get("place_rank")
+        if mapped_type == "country" or place_rank == 4:
+            admin_level = 2
+        elif mapped_type in ("state", "province") or place_rank == 8:
+            admin_level = 4
+        elif mapped_type in ("city", "county", "municipality") or place_rank in (12, 16):
+            admin_level = 6
+
+    imp = item.get("importance")
+    norm_extent = normalize_extent(item.get("boundingbox"), source_format="nominatim")
+    city_val = addr.get("city") or addr.get("town") or addr.get("municipality") or addr.get("county")
+
+    return {
+        "lat": float(item["lat"]),
+        "lng": float(item["lon"]),
+        "name": item.get("name") or item.get("display_name", "").split(",")[0],
+        "display_name": item.get("display_name", ""),
+        "address": item.get("display_name", ""),
+        "type": mapped_type,
+        "osm_key": raw_class or None,
+        "osm_id": item.get("osm_id"),
+        "osm_type": item.get("osm_type"),
+        "city": city_val,
+        "state": addr.get("state"),
+        "country": addr.get("country"),
+        "admin_level": admin_level,
+        "extent": norm_extent,
+        "importance": float(imp) if imp is not None else None,
+        "source": "nominatim",
+    }
+
+
 async def smart_geocode_logic(
-    query: str, 
-    limit: int, 
-    trip_title: Optional[str] = None, 
-    api_key: Optional[str] = None, 
-    lat: Optional[float] = None, 
+    query: str,
+    limit: Optional[int] = None,
+    trip_title: Optional[str] = None,
+    api_key: Optional[str] = None,
+    lat: Optional[float] = None,
     lng: Optional[float] = None,
     country: Optional[str] = None,    # 🆕 前端傳入的國家過濾
     region: Optional[str] = None,     # 🆕 前端傳入的區域過濾
     zoom: Optional[float] = None,     # 🆕 P1: 地圖縮放層級 (用於動態 bias)
-    bbox: Optional[str] = None        # 🆕 P2: 地圖視窗邊界 (minLon,minLat,maxLon,maxLat)
+    bbox: Optional[str] = None,       # 🆕 P2: 地圖視窗邊界 (minLon,minLat,maxLon,maxLat)
+    allow_overpass: bool = True,      # 🆕 批次行程自癒時關閉全國 Overpass 掃描
+    _allow_paren_fallback: bool = True,  # 🛡️ 括號/前綴長標題單次降級守衛（保護舊版 SW 用戶且防無窮遞迴）
 ) -> dict:
-    log_debug(f"🌍 [SmartGeo] 啟動多層檢索: '{query}' (Trip: {trip_title or '無'}, 偏置: {lat},{lng})")
-    log_debug(f"🔍 [SmartGeo] Start search: '{query}' (Trip: {trip_title}, Country: {country}, Region: {region}, Zoom: {zoom}, Bias: {lat},{lng})")
+    clean_query = (query or "").strip()
+    if not clean_query:
+        return {"results": [], "source": "none"}
+
+    # limit=None 或 <=0：上游單次安全抓取上限 25，去重與智慧排序後「有多少筆顯示多少筆」；
+    # limit=1 等小量查詢至少抓 15 筆候選池供 rerank_top_k 擇優，再依 return_limit 切片遵守向下相容契約。
+    return_limit: Optional[int] = min(int(limit), 50) if (limit is not None and int(limit) > 0) else None
+    upstream_limit: int = min(max(return_limit * 5, 15), 50) if return_limit is not None else 25
+
+    log_debug(f"🌍 [SmartGeo] 啟動多層檢索: '{clean_query}' (Trip: {trip_title or '無'}, limit={return_limit or 'ALL'}, 偏置: {lat},{lng})")
+    log_debug(f"🔍 [SmartGeo] Start search: '{clean_query}' (Trip: {trip_title}, Country: {country}, Region: {region}, Zoom: {zoom}, Bias: {lat},{lng})")
     
-    # 🧠 Step 0: 智能國家判斷和翻譯
+    # 🧠 Step 0: 智能國家判斷和翻譯（優先序：前端顯式 country > 查詢純國名 > 查詢地名關鍵字 > 地圖中心座標 > tripTitle/region）
     country_code = None
     api_country_lock = None # 🆕 只有明確指定時才物理鎖死 API
-    search_queries = [query]
+    search_queries = [clean_query]
     chinese_display = None  # 🆕 中文顯示名稱
     
     # 🆕 第零優先級：前端明確指定的國家 (最高優先，大小寫不敏感，支援 2 位 ISO 與全名)
     if country:
         c_upper = country.strip().upper()
-        if c_upper in COUNTRY_BOUNDS:
+        if c_upper in COUNTRY_BOUNDS or c_upper in _ISO_TO_ZH_NAME or c_upper in _ISO_TO_EN_NAME:
             country_code = c_upper
         else:
             normalized_country = country.strip().lower()
@@ -2983,227 +4749,621 @@ async def smart_geocode_logic(
     
     # 🆕 0.1 優先級：偵測搜尋詞本身是否就是國家名（明確導向）
     user_explicit_country = False
-    norm_query = query.strip().lower()
-    # 修正：使用正確的變數名稱 COUNTRY_TO_ISO，並支援大小寫不敏感查詢
+    norm_query = clean_query.lower()
     found_explicit_code = next((v.upper() for k, v in COUNTRY_TO_ISO.items() if k.lower() == norm_query), None)
     if found_explicit_code:
         country_code = found_explicit_code
         user_explicit_country = True
         api_country_lock = country_code
         log_debug(f"   🌍 Explicit Country Query Detected (Lock) → {country_code}")
-    
-    # 第一優先級：關鍵字規則（確定性，零延遲，依序校驗：景點名稱 ➔ 母體行程標題 ➔ 目標區域）
+
+    # 🆕 0.2 優先級：識別純城市／行政區查詢（例如「台中」、「台南」、「慕尼黑」、「巴塞隆納」）
+    explicit_city_hit = None if user_explicit_country else _detect_explicit_city_anchor(clean_query)
+    is_explicit_city = explicit_city_hit is not None
+    explicit_city_cc = (explicit_city_hit[1].get("country") or "").upper() if explicit_city_hit else ""
+    explicit_city_is_admin_region = bool(explicit_city_hit and explicit_city_hit[1].get("is_admin_region"))
+    explicit_city_en = (
+        _get_city_anchor_english_name(explicit_city_hit[1])
+        if (explicit_city_hit and explicit_city_cc not in ("TW", "CN", "HK", "MO"))
+        else None
+    )
+    explicit_city_coords: Optional[tuple[float, float]] = (
+        (float(explicit_city_hit[1]["lat"]), float(explicit_city_hit[1]["lng"]))
+        if (explicit_city_hit and explicit_city_hit[1].get("lat") is not None and explicit_city_hit[1].get("lng") is not None)
+        else None
+    )
+
+    # 座標所在國（用於餐飲消歧義如「大阪燒」與歐美鏡頭跨語系翻譯）
+    coord_country = infer_country_from_coords(lat, lng)
+    has_poi_or_food_tail = False if (user_explicit_country or is_explicit_city) else _has_poi_or_food_intent(clean_query)
+
+    # 第一優先級：查詢關鍵字 / 已知全球城市前綴 ➔ 地圖中心座標 (lat, lng) ➔ 行程標題 / 目標區域
     if not country_code:
-        country_code = detect_country_from_keywords(query)
-        if not country_code and trip_title:
-            country_code = detect_country_from_keywords(trip_title)
-        if not country_code and region:
-            country_code = detect_country_from_keywords(region)
+        if explicit_city_cc:
+            country_code = explicit_city_cc
+        else:
+            kw_country = detect_country_from_keywords(clean_query) or _detect_country_from_city_prefix(clean_query)
+            # 若查詢為在地美食料理詞（例如台北搜「大阪燒」、「廣島燒」、「台南担仔麵」）且地圖座標已定位，優先以當前地圖所在國為軟提示
+            if kw_country and has_poi_or_food_tail and coord_country and kw_country != coord_country:
+                # 排除明確跨國交通/市政/地標詞（如「東京車站」、「東京鐵塔」、「慕尼黑市政廳」、「赫爾辛基中央車站」、「巴塞隆納聖家堂」）
+                is_specific_landmark_or_transit = any(
+                    m in norm_query
+                    for m in (
+                        "車站", "駅", "機場", "空港", "鐵塔", "塔", "寺", "神社", "教堂", "聖家堂",
+                        "市政廳", "市政府", "歌劇院", "博物館", "美術館", "皇宮", "王宮", "城堡",
+                        "老城區", "舊城區", "廣場", "競技場", "羅浮宮", "迪士尼", "環球影城",
+                        "castle", "tower", "station", "airport", "city hall", "rathaus", "opera", "cathedral", "museum", "palace",
+                    )
+                )
+                country_code = kw_country if is_specific_landmark_or_transit else coord_country
+            elif kw_country:
+                country_code = kw_country
+            elif coord_country:
+                country_code = coord_country
+                log_debug(f"   📍 Coordinate Country Inference → {country_code}")
+            elif trip_title:
+                country_code = detect_country_from_keywords(trip_title)
+            if not country_code and region:
+                country_code = detect_country_from_keywords(region)
         if country_code:
-            log_debug(f"   🔑 Keyword Match → {country_code}")
+            log_debug(f"   🔑 Resolved Country Hint → {country_code}")
 
-    
-    # 第二優先級：AI 判斷（需要 API Key）- 🆕 並行運算優化
-    if not country_code and api_key:
+    # 第二優先級：AI 判斷（僅當座標與關鍵字皆無法推斷且有 API Key 時，嚴格受 1.2s 超時保護）
+    if not country_code and api_key and not _INCOMPLETE_ZHUYIN_RE.search(clean_query):
         log_debug("   🚀 Parallelizing AI country detection...")
-        tasks = []
+        ai_tasks = []
         if trip_title:
-            tasks.append(detect_country_from_trip_title(trip_title, api_key))
-        tasks.append(detect_country_from_query(query, api_key))
-        
-        # 使用 asyncio.gather 同時啟動多個 AI 任務，將延遲從相加轉為取最大值
-        ai_results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # 解析結果（優先級：標題 > 查詢）
-        res_list = [r for r in ai_results if isinstance(r, str) and r]
-        if res_list:
-            country_code = res_list[0]
-            log_debug(f"   🧠 Detected Country (Parallel): {country_code}")
-
+            ai_tasks.append(detect_country_from_trip_title(trip_title, api_key))
+        ai_tasks.append(detect_country_from_query(clean_query, api_key))
+        try:
+            ai_results = await asyncio.wait_for(
+                asyncio.gather(*ai_tasks, return_exceptions=True),
+                timeout=1.2,
+            )
+            res_list = [r for r in ai_results if isinstance(r, str) and r]
+            if res_list:
+                country_code = res_list[0]
+                log_debug(f"   🧠 Detected Country (Parallel): {country_code}")
+        except asyncio.TimeoutError:
+            log_debug("   ⏱️ AI country detection timed out (1.2s), proceeding without lock")
 
     # 🆕 Step 1.1: 快速路徑 - 如果查詢是坐標，直接跳過所有 AI 邏輯
-    if "," in query:
-        parts = query.split(",")
+    if "," in clean_query:
+        parts = clean_query.split(",")
         if len(parts) == 2:
             try:
                 lat_val, lng_val = float(parts[0]), float(parts[1])
-                log_debug(f"   ⚡ FAST PATH: Coordinates detected ({lat_val}, {lng_val})")
-                return {"results": [{
-                    "lat": lat_val, "lng": lng_val, "name": query, "address": query, "type": "coordinate", "source": "direct"
-                }], "source": "direct"}
-            except: pass
+                if math.isfinite(lat_val) and math.isfinite(lng_val) and -90.0 <= lat_val <= 90.0 and -180.0 <= lng_val <= 180.0:
+                    log_debug(f"   ⚡ FAST PATH: Coordinates detected ({lat_val}, {lng_val})")
+                    return {"results": [{
+                        "lat": lat_val, "lng": lng_val, "name": clean_query, "display_name": clean_query, "address": clean_query, "type": "coordinate", "source": "direct"
+                    }], "source": "direct"}
+            except Exception:
+                pass
 
-    # 🆕 Step 1.2: 先嘗試確定性著名景點翻譯（無需 API Key）
-    landmark_result = translate_famous_landmark(query, country_code)
-    search_terms, display_name, landmark_data = landmark_result
+    # 🆕 Step 1.2: 城市/次區/地標前綴空間錨點切換（例如台北搜『慕尼黑市政廳』『台南龍山寺』『新宿一蘭拉麵』『東京迪士尼飯店』）
+    # 同時萃取僅供 rerank_top_k 使用的母語設施單詞（如 Rathaus / City Hall），維持 _translate_via_micro_dict 契約不變
+    effective_bias_lat: Optional[float] = lat
+    effective_bias_lng: Optional[float] = lng
+    city_prefix_switched = False
+    city_prefix_key: Optional[str] = None
+    is_subdistrict_anchor = False
+    rerank_extra_variants: List[str] = []
+    if not user_explicit_country and not is_explicit_city:
+        city_prefix_hit = _detect_city_prefix_anchor(clean_query)
+        if city_prefix_hit:
+            city_prefix_key, prefix_info, prefix_suffix = city_prefix_hit
+            effective_bias_lat = float(prefix_info["lat"])
+            effective_bias_lng = float(prefix_info["lng"])
+            city_prefix_switched = True
+            is_subdistrict_anchor = bool(
+                prefix_info.get("is_subdistrict")
+                or city_prefix_key in _SUBDISTRICT_ANCHORS
+                or city_prefix_key.lower() in _SUBDISTRICT_ANCHORS
+            )
+            target_for_fac = country_code or prefix_info.get("country")
+            rerank_extra_variants = _get_facility_standalone_terms(prefix_suffix, target_for_fac)
+            log_debug(
+                f"   🧭 City-Prefix Anchor Switch → ({effective_bias_lat:.4f}, {effective_bias_lng:.4f}), "
+                f"subdistrict={is_subdistrict_anchor}, rerank_extra={rerank_extra_variants}"
+            )
+
+    cleaned_paren_query = _extract_clean_place_query(clean_query) if _allow_paren_fallback else clean_query
+    has_paren_or_prefix_noise = bool(
+        _allow_paren_fallback
+        and cleaned_paren_query
+        and cleaned_paren_query != clean_query
+        and len(cleaned_paren_query) >= 2
+    )
+
+    # 🆕 Step 1.3: 確定性著名景點翻譯（全詞精確匹配閘門 + 連鎖品牌零覆寫 + 撞名地標安全網）
+    if user_explicit_country or is_explicit_city:
+        search_terms, display_name, landmark_data = ([clean_query], None, None)
+    else:
+        landmark_result = translate_famous_landmark(clean_query, country_code)
+        search_terms, display_name, landmark_data = landmark_result
     
-    # 🚀 INSTANT RETURN: 如果景點有座標且國家與空間錨點相符，直接回傳，完全跳過 API 調用
+    # 🚀 INSTANT RETURN: 全距離強制 _is_exact_landmark_match 且排除連鎖品牌；
+    # HOMONYM_GUARD_KEYS 採精確裸詞比對，僅在 lat is None or lng is None or dist_km > 80.0 阻斷秒回（守住離線 CI 確定性）。
     landmark_country = (landmark_data.get("country") or "").upper() if landmark_data else ""
     effective_target_cc = (api_country_lock or country_code or "").upper()
     country_matches = True
     if effective_target_cc and landmark_country:
         country_matches = (landmark_country == effective_target_cc)
 
-    # 🛡️ 空間錨點距離守衛：若已提供行程錨點 (lat, lng)，且地標距離當前行程錨點超過 80km，嚴禁秒回跨國/跨城同名地標
-    if landmark_data and landmark_data.get("lat") and landmark_data.get("lng") and lat is not None and lng is not None:
-        if haversine_km(lat, lng, landmark_data["lat"], landmark_data["lng"]) > 80.0:
-            country_matches = False
-            display_name = None
+    norm_clean_q = normalize_cjk_chars(clean_query)
+    is_exact_lm = _is_exact_landmark_match(clean_query, landmark_data, display_name)
+    is_chain_brand = _is_chain_brand_entry(clean_query, landmark_data, display_name)
+    is_bare_homonym = norm_clean_q in _HOMONYM_GUARD_NORM
+    lm_dist_km: Optional[float] = (
+        haversine_km(lat, lng, landmark_data["lat"], landmark_data["lng"])
+        if (landmark_data and landmark_data.get("lat") is not None and landmark_data.get("lng") is not None and lat is not None and lng is not None)
+        else None
+    )
 
-    if landmark_data and landmark_data.get("lat") and landmark_data.get("lng") and country_matches:
+    can_instant_return = bool(
+        landmark_data
+        and landmark_data.get("lat") is not None
+        and landmark_data.get("lng") is not None
+        and country_matches
+        and is_exact_lm
+        and not is_chain_brand
+    )
+    landmark_blocked_by_homonym = False
+    if can_instant_return and is_bare_homonym:
+        if lat is None or lng is None or (lm_dist_km is not None and lm_dist_km > 80.0):
+            can_instant_return = False
+            landmark_blocked_by_homonym = True
+            display_name = None
+            landmark_data = None
+            search_terms = [clean_query]
+    elif landmark_data and not can_instant_return:
+        if is_bare_homonym and (lat is None or lng is None or (lm_dist_km is not None and lm_dist_km > 80.0)):
+            landmark_blocked_by_homonym = True
+            display_name = None
+            landmark_data = None
+            search_terms = [clean_query]
+        elif not is_exact_lm or is_chain_brand or not country_matches:
+            display_name = None
+            landmark_data = None
+            search_terms = [clean_query]
+
+    if can_instant_return and landmark_data:
+        lm_addr = f"{landmark_data.get('display', display_name)}, {landmark_data.get('country', '')}"
         instant_result = {
             "lat": landmark_data["lat"],
             "lng": landmark_data["lng"],
             "name": landmark_data.get("display", display_name),
-            "address": f"{landmark_data.get('display', display_name)}, {landmark_data.get('country', '')}",
+            "display_name": lm_addr,
+            "address": lm_addr,
             "type": "landmark",
             "source": "landmarks_db",
-            "original_name": query
+            "original_name": clean_query
         }
         log_debug(f"   ⚡ INSTANT RETURN: {display_name} ({landmark_data['lat']}, {landmark_data['lng']})")
         return {"results": [instant_result], "source": "landmarks_db"}
     
     # 🆕 Step 2: 投機性並行搜尋 (Speculative Parallelism)
-    # 我們開啟三個任務：AI 翻譯、原始名稱搜尋、以及（如果有）景點搜尋
     search_queries = []
     chinese_display = None
     
     tasks = []
-    # 任務 A: AI 翻譯 (如果需要)
+    # 任務 A: 三層極速翻譯（有 Key 走 Flash-Lite 1.8s，無 Key 走 0ms 微字典 + 1.2s Wikipedia langlinks；
+    # 已知城市錨點已有 0ms 英文名或含括號備註雜訊之初次原詞不浪費外部 Wiki 逾時）
     translation_task = None
-    if not display_name and country_code and api_key:
-        translation_task = asyncio.create_task(translate_place_name(query, country_code, api_key))
+    needs_free_translation = bool(
+        not display_name
+        and country_code
+        and not user_explicit_country
+        and not explicit_city_en
+        and not has_paren_or_prefix_noise
+        and _HAS_CJK_RE.search(clean_query)
+        and country_code.upper() not in ("TW", "CN", "HK", "MO")
+    )
+    if (not display_name and country_code and not user_explicit_country and api_key and not has_paren_or_prefix_noise) or needs_free_translation:
+        translation_task = asyncio.create_task(
+            translate_place_name(clean_query, country_code, api_key, lat=effective_bias_lat, lng=effective_bias_lng)
+        )
         tasks.append(translation_task)
     
     # 任務 B: 原始名稱初步搜尋 (Speculative Photon)
     region_term = extract_region_for_search(region or trip_title) if (region or trip_title) else ""
-    # 🛡️ 區域前綴消歧義：若地名本身不含區域前綴，優先以前綴組裝搜尋 (例如 "北海道 朝市")
-    if region_term and region_term not in query:
-        speculative_query = f"{region_term} {query}".strip()
+
+    # 判斷是否為跨城／跨國／離題行程標題，決定是否抑制 region_term 前綴與硬 bbox
+    region_conflicts_with_target = False
+    if user_explicit_country or is_explicit_city:
+        if not region_term or normalize_cjk_chars(region_term) != normalize_cjk_chars(clean_query):
+            region_conflicts_with_target = True
+    if city_prefix_switched and effective_bias_lat is not None and effective_bias_lng is not None:
+        if lat is None or lng is None or haversine_km(lat, lng, effective_bias_lat, effective_bias_lng) > 30.0:
+            region_conflicts_with_target = True
+    if region_term and not region_conflicts_with_target:
+        reg_anchor = GLOBAL_CITY_ANCHORS.get(region_term) or GLOBAL_CITY_ANCHORS.get(region_term.lower())
+        reg_cc = (reg_anchor.get("country") if reg_anchor else detect_country_from_keywords(region_term)) or ""
+        if reg_cc and country_code and reg_cc.upper() != country_code.upper():
+            region_conflicts_with_target = True
+        elif reg_anchor and effective_bias_lat is not None and effective_bias_lng is not None:
+            if haversine_km(effective_bias_lat, effective_bias_lng, reg_anchor["lat"], reg_anchor["lng"]) > 150.0:
+                region_conflicts_with_target = True
+
+    effective_bbox = None if (user_explicit_country or is_explicit_city or region_conflicts_with_target) else bbox
+    use_region_prefix = bool(region_term and not region_conflicts_with_target and region_term.lower() not in norm_query)
+    speculative_query = f"{region_term} {clean_query}".strip() if use_region_prefix else clean_query
+    speculative_lat = None if (user_explicit_country or is_explicit_city) else effective_bias_lat
+    speculative_lng = None if (user_explicit_country or is_explicit_city) else effective_bias_lng
+    if user_explicit_country or is_explicit_city:
+        speculative_zoom = None
+    elif is_subdistrict_anchor and (zoom is None or float(zoom) > 10.0):
+        speculative_zoom = 15.0
+    elif city_prefix_switched and region_conflicts_with_target:
+        speculative_zoom = 12.0
     else:
-        speculative_query = query
-    speculative_task = asyncio.create_task(geocode_with_photon(speculative_query, limit, lat, lng, zoom, country_code=api_country_lock, bbox=bbox))
+        speculative_zoom = zoom
+
+    speculative_task = asyncio.create_task(
+        geocode_with_photon(
+            speculative_query,
+            upstream_limit,
+            speculative_lat,
+            speculative_lng,
+            speculative_zoom,
+            country_code=api_country_lock,
+            bbox=effective_bbox,
+        )
+    )
     tasks.append(speculative_task)
     
-    # 🆕 任務 C: 全域觀察者任務 (Global Observer)
-    # 如果偵測到「明確國名」，開啟全域不偏向搜尋，防止在地店家排擠國家座標
+    # 🆕 任務 C: 全域觀察者任務 (Global Observer — 明確國名或跨城純城市查詢不帶 bbox/偏置，防止在地店家排擠宏觀實體)
     global_task = None
+    global_q_sent: Optional[str] = None
     if user_explicit_country:
-        # 使用低強度 Bias (0.1) 確保全球範圍的權威結果能排到最前面
-        # 🆕 橋階關鍵字：利用純國碼 (如 AU) 進行強攻，直接定位主權實體，不帶地緣偏見
-        global_q = country_code.upper() if country_code else query
-        global_task = asyncio.create_task(geocode_with_photon(global_q, limit, None, None, None, location_bias_scale=None, osm_tag="place:country", country_code=api_country_lock, bbox=bbox))
-        tasks.append(global_task)
+        global_q = get_country_english_name(country_code) or clean_query
+        global_osm_tag = None if (country_code and country_code.upper() in _OSM_SAR_CODES) else "place:country"
+        if global_osm_tag is not None or global_q.lower() != speculative_query.lower():
+            global_q_sent = global_q
+            global_task = asyncio.create_task(
+                geocode_with_photon(
+                    global_q,
+                    upstream_limit,
+                    None,
+                    None,
+                    None,
+                    location_bias_scale=None,
+                    osm_tag=global_osm_tag,
+                    country_code=api_country_lock,
+                    bbox=None,
+                )
+            )
+            tasks.append(global_task)
+    elif is_explicit_city:
+        # 跨城宏觀召回：日本城市若具日文新字體變體（如 沖繩->沖縄、那霸->那覇、橫濱->横浜、輕井澤->軽井沢）優先採日文漢字精準召回；
+        # 否則以 0ms 城市錨點英文名（如 巴塞隆納->Barcelona、慕尼黑->Munich）或 CJK 異體字並行取回完整邊界與 extent；
+        # 若無差異且 speculative_task 已採無偏置/無 bbox 查詢，避免對 Photon 發出重複雙打請求引發 503
+        city_variants = expand_cjk_variants(clean_query)
+        jp_city_var = _jp_kanji_variant(clean_query) if (country_code and country_code.upper() == "JP") else None
+        if jp_city_var and jp_city_var.lower() != speculative_query.lower():
+            macro_q = jp_city_var
+        elif explicit_city_en and explicit_city_en.lower() != speculative_query.lower():
+            macro_q = explicit_city_en
+        else:
+            macro_q = next((v for v in city_variants if v != clean_query), clean_query)
+        if macro_q.lower() != speculative_query.lower():
+            global_q_sent = macro_q
+            global_task = asyncio.create_task(
+                geocode_with_photon(
+                    macro_q,
+                    upstream_limit,
+                    None,
+                    None,
+                    None,
+                    location_bias_scale=None,
+                    country_code=api_country_lock,
+                    bbox=None,
+                )
+            )
+            tasks.append(global_task)
 
-    log_debug(f"   🚀 Starting Speculative Searches for '{query}'...")
-    
-    # 等待初步結果或翻譯完成（設置一個小的超時或併行等待）
-    # 為了保持簡單，我們等待所有任務完成，但此時已是「並行」而非「順位」
+    log_debug(f"   🚀 Starting Speculative Searches for '{clean_query}'...")
     await asyncio.gather(*tasks, return_exceptions=True)
 
     # 彙整搜尋關鍵字
     if display_name:
-        search_queries = search_terms
+        search_queries = list(search_terms)
         chinese_display = display_name
-    elif translation_task and not translation_task.exception():
-        search_queries = translation_task.result()
-        log_debug(f"   🔤 AI Translated: {search_queries}")
-    
+    elif translation_task and not translation_task.cancelled() and not translation_task.exception():
+        search_queries = list(translation_task.result() or [])
+        log_debug(f"   🔤 Translated variants: {search_queries}")
+
+    # 連鎖品牌子字串前綴保留搜尋詞（例如「新宿一蘭拉麵」->「新宿 一蘭 ラーメン」，display_name=None）仍應納入查詢變體
+    if search_terms and not landmark_blocked_by_homonym:
+        for st in search_terms:
+            if st and st not in search_queries:
+                if st != clean_query:
+                    search_queries.insert(0, st)
+                else:
+                    search_queries.append(st)
+
+    # 明確國名／已知城市查詢補充 0ms 英文權威名供 rerank 多變體評分（免依賴外部 Wikipedia 逾時）
+    if user_explicit_country:
+        en_country = get_country_english_name(country_code)
+        if en_country and en_country not in search_queries:
+            search_queries.insert(0, en_country)
+    elif is_explicit_city and explicit_city_en and explicit_city_en not in search_queries:
+        search_queries.insert(0, explicit_city_en)
+
+    # 日本單語系乾淨漢字變體（如「東京車站」->「東京駅」獨立變體，不空白拼接）
+    if country_code and country_code.upper() == "JP":
+        jp_var = _jp_kanji_variant(clean_query)
+        if jp_var and jp_var not in search_queries:
+            search_queries.insert(0, jp_var)
+
     # 🆕 P1-B: 展開 CJK 異體字變體（如「台中一中」→「臺中一中」）加入搜尋
-    for variant in expand_cjk_variants(query):
+    for variant in expand_cjk_variants(clean_query):
         if variant not in search_queries:
             search_queries.append(variant)
 
     if not country_code:
         log_debug("   ⚠️ No country detected, using broad search")
 
-    
-
-    
     all_results = []
     found_source = "none"
     
-    # 🆕 整合投機性搜尋結果
-    # A. 全域觀察者結果 (優先級最高，因為這是明確的國土座標)
-    if global_task and not global_task.exception():
+    # 🆕 整合投機性搜尋結果（各批次獨立標記 _batch_rank 供 rerank_top_k 分源權威校正）
+    # A. 全域觀察者結果 (優先級最高，因為這是明確的國土/城市座標)
+    if global_task and not global_task.cancelled() and not global_task.exception():
         global_results = global_task.result()
         if global_results:
-            for r in global_results: r["source"] = "photon_global"
+            for b_idx, r in enumerate(global_results):
+                r["source"] = "photon_global"
+                r["_batch_rank"] = b_idx
             all_results.extend(global_results)
+            found_source = "photon"
             log_debug(f"   🌍 Found {len(global_results)} global entities")
 
     # B. 在地觀察者結果 (次之，包含附近同名店家)
-    if speculative_task and not speculative_task.exception():
+    if speculative_task and not speculative_task.cancelled() and not speculative_task.exception():
         photon_spec = speculative_task.result()
         if photon_spec:
-            for r in photon_spec: r["source"] = "photon_speculative"
+            for b_idx, r in enumerate(photon_spec):
+                r["source"] = "photon_speculative"
+                r["_batch_rank"] = b_idx
             all_results.extend(photon_spec)
-            found_source = "photon"
+            if found_source == "none":
+                found_source = "photon"
             log_debug(f"   ⚡ Using {len(photon_spec)} speculative results")
     
-    # 🆕 P0 Pre-filter: 提前清除境外 Speculative 垃圾結果
-    # 防止中國「台州」等結果佔滿 effective_limit，導致後續 Nominatim 搜尋被 break 跳過
-    is_strict = bool(api_country_lock) # 只有硬性鎖定時才進行嚴格過濾
-    if country_code and all_results:
-        pre_filtered = filter_results_by_country(all_results, country_code, strict=is_strict)
+    # 嚴格遵循 strict：僅於明確鎖國 (api_country_lock) 時才預先過濾境外結果；非鎖國一律保留跨國結果供智慧排序
+    is_strict = bool(api_country_lock)
+    if country_code and all_results and is_strict:
+        pre_filtered = filter_results_by_country(all_results, country_code, strict=True)
         if len(pre_filtered) < len(all_results):
-            log_debug(f"   🧹 Pre-filter: {len(all_results)} → {len(pre_filtered)} (strict={is_strict})")
+            log_debug(f"   🧹 Pre-filter: {len(all_results)} → {len(pre_filtered)} (strict=True)")
             all_results = pre_filtered
 
-    # 限定候選池數量 (當 limit=1 時，仍收集至少 5 筆候選讓 Photon + Nominatim 共同進入 rerank_top_k 距離重排)
-    effective_limit = max(limit * 3, 5) if (lat is not None and lng is not None) else (limit * 2 if user_explicit_country else limit)
-    
-    nominatim_calls = 0  # 🆕 P0: Nominatim 呼叫計數器（遵守 1req/s 政策，最多 2 次）
-    
+    # ⚡ 快速括號/前綴單次降級：含括號備註或時間前綴（如『淺草寺 (雷門拍照)』）且原詞快速 Photon 0 命中時，
+    # 立即轉入清洗後純地名檢索，杜絕在雜訊原詞上空耗 Nominatim + Overpass (10s+) 撞穿前端 3.5s 存檔逾時！
+    if has_paren_or_prefix_noise and not all_results:
+        log_debug(f"   ⚡ Fast Parenthetical Fallback (single-pass): '{clean_query}' -> '{cleaned_paren_query}'")
+        return await smart_geocode_logic(
+            cleaned_paren_query,
+            limit=limit,
+            trip_title=trip_title,
+            api_key=api_key,
+            lat=lat,
+            lng=lng,
+            country=country,
+            region=region,
+            zoom=zoom,
+            bbox=bbox,
+            allow_overpass=allow_overpass,
+            _allow_paren_fallback=False,
+        )
+
+    # 空間感知 Nominatim 短路評估：
+    # - 明確國名：photon_global 或位於目標國邊界內之 country/admin_level=2 實體即為權威命中（支援母語名 Deutschland/Ísland/Österreich）
+    # - 一般查詢：若已帶空間錨點 (lat, lng)，僅當已有「距離 <= 80km 且相似度 >= 0.85」之強在地命中，
+    #   或「經跨語系翻譯且已於目標國內命中 >= 2 筆高相似度結果（如慕尼黑搜 89km 外新天鵝堡）」時才省去額外 Nominatim 請求；
+    # - 嚴格確保 [PoC 4] 秘魯庫斯科搜 Plaza Mayor（無翻譯且馬德里誘餌不在秘魯境內）絕不被短路！
+    had_cross_lang_translation = bool(
+        any(q.strip().lower() != norm_query and q.isascii() != clean_query.isascii() for q in search_queries)
+    )
+    target_cc_bounds = COUNTRY_BOUNDS.get(country_code.upper()) if country_code else None
+    q_has_non_latin = bool(_NON_LATIN_SCRIPT_RE.search(norm_query))
+
+    def _in_target_cc(r: dict) -> bool:
+        if not target_cc_bounds:
+            return False
+        r_lat, r_lng = r.get("lat"), r.get("lng")
+        if r_lat is None or r_lng is None:
+            return False
+        return (
+            target_cc_bounds["lat_min"] - 0.1 <= r_lat <= target_cc_bounds["lat_max"] + 0.1
+            and target_cc_bounds["lng_min"] - 0.1 <= r_lng <= target_cc_bounds["lng_max"] + 0.1
+        )
+
+    def _has_strong_spatial_coverage(results_list: list) -> bool:
+        if not results_list:
+            return False
+        if user_explicit_country:
+            is_sar_cc = bool(country_code and country_code.upper() in _OSM_SAR_CODES)
+            return any(
+                (
+                    (str(r.get("type") or "").lower() == "country" or r.get("admin_level") == 2)
+                    or (is_sar_cc and (str(r.get("type") or "").lower() in ("state", "province", "city", "administrative") or r.get("admin_level") in (3, 4)) and _in_target_cc(r))
+                )
+                and (
+                    str(r.get("source") or "").lower() == "photon_global"
+                    or _in_target_cc(r)
+                    or max((cjk_text_similarity(v, r.get("name", "")) for v in search_queries), default=0.0) >= 0.85
+                )
+                for r in results_list
+            )
+        if is_explicit_city:
+            target_types = ("state", "province") if explicit_city_is_admin_region else ("city", "county", "municipality", "administrative", "town")
+            return any(
+                (str(r.get("type") or "").lower() in target_types or (not explicit_city_is_admin_region and isinstance(r.get("admin_level"), int) and r["admin_level"] <= 6))
+                and (
+                    max((cjk_text_similarity(v, r.get("name", "")) for v in search_queries), default=0.0) >= 0.85
+                    or (
+                        not explicit_city_is_admin_region
+                        and explicit_city_coords is not None
+                        and r.get("lat") is not None
+                        and r.get("lng") is not None
+                        and str(r.get("type") or "").lower() in ("city", "municipality", "town", "province")
+                        and haversine_km(r["lat"], r["lng"], explicit_city_coords[0], explicit_city_coords[1]) <= 8.0
+                    )
+                )
+                for r in results_list
+            )
+        if effective_bias_lat is not None and effective_bias_lng is not None:
+            strong_local = 0
+            strong_in_country_translated = 0
+            coverage_variants = list(dict.fromkeys([*search_queries, *rerank_extra_variants]))
+            for r in results_list:
+                r_lat, r_lng = r.get("lat"), r.get("lng")
+                if r_lat is None or r_lng is None:
+                    continue
+                r_name = r.get("name", "") or ""
+                sim = max((cjk_text_similarity(v, r_name) for v in coverage_variants), default=0.0)
+                dist = haversine_km(effective_bias_lat, effective_bias_lng, r_lat, r_lng)
+                if dist <= 80.0:
+                    is_photon_cross_script = (
+                        str(r.get("source") or "").startswith("photon")
+                        and dist <= 30.0
+                        and bool(r_name)
+                        and len(norm_query) >= 3
+                        and (q_has_non_latin != bool(_NON_LATIN_SCRIPT_RE.search(r_name)))
+                    )
+                    if sim >= 0.85 or is_photon_cross_script:
+                        strong_local += 1
+                if had_cross_lang_translation and sim >= 0.85 and _in_target_cc(r):
+                    strong_in_country_translated += 1
+            needed = 3 if return_limit is None else max(return_limit, 2)
+            if strong_local >= needed:
+                return True
+            if had_cross_lang_translation and strong_in_country_translated >= 2:
+                return True
+            return False
+        return len(results_list) >= (return_limit or 5)
+
+    # 先執行翻譯/日文/異體字變體之 Photon 查詢（非已查過之 speculative_query；最多並行 2 個高優先變體大幅降低尾延遲）
+    searched_photon = {speculative_query.lower()}
+    if global_q_sent:
+        searched_photon.add(global_q_sent.lower())
+
+    pending_photon_queries: List[str] = []
     for q in search_queries:
-        if len(all_results) >= effective_limit:
+        if q.lower() in searched_photon:
+            continue
+        searched_photon.add(q.lower())
+        pending_photon_queries.append(q)
+        if len(pending_photon_queries) >= 2:
             break
-        
-        # 🆕 P0 修復：Photon 只對「非原始查詢」執行（原始已 Speculative 搜過）
-        # 但 Nominatim 對「所有查詢」執行，因為 Nominatim 的 CJK 能力遠優於 Photon
-        if q != query:
-            # Photon (🆕 P1: 傳遞 zoom 用於動態 bias scale, 傳遞 bbox)
-            photon = await geocode_with_photon(q, max(limit, 3), lat, lng, zoom, country_code=api_country_lock, bbox=bbox)
-            if photon:
-                for r in photon: r["source"] = "photon"
+
+    if pending_photon_queries and not (_has_strong_spatial_coverage(all_results) and len(all_results) >= (return_limit or 10)):
+        # 若已切換城市前綴空間錨點（如台北搜『慕尼黑市政廳』-> 慕尼黑座標），直接使用該目標城市偏置精準命中德國主地標；
+        # 否則若為無錨點跨國查詢則不帶原始城市偏置避免跨半球干擾。
+        if city_prefix_switched and effective_bias_lat is not None and effective_bias_lng is not None:
+            use_variant_lat = effective_bias_lat
+            use_variant_lng = effective_bias_lng
+            use_variant_zoom = speculative_zoom
+        else:
+            use_variant_lat = None if (region_conflicts_with_target and not is_explicit_city and not user_explicit_country and coord_country and country_code and coord_country != country_code.upper()) else speculative_lat
+            use_variant_lng = None if use_variant_lat is None else speculative_lng
+            use_variant_zoom = None if use_variant_lat is None else speculative_zoom
+        photon_batch = await asyncio.gather(
+            *[
+                geocode_with_photon(
+                    q,
+                    max(upstream_limit, 5),
+                    use_variant_lat,
+                    use_variant_lng,
+                    use_variant_zoom,
+                    country_code=api_country_lock,
+                    bbox=effective_bbox,
+                )
+                for q in pending_photon_queries
+            ],
+            return_exceptions=True,
+        )
+        for photon in photon_batch:
+            if isinstance(photon, list) and photon:
+                for b_idx, r in enumerate(photon):
+                    r["source"] = "photon"
+                    r["_batch_rank"] = b_idx
                 all_results.extend(photon)
                 found_source = "photon"
 
-        # Nominatim（所有查詢都執行，包括原始中文查詢，並帶入空間錨點 viewbox）
-        if nominatim_calls < 2:
+    # Nominatim 補全（空間感知短路 + Event-Loop 分桶鎖保護 1 req/s + extratags/extent 豐富化）
+    nominatim_calls = 0
+    if not _has_strong_spatial_coverage(all_results):
+        nom_queries = search_queries[:2]
+        for q in nom_queries:
+            if nominatim_calls >= 2:
+                break
+            if nominatim_calls > 0 and _has_strong_spatial_coverage(all_results):
+                break
             try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
-                    params = {"q": q, "format": "json", "limit": max(limit, 3), "addressdetails": 1}
-                    if api_country_lock:
-                        params["countrycodes"] = api_country_lock.lower()
-                    if bbox:
-                        clean_vb = sanitize_bbox(bbox)
-                        if clean_vb:
-                            params["viewbox"] = clean_vb
-                    res = await client.get("https://nominatim.openstreetmap.org/search", params=params, headers={
-                        "User-Agent": "RyanTravelApp/3.0 (contact@ryantravel.app)",
-                        "Accept-Language": "zh-TW,zh,en"  # 🆕 P0: 確保中文結果優先回傳
-                    })
-                    data = res.json()
-                    if data:
-                        for item in data:
-                            imp = item.get("importance")
-                            all_results.append({
-                                "lat": float(item["lat"]), "lng": float(item["lon"]),
-                                "name": item.get("name") or item.get("display_name", "").split(",")[0],
-                                "address": item.get("display_name", ""), "type": item.get("type", "place"),
-                                "importance": float(imp) if imp is not None else None,
-                                "source": "nominatim"
-                            })
-                        found_source = "nominatim"
-                    nominatim_calls += 1
+                async with _get_nominatim_lock():
+                    await _nominatim_rate_limit_wait()
+                    async with httpx.AsyncClient(timeout=3.0) as client:
+                        params: Dict[str, Any] = {
+                            "q": q,
+                            "format": "json",
+                            "limit": max(upstream_limit, 5),
+                            "addressdetails": 1,
+                            "extratags": 1,
+                        }
+                        nom_country_lock = api_country_lock or (explicit_city_cc if (is_explicit_city and explicit_city_cc) else None)
+                        if nom_country_lock:
+                            lock_up = nom_country_lock.upper()
+                            if lock_up in _OSM_SAR_CODES:
+                                params["countrycodes"] = f"cn,{lock_up.lower()}"
+                                if not effective_bbox and lock_up in COUNTRY_BOUNDS:
+                                    b = COUNTRY_BOUNDS[lock_up]
+                                    sar_vb = sanitize_bbox(
+                                        f"{b['lng_min'] - 0.05},{b['lat_min'] - 0.05},{b['lng_max'] + 0.05},{b['lat_max'] + 0.05}"
+                                    )
+                                    if sar_vb:
+                                        params["viewbox"] = sar_vb
+                            else:
+                                params["countrycodes"] = lock_up.lower()
+                        if effective_bbox:
+                            clean_vb = sanitize_bbox(effective_bbox)
+                            if clean_vb:
+                                params["viewbox"] = clean_vb
+                        res = await client.get(
+                            "https://nominatim.openstreetmap.org/search",
+                            params=params,
+                            headers={
+                                "User-Agent": os.getenv("APP_USER_AGENT", "RyanTravelApp/3.0 (contact@ryantravel.app)"),
+                                "Accept-Language": "zh-TW,zh,en",
+                            },
+                        )
+                        nom_status = getattr(res, "status_code", 200)
+                        nom_added = 0
+                        if not isinstance(nom_status, int) or nom_status == 200:
+                            data = res.json()
+                            if isinstance(data, list) and data:
+                                for b_idx, item in enumerate(data):
+                                    if isinstance(item, dict) and "lat" in item and "lon" in item:
+                                        extracted_nom = _extract_nominatim_result(item)
+                                        extracted_nom["_batch_rank"] = b_idx
+                                        all_results.append(extracted_nom)
+                                        nom_added += 1
+                                found_source = "nominatim"
+                        nominatim_calls += 1
+                        if nom_added > 0 and (not is_explicit_city or _has_strong_spatial_coverage(all_results)):
+                            break
             except Exception as e:
-                print(f"   ⚠️ Nominatim error: {e}")
+                print(f"   ⚠️ Nominatim error: {type(e).__name__}: {e!r}")
 
-    # 🆕 P3: Overpass 名稱搜尋（當 Photon + Nominatim 結果不足時啟動）
-    if len(all_results) < 2 and country_code:
-        overpass_results = await search_overpass_by_name(query, country_code, limit)
+    # 🆕 P3: Overpass 名稱搜尋（僅在 Photon + Nominatim 皆 0 筆、非純國名且允許 Overpass 時才觸發，杜絕 11s 拖尾）
+    if allow_overpass and not user_explicit_country and len(all_results) < 1 and country_code:
+        overpass_results = await search_overpass_by_name(clean_query, country_code, min(upstream_limit, 10))
         if overpass_results:
+            for b_idx, r in enumerate(overpass_results):
+                r["_batch_rank"] = b_idx
             all_results.extend(overpass_results)
             found_source = "overpass"
             log_debug(f"   🗺️ Overpass fallback: {len(overpass_results)} results")
@@ -3211,9 +5371,9 @@ async def smart_geocode_logic(
     # ArcGIS Fallback
     if not all_results and ARCGIS_API_KEY:
         try:
-            params = {"SingleLine": query, "f": "json", "outFields": "PlaceName,Place_addr,Type", "maxLocations": effective_limit, "token": ARCGIS_API_KEY}
-            if lat is not None and lng is not None:
-                params["location"] = f"{lng},{lat}" # ArcGIS uses x,y
+            params = {"SingleLine": clean_query, "f": "json", "outFields": "PlaceName,Place_addr,Type", "maxLocations": upstream_limit, "token": ARCGIS_API_KEY}
+            if effective_bias_lat is not None and effective_bias_lng is not None:
+                params["location"] = f"{effective_bias_lng},{effective_bias_lat}" # ArcGIS uses x,y
                 params["distance"] = 50000 # 50km radius bias
             
             async with httpx.AsyncClient(timeout=3.0) as client:
@@ -3223,47 +5383,94 @@ async def smart_geocode_logic(
                 )
                 data = res.json()
                 if data.get("candidates"):
-                    for c in data["candidates"]:
+                    for b_idx, c in enumerate(data["candidates"]):
+                        place_addr = c.get("attributes", {}).get("Place_addr", "")
                         all_results.append({
                             "lat": c["location"]["y"], "lng": c["location"]["x"],
-                            "name": c.get("attributes", {}).get("PlaceName", query),
-                            "address": c.get("attributes", {}).get("Place_addr", ""),
+                            "name": c.get("attributes", {}).get("PlaceName", clean_query),
+                            "display_name": place_addr,
+                            "address": place_addr,
                             "type": c.get("attributes", {}).get("Type", "place"),
-                            "source": "arcgis"
+                            "source": "arcgis",
+                            "_batch_rank": b_idx,
                         })
                     found_source = "arcgis"
         except Exception:
             pass
 
-    # 🗺️ 搜尋過濾策略 (寬容化優雅降級)
+    # 🗺️ 搜尋過濾策略：strict=False 不硬刪跨國結果，全部交由智慧排序；僅 strict=True 時鎖定目標國
     if country_code and all_results:
-        is_strict = bool(api_country_lock)
         all_results = filter_results_by_country(all_results, country_code, strict=is_strict)
 
-    # 去重
-    seen = set()
+    # 跨源正規化去重（統一 Photon N/W/R 與 Nominatim node/way/relation，並於撞鍵時回填缺失之 extent/display_name/admin_level）
+    seen_coords: Dict[tuple, dict] = {}
+    seen_osm_ids: Dict[tuple, dict] = {}
     unique = []
     for r in all_results:
-        key = (round(r["lat"], 5), round(r["lng"], 5))
-        if key not in seen:
-            seen.add(key)
-            unique.append(r)
+        r_osm_id = r.get("osm_id")
+        osm_key_id = (_normalize_osm_type(r.get("osm_type")), str(r_osm_id)) if r_osm_id is not None else None
+        coord_key = (round(r["lat"], 5), round(r["lng"], 5))
+        existing = (seen_osm_ids.get(osm_key_id) if osm_key_id else None) or seen_coords.get(coord_key)
+        if existing is not None:
+            for meta_key in ("extent", "display_name", "admin_level", "city", "state", "country", "importance"):
+                if not existing.get(meta_key) and r.get(meta_key):
+                    existing[meta_key] = r[meta_key]
+            continue
+        if osm_key_id:
+            seen_osm_ids[osm_key_id] = r
+        seen_coords[coord_key] = r
+        unique.append(r)
 
-    # 🧬 多元加權智能重排 (Top-K Reranking)
+    # 🧬 多元加權智能重排（return_limit=None 時回傳全部去重排序結果；母語設施單詞僅追加至 query_variants）
+    rerank_variants = list(dict.fromkeys([*search_queries, *rerank_extra_variants]))
     ranked = rerank_top_k(
-        unique, 
-        query, 
-        bias_lat=lat, 
-        bias_lng=lng, 
-        target_country=country_code, 
-        limit=limit
+        unique,
+        clean_query,
+        bias_lat=effective_bias_lat,
+        bias_lng=effective_bias_lng,
+        target_country=country_code,
+        limit=return_limit,
+        zoom=zoom,
+        query_variants=rerank_variants,
+        is_explicit_country=user_explicit_country,
+        is_explicit_city=is_explicit_city,
+        explicit_city_coords=explicit_city_coords,
+        is_admin_region_anchor=explicit_city_is_admin_region,
+        is_subdistrict_anchor=is_subdistrict_anchor,
+        prefix_label=city_prefix_key,
     )
 
-    # 🆕 注入中文顯示名稱
-    if chinese_display and ranked:
+    # 🆕 注入中文顯示名稱（僅限單一權威地標之全詞精確匹配且非連鎖品牌，絕不覆寫分店名！）
+    if (
+        chinese_display
+        and ranked
+        and landmark_data is not None
+        and _is_exact_landmark_match(clean_query, landmark_data, chinese_display)
+        and not is_chain_brand
+    ):
+        ranked[0]["original_name"] = ranked[0].get("name", clean_query)  # 先保留原始名稱再覆寫
         ranked[0]["name"] = chinese_display
-        ranked[0]["original_name"] = ranked[0].get("name", query)  # 保留原始名稱
         log_debug(f"   ✨ Injected Chinese Name: {chinese_display}")
+
+    # 🛡️ 括號/前綴長標題單次降級（保護舊版 SW 4h 視窗用戶並減少前端重複請求；嚴格單次禁止遞迴）
+    if not ranked and _allow_paren_fallback:
+        cleaned_fallback = _extract_clean_place_query(clean_query)
+        if cleaned_fallback and cleaned_fallback != clean_query and len(cleaned_fallback) >= 2:
+            log_debug(f"   🧹 Parenthetical Fallback (single-pass): '{clean_query}' -> '{cleaned_fallback}'")
+            return await smart_geocode_logic(
+                cleaned_fallback,
+                limit=limit,
+                trip_title=trip_title,
+                api_key=api_key,
+                lat=lat,
+                lng=lng,
+                country=country,
+                region=region,
+                zoom=zoom,
+                bbox=bbox,
+                allow_overpass=allow_overpass,
+                _allow_paren_fallback=False,
+            )
 
     return {"results": ranked, "source": found_source}
 

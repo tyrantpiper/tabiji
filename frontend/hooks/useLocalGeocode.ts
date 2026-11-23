@@ -4,16 +4,23 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import MiniSearch from 'minisearch'
 
 /**
- * 🆕 Bigram 分詞器 (對中日韓文字有效)
- * 將「東京」分成 ["東", "京", "東京"]
+ * 🆕 Bigram 分詞器 (對中日韓與混排文字有效)
+ * 按空白與 CJK/英數邊界切分詞元後分別產生單字與雙字元，避免空白字元在 AND 模式下拆斷「東京 鐵塔」與「台北101」
  */
 function bigramTokenize(text: string): string[] {
-    const chars = text.split('')
-    const bigrams: string[] = []
-    for (let i = 0; i < text.length - 1; i++) {
-        bigrams.push(text.slice(i, i + 2))
+    const segments = text
+        .split(/\s+|(?<=[\u3400-\u9fff])(?=[a-z0-9])|(?<=[a-z0-9])(?=[\u3400-\u9fff])/i)
+        .filter(Boolean)
+    const tokens: string[] = []
+    for (const seg of segments) {
+        for (const ch of seg) {
+            tokens.push(ch)
+        }
+        for (let i = 0; i < seg.length - 1; i++) {
+            tokens.push(seg.slice(i, i + 2))
+        }
     }
-    return [...chars, ...bigrams]
+    return tokens
 }
 
 /**
@@ -68,10 +75,18 @@ const CHAR_EQUIVALENTS: Record<string, string> = {
     "機": "机", "鐵": "铁", "線": "线", "場": "场",
     "島": "岛", "灣": "湾", "濟": "济", "雲": "云",
     "麵": "面", "飯": "饭", "館": "馆",
+    // 🆕 P1-A: 與後端同步之台灣異體字與日文漢字對齊
+    "臺": "台", "裏": "裡", "峯": "峰", "羣": "群",
+    "兰": "蘭", "澤": "沢", "广": "広", "淺": "浅",
+    "燈": "灯", "縣": "県",
+    // 🆕 日本觀光高頻新字體對齊 (與後端 CHAR_EQUIVALENTS 100% 同步)
+    "繩": "縄", "霸": "覇", "橫": "横", "濱": "浜",
+    "輕": "軽", "戶": "戸", "鉄": "铁", "櫻": "桜",
+    "氣": "気", "豐": "豊",
 }
 
-// 🆕 P1: 常見字尾 (與後端同步)
-const SUFFIXES = ["店", "站", "駅", "市場", "神社", "寺", "城"]
+// 🆕 P1: 與後端 normalize_for_fuzzy 同步（保留站/駅/寺/神社/城，防止「龍山寺」碰撞「龍山站」）
+const SUFFIXES = ["分店", "本店", "總店", "店"]
 
 /**
  * 標準化文字用於模糊比較
@@ -79,16 +94,18 @@ const SUFFIXES = ["店", "站", "駅", "市場", "神社", "寺", "城"]
 function normalizeForFuzzy(text: string): string {
     if (!text) return ""
     let normalized = text.toLowerCase().trim()
-    // 🆕 P1: 移除常見字尾 (與後端同步)
+    // 🆕 P1: 僅在剩餘詞長 >= 2 時移除通用商業尾詞 (與後端同步)
     for (const suffix of SUFFIXES) {
-        if (normalized.endsWith(suffix) && normalized.length > suffix.length) {
+        if (normalized.endsWith(suffix) && normalized.length - suffix.length >= 2) {
             normalized = normalized.slice(0, -suffix.length)
             break
         }
     }
     // 字元標準化
     for (const [char, equiv] of Object.entries(CHAR_EQUIVALENTS)) {
-        normalized = normalized.replace(new RegExp(char, 'g'), equiv)
+        if (normalized.includes(char)) {
+            normalized = normalized.replaceAll(char, equiv)
+        }
     }
     return normalized
 }
@@ -241,11 +258,12 @@ export function useLocalGeocode() {
             type: 'landmark' | 'brand' | 'region'  // 🆕 新增 region
         }>({
             fields: ['display', 'searchText'],
-            storeFields: ['display', 'lat', 'lng', 'country', 'parent', 'type'],
+            storeFields: ['display', 'searchText', 'lat', 'lng', 'country', 'parent', 'type'],
             tokenize: (text) => bigramTokenize(normalizeForFuzzy(text)),
             searchOptions: {
                 prefix: true,
                 fuzzy: 0.2,
+                combineWith: 'AND',
                 boost: { display: 2 }
             }
         })
@@ -323,15 +341,36 @@ export function useLocalGeocode() {
         return engine
     }, [landmarks, brands, regions])  // 🆕 加入 regions 依賴
 
-    // 搜尋函數 (使用 MiniSearch)
-    const search = useCallback((query: string, limit = 5): LocalSearchResult[] => {
+    // 搜尋函數 (使用 MiniSearch + AND 交集 + 正規化子字串過濾，limit<=0 或省略時回傳全部命中結果)
+    const search = useCallback((query: string, limit?: number): LocalSearchResult[] => {
         if (!query || query.length < 1 || !isLoaded) return []
 
         const normalizedQuery = normalizeForFuzzy(query)
-        const results = miniSearchEngine.search(normalizedQuery)
+        if (!normalizedQuery) return []
+        const rawResults = miniSearchEngine.search(normalizedQuery, { combineWith: 'AND' })
+
+        // 二次子字串守衛：支援空白分词（如「東京 鐵塔」、「台北 101」），同時確保每一正規化詞元皆實質出現於顯示名或索引別名中，杜絕單字碰撞雜訊（例如搜「市政廳」命中「築地市場」）
+        const queryTokens = normalizedQuery.split(/\s+/).filter(Boolean)
+        const compactQuery = normalizedQuery.replace(/\s+/g, '')
+        const filtered = rawResults.filter(result => {
+            const normDisplay = normalizeForFuzzy(String(result.display || ''))
+            const normSearch = normalizeForFuzzy(String(result.searchText || ''))
+            if (normDisplay.includes(normalizedQuery) || normSearch.includes(normalizedQuery)) {
+                return true
+            }
+            const compactDisplay = normDisplay.replace(/\s+/g, '')
+            const compactSearch = normSearch.replace(/\s+/g, '')
+            if (compactQuery && (compactDisplay.includes(compactQuery) || compactSearch.includes(compactQuery))) {
+                return true
+            }
+            if (queryTokens.length > 1) {
+                return queryTokens.every(tok => normDisplay.includes(tok) || normSearch.includes(tok))
+            }
+            return false
+        })
 
         // 🆕 Region boost: 行政區優先顯示
-        return results
+        const sorted = filtered
             .map(result => ({
                 name: result.id.split(':').slice(1).join(':'),  // 處理 region:JP:新宿區 格式
                 display: result.display,
@@ -343,7 +382,8 @@ export function useLocalGeocode() {
                 score: result.score * (result.type === 'region' ? 1.5 : 1)  // 🆕 Region boost
             }))
             .sort((a, b) => b.score - a.score)
-            .slice(0, limit)
+
+        return limit && limit > 0 ? sorted.slice(0, limit) : sorted
     }, [miniSearchEngine, isLoaded])
 
     return {
@@ -352,6 +392,6 @@ export function useLocalGeocode() {
         isLoaded,
         error,
         landmarkCount: Object.keys(landmarks).length,
-        brandCount: Object.values(brands).flat().length
+        brandCount: Object.values(brands).reduce((acc, cat) => acc + Object.keys(cat).length, 0)
     }
 }
