@@ -3,6 +3,8 @@
 > **所屬領域**: MapLibre GL JS, WebGL Canvas, 3D Globe, 大圓航線, 手勢隔離, CSP Worker
 
 ## 🏛️ 架構決策 (Decisions)
+- **地圖搜尋真實視口偏置、競態序列鎖、L1 AND 精確過濾與 L2-1 宏觀分流契約 (AD-246)**: 前端所有地圖與表單搜尋入口一律省略 limit (嚴禁傳 limit: null) 與硬 bbox，lat/lng 直取 mapRef.getCenter()；必配 AbortController + 單調 requestSeqRef + selectedQuery state + INCOMPLETE_ZHUYIN_RE 早退 (不阻斷 Android Gboard 英文 isComposing)；L2 回應以 [...rawResults] 為主、去重後 localMapped 附尾，去重統一採 (normOsmType, osm_id) + 同名 <50m。useLocalGeocode.ts 強制 combineWith: 'AND'、空白/CJK 邊界 bigramTokenize 與同步 10 個日文新字體。點擊結果採 L2-1 智慧分流：isMacroGeoResult(r) 時僅在 isUsableMacroExtent (0.002° <= span <= 45° 擋跨洋領地) 通過才 fitBounds(..., { bearing: 0, pitch: 0 })，否則質心 flyTo 且不開啟 POIDetailDrawer；僅具體 POI 插紅針開抽屜。
+
 - **地圖搜尋 L1 本地結果保底與多供應商競速 POI 備援契約 (AD-229)**: DayMap 與 FullscreenMapModal 在觸發 L2 雲端 debounce 請求當下及 catch 失敗回退時，必須保留並回寫本地秒回清單 localMapped，嚴禁執行 setResults([]) 洗白已有結果。後端 /api/poi/nearby 禁止單依賴 Overpass，必須以主供應商短時限並行 Photon / Wikipedia / Nominatim 競速保底。
 
 - **Zero-Dictionary Dynamic Segment Naming & Action Noise Disambiguation**: Corridor segment naming follows a 4-tier zero-dictionary hierarchy: known_city_anchors -> GLOBAL_CITY_ANCHORS -> LANDMARKS_DB -> POI token co-occurrence analysis, generating clean 'A -> B' labels for unindexed global routes (e.g. Lima -> Cusco). Transit bridge items without coordinates automatically anchor to origin segment center, while action noise items (check-in, rest) with out-of-country coordinates are purged.
@@ -31,6 +33,8 @@
 - **地圖控制膠囊呼吸降敏架構**: 靜止 3 秒進入 25% 晶透幽靈態，觸控或拖曳瞬間喚醒至 100%。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **公用 Photon 漢字 Edit-Distance 跨海誤配、scale 反轉與跨洋 fitBounds 幾內亞灣陷阱 (FP-112)**: 公用 photon.komoot.io 未啟用 zh 語言包，裸查「東京車站」會因 Lucene Fuzziness(AUTO) 改 1 字誤中屏東「東海車站」，裸查「慕尼黑/首爾」遭台灣同名餐廳劫持；location_bias_scale=0.9 實為 90% 全球重要度權重導致台北搜 Starbucks 飛去美日；法國 (350.7°)/美國 (360°)/紐西蘭 (358.4°) 含海外領地之 extent 直接呼叫 MapLibre fitBounds 會使鏡頭退至非洲幾內亞灣 zoom:0，必須經 isUsableMacroExtent (<=45°) 過濾後退回本土質心 flyTo。
+
 - **MapLibre 3D DEM Pitch 404 Cascade from TileJSON Null Maxzoom**: Symptom: Tilting map camera pitch >= 30 deg floods console with GET tiles.mapterhorn.com/{z}/{x}/{y}.webp 404 (Not Found). Cause: TileJSON maxzoom is null, defaulting to 22, while GLO-30 data only exists up to z12. Lesson: Always explicitly specify maxzoom: 12 on raster-dem sources.
 
 - **FP-001 (圖形與地圖渲染)**: 雙 WebGL Context (Liquid Glass + MapLibre) 導致 iOS Safari 拋出 WebGL Context Lost 崩潰。改以純 CSS backdrop-blur 交付。

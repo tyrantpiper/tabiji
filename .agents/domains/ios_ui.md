@@ -3,6 +3,8 @@
 > **所屬領域**: Tailwind CSS v4, Radix UI Primitives, Framer Motion, WebKit 防衛, 手勢互動
 
 ## 🏛️ 架構決策 (Decisions)
+- **長地名自動換行與跨元件 0px 水平溢位四層防線契約 (AD-247)**: dialog.tsx DialogContent 必宣告 grid-cols-1 阻斷隱式 auto 軌道膨脹；scroll-area.tsx Viewport 必宣告 overflow-x-hidden [&>div]:!block [&>div]:!min-w-0 破除 Radix display: table 水平撐寬。所有地點搜尋結果與行程卡片 (ActivityEditModal, LocationEditDialog, POISearch, TimelineCard, TimelineCardOverlay, InfoView, DayMap, FullscreenMapModal, POIDetailDrawer 展開態) 滾動容器必套用四重軸鎖，button 必加 min-w-0 max-w-full overflow-hidden，地名與地址撤除 truncate 改用 min-w-0 flex-1 wrap-break-word [word-break:break-word] whitespace-normal，包裹長文字之 <Button> 必覆寫 whitespace-normal；ActivityEditModal 清理鎖定 [isOpen, editItem?.id]、LocationEditDialog 鎖定 [isOpen, day]，並以 extractCleanPlaceQuery 保留括號備註至空白 desc。
+
 - **前端零依賴分級壓縮、iOS 16.7MP 防護、白底合成與空 MIME/HEIC 契約 (AD-239)**: frontend/lib/image-utils.ts 集中定義 IMAGE_PRESETS (avatar 512 / spot 1600 / cover 1920 / document 2048 / receipt 2048+shortEdge / capsule 1600 / ai_input 1600+shortEdge) 並支援字串 preset 參數。必須實作 hasCanvas2dSupport() 0ms jsdom 預檢、帶 SerialTaskSignal 取消訊號與 8s 逾時之單併發佇列及 __resetImageUtilsForTesting()；優先 createImageBitmap(file)（禁傳 resizeWidth/resizeHeight 避開 Safari EXIF 旋轉倒置）；以 1x1 WebP 探針＋輸出 blob.type 雙驗防 Safari 靜默輸出 PNG；ctx.drawImage 前無條件填 #ffffff 防 bg-black/95 預覽透明黑字隱形；硬鎖 outW*outH <= 16_000_000 並於 finally 釋放 bitmap 與 canvas.width=0；僅對不透明 JPEG 切片前 64KB 檢查 APP1/APP13 EXIF；readImageFileAsDataUrl() 須依副檔名補齊空 MIME/octet-stream 標籤，所有 Cloudinary 上傳器將 .heic/.heif 回傳 URL 正規化為 .jpg 且卸載必 abort XHR。
 
 - **登入頁頂端浮動雙語膠囊安全區淨空與實心選取態聚焦外環契約 (AD-235)**: 登入頁右上角 absolute 語系膠囊 (top: safe-area + 0.75rem, min-h-11 + p-0.5 border) 底緣達 safe-area + 3.875rem。<main> 必須在所有斷點維持 pt-[calc(max(env(safe-area-inset-top,0px),0px)+4rem)]（嚴禁在 sm: 降級為 sm:pt-12 或保留 py-8 sm:py-12 衝突樣式），確保 667x375 橫屏與 320x568 130% 字級下 zero overlap。膠囊內部須採 isolate + z-0 motion.span + relative z-10 文字、Boolean(useReducedMotion()) 正規化，且實心選取態按鈕必須宣告 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-800 維持鍵盤聚焦可視對比。
@@ -48,6 +50,8 @@
 - **Framer Motion 一次性動畫遞增 key 重播**: 鈴鐺動畫以 key={ringCount} 重播，取代布林狀態重設，消除快速連點卡死。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **Sheet/Dialog/ScrollArea/Button 四重水平撐破與 MiniSearch 單字元 OR 假陽性陷阱 (FP-115)**: ActivityEditModal 僅設 overflow-y-auto + truncate、dialog.tsx grid 缺 grid-cols-1、scroll-area.tsx Radix 注入 display: table 及 button.tsx 預設 whitespace-nowrap 共同造成 320px 整頁左右滑動；useLocalGeocode 預設 combineWith: 'OR' 搭配單字元分詞造成搜芬蘭出一蘭拉麵、搜台中出海雲台區、搜 Starbucks 出 Mystays。
+
 - **iOS Safari WebP 靜默 PNG、空 MIME HEIC 破圖與 Node 20 jsdom 8 秒死鎖陷阱 (FP-108)**: 現代 iOS Safari 呼叫 canvas.toBlob('image/webp') 會靜默退回 2-6MB PNG；Windows/Android 選取 .heic 或部分 .jpg 時 file.type 為空字串，致 FileReader 輸出 application/octet-stream 遭後端 400 或傳上 Cloudinary 回 .heic URL 在 Chrome 100% 破圖；Node 20+ jsdom 具 URL.createObjectURL 但無 2D Canvas 實作會使未預檢之壓縮佇列卡死至 8s 逾時。必須以 1x1 探針＋blob.type 驗證、hasCanvas2dSupport() 預檢、SerialTaskSignal 取消訊號與 .heic->.jpg URL 正規化全面防禦。
 
 - **Radix ScrollArea 僅設 max-h 無固定 height 導致捲動截斷與 JSX 數值 0 渲染陷阱 (FP-100, FP-103)**: Radix UI ScrollArea 在外層僅設 max-h-[...] 而無明確固定 height 時，內層 Viewport height:100% 會退化成 auto，導致無捲動軸且超出部分被外層 overflow-hidden 截斷（實測 20 筆僅剩 4 筆）。動態高度上限清單應改用原生 div 配合 max-h-[...] 與四重軸向鎖定。另 JSX 條件渲染評分數值嚴禁寫 {rating && ...}（0 會印出字元 '0'），須顯式判別 (rating ?? 0) > 0。

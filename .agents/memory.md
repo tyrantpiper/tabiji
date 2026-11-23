@@ -39,4 +39,6 @@
 - **Credential Fingerprint Lock**: `auth-session.ts` 以 JSON 序列化憑證指紋鎖（`lastFailedExchangeFingerprint`）＋ `isReauthDismissedInMemory` 取代短時間冷卻，消滅 SWR 15s 輪詢大於 10s 冷卻觸發的無限 401 風暴。
 - **Two-Layer & Edge Bug Masking**: 外層邊緣錯誤（如 Edge Shield 誤攔 `/api/poi/nearby` 或 `www` 404 遮蔽 `.vercel.app` 原生端點暴露）會長期掩蓋下層缺陷，稽核必須雙網域穿透實測。
 - **Three-Master-Key Decoupling**: Cloud Run `SESSION_SECRET_KEY` (JWT 門票)、`VAULT_MASTER_KEY` (AES-GCM 保險庫)、`RECOVERY_PEPPER` (HMAC 指紋) 三權嚴格獨立於 `SUPABASE_KEY`（`sb_*` 僅置於 `apikey` 標頭）。
+- **CJK Orthographic & Lexical Bridge**: 針對公用 Photon 無中文索引與日本 OSM 95% 長尾缺 `name:zh` 之結構限制，建立繁簡日新字體正規化（`澀→渋`/`車站→駅`）、品牌泛用尾詞剝除與保序 Bigram Top-K 橋接，補足自架開源引擎亦缺的東亞在地能力。
+- **Five-Cloud Ordered Rollout**: 因 Vercel (~1m) 快於 Cloud Run (3–5m)、Cloudflare Worker 無自動 CI 且 `/sw.js` 具 4h 快取，涉及跨雲契約與邊緣快取之發佈必須嚴守 `Cloud Run 驗收 ➔ 手動 wrangler deploy 升版快取 ➔ Git Push 觸發 Vercel`。
 
