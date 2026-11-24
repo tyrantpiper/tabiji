@@ -2156,6 +2156,7 @@ export function ItineraryView() {
                 dailyLoc={dailyLocs[day]}
                 tripTitle={currentTrip?.title}
                 biasLoc={calculateBiasLocation(day)}
+                canTogglePrivate={Boolean(currentTrip?.created_by && userId && currentTrip.created_by === userId)}
             />
 
             {/* 📅 iOS Calendar Range Picker Sheet */}

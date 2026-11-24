@@ -243,16 +243,29 @@ def _merge_cards_preserving_hidden_private(
     user_id: str,
     is_owner: bool,
 ) -> list:
-    """合併寫入信用卡：保留他方隱藏私卡、還原已脫敏既有公開卡原始 creator_id，並對私卡強制綁定 user_id。"""
+    """合併寫入信用卡：
+    1. 無條件保留他方隱藏私卡，並禁止 submitted 卡片碰撞隱藏私卡 ID（消除存在性探測與重複 ID）。
+    2. 嚴格由 JWT 身分決定新卡 creator_id，絕不信任客戶端傳入之 creator_id。
+    3. 既有他方公開卡一律鎖定原始 creator_id 並禁止非建立者將其私化奪取。
+    """
     uid = str(user_id or "").strip()
     existing_list = existing_cards if isinstance(existing_cards, list) else []
-    hidden_foreign_cards = [
-        card for card in existing_list
-        if not _is_card_visible_to_user(card, uid, is_owner)
-    ]
-    existing_by_id = {
-        str(card["id"]): card
-        for card in existing_list
+    hidden_foreign_cards = []
+    visible_existing_cards = []
+    for card in existing_list:
+        if _is_card_visible_to_user(card, uid, is_owner):
+            visible_existing_cards.append(card)
+        else:
+            hidden_foreign_cards.append(card)
+
+    hidden_ids = {
+        str(card["id"]).strip()
+        for card in hidden_foreign_cards
+        if isinstance(card, dict) and card.get("id")
+    }
+    visible_by_id = {
+        str(card["id"]).strip(): card
+        for card in visible_existing_cards
         if isinstance(card, dict) and card.get("id")
     }
 
@@ -262,21 +275,62 @@ def _merge_cards_preserving_hidden_private(
             normalized_submitted.append(card)
             continue
         cleaned = dict(card)
-        cid = str(cleaned.get("id") or "")
-        prev_card = existing_by_id.get(cid)
-        if not cleaned.get("is_public"):
+        cid = str(cleaned.get("id") or "").strip()
+        if cid and cid in hidden_ids:
+            # 防止以隱藏私卡 ID 碰撞探測或覆寫歸屬
+            cleaned["id"] = str(uuid.uuid4())
+            prev_card = None
+        else:
+            prev_card = visible_by_id.get(cid) if cid else None
+
+        if prev_card is None:
+            # 新卡一律強制綁定 JWT user_id，不信任客戶端偽造 creator_id
             cleaned["creator_id"] = uid
         else:
-            submitted_creator = str(cleaned.get("creator_id") or "").strip()
-            if prev_card and prev_card.get("creator_id") and (
-                not submitted_creator or submitted_creator.startswith("mem_")
-            ):
-                cleaned["creator_id"] = prev_card["creator_id"]
-            elif not submitted_creator or submitted_creator.startswith("mem_"):
+            prev_creator = str(prev_card.get("creator_id") or "").strip()
+            caller_owns_prev = (prev_creator == uid) or (not prev_creator and is_owner)
+            if caller_owns_prev:
                 cleaned["creator_id"] = uid
+            else:
+                # 既有他方公開卡：鎖定原建立者且禁止非建立者私化奪取
+                cleaned["creator_id"] = prev_creator
+                if not cleaned.get("is_public"):
+                    cleaned["is_public"] = True
         normalized_submitted.append(cleaned)
 
     return normalized_submitted + hidden_foreign_cards
+
+
+def _fetch_trip_is_owner(supabase, trip_id: str, user_id: str) -> bool:
+    """查詢指定行程建立者並判定呼叫者是否為建立者（避免選擇不存在欄位）。"""
+    trip_res = supabase.table("itineraries").select("created_by").eq("id", trip_id).execute()
+    trip_row = _first_row(getattr(trip_res, "data", None))
+    return _is_trip_creator(trip_row, user_id, allow_legacy_user_id=True)
+
+
+def _sanitize_imported_day_map(raw_map: Any, user_id: str) -> dict:
+    """淨化匯入之每日陣列欄位：私人項目強制綁定 JWT user_id，公開項目剝除殘留 private_owner_id。"""
+    if not isinstance(raw_map, dict):
+        return {}
+    uid = str(user_id or "").strip()
+    sanitized = {}
+    for day_key, items_list in raw_map.items():
+        if not isinstance(items_list, list):
+            sanitized[day_key] = items_list
+            continue
+        cleaned_list = []
+        for item in items_list:
+            if not isinstance(item, dict):
+                cleaned_list.append(item)
+                continue
+            entry = dict(item)
+            if entry.get("is_private"):
+                entry["private_owner_id"] = uid
+            else:
+                entry.pop("private_owner_id", None)
+            cleaned_list.append(entry)
+        sanitized[day_key] = cleaned_list
+    return sanitized
 
 # ensure_user_exists moved to utils.helpers
 
@@ -434,10 +488,10 @@ async def get_trips(
             trip_id_str = str(trip.get('id') or '')
             is_owner = _is_trip_creator(trip, user_id, allow_legacy_user_id=False)
 
-            raw_day_costs = trip.get('day_costs') or content.get('day_costs', {})
-            raw_day_tickets = trip.get('day_tickets') or content.get('day_tickets', {})
-            raw_day_checklists = trip.get('day_checklists') or content.get('day_checklists', {})
-            raw_credit_cards = trip.get('credit_cards') or content.get('credit_cards', [])
+            raw_day_costs = content.get('day_costs') or trip.get('day_costs') or {}
+            raw_day_tickets = content.get('day_tickets') or trip.get('day_tickets') or {}
+            raw_day_checklists = content.get('day_checklists') or trip.get('day_checklists') or {}
+            raw_credit_cards = content.get('credit_cards') or trip.get('credit_cards') or []
 
             filtered_costs = _filter_private_day_items(raw_day_costs, user_id, is_owner)
             filtered_tickets = _filter_private_day_items(raw_day_tickets, user_id, is_owner)
@@ -445,12 +499,12 @@ async def get_trips(
             filtered_cards = _filter_private_cards(raw_credit_cards, user_id, is_owner, trip_id=trip_id_str)
 
             # 🆕 將 content 內的欄位提升到頂層，與 get_trip_by_id 格式一致
-            trip['daily_locations'] = trip.get('daily_locations') or content.get('daily_locations', {})
-            trip['day_notes'] = trip.get('day_notes') or content.get('day_notes', {})
+            trip['daily_locations'] = content.get('daily_locations') or trip.get('daily_locations') or {}
+            trip['day_notes'] = content.get('day_notes') or trip.get('day_notes') or {}
             trip['day_costs'] = filtered_costs
             trip['day_tickets'] = filtered_tickets
             trip['day_checklists'] = filtered_checklists
-            trip['ai_review'] = trip.get('ai_review') or content.get('ai_review', "")
+            trip['ai_review'] = content.get('ai_review') or trip.get('ai_review') or ""
             trip['credit_cards'] = filtered_cards
             if 'content' in trip and isinstance(trip.get('content'), dict):
                 content['day_costs'] = filtered_costs
@@ -460,9 +514,11 @@ async def get_trips(
                 trip['content'] = content
             trip['currency'] = resolve_trip_currency(trip, content)
             trip['is_sample'] = content.get('is_sample', False)  # 🎓 Sample trip flag
-            # 🛡️ 列表出口脫敏：非建立者本人不暴露原生 created_by UUID，消除 ATO 外洩路徑
+            # 🛡️ 列表出口脫敏：非建立者本人不暴露原生 created_by / legacy user_id UUID，消除 ATO 外洩路徑
             if not is_owner:
                 trip['created_by'] = None
+                if trip.get('user_id') and str(trip.get('user_id')).strip() != str(user_id).strip():
+                    trip['user_id'] = None
             trips.append(trip)
             
         # 📌 Feature: 行程強制置頂 (Pin Sample Itinerary)
@@ -1351,16 +1407,26 @@ async def import_to_trip(
             # 🛡️ 戰略修復 4.0: 全欄位保留型深度合併 (Neural Preservation Merge)
             # 確保在匯入內容時，不會抹除 credit_cards, flight_info, hotel_info, day_ai_reviews 等欄位
             updated_content = fresh_content.copy()
+            is_owner = _is_trip_creator(fresh_trip, user_id, allow_legacy_user_id=True)
 
-            # B. 深度合併每日數組數據 (追加)
+            # B. 深度合併每日數組數據 (追加，並強制將私人項目歸屬綁定為 JWT user_id)
             if request.day_notes:
                 updated_content["day_notes"] = deep_merge_day_arrays(updated_content.get("day_notes"), request.day_notes)
             if request.day_costs:
-                updated_content["day_costs"] = deep_merge_day_arrays(updated_content.get("day_costs"), request.day_costs)
+                updated_content["day_costs"] = deep_merge_day_arrays(
+                    updated_content.get("day_costs"),
+                    _sanitize_imported_day_map(request.day_costs, user_id),
+                )
             if request.day_tickets:
-                updated_content["day_tickets"] = deep_merge_day_arrays(updated_content.get("day_tickets"), request.day_tickets)
+                updated_content["day_tickets"] = deep_merge_day_arrays(
+                    updated_content.get("day_tickets"),
+                    _sanitize_imported_day_map(request.day_tickets, user_id),
+                )
             if request.day_checklists:
-                updated_content["day_checklists"] = deep_merge_day_arrays(updated_content.get("day_checklists"), request.day_checklists)
+                updated_content["day_checklists"] = deep_merge_day_arrays(
+                    updated_content.get("day_checklists"),
+                    _sanitize_imported_day_map(request.day_checklists, user_id),
+                )
 
             # C. 合併 AI 審核 (保留原有的或更新)
             if request.ai_review:
@@ -1408,7 +1474,7 @@ async def import_to_trip(
                     "image_url": item.image_url,
                     "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
                     "hide_navigation": item.hide_navigation,
-                    "is_private": item.is_private,
+                    "is_private": bool(item.is_private) if is_owner else False,
                     "is_highlight": item.is_highlight,
                     "preview_metadata": item.preview_metadata
                 })
@@ -1878,6 +1944,9 @@ async def create_item(
         if not member_check.data:
             raise HTTPException(status_code=403, detail="您沒有權限在此行程新增項目")
 
+        if request.is_private and not _fetch_trip_is_owner(supabase, request.itinerary_id, user_id):
+            raise HTTPException(status_code=403, detail="僅行程建立者可建立私密行程項目")
+
         lat_val = request.lat if request.lat != 0.0 else None
         lng_val = request.lng if request.lng != 0.0 else None
         
@@ -1968,7 +2037,7 @@ async def reorder_items(
             unique_item_ids = list(dict.fromkeys(i.item_id for i in request.items))
             db_items = []
             for batch in _chunked(unique_item_ids):
-                items_query = supabase.table("itinerary_items").select("id, itinerary_id").in_("id", batch).execute()
+                items_query = supabase.table("itinerary_items").select("id, itinerary_id, is_private").in_("id", batch).execute()
                 db_items.extend(items_query.data or [])
             if len(db_items) != len(unique_item_ids):
                 raise HTTPException(status_code=404, detail="部分行程項目不存在")
@@ -1981,6 +2050,11 @@ async def reorder_items(
             member_check = supabase.table("trip_members").select("user_id").eq("itinerary_id", tid).eq("user_id", user_id).execute()
             if not member_check.data:
                 raise HTTPException(status_code=403, detail="您沒有權限排序此行程")
+
+            if any(row.get("is_private") for row in db_items):
+                is_owner = _fetch_trip_is_owner(supabase, tid, user_id)
+                if any(not _is_day_item_visible_to_user(row, user_id, is_owner) for row in db_items):
+                    raise HTTPException(status_code=403, detail="您沒有權限排序他人的私密行程項目")
 
             for item in request.items:
                 data = {"sort_order": item.sort_order}
@@ -2013,7 +2087,7 @@ async def update_item(
     print(f"📝 嘗試更新細項 {item_id}, user={user_id}")
     try:
         # 🛡️ 權限檢查與資料快照 (非 single 查詢：缺失項目先回 404，防止 PGRST116 轉為 500)
-        item_check = supabase.table("itinerary_items").select("itinerary_id, link_url, location_lat, location_lng, image_url, image_urls, place_name").eq("id", item_id).execute()
+        item_check = supabase.table("itinerary_items").select("itinerary_id, link_url, location_lat, location_lng, image_url, image_urls, place_name, is_private").eq("id", item_id).execute()
         item_row = _first_row(item_check.data)
         if not item_row:
             raise HTTPException(status_code=404, detail="找不到此行程項目")
@@ -2021,6 +2095,13 @@ async def update_item(
         member_check = supabase.table("trip_members").select("user_id").eq("itinerary_id", tid).eq("user_id", user_id).execute()
         if not member_check.data:
             raise HTTPException(status_code=403, detail="您沒有權限修改此項目")
+        # 🛡️ 私密項目存取隔離：非私密擁有者（行程建立者）禁止修改、解密外洩或將公開項目私化
+        if item_row.get("is_private") or request.is_private:
+            is_owner = _fetch_trip_is_owner(supabase, tid, user_id)
+            if item_row.get("is_private") and not _is_day_item_visible_to_user(item_row, user_id, is_owner):
+                raise HTTPException(status_code=403, detail="您沒有權限修改此私密行程項目")
+            if request.is_private and not is_owner:
+                raise HTTPException(status_code=403, detail="僅行程建立者可將行程項目設為私密")
         # 只更新有值的欄位
         data = {}
         if request.time_slot is not None: data["time_slot"] = request.time_slot
@@ -2162,12 +2243,17 @@ async def delete_item(
     print(f"🗑️ 嘗試刪除細項 {item_id}, user={user_id}")
     try:
         # 🛡️ 權限檢查 (非 single() 查詢，確保項目已刪除時具備天然冪等性)
-        item_check = supabase.table("itinerary_items").select("itinerary_id").eq("id", item_id).execute()
+        item_check = supabase.table("itinerary_items").select("itinerary_id, is_private").eq("id", item_id).execute()
         if item_check.data and len(item_check.data) > 0:
-            tid = item_check.data[0]["itinerary_id"]
+            item_row = item_check.data[0]
+            tid = item_row["itinerary_id"]
             member_check = supabase.table("trip_members").select("user_id").eq("itinerary_id", tid).eq("user_id", user_id).execute()
             if not member_check.data:
                  raise HTTPException(status_code=403, detail="您沒有權限刪除此項目")
+            if item_row.get("is_private"):
+                is_owner = _fetch_trip_is_owner(supabase, tid, user_id)
+                if not _is_day_item_visible_to_user(item_row, user_id, is_owner):
+                    raise HTTPException(status_code=403, detail="您沒有權限刪除此私密行程項目")
 
         res = supabase.table("itinerary_items").delete().eq("id", item_id).execute()
         

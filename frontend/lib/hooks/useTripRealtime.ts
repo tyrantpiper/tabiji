@@ -301,7 +301,7 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                                     existingDayItems,
                                     payload.items,
                                     userId,
-                                    isTripOwner,
+                                    false,
                                     isTripOwner
                                 )
                                 const nextChecklists = {
@@ -339,7 +339,7 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                                                 existingDayData,
                                                 payload.data,
                                                 userId,
-                                                isTripOwner,
+                                                false,
                                                 isTripOwner
                                             )
                                     return {

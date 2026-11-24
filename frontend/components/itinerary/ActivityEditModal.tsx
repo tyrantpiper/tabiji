@@ -54,6 +54,7 @@ interface ActivityEditModalProps {
     dailyLoc?: DailyLocation
     tripTitle?: string  // 🆕 智能搜尋用
     biasLoc?: { lat: number, lng: number } // 🆕 Smart Geocoding Bias
+    canTogglePrivate?: boolean // 🛡️ 僅行程建立者可切換私密行程項目
 }
 
 export function ActivityEditModal({
@@ -67,6 +68,7 @@ export function ActivityEditModal({
     dailyLoc,
     tripTitle,  // 🆕 智能搜尋用
     biasLoc,    // 🆕 Smart Geocoding Bias
+    canTogglePrivate = true,
 }: ActivityEditModalProps) {
     const [searchCountry, setSearchCountry] = useState("")
     const [searchRegion, setSearchRegion] = useState("")
@@ -1067,24 +1069,26 @@ export function ActivityEditModal({
                                 />
                             </div>
 
-                            {/* Private Mode Toggle */}
-                            <div className="p-3.5 flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
-                                        <span>🔒</span> {zh ? "私密行程" : "Private Activity"}
+                            {/* Private Mode Toggle (僅行程建立者顯示，對應後端行程級私密隔離契約) */}
+                            {canTogglePrivate && (
+                                <div className="p-3.5 flex items-center justify-between">
+                                    <div className="space-y-0.5">
+                                        <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                                            <span>🔒</span> {zh ? "私密行程" : "Private Activity"}
+                                        </div>
+                                        <p className="text-[11px] text-slate-400">
+                                            {zh ? "僅供本人檢視 (本機標記)" : "Only visible to you (Local Tag)"}
+                                        </p>
                                     </div>
-                                    <p className="text-[11px] text-slate-400">
-                                        {zh ? "僅供本人檢視 (本機標記)" : "Only visible to you (Local Tag)"}
-                                    </p>
+                                    <Switch
+                                        checked={!!editItem.is_private}
+                                        onCheckedChange={(checked) => {
+                                            haptic.tap()
+                                            setEditItem({ ...editItem, is_private: checked })
+                                        }}
+                                    />
                                 </div>
-                                <Switch
-                                    checked={!!editItem.is_private}
-                                    onCheckedChange={(checked) => {
-                                        haptic.tap()
-                                        setEditItem({ ...editItem, is_private: checked })
-                                    }}
-                                />
-                            </div>
+                            )}
 
                             {/* No Navigation Toggle */}
                             <div className="p-3.5 flex items-center justify-between">

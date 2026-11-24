@@ -40,6 +40,11 @@ class FakeQuery:
         self._op = "select"
         return self
 
+    def insert(self, payload):
+        self._op = "insert"
+        self._payload = payload
+        return self
+
     def update(self, payload):
         self._op = "update"
         self._payload = payload
@@ -75,10 +80,21 @@ class FakeQuery:
     def execute(self):
         rows = self.store.setdefault(self.table_name, [])
         if self._op == "select":
+            if self.table_name == "user_trips_view" and self.store.get("_raise_view_error"):
+                raise RuntimeError("simulated user_trips_view outage")
             matched = [dict(r) for r in rows if self._matches(r)]
             if self._limit is not None:
                 matched = matched[: self._limit]
             return MagicMock(data=matched)
+        if self._op == "insert":
+            items = self._payload if isinstance(self._payload, list) else [self._payload]
+            inserted = []
+            for entry in items:
+                rec = dict(entry)
+                rec.setdefault("id", f"ins-{len(rows) + 1}")
+                rows.append(rec)
+                inserted.append(dict(rec))
+            return MagicMock(data=inserted)
         if self._op == "update":
             updated = []
             for r in rows:
@@ -430,3 +446,204 @@ def test_gdpr_delete_reclaims_solo_orphan_system_sample_trip(make_client):
     remaining_item_ids = {i["id"] for i in store["itinerary_items"]}
     assert "si-1" not in remaining_item_ids
     assert "si-2" in remaining_item_ids
+
+
+def test_patch_info_blocks_card_creator_forgery_hijacking_privatization_and_hidden_id_collision(make_client):
+    """P0 Credit Card Ownership & Oracle Guard:
+    1. New public card forging creator_id=OWNER_ID must be bound to JWT COLLAB_ID.
+    2. Editing Owner's existing public card with creator_id=COLLAB_ID must keep OWNER_ID.
+    3. Flipping Owner's existing public card to is_public=False must be blocked (stays public + OWNER_ID).
+    4. Submitting hidden foreign private card's id must NOT leak OWNER_ID or create duplicate ids.
+    5. Benign control: card creator CAN toggle their own card between public and private.
+    """
+    store = _base_store()
+    store["itineraries"][0]["content"]["credit_cards"].append(
+        {"id": "card-pub-steal", "name": "Owner Shared Steal Target", "is_public": True, "creator_id": OWNER_ID}
+    )
+    collab_client = make_client(store, COLLAB_ID)
+
+    res = collab_client.patch(
+        f"/api/trips/{TRIP_ID}/info",
+        json={
+            "credit_cards": [
+                {"id": "card-forged-new", "name": "Forged Public", "is_public": True, "creator_id": OWNER_ID},
+                {"id": "card-pub", "name": "Shared Card Edited", "is_public": True, "creator_id": COLLAB_ID},
+                {"id": "card-pub-steal", "name": "Tried To Steal", "is_public": False, "creator_id": COLLAB_ID},
+                {"id": "card-own-priv", "name": "Colliding Public Clone", "is_public": True, "creator_id": ""},
+            ]
+        },
+    )
+    assert res.status_code == 200
+
+    saved_cards = store["itineraries"][0]["content"]["credit_cards"]
+    ids = [c["id"] for c in saved_cards]
+    assert len(ids) == len(set(ids)), "Duplicate card IDs must never exist after hidden-ID collision"
+    by_id = {c["id"]: c for c in saved_cards}
+
+    # 1. Forged new public card bound to COLLAB_ID
+    assert by_id["card-forged-new"]["creator_id"] == COLLAB_ID
+    # 2. Existing Owner public card preserved original OWNER_ID despite tools-view sending COLLAB_ID
+    assert by_id["card-pub"]["creator_id"] == OWNER_ID
+    # 3. Existing Owner public card could NOT be privatized/stolen by Collaborator
+    assert by_id["card-pub-steal"]["is_public"] is True
+    assert by_id["card-pub-steal"]["creator_id"] == OWNER_ID
+    # 4. Hidden Owner private card survived untouched; colliding clone got re-minted ID & bound to COLLAB_ID
+    assert by_id["card-own-priv"]["name"] == "OWNER_SECRET_CARD"
+    assert by_id["card-own-priv"]["is_public"] is False
+    assert by_id["card-own-priv"]["creator_id"] == OWNER_ID
+    clones = [c for c in saved_cards if c.get("name") == "Colliding Public Clone"]
+    assert len(clones) == 1
+    assert clones[0]["id"] != "card-own-priv"
+    assert clones[0]["creator_id"] == COLLAB_ID
+
+    # 5. Benign control: Collaborator CAN privatize Collaborator's OWN card; Owner CAN privatize Owner's OWN card
+    res_collab_own = collab_client.patch(
+        f"/api/trips/{TRIP_ID}/info",
+        json={
+            "credit_cards": [
+                {"id": "card-forged-new", "name": "Forged Public", "is_public": False},
+                {"id": "card-pub", "name": "Shared Card Edited", "is_public": True},
+                {"id": "card-pub-steal", "name": "Tried To Steal", "is_public": True},
+            ]
+        },
+    )
+    assert res_collab_own.status_code == 200
+    after_collab = {c["id"]: c for c in store["itineraries"][0]["content"]["credit_cards"]}
+    assert after_collab["card-forged-new"]["is_public"] is False
+    assert after_collab["card-forged-new"]["creator_id"] == COLLAB_ID
+
+    owner_client = make_client(store, OWNER_ID)
+    res_owner_own = owner_client.patch(
+        f"/api/trips/{TRIP_ID}/info",
+        json={
+            "credit_cards": [
+                {"id": "card-pub", "name": "Shared Card Now Private", "is_public": False},
+                {"id": "card-own-priv", "name": "OWNER_SECRET_CARD", "is_public": False},
+            ]
+        },
+    )
+    assert res_owner_own.status_code == 200
+    after_owner = {c["id"]: c for c in store["itineraries"][0]["content"]["credit_cards"]}
+    assert after_owner["card-pub"]["is_public"] is False
+    assert after_owner["card-pub"]["creator_id"] == OWNER_ID
+    # Collab's hidden private card survived Owner's update!
+    assert "card-forged-new" in after_owner
+
+
+def test_private_itinerary_items_bola_declassification_deletion_reorder_and_collab_create_blocked(make_client):
+    """P0 Private Itinerary Item Isolation:
+    Production `itinerary_items` has `is_private` (no `private_owner_id` column).
+    Collaborators MUST be blocked (403) from creating private items, declassifying/editing/deleting/reordering
+    Owner's private items, or privatizing public items; Owner and public benign operations MUST still succeed.
+    """
+    store = _base_store()
+    # Match real production schema: itinerary_items rows have is_private, NO private_owner_id column
+    for row in store["itinerary_items"]:
+        row.pop("private_owner_id", None)
+
+    collab_client = make_client(store, COLLAB_ID)
+
+    # 1. Collaborator cannot create a private itinerary item (would vanish from Collab & leak to Owner)
+    r_create_priv = collab_client.post(
+        "/api/trips/items",
+        json={
+            "itinerary_id": TRIP_ID,
+            "day_number": 1,
+            "time_slot": "20:00",
+            "place_name": "Collab Hidden Attempt",
+            "category": "sightseeing",
+            "lat": 35.66,
+            "lng": 139.70,
+            "is_private": True,
+        },
+    )
+    assert r_create_priv.status_code == 403
+
+    # 2. Collaborator cannot declassify/exfiltrate Owner's private item via PATCH
+    r_declassify = collab_client.patch("/api/trips/items/item-priv", json={"is_private": False})
+    assert r_declassify.status_code == 403
+    assert next(i for i in store["itinerary_items"] if i["id"] == "item-priv")["is_private"] is True
+
+    # 3. Collaborator cannot privatize a shared public item
+    r_privatize = collab_client.patch("/api/trips/items/item-pub", json={"is_private": True})
+    assert r_privatize.status_code == 403
+
+    # 4. Collaborator cannot delete Owner's private item
+    r_del_priv = collab_client.delete("/api/trips/items/item-priv")
+    assert r_del_priv.status_code == 403
+    assert any(i["id"] == "item-priv" for i in store["itinerary_items"])
+
+    # 5. Collaborator cannot reorder Owner's private item
+    r_reorder_priv = collab_client.patch(
+        "/api/trips/items/reorder",
+        json={"items": [{"item_id": "item-priv", "sort_order": 0}], "adjust_times": False},
+    )
+    assert r_reorder_priv.status_code == 403
+
+    # 6. Benign Control (Collaborator): public create / update / reorder / delete all succeed
+    r_collab_pub = collab_client.post(
+        "/api/trips/items",
+        json={
+            "itinerary_id": TRIP_ID,
+            "day_number": 1,
+            "time_slot": "11:00",
+            "place_name": "Collab Public Cafe",
+            "category": "food",
+            "lat": 35.67,
+            "lng": 139.71,
+            "is_private": False,
+        },
+    )
+    assert r_collab_pub.status_code == 200
+    pub_created_id = r_collab_pub.json()["data"][0]["id"]
+    assert collab_client.patch(f"/api/trips/items/{pub_created_id}", json={"notes": "Great coffee"}).status_code == 200
+    assert collab_client.patch(
+        "/api/trips/items/reorder",
+        json={"items": [{"item_id": pub_created_id, "sort_order": 1}], "adjust_times": False},
+    ).status_code == 200
+    assert collab_client.delete(f"/api/trips/items/{pub_created_id}").status_code == 200
+
+    # 7. Benign Control (Owner): private create / update / reorder / delete all succeed
+    owner_client = make_client(store, OWNER_ID)
+    r_owner_priv = owner_client.post(
+        "/api/trips/items",
+        json={
+            "itinerary_id": TRIP_ID,
+            "day_number": 1,
+            "time_slot": "21:00",
+            "place_name": "Owner Private Dinner",
+            "category": "food",
+            "lat": 35.65,
+            "lng": 139.74,
+            "is_private": True,
+        },
+    )
+    assert r_owner_priv.status_code == 200
+    own_created_id = r_owner_priv.json()["data"][0]["id"]
+    assert owner_client.patch(f"/api/trips/items/{own_created_id}", json={"notes": "Ring box"}).status_code == 200
+    assert owner_client.patch(
+        "/api/trips/items/reorder",
+        json={"items": [{"item_id": own_created_id, "sort_order": 2}], "adjust_times": False},
+    ).status_code == 200
+    assert owner_client.delete(f"/api/trips/items/{own_created_id}").status_code == 200
+
+
+def test_get_trips_fallback_prefers_content_and_masks_foreign_legacy_user_id(make_client):
+    """When user_trips_view fails and GET /api/trips falls back to itineraries,
+    content fields take precedence over stale top-level columns and foreign user_id is masked."""
+    store = _base_store()
+    store["_raise_view_error"] = True
+    store["itineraries"][0]["user_id"] = OWNER_ID
+    store["itineraries"][0]["day_costs"] = {"1": [{"item": "STALE_TOP_LEVEL_COST", "amount": "1"}]}
+
+    collab_client = make_client(store, COLLAB_ID)
+    res = collab_client.get("/api/trips")
+    assert res.status_code == 200
+    payload = res.json()
+    raw = json.dumps(payload, ensure_ascii=False)
+    assert OWNER_ID not in raw
+    assert "OWNER_SECRET_COST" not in raw
+    assert "STALE_TOP_LEVEL_COST" not in raw
+    assert "Public Ramen" in raw
+    assert payload[0]["created_by"] is None
+    assert payload[0].get("user_id") is None

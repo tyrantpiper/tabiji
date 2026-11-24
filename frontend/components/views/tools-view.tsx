@@ -641,7 +641,7 @@ export function ToolsView() {
                 rewardLimit: parseFloat(newRewardLimit) || 0,
                 notes: newCardNotes.trim(),
                 is_public: newCardIsPublic,
-                creator_id: userId || undefined
+                creator_id: editingCard?.creator_id || userId || undefined
             }
 
             // 🧠 v3.11: Atomic Migration Logic (Fixes Data Loss)

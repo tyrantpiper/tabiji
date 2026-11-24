@@ -1385,8 +1385,9 @@ describe("Daily Dashboard 5-Tab Cards Unification & Safety-Net Suite", () => {
           items: [
             { id: "c-pub", text: "Shared Passport", checked: true },
             { id: "c-peer", text: "Peer Public Umbrella", checked: false },
-            // Defense-in-depth: even if an older client leaked Collab's own private item, Owner MUST NOT receive it
+            // Defense-in-depth: even if an older client leaked Collab's own private item (with or without private_owner_id), Owner MUST NOT receive it
             { id: "c-collab-priv", text: "Collab Secret Diary", checked: false, is_private: true, private_owner_id: COLLAB_UUID },
+            { id: "c-ownerless-leak", text: "Leaked Ownerless Private", checked: false, is_private: true },
           ],
         },
       })
@@ -1396,8 +1397,9 @@ describe("Daily Dashboard 5-Tab Cards Unification & Safety-Net Suite", () => {
     expect(screen.getByText("Peer Public Umbrella")).toBeDefined()
     expect(screen.getByText("My Secret Ring")).toBeDefined()
     expect(screen.queryByText("Collab Secret Diary")).toBeNull()
+    expect(screen.queryByText("Leaked Ownerless Private")).toBeNull()
 
-    // Verify SWR optimistic updater ALSO preserves Owner's private item & blocks Collab's private item
+    // Verify SWR optimistic updater ALSO preserves Owner's private item & blocks Collab's private item (including ownerless incoming leak)
     const [, chkUpdater] = mockSwrMutate.mock.calls[0]
     const patchedTrip = chkUpdater({
       id: "trip-merge-1",
@@ -1406,13 +1408,16 @@ describe("Daily Dashboard 5-Tab Cards Unification & Safety-Net Suite", () => {
         1: [
           { id: "c-pub", text: "Shared Passport", checked: false },
           { id: "c-own-priv", text: "My Secret Ring", checked: false, is_private: true, private_owner_id: OWNER_UUID },
+          { id: "c-own-legacy", text: "Owner Existing Legacy Private", checked: false, is_private: true },
         ],
       },
     })
     const chkTexts = patchedTrip.day_checklists[1].map((i: { text: string }) => i.text)
     expect(chkTexts).toContain("Peer Public Umbrella")
     expect(chkTexts).toContain("My Secret Ring")
+    expect(chkTexts).toContain("Owner Existing Legacy Private")
     expect(chkTexts).not.toContain("Collab Secret Diary")
+    expect(chkTexts).not.toContain("Leaked Ownerless Private")
 
     // Collaborator broadcasts public-only costs update
     act(() => {
