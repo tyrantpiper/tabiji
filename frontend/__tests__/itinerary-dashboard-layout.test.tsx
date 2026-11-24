@@ -103,16 +103,17 @@ describe("ItineraryDashboardHub Component", () => {
 })
 
 describe("IOSBottomSheet Component", () => {
-  it("renders segmented control tabs in strictly aligned order and dismiss button when open", () => {
+  it("renders 5-column pure-icon capsule tabs in strict order with zero visible text, dynamic header, z-115 layer, and dismiss button", () => {
     const handleClose = vi.fn()
     const handleTabChange = vi.fn()
 
-    render(
+    const { rerender } = render(
       <IOSBottomSheet
         isOpen={true}
         activeTab="ai_review"
         onClose={handleClose}
         onTabChange={handleTabChange}
+        tabIndicators={{ ai_review: true, tips: false, checklist: true, tickets: false, costs: true }}
       >
         <div data-testid="sheet-child">Inner Sheet Content</div>
       </IOSBottomSheet>
@@ -120,22 +121,137 @@ describe("IOSBottomSheet Component", () => {
 
     expect(screen.getByTestId("sheet-child")).toBeDefined()
 
-    // 🛡️ Verify tab order matches mental model: AI Review -> Tips -> Checklist -> Tickets -> Costs
-    const tabLabels = ["AI 審核", "重點提醒", "行前清單", "交通票券", "預估花費"]
-    const renderedTabs = tabLabels.map(label => screen.getByText(label))
-    expect(renderedTabs).toHaveLength(5)
+    // 🛡️ Layer safety: z-115 floats cleanly above standby AI orb (z-110)
+    const dialog = screen.getByRole("dialog")
+    expect(dialog.className).toContain("z-115")
 
-    // Switch tab to checklist
-    fireEvent.click(screen.getByText("行前清單"))
+    // 🛡️ Dynamic header reflects active tab
+    expect(dialog.textContent).toContain("當日智慧看板")
+    expect(dialog.textContent).toContain("AI 審核")
+
+    // 🛡️ 5-column pure-icon frosted capsule (zero horizontal scroll, zero visible text)
+    const tablist = screen.getByRole("tablist")
+    expect(tablist.className).toContain("grid-cols-5")
+    expect(tablist.className).not.toContain("overflow-x-auto")
+
+    const expectedLabels = ["AI 審核", "重點提醒", "行前清單", "交通票券", "預估花費"]
+    const tabs = screen.getAllByRole("tab")
+    expect(tabs).toHaveLength(5)
+    expect(tabs.map((tab) => tab.getAttribute("aria-label"))).toEqual(expectedLabels)
+    expect(tabs.map((tab) => tab.getAttribute("title"))).toEqual(expectedLabels)
+    for (const tab of tabs) {
+      expect(tab.textContent?.trim()).toBe("")
+      expect(tab.className).toContain("h-11")
+    }
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true")
+    expect(tabs[2].getAttribute("aria-selected")).toBe("false")
+
+    // 🛡️ Micro-dot indicators strictly reflect tabIndicators prop
+    expect(screen.getByTestId("tab-indicator-ai_review")).toBeDefined()
+    expect(screen.getByTestId("tab-indicator-checklist")).toBeDefined()
+    expect(screen.getByTestId("tab-indicator-costs")).toBeDefined()
+    expect(screen.queryByTestId("tab-indicator-tips")).toBeNull()
+    expect(screen.queryByTestId("tab-indicator-tickets")).toBeNull()
+
+    // Switch tab to checklist via accessible name
+    fireEvent.click(screen.getByRole("tab", { name: "行前清單" }))
     expect(handleTabChange).toHaveBeenCalledWith("checklist")
 
-    // Switch tab to costs
-    fireEvent.click(screen.getByText("預估花費"))
+    // Switch tab to costs via accessible name
+    fireEvent.click(screen.getByRole("tab", { name: "預估花費" }))
     expect(handleTabChange).toHaveBeenCalledWith("costs")
 
-    // Click close button
-    const closeBtn = screen.getByLabelText("Close")
+    // Keyboard roving navigation (ArrowRight from ai_review -> tips)
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" })
+    expect(handleTabChange).toHaveBeenCalledWith("tips")
+
+    // Rerender with checklist active and verify dynamic header syncs
+    rerender(
+      <IOSBottomSheet
+        isOpen={true}
+        activeTab="checklist"
+        onClose={handleClose}
+        onTabChange={handleTabChange}
+      >
+        <div data-testid="sheet-child">Inner Sheet Content</div>
+      </IOSBottomSheet>
+    )
+    expect(screen.getByRole("dialog").textContent).toContain("行前清單")
+    // Backward compatibility: omitting tabIndicators renders zero dots
+    expect(screen.queryByTestId("tab-indicator-ai_review")).toBeNull()
+
+    // Click close button (localized zh aria-label)
+    const closeBtn = screen.getByLabelText("關閉")
     fireEvent.click(closeBtn)
     expect(handleClose).toHaveBeenCalled()
+  })
+
+  it("enforces fourfold scroll axis-lock + safe-area bottom inset and activates tabs[0] cleanly on unknown activeTab", () => {
+    render(
+      <IOSBottomSheet
+        isOpen={true}
+        activeTab={"unknown_tab" as unknown as "ai_review"}
+        onClose={vi.fn()}
+        onTabChange={vi.fn()}
+      >
+        <div data-testid="sheet-fallback-child">Fallback Content</div>
+      </IOSBottomSheet>
+    )
+
+    const child = screen.getByTestId("sheet-fallback-child")
+    const scrollContainer = child.parentElement!
+    expect(scrollContainer.className).toContain("min-h-0")
+    expect(scrollContainer.className).toContain("overflow-y-auto")
+    expect(scrollContainer.className).toContain("overflow-x-hidden")
+    expect(scrollContainer.className).toContain("overscroll-x-none")
+    expect(scrollContainer.className).toContain("overscroll-y-contain")
+    expect(scrollContainer.className).toContain("touch-pan-y")
+    expect(scrollContainer.className).toContain("safe-area-inset-bottom")
+    expect(screen.getByRole("dialog").textContent).toContain("AI 審核")
+
+    // Normalized fallback must select tabs[0] and keep tablist keyboard-reachable (tabIndex=0)
+    const tabs = screen.getAllByRole("tab")
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true")
+    expect(tabs[0].getAttribute("tabindex")).toBe("0")
+    expect(tabs[1].getAttribute("aria-selected")).toBe("false")
+    expect(tabs[1].getAttribute("tabindex")).toBe("-1")
+  })
+
+  it("does NOT close on Escape while a higher-layer Radix Dialog or Popover is open, and closes cleanly once clear", () => {
+    const handleClose = vi.fn()
+    render(
+      <IOSBottomSheet
+        isOpen={true}
+        activeTab="checklist"
+        onClose={handleClose}
+        onTabChange={vi.fn()}
+      >
+        <div data-testid="sheet-esc-child">Checklist Content</div>
+      </IOSBottomSheet>
+    )
+
+    // Simulate SessionReauthModal (Radix DialogContent) open on top of IOSBottomSheet
+    const mockReauthDialog = document.createElement("div")
+    mockReauthDialog.setAttribute("data-slot", "dialog-content")
+    mockReauthDialog.setAttribute("data-state", "open")
+    document.body.appendChild(mockReauthDialog)
+
+    fireEvent.keyDown(window, { key: "Escape" })
+    expect(handleClose).not.toHaveBeenCalled()
+
+    // Simulate emoji Popover open on top of IOSBottomSheet
+    document.body.removeChild(mockReauthDialog)
+    const mockPopover = document.createElement("div")
+    mockPopover.setAttribute("data-slot", "popover-content")
+    mockPopover.setAttribute("data-state", "open")
+    document.body.appendChild(mockPopover)
+
+    fireEvent.keyDown(window, { key: "Escape" })
+    expect(handleClose).not.toHaveBeenCalled()
+
+    // Once higher overlays close, Escape dismisses IOSBottomSheet normally
+    document.body.removeChild(mockPopover)
+    fireEvent.keyDown(window, { key: "Escape" })
+    expect(handleClose).toHaveBeenCalledTimes(1)
   })
 })

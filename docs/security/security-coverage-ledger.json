@@ -1,13 +1,13 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-23T08:30:00Z",
+  "last_audit_date": "2026-11-24T04:48:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 439,
-    "audited_targets": 439,
+    "total_targets": 444,
+    "audited_targets": 444,
     "verified_vulnerabilities": 53,
-    "remediated_vulnerabilities": 201,
-    "dismissed_hypotheses": 185
+    "remediated_vulnerabilities": 204,
+    "dismissed_hypotheses": 187
   },
   "targets": [
     {
@@ -5639,6 +5639,67 @@
       "status": "DISMISSED",
       "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-23_topk_ui_wrap.md",
       "validator_details": "Verified in Round 2 (Security Sentinel runner.py --mode adaptive -> DISMISSED): The code snippet implements a comprehensive dual-guard pattern against async race conditions. When 'isOpen' or 'day' changes, the useEffect hook immediately calls abortControllerRef.current?.abort(), increments requestSeqRef.current, clears locSearchResults, and sets isLocSearching to false. When any in-flight geocodeApi.search resolves or rejects, it checks both (seq !== requestSeqRef.current || controller.signal.aborted). Since the effect has already aborted the controller and incremented requestSeqRef, any stale response is discarded before calling setLocSearchResults. Furthermore, in the finally block, setIsLocSearching(false) is gated by (seq === requestSeqRef.current && !controller.signal.aborted), preventing stale completions from tampering with loading states established by subsequent searches or the cleanup effect."
+    },
+    {
+      "id": "frontend/components/itinerary/EditableDailyTips.tsx:grapheme_storage_and_micro_form_selectors",
+      "target_type": "frontend_itinerary_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "surrogate_pair_corruption_or_storage_security_error"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-24_daily_dashboard_cards.md",
+      "validator_details": "Verified by sandbox Red->Green PoC (exploit_poc_3 & exploit_poc_4 in daily-dashboard-cards.test.tsx) and Security Sentinel runner.py --mode fast (DISMISSED): 1) extractFirstGrapheme uses Intl.Segmenter with granularity 'grapheme' and Array.from fallback to extract the first emoji grapheme without splitting UTF-16 surrogate pairs or overflowing full strings; 2) resolveOwnerId wraps localStorage.getItem('user_uuid') in try/catch to prevent SecurityError in Safari Private Mode / restricted WebViews; 3) IconPicker guards Enter with e.nativeEvent.isComposing; 4) CurrencyPillSelector dynamically appends non-preset currencies.",
+      "remediated_at": "2026-11-24T04:48:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_daily_dashboard_cards_2026-11-24.diff"
+    },
+    {
+      "id": "frontend/components/itinerary/EditableDailyTips.tsx:single_frame_lock_and_privacy_handlers",
+      "target_type": "frontend_itinerary_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "double_tap_duplicate_mutation_or_privacy_owner_leak"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-24_daily_dashboard_cards.md",
+      "validator_details": "Verified by sandbox Red->Green PoC (exploit_poc_3 & spec_2 in daily-dashboard-cards.test.tsx) and Security Sentinel runner.py --mode fast (DISMISSED): Single-frame locks (noteLockRef, costLockRef, ticketLockRef) are synchronously acquired before async suspension and released in finally blocks, while handleAddCost, handleTogglePrivacyCost, handleAddTicket, and handleTogglePrivacyTicket safely resolve private_owner_id via resolveOwnerId(userId) with optimistic rollback.",
+      "remediated_at": "2026-11-24T04:48:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_daily_dashboard_cards_2026-11-24.diff"
+    },
+    {
+      "id": "frontend/components/itinerary/EditableDailyChecklist.tsx:debounce_counter_conservation_and_add_lock",
+      "target_type": "frontend_itinerary_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "debounce_counter_leak_or_unhandled_promise_rejection"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-24_daily_dashboard_cards.md",
+      "validator_details": "Verified by sandbox Red->Green PoC (exploit_poc_1 & exploit_poc_2 in daily-dashboard-cards.test.tsx) and Security Sentinel runner.py --mode fast (DISMISSED): 1) pendingUpdatesCount is incremented at most once per debounce window via hasPendingDebounceRef and safely decremented in finally and unmount cleanup; 2) toggleItem rolls back to committedItemsRef.current baseline on failure; 3) addItemWithText enforces synchronous actionLockRef.current and try/catch/finally rollback; 4) generateId provides non-crypto fallback.",
+      "remediated_at": "2026-11-24T04:48:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_daily_dashboard_cards_2026-11-24.diff"
+    },
+    {
+      "id": "frontend/components/itinerary/EditableDailyChecklist.tsx:decoupled_row_buttons_and_ime_guard",
+      "target_type": "frontend_itinerary_component",
+      "trust_boundary": "browser_local",
+      "vectors_checked": [
+        "nested_interactive_buttons_or_ime_premature_submit"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-24_daily_dashboard_cards.md",
+      "validator_details": "Verified by sandbox suite (spec_1 & spec_3 in daily-dashboard-cards.test.tsx) and Security Sentinel runner.py --mode fast (DISMISSED): Row items render decoupled sibling <button type='button'> elements inside motion.div without nested interactive controls, quick-add chips bind disabled={isUpdating}, and edit/add inputs check e.nativeEvent.isComposing before handling Enter."
+    },
+    {
+      "id": "frontend/components/itinerary/EditableDailyAIReview.tsx:sentinel_contract_and_dark_mode_contrast",
+      "target_type": "frontend_itinerary_component",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "cross_day_optimistic_state_bleed_or_locale_omission"
+      ],
+      "status": "DISMISSED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-24_daily_dashboard_cards.md",
+      "validator_details": "Verified by post-audit-remediation-sentinel.test.tsx, daily-dashboard-cards.test.tsx, and Security Sentinel runner.py --mode fast (DISMISSED): optimisticState is keyed by scopeKey (${tripId}-${day}), lang is forwarded to tripsApi.generateAIReview(tripId, day, userId, lang), bilingual 'AI is reviewing...' loading text is preserved, misaligned mx-6 margin is removed, and formatReview applies explicit dark-mode high-contrast classes."
     }
   ],
   "known_design_intents": {

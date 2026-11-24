@@ -1,8 +1,8 @@
 "use client"
 
-import React, { useEffect, useState, useRef, useCallback, useSyncExternalStore } from "react"
+import React, { useEffect, useState, useRef, useCallback, useId, useSyncExternalStore } from "react"
 import { createPortal } from "react-dom"
-import { motion, AnimatePresence, PanInfo } from "framer-motion"
+import { motion, AnimatePresence, PanInfo, useReducedMotion } from "framer-motion"
 import { X, Sparkles, AlertCircle, Wallet, Ticket, CheckSquare } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useLanguage } from "@/lib/LanguageContext"
@@ -15,6 +15,7 @@ interface IOSBottomSheetProps {
   activeTab: DashboardSectionTab
   onClose: () => void
   onTabChange: (tab: DashboardSectionTab) => void
+  tabIndicators?: Partial<Record<DashboardSectionTab, boolean>>
   children: React.ReactNode
 }
 
@@ -32,12 +33,16 @@ export default function IOSBottomSheet({
   activeTab,
   onClose,
   onTabChange,
+  tabIndicators,
   children,
 }: IOSBottomSheetProps) {
   const { lang } = useLanguage()
   const zh = lang === "zh"
   const haptic = useHaptic()
   const isMounted = useSyncExternalStore(subscribeNoop, () => true, () => false)
+  const shouldReduceMotion = Boolean(useReducedMotion())
+  const pillLayoutId = useId()
+  const dialogTitleId = useId()
   const [detent, setDetent] = useState<"half" | "full">("half")
   const contentScrollRef = useRef<HTMLDivElement>(null)
 
@@ -60,11 +65,19 @@ export default function IOSBottomSheet({
     }
   }, [isOpen])
 
-  // 監聽 ESC 鍵關閉
+  // 監聽 ESC 鍵關閉 (若上方有更高層級 Radix Dialog/AlertDialog/Popover 開啟則放行，避免底抽連帶被關)
   useEffect(() => {
     if (!isOpen) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (
+          e.defaultPrevented ||
+          document.querySelector(
+            '[data-slot="dialog-content"][data-state="open"], [data-slot="alert-dialog-content"][data-state="open"], [data-slot="popover-content"][data-state="open"]'
+          )
+        ) {
+          return
+        }
         handleDismiss()
       }
     }
@@ -99,13 +112,68 @@ export default function IOSBottomSheet({
     [detent, haptic, handleDismiss]
   )
 
-  const tabs: Array<{ id: DashboardSectionTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-    { id: "ai_review", label: zh ? "AI 審核" : "AI Review", icon: Sparkles },
-    { id: "tips", label: zh ? "重點提醒" : "Tips", icon: AlertCircle },
-    { id: "checklist", label: zh ? "行前清單" : "Checklist", icon: CheckSquare },
-    { id: "tickets", label: zh ? "交通票券" : "Tickets", icon: Ticket },
-    { id: "costs", label: zh ? "預估花費" : "Costs", icon: Wallet },
+  const tabs: Array<{
+    id: DashboardSectionTab
+    label: string
+    icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>
+    activeColorClass: string
+    dotColorClass: string
+  }> = [
+    {
+      id: "ai_review",
+      label: zh ? "AI 審核" : "AI Review",
+      icon: Sparkles,
+      activeColorClass: "text-emerald-600 dark:text-emerald-400",
+      dotColorClass: "bg-emerald-500 dark:bg-emerald-400",
+    },
+    {
+      id: "tips",
+      label: zh ? "重點提醒" : "Tips",
+      icon: AlertCircle,
+      activeColorClass: "text-amber-600 dark:text-amber-400",
+      dotColorClass: "bg-amber-500 dark:bg-amber-400",
+    },
+    {
+      id: "checklist",
+      label: zh ? "行前清單" : "Checklist",
+      icon: CheckSquare,
+      activeColorClass: "text-indigo-600 dark:text-indigo-400",
+      dotColorClass: "bg-indigo-500 dark:bg-indigo-400",
+    },
+    {
+      id: "tickets",
+      label: zh ? "交通票券" : "Tickets",
+      icon: Ticket,
+      activeColorClass: "text-sky-600 dark:text-sky-400",
+      dotColorClass: "bg-sky-500 dark:bg-sky-400",
+    },
+    {
+      id: "costs",
+      label: zh ? "預估花費" : "Costs",
+      icon: Wallet,
+      activeColorClass: "text-emerald-700 dark:text-emerald-300",
+      dotColorClass: "bg-emerald-600 dark:bg-emerald-400",
+    },
   ]
+
+  const activeTabMeta = tabs.find((tab) => tab.id === activeTab) ?? tabs[0]
+
+  const handleTabKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+    let nextIndex: number | null = null
+    if (e.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length
+    else if (e.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length
+    else if (e.key === "Home") nextIndex = 0
+    else if (e.key === "End") nextIndex = tabs.length - 1
+
+    if (nextIndex !== null) {
+      e.preventDefault()
+      haptic.selection()
+      onTabChange(tabs[nextIndex].id)
+      const tablist = e.currentTarget.parentElement
+      const nextBtn = tablist?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]
+      nextBtn?.focus()
+    }
+  }
 
   if (!isMounted) return null
 
@@ -118,7 +186,8 @@ export default function IOSBottomSheet({
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-100 flex flex-col justify-end"
+          aria-labelledby={dialogTitleId}
+          className="fixed inset-0 z-115 flex flex-col justify-end"
         >
           {/* 1. Backdrop 遮罩 (高斯模糊背景) */}
           <motion.div
@@ -126,7 +195,7 @@ export default function IOSBottomSheet({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
             onClick={handleDismiss}
             className="fixed inset-0 bg-black/40 backdrop-blur-md"
             style={{ touchAction: "none" }}
@@ -138,7 +207,7 @@ export default function IOSBottomSheet({
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
-            transition={SPRING_CONFIG}
+            transition={shouldReduceMotion ? { duration: 0 } : SPRING_CONFIG}
             className={cn(
               "relative w-full max-w-2xl mx-auto rounded-t-[28px] overflow-hidden flex flex-col",
               "bg-background/95 dark:bg-zinc-900/95 backdrop-blur-2xl",
@@ -153,18 +222,23 @@ export default function IOSBottomSheet({
               dragConstraints={{ top: 0, bottom: 0 }}
               dragElastic={{ top: 0, bottom: 0.6 }}
               onDragEnd={handleDragEnd}
-              className="w-full pt-2.5 pb-2 px-4 flex flex-col items-center cursor-grab active:cursor-grabbing select-none"
+              className="w-full pt-2.5 pb-2 px-4 flex flex-col items-center cursor-grab active:cursor-grabbing select-none shrink-0"
             >
               {/* iOS Drag Pill */}
               <div className="w-11 h-1.5 rounded-full bg-muted-foreground/30 hover:bg-muted-foreground/50 transition-colors" />
 
-              {/* 頂部操作列：標題、切換檔位指示、關閉按鈕 */}
-              <div className="w-full flex items-center justify-between mt-1 px-1">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              {/* 頂部操作列：動態標題、切換檔位指示、關閉按鈕 */}
+              <div className="w-full flex items-center justify-between gap-2 mt-1 px-1 min-w-0">
+                <span
+                  id={dialogTitleId}
+                  className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground tracking-wider"
+                >
                   {zh ? "當日智慧看板" : "Daily Dashboard"}
+                  <span aria-hidden="true" className="mx-1.5 opacity-50">·</span>
+                  <span className="text-foreground font-semibold">{activeTabMeta.label}</span>
                 </span>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   {/* 展開/收合檔位按鈕 */}
                   <button
                     type="button"
@@ -172,7 +246,7 @@ export default function IOSBottomSheet({
                       haptic.selection()
                       setDetent((prev) => (prev === "full" ? "half" : "full"))
                     }}
-                    className="text-xs text-primary/80 hover:text-primary font-medium px-2 py-0.5 rounded-md hover:bg-muted/50 transition-colors"
+                    className="text-xs text-foreground/80 hover:text-foreground dark:text-zinc-200 dark:hover:text-white font-medium px-2 py-0.5 rounded-md hover:bg-muted/50 transition-colors touch-manipulation cursor-pointer"
                   >
                     {detent === "full" ? (zh ? "半屏" : "Half") : (zh ? "全屏" : "Full")}
                   </button>
@@ -184,8 +258,8 @@ export default function IOSBottomSheet({
                       haptic.tap()
                       handleDismiss()
                     }}
-                    className="w-7 h-7 rounded-full bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
-                    aria-label="Close"
+                    className="w-7 h-7 rounded-full bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors touch-manipulation cursor-pointer"
+                    aria-label={zh ? "關閉" : "Close"}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -193,37 +267,69 @@ export default function IOSBottomSheet({
               </div>
             </motion.div>
 
-            {/* 4. iOS Segmented Control (分段控制列) */}
-            <div className="px-4 py-1.5 border-b border-border/40">
-              <div className="flex items-center p-1 bg-muted/50 dark:bg-zinc-800/60 rounded-xl overflow-x-auto no-scrollbar gap-1">
-                {tabs.map((tab) => {
+            {/* 4. iOS Pure-Icon Frosted Glass Segmented Capsule (5 等分純圖示毛玻璃膠囊) */}
+            <div className="px-4 py-1.5 border-b border-border/40 shrink-0">
+              <div
+                role="tablist"
+                aria-label={zh ? "當日智慧看板分頁" : "Daily dashboard sections"}
+                className="grid grid-cols-5 gap-1 p-1 rounded-2xl bg-muted/60 dark:bg-zinc-800/70 backdrop-blur-md border border-border/40 isolate"
+              >
+                {tabs.map((tab, index) => {
                   const Icon = tab.icon
-                  const isActive = activeTab === tab.id
+                  const isActive = activeTabMeta.id === tab.id
+                  const hasIndicator = Boolean(tabIndicators?.[tab.id])
                   return (
                     <button
                       key={tab.id}
                       type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      aria-label={tab.label}
+                      title={tab.label}
+                      data-tab-id={tab.id}
+                      tabIndex={isActive ? 0 : -1}
+                      onKeyDown={(e) => handleTabKeyDown(e, index)}
                       onClick={() => {
                         haptic.selection()
                         onTabChange(tab.id)
                       }}
                       className={cn(
-                        "relative flex-1 min-w-18 py-1.5 px-2 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap",
+                        "relative h-11 min-w-0 rounded-xl flex items-center justify-center transition-colors touch-manipulation cursor-pointer",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
                         isActive
-                          ? "text-foreground font-semibold"
+                          ? "text-foreground"
                           : "text-muted-foreground hover:text-foreground/80"
                       )}
                     >
                       {isActive && (
-                        <motion.div
-                          layoutId="active-segmented-pill"
-                          className="absolute inset-0 bg-background dark:bg-zinc-700 rounded-lg shadow-sm"
-                          transition={{ type: "spring", stiffness: 450, damping: 35 }}
+                        <motion.span
+                          layoutId={pillLayoutId}
+                          aria-hidden="true"
+                          className="absolute inset-0 z-0 bg-background dark:bg-zinc-700 rounded-xl shadow-xs ring-1 ring-black/5 dark:ring-white/10"
+                          transition={shouldReduceMotion ? { duration: 0 } : { type: "spring", stiffness: 450, damping: 35 }}
                         />
                       )}
-                      <span className="relative z-10 flex items-center gap-1">
-                        <Icon className={cn("w-3.5 h-3.5", isActive ? "text-primary" : "text-muted-foreground")} />
-                        {tab.label}
+                      <span className="relative z-10 inline-flex items-center justify-center">
+                        <Icon
+                          aria-hidden="true"
+                          className={cn(
+                            "w-5 h-5 transition-colors",
+                            isActive ? tab.activeColorClass : "text-muted-foreground"
+                          )}
+                        />
+                        {hasIndicator && (
+                          <span
+                            data-testid={`tab-indicator-${tab.id}`}
+                            aria-hidden="true"
+                            className={cn(
+                              "absolute -top-0.5 -right-1 w-1.5 h-1.5 rounded-full ring-2",
+                              isActive
+                                ? "ring-background dark:ring-zinc-700"
+                                : "ring-muted/80 dark:ring-zinc-800",
+                              tab.dotColorClass
+                            )}
+                          />
+                        )}
                       </span>
                     </button>
                   )
@@ -231,11 +337,11 @@ export default function IOSBottomSheet({
               </div>
             </div>
 
-            {/* 5. 模組內容展示區 (可獨立上下滾動，隔離外部 drag) */}
+            {/* 5. 模組內容展示區 (四重軸鎖 + 流體高度 + iOS 安全區底距，隔離外部 drag) */}
             <div
               ref={contentScrollRef}
-              className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 pb-8"
-              style={{ WebkitOverflowScrolling: "touch" }}
+              className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-x-none overscroll-y-contain touch-pan-y px-4 py-3 pb-[calc(env(safe-area-inset-bottom,0px)+2rem)]"
+              style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
             >
               {children}
             </div>

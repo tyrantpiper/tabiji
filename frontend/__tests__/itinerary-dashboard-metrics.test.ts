@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import {
+  parseCostAmount,
   calculateDayCostsSummary,
   calculateChecklistProgress,
   extractAIReviewHighlights
@@ -343,6 +344,150 @@ STATUS: HEALTHY
     expect(() => calculateDayCostsSummary(costsWithMalformedCurrency, "JPY")).not.toThrow()
     const result = calculateDayCostsSummary(costsWithMalformedCurrency, "JPY")
     expect(result.primaryTotal).toBe(2500) // 500 (fallback JPY) + 2000 (trimmed JPY)
+  })
+
+  it("parses embedded currency codes/symbols, commas, and preserves free/range text safely", () => {
+    expect(parseCostAmount("1,200", undefined, "JPY")).toEqual({
+      amount: 1200,
+      currency: "JPY",
+      extractedCurrency: null,
+      isNegative: false,
+      normalizedAmount: "1200",
+    })
+    expect(parseCostAmount("28,000", "JPY", "JPY")).toEqual({
+      amount: 28000,
+      currency: "JPY",
+      extractedCurrency: null,
+      isNegative: false,
+      normalizedAmount: "28000",
+    })
+    expect(parseCostAmount("1500 THB", undefined, "JPY")).toEqual({
+      amount: 1500,
+      currency: "THB",
+      extractedCurrency: "THB",
+      isNegative: false,
+      normalizedAmount: "1500",
+    })
+    expect(parseCostAmount("THB 1,500", undefined, "JPY")).toEqual({
+      amount: 1500,
+      currency: "THB",
+      extractedCurrency: "THB",
+      isNegative: false,
+      normalizedAmount: "1500",
+    })
+    expect(parseCostAmount("¥1,500", undefined, "TWD")).toEqual({
+      amount: 1500,
+      currency: "JPY",
+      extractedCurrency: "JPY",
+      isNegative: false,
+      normalizedAmount: "1500",
+    })
+    expect(parseCostAmount("NT$300", undefined, "JPY")).toEqual({
+      amount: 300,
+      currency: "TWD",
+      extractedCurrency: "TWD",
+      isNegative: false,
+      normalizedAmount: "300",
+    })
+    expect(parseCostAmount("$20", undefined, "JPY")).toEqual({
+      amount: 20,
+      currency: "USD",
+      extractedCurrency: "USD",
+      isNegative: false,
+      normalizedAmount: "20",
+    })
+    expect(parseCostAmount("-500", "JPY", "JPY")).toEqual({
+      amount: -500,
+      currency: "JPY",
+      extractedCurrency: null,
+      isNegative: true,
+      normalizedAmount: "-500",
+    })
+    expect(parseCostAmount("-$20", undefined, "JPY")).toEqual({
+      amount: -20,
+      currency: "USD",
+      extractedCurrency: "USD",
+      isNegative: true,
+      normalizedAmount: "-20",
+    })
+    // Full-width digits and commas
+    expect(parseCostAmount("１，２００", undefined, "JPY")).toEqual({
+      amount: 1200,
+      currency: "JPY",
+      extractedCurrency: null,
+      isNegative: false,
+      normalizedAmount: "1200",
+    })
+    // Redundant matching dual currency markers parse cleanly ("¥1,500 JPY", "NT$300 TWD", "$20 USD")
+    expect(parseCostAmount("¥1,500 JPY", undefined, "TWD")).toEqual({
+      amount: 1500,
+      currency: "JPY",
+      extractedCurrency: "JPY",
+      isNegative: false,
+      normalizedAmount: "1500",
+    })
+    expect(parseCostAmount("NT$300 TWD", undefined, "JPY")).toEqual({
+      amount: 300,
+      currency: "TWD",
+      extractedCurrency: "TWD",
+      isNegative: false,
+      normalizedAmount: "300",
+    })
+    expect(parseCostAmount("$20 USD", undefined, "JPY")).toEqual({
+      amount: 20,
+      currency: "USD",
+      extractedCurrency: "USD",
+      isNegative: false,
+      normalizedAmount: "20",
+    })
+    // Free / range / conflicting currency / malformed comma / unknown-suffix text must NOT be misparsed
+    for (const nonNumeric of [
+      "免費",
+      "Free",
+      "1,000-2,000",
+      "1,000~2,000",
+      "¥1,000~¥2,000",
+      "100 PAX",
+      "--500",
+      "$20 JPY",
+      "1,20",
+      "1,2,3",
+      "",
+    ]) {
+      const parsed = parseCostAmount(nonNumeric, "JPY", "JPY")
+      expect(parsed.amount).toBeNull()
+      expect(parsed.normalizedAmount).toBeNull()
+      expect(parsed.isNegative).toBe(false)
+    }
+  })
+
+  it("calculateDayCostsSummary recognizes embedded currencies like '1500 THB', '¥1,500', 'NT$300', '$20' and ignores ranges/negatives", () => {
+    const summary = calculateDayCostsSummary(
+      [
+        { amount: "¥1,500" },
+        { amount: "1,200" },
+        { amount: "1500 THB" },
+        { amount: "NT$300" },
+        { amount: "$20" },
+        { amount: "-500", currency: "JPY" },
+        { amount: "1,000~2,000", currency: "JPY" },
+        { amount: "免費", currency: "JPY" },
+      ],
+      "JPY"
+    )
+    expect(summary).toEqual({
+      primaryTotal: 2700,
+      primaryCurrency: "JPY",
+      hasMultipleCurrencies: true,
+    })
+
+    // Single embedded non-default currency becomes primaryCurrency
+    const thbOnly = calculateDayCostsSummary([{ amount: "1500 THB" }], "JPY")
+    expect(thbOnly).toEqual({
+      primaryTotal: 1500,
+      primaryCurrency: "THB",
+      hasMultipleCurrencies: false,
+    })
   })
 })
 

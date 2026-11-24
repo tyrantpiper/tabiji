@@ -133,9 +133,33 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                 if (!payload || payload.senderSessionId === clientSessionId) return
                 console.log("⚡ [Realtime Broadcast] Remote collab event:", payload.event)
 
+                const filterForeignPrivate = <T,>(items: T[], allowOwnerView = false): T[] =>
+                    items.filter((entry) => {
+                        if (!entry || typeof entry !== "object") return true
+                        const rec = entry as { is_private?: boolean; private_owner_id?: string }
+                        if (!rec.is_private) return true
+                        if (allowOwnerView) return true
+                        return Boolean(userId && rec.private_owner_id && rec.private_owner_id === userId)
+                    })
+
+                // 🛡️ 派發自定義 DOM 事件前先過濾他人的私人項目，防止敏感私人資料閃現至協作者畫面
+                const sanitizedPayload = (() => {
+                    if (payload.event === "checklist:update" && Array.isArray(payload.items)) {
+                        return { ...payload, items: filterForeignPrivate(payload.items) }
+                    }
+                    if (
+                        payload.event === "tip:update" &&
+                        (payload.type === "costs" || payload.type === "tickets") &&
+                        Array.isArray(payload.data)
+                    ) {
+                        return { ...payload, data: filterForeignPrivate(payload.data) }
+                    }
+                    return payload
+                })()
+
                 // 派發自定義 DOM 事件以通知特定元件 (例如卡片重排、Daily Tips 或 Checklist 輸入)
                 if (typeof window !== "undefined") {
-                    window.dispatchEvent(new CustomEvent("tabiji:collab-event", { detail: payload }))
+                    window.dispatchEvent(new CustomEvent("tabiji:collab-event", { detail: sanitizedPayload }))
                 }
 
                 // 鏡像更新 SWR 快取 (針對細項異動與拖曳與行程主表設定變更)
@@ -153,6 +177,60 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                             toast.info("📍 旅伴已更新景點清單", { duration: 2500 })
                         }
                     }
+                }
+
+                // 📝 每日提醒 / 花費 / 票券 / 行前清單廣播事件：同步 SWR 行程詳情快取並背景校驗
+                if (payload.event === "tip:update" || payload.event === "checklist:update") {
+                    const rawDayIndex = payload.dayIndex
+                    const dayKey =
+                        rawDayIndex !== undefined &&
+                        rawDayIndex !== null &&
+                        String(rawDayIndex).trim() !== ""
+                            ? Number(rawDayIndex)
+                            : null
+                    const hasValidDay = dayKey !== null && Number.isInteger(dayKey) && dayKey >= 0
+
+                    mutate(
+                        (key: unknown) => Array.isArray(key) && key[0] === `/api/trips/${tripId}`,
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        (current: any) => {
+                            if (!current || typeof current !== "object" || !hasValidDay) return current
+                            const isTripOwner = Boolean(userId && current.created_by && current.created_by === userId)
+                            if (payload.event === "checklist:update" && Array.isArray(payload.items)) {
+                                const visibleItems = filterForeignPrivate(payload.items, isTripOwner)
+                                const nextChecklists = {
+                                    ...(current.day_checklists || {}),
+                                    [dayKey]: visibleItems,
+                                }
+                                if (dayKey === 1) {
+                                    nextChecklists[0] = []
+                                }
+                                return {
+                                    ...current,
+                                    day_checklists: nextChecklists,
+                                }
+                            }
+                            if (payload.event === "tip:update" && Array.isArray(payload.data)) {
+                                const fieldMap: Record<string, string> = {
+                                    notes: "day_notes",
+                                    costs: "day_costs",
+                                    tickets: "day_tickets",
+                                }
+                                const targetField = typeof payload.type === "string" ? fieldMap[payload.type] : undefined
+                                if (targetField) {
+                                    return {
+                                        ...current,
+                                        [targetField]: {
+                                            ...(current[targetField] || {}),
+                                            [dayKey]: filterForeignPrivate(payload.data, isTripOwner),
+                                        },
+                                    }
+                                }
+                            }
+                            return current
+                        },
+                        { revalidate: true }
+                    )
                 }
 
                 // 💰 記帳廣播事件處理

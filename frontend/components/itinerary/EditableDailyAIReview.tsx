@@ -1,8 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import { ChevronDown, Loader2, RefreshCw, Trash2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { useState, useMemo, useRef } from "react"
+import { ChevronDown, Loader2, RefreshCw, Sparkles, Trash2 } from "lucide-react"
 import { tripsApi } from "@/lib/api"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -14,7 +13,9 @@ interface EditableDailyAIReviewProps {
     day: number
     review: string | undefined
     userId?: string              // 🆕 新增
+    readOnly?: boolean
     onUpdate: (newReview?: string) => Promise<void> | void  // 刷新行程資料
+    className?: string
 }
 
 /**
@@ -31,13 +32,16 @@ export default function EditableDailyAIReview({
     day,
     review,
     userId,
-    onUpdate
+    readOnly = false,
+    onUpdate,
+    className,
 }: EditableDailyAIReviewProps) {
     const [isLoading, setIsLoading] = useState(false)
     const { lang } = useLanguage()
     const zh = lang === 'zh'
     const [loadingAction, setLoadingAction] = useState<"generate" | "clear" | null>(null)
     const [isExpanded, setIsExpanded] = useState(true)  // 預設展開以利抽屜內直接閱讀
+    const actionLockRef = useRef(false)
 
     // 🚀 樂觀即時狀態 (Optimistic Instant State: 綁定 tripId-day 防跨天串擾)
     const scopeKey = `${tripId}-${day}`
@@ -55,8 +59,9 @@ export default function EditableDailyAIReview({
 
     // 生成/重新生成 AI 審核
     const handleGenerate = async () => {
-        if (isLoading || !tripId) return
+        if (readOnly || isLoading || actionLockRef.current || !tripId) return
 
+        actionLockRef.current = true
         setIsLoading(true)
         setLoadingAction("generate")
 
@@ -73,13 +78,15 @@ export default function EditableDailyAIReview({
         } finally {
             setIsLoading(false)
             setLoadingAction(null)
+            actionLockRef.current = false
         }
     }
 
     // 清除審核報告
     const handleClear = async () => {
-        if (isLoading || !tripId) return
+        if (readOnly || isLoading || actionLockRef.current || !tripId) return
 
+        actionLockRef.current = true
         setIsLoading(true)
         setLoadingAction("clear")
 
@@ -94,24 +101,24 @@ export default function EditableDailyAIReview({
         } finally {
             setIsLoading(false)
             setLoadingAction(null)
+            actionLockRef.current = false
         }
     }
 
-    // 格式化審核報告 - 識別標題和列表項目
+    // 格式化審核報告 - 識別標題和列表項目 (補齊暗黑模式高對比色票)
     const formatReview = (text: string | null | undefined) => {
         if (!text) return null
-        // 處理可能的 literal \n 字串
         const normalizedText = String(text).replace(/\\n/g, '\n')
         const lines = normalizedText.split('\n')
 
         return lines.map((line, i) => {
             const trimmed = line.trim()
-            if (!trimmed) return <div key={i} className="h-2" />  // 空行增加間距
+            if (!trimmed) return <div key={i} className="h-2" />
 
             // 標題行 (🎯, ✅, ⚠️, 💡 開頭)
             if (/^[🎯✅⚠️💡]/.test(trimmed)) {
                 return (
-                    <p key={i} className="font-bold text-indigo-900 mt-4 first:mt-0 mb-2">
+                    <p key={i} className="font-bold text-tabiji-charcoal dark:text-tabiji-paper mt-4 first:mt-0 mb-2">
                         {trimmed}
                     </p>
                 )
@@ -120,7 +127,7 @@ export default function EditableDailyAIReview({
             // 數字列表 (1. 2. 3. 開頭)
             if (/^\d+\./.test(trimmed)) {
                 return (
-                    <p key={i} className="pl-4 py-0.5 text-indigo-700">
+                    <p key={i} className="pl-4 py-0.5 text-slate-700 dark:text-slate-300">
                         {trimmed}
                     </p>
                 )
@@ -129,113 +136,148 @@ export default function EditableDailyAIReview({
             // 項目行 (• 開頭)
             if (trimmed.startsWith('•')) {
                 return (
-                    <p key={i} className="pl-4 py-0.5 text-indigo-700">
+                    <p key={i} className="pl-4 py-0.5 text-slate-700 dark:text-slate-300">
                         {trimmed}
                     </p>
                 )
             }
 
-            return <p key={i} className="py-0.5">{trimmed}</p>
+            return (
+                <p key={i} className="py-0.5 text-slate-700 dark:text-slate-300">
+                    {trimmed}
+                </p>
+            )
         })
     }
 
-    // 無審核報告 - 顯示生成按鈕
+    const unifiedCardClass =
+        "bg-white/95 dark:bg-[#182320]/90 border border-tabiji-forest/10 dark:border-white/10 rounded-2xl p-4 shadow-[0_2px_12px_rgba(11,48,38,0.05)] dark:shadow-[0_2px_14px_rgba(0,0,0,0.3)]"
+
+    // 無審核報告 - 顯示統一和紙白／深翠黑現代空狀態卡片
     if (!effectiveReview) {
         return (
-            <div className="mx-6 mt-4">
-                <Button
-                    variant="outline"
-                    className={cn(
-                        "w-full py-6 border-dashed border-2 border-indigo-300",
-                        "bg-linear-to-br from-indigo-50/50 to-purple-50/50",
-                        "hover:border-indigo-400 hover:bg-indigo-50",
-                        "text-indigo-600 font-medium",
-                        "touch-manipulation"
+            <div className={cn(unifiedCardClass, className)}>
+                <div className="flex items-center gap-2.5 mb-3.5">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-500/12 dark:bg-emerald-400/15 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                        <Sparkles className="w-4 h-4" />
+                    </div>
+                    <h3 className="text-sm font-bold text-tabiji-charcoal dark:text-tabiji-paper">
+                        {zh ? "AI 深度審核報告" : "AI Review Report"}
+                    </h3>
+                </div>
+                <div className="py-6 px-4 text-center rounded-xl bg-tabiji-paper/45 dark:bg-white/[0.02] border border-dashed border-tabiji-forest/12 dark:border-white/10">
+                    <div className="w-11 h-11 rounded-2xl bg-emerald-500/12 dark:bg-emerald-400/15 text-emerald-700 dark:text-emerald-300 flex items-center justify-center mx-auto mb-2.5">
+                        <Sparkles className="w-5 h-5" />
+                    </div>
+                    <p className="text-sm font-semibold text-tabiji-charcoal dark:text-tabiji-paper">
+                        {zh ? "尚未生成當日行程審核" : "No AI itinerary review yet"}
+                    </p>
+                    <p className={cn("text-xs text-slate-500 dark:text-slate-400 mt-1", !readOnly && "mb-4")}>
+                        {zh
+                            ? "由 AI 從時間節奏、動線順暢與體力負荷五維度剖析當日行程"
+                            : "Analyze daily pacing, route efficiency, and fatigue across 5 dimensions"}
+                    </p>
+                    {!readOnly && (
+                        <button
+                            type="button"
+                            onClick={handleGenerate}
+                            disabled={isLoading}
+                            className="inline-flex items-center justify-center h-9 px-4 rounded-full text-xs font-semibold bg-tabiji-forest hover:bg-tabiji-forest/90 text-tabiji-paper dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:text-white transition-colors touch-manipulation disabled:opacity-50"
+                        >
+                            {isLoading && loadingAction === "generate" ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                                    {zh ? "AI 正在審核中..." : "AI is reviewing..."}
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                                    {zh ? "生成 AI 深度審核報告" : "Generate AI Review"}
+                                </>
+                            )}
+                        </button>
                     )}
-                    onClick={handleGenerate}
-                    disabled={isLoading}
-                >
-                    {isLoading && loadingAction === "generate" ? (
-                        <>
-                            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                            {zh ? "AI 正在審核中..." : "AI is reviewing..."}
-                        </>
-                    ) : (
-                        <>
-                            <span className="text-xl mr-2">🕵️</span>
-                            {zh ? '生成 AI 深度審核報告' : 'Generate AI Review'}
-                        </>
-                    )}
-                </Button>
+                </div>
             </div>
         )
     }
 
     // 有審核報告 - 顯示報告 + 操作按鈕 (可收合)
     return (
-        <div className="mx-6 mt-4 p-5 bg-linear-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-2xl shadow-sm">
-            {/* Header - 點擊展開/收合 */}
-            <div
-                className="flex items-center justify-between cursor-pointer select-none"
-                onClick={() => setIsExpanded(!isExpanded)}
-            >
-                <h3 className="text-base font-bold text-indigo-900 flex items-center gap-2">
-                    <span className="text-lg">🕵️</span> {zh ? 'AI 深度審核報告' : 'AI Review Report'}
-                    <ChevronDown
-                        className={cn(
-                            "w-4 h-4 text-indigo-500 transition-transform duration-200",
-                            isExpanded && "rotate-180"
-                        )}
-                    />
+        <div className={cn(unifiedCardClass, className)}>
+            {/* Header - 語意化收合按鈕與同級操作列 */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="flex-1 min-w-[min(100%,9rem)]">
+                    <button
+                        type="button"
+                        aria-expanded={isExpanded}
+                        onClick={() => setIsExpanded((prev) => !prev)}
+                        className="w-full flex items-center gap-2.5 text-left cursor-pointer select-none rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tabiji-forest/40 dark:focus-visible:ring-emerald-400/40"
+                    >
+                        <span className="w-8 h-8 rounded-xl bg-emerald-500/12 dark:bg-emerald-400/15 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                            <Sparkles className="w-4 h-4" />
+                        </span>
+                        <span className="text-sm font-bold text-tabiji-charcoal dark:text-tabiji-paper flex items-center gap-1.5 min-w-0 leading-snug wrap-break-word">
+                            <span>{zh ? "AI 深度審核報告" : "AI Review Report"}</span>
+                            <ChevronDown
+                                className={cn(
+                                    "w-4 h-4 text-slate-400 dark:text-slate-400 transition-transform duration-200 shrink-0",
+                                    isExpanded && "rotate-180"
+                                )}
+                            />
+                        </span>
+                    </button>
                 </h3>
-                <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                    {/* 重新審核 */}
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-indigo-600 hover:bg-indigo-100 touch-manipulation"
-                        onClick={handleGenerate}
-                        disabled={isLoading}
-                        title={zh ? "重新審核" : "Re-review"}
-                    >
-                        {isLoading && loadingAction === "generate" ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                            <RefreshCw className="w-4 h-4" />
-                        )}
-                    </Button>
-                    {/* 清除 */}
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-red-500 hover:bg-red-100 touch-manipulation"
-                        onClick={handleClear}
-                        disabled={isLoading}
-                        title={zh ? "清除審核" : "Clear review"}
-                    >
-                        {isLoading && loadingAction === "clear" ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                            <Trash2 className="w-4 h-4" />
-                        )}
-                    </Button>
-                </div>
+                {!readOnly && (
+                    <div className="flex items-center gap-1 shrink-0 ml-auto">
+                        {/* 重新審核 */}
+                        <button
+                            type="button"
+                            className="h-8 w-8 rounded-full flex items-center justify-center bg-tabiji-mist/70 hover:bg-tabiji-mist text-tabiji-charcoal dark:bg-white/8 dark:hover:bg-white/14 dark:text-tabiji-paper transition-colors touch-manipulation disabled:opacity-50"
+                            onClick={handleGenerate}
+                            disabled={isLoading}
+                            aria-label={zh ? "重新審核" : "Re-review"}
+                            title={zh ? "重新審核" : "Re-review"}
+                        >
+                            {isLoading && loadingAction === "generate" ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                                <RefreshCw className="w-3.5 h-3.5" />
+                            )}
+                        </button>
+                        {/* 清除 */}
+                        <button
+                            type="button"
+                            className="h-8 w-8 rounded-full flex items-center justify-center bg-tabiji-mist/70 hover:bg-red-500/12 text-slate-500 hover:text-red-500 dark:bg-white/8 dark:hover:bg-red-500/20 dark:text-slate-300 dark:hover:text-red-400 transition-colors touch-manipulation disabled:opacity-50"
+                            onClick={handleClear}
+                            disabled={isLoading}
+                            aria-label={zh ? "清除審核" : "Clear review"}
+                            title={zh ? "清除審核" : "Clear review"}
+                        >
+                            {isLoading && loadingAction === "clear" ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                            )}
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Content - 可收合 */}
             <div
                 className={cn(
                     "overflow-hidden transition-all duration-300 ease-in-out",
-                    isExpanded ? "max-h-750 opacity-100 mt-3" : "max-h-0 opacity-0 mt-0"
+                    isExpanded ? "max-h-750 opacity-100 mt-3.5" : "max-h-0 opacity-0 mt-0"
                 )}
             >
                 {/* 📊 五維量規微型健康指標卡片 */}
                 {highlights.dimensions && (
-                    <div className="mb-3.5 p-3 bg-white/80 dark:bg-card/80 backdrop-blur rounded-xl border border-indigo-100 dark:border-indigo-950/40 space-y-2.5">
-                        <div className="flex items-center justify-between text-xs font-semibold text-indigo-950 dark:text-indigo-200">
+                    <div className="mb-3.5 p-3 bg-tabiji-paper/65 dark:bg-white/[0.04] rounded-xl border border-tabiji-forest/10 dark:border-white/10 space-y-2.5">
+                        <div className="flex items-center justify-between text-xs font-semibold text-tabiji-charcoal dark:text-tabiji-paper">
                             <span>{zh ? "五維審核量規指標" : "Health Rubric Metrics"}</span>
                             {highlights.score !== null && (
-                                <span className="tabular-nums font-bold text-indigo-600 dark:text-indigo-400">
+                                <span className="tabular-nums font-bold text-emerald-700 dark:text-emerald-300">
                                     {zh ? `總評分: ${highlights.score} / 100` : `Score: ${highlights.score} / 100`}
                                 </span>
                             )}
@@ -249,11 +291,11 @@ export default function EditableDailyAIReview({
                                 { label: zh ? "時段契合" : "Timing", val: highlights.dimensions.timing },
                             ].map((dim) => (
                                 <div key={dim.label} className="space-y-0.5">
-                                    <div className="flex justify-between text-[10px] text-muted-foreground">
+                                    <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400">
                                         <span>{dim.label}</span>
-                                        <span className="tabular-nums font-medium text-foreground">{dim.val} / 20</span>
+                                        <span className="tabular-nums font-medium text-tabiji-charcoal dark:text-tabiji-paper">{dim.val} / 20</span>
                                     </div>
-                                    <div className="w-full h-1.5 bg-indigo-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                                    <div className="w-full h-1.5 bg-tabiji-forest/10 dark:bg-white/10 rounded-full overflow-hidden">
                                         <div
                                             className={cn(
                                                 "h-full rounded-full transition-all duration-300",
@@ -268,7 +310,7 @@ export default function EditableDailyAIReview({
                     </div>
                 )}
 
-                <div className="text-sm text-indigo-800 leading-relaxed space-y-1">
+                <div className="text-sm text-tabiji-charcoal dark:text-tabiji-paper leading-relaxed space-y-1 wrap-break-word [overflow-wrap:anywhere]">
                     {formatReview(cleanText)}
                 </div>
             </div>

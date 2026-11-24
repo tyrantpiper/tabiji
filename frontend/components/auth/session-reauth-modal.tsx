@@ -128,7 +128,8 @@ export function SessionReauthModal() {
             }
         }}>
             <DialogContent
-                className="max-w-md p-6 bg-[#FCFBF7] dark:bg-[#151E1C] border-[#0B3026]/10 dark:border-white/10 rounded-2xl shadow-2xl"
+                overlayClassName="z-165"
+                className="z-165 max-w-md p-6 bg-[#FCFBF7] dark:bg-[#151E1C] border-[#0B3026]/10 dark:border-white/10 rounded-2xl shadow-2xl"
                 showCloseButton={!isSubmitting}
             >
                 <DialogHeader className="space-y-3">

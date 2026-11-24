@@ -1,9 +1,18 @@
 import { ChecklistItem } from "@/lib/itinerary-types"
+import { FIAT_TO_COUNTRY } from "@/lib/currency"
 
 export interface CostSummary {
   primaryTotal: number
   primaryCurrency: string
   hasMultipleCurrencies: boolean
+}
+
+export interface ParsedCostAmount {
+  amount: number | null
+  currency: string
+  extractedCurrency: string | null
+  isNegative: boolean
+  normalizedAmount: string | null
 }
 
 export interface ChecklistProgress {
@@ -178,6 +187,214 @@ export function extractAIReviewHighlights(
   }
 }
 
+const CURRENCY_CODE_ALIASES: Record<string, string> = {
+  NTD: "TWD",
+  RMB: "CNY",
+}
+
+// Longer/multi-char currency symbols MUST appear before single-char symbols (e.g. NT$ before $)
+const CURRENCY_SYMBOL_PREFIXES: Array<[string, string]> = [
+  ["NT$", "TWD"],
+  ["TW$", "TWD"],
+  ["US$", "USD"],
+  ["HK$", "HKD"],
+  ["SG$", "SGD"],
+  ["S$", "SGD"],
+  ["AU$", "AUD"],
+  ["A$", "AUD"],
+  ["CA$", "CAD"],
+  ["C$", "CAD"],
+  ["NZ$", "NZD"],
+  ["CN¥", "CNY"],
+  ["CN￥", "CNY"],
+  ["JP¥", "JPY"],
+  ["JP￥", "JPY"],
+  ["¥", "JPY"],
+  ["￥", "JPY"],
+  ["€", "EUR"],
+  ["£", "GBP"],
+  ["₩", "KRW"],
+  ["฿", "THB"],
+  ["₫", "VND"],
+  ["₱", "PHP"],
+  ["₹", "INR"],
+  ["$", "USD"],
+]
+
+const CURRENCY_SYMBOL_SUFFIXES: Array<[string, string]> = [
+  ["¥", "JPY"],
+  ["￥", "JPY"],
+  ["円", "JPY"],
+  ["€", "EUR"],
+  ["£", "GBP"],
+  ["₩", "KRW"],
+  ["원", "KRW"],
+  ["฿", "THB"],
+  ["₫", "VND"],
+  ["₱", "PHP"],
+  ["₹", "INR"],
+]
+
+const STRICT_COST_NUMBER_RE = /^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)$/
+
+function normalizeCostInputChars(input: string): string {
+  return input
+    .replace(/[\uFF10-\uFF19]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/\uFF0C/g, ",")
+    .replace(/\uFF0E/g, ".")
+    .replace(/[\uFF0D\u2212]/g, "-")
+    .replace(/\uFF0B/g, "+")
+    .replace(/\u3000/g, " ")
+    .trim()
+}
+
+function resolveKnownCurrencyCode(token: string): string | null {
+  const upper = token.trim().toUpperCase()
+  if (!upper) return null
+  if (Object.prototype.hasOwnProperty.call(CURRENCY_CODE_ALIASES, upper)) {
+    return CURRENCY_CODE_ALIASES[upper]
+  }
+  if (Object.prototype.hasOwnProperty.call(FIAT_TO_COUNTRY, upper)) {
+    return upper
+  }
+  return null
+}
+
+/**
+ * 🛡️ 共用容錯金額與內嵌幣別解析器
+ * 支援千分位逗號 ("1,200"、"28,000")、內嵌幣別代碼 ("1500 THB"、"THB 1,500") 與常見符號 ("¥1,500"、"NT$300"、"$20")，
+ * 同時安全保留免費/區間等非單一數值文字 ("免費"、"1,000~2,000"、"1000-2000") 不誤拆。
+ */
+export function parseCostAmount(
+  rawAmount: string | number | undefined | null,
+  explicitCurrency?: string | null,
+  defaultCurrency = "JPY"
+): ParsedCostAmount {
+  const fallbackCurr = String(defaultCurrency || "JPY").trim().toUpperCase() || "JPY"
+  const explicitCurr =
+    explicitCurrency !== undefined && explicitCurrency !== null && String(explicitCurrency).trim() !== ""
+      ? String(explicitCurrency).trim().toUpperCase()
+      : ""
+
+  const emptyResult: ParsedCostAmount = {
+    amount: null,
+    currency: explicitCurr || fallbackCurr,
+    extractedCurrency: null,
+    isNegative: false,
+    normalizedAmount: null,
+  }
+
+  if (typeof rawAmount === "number") {
+    if (!Number.isFinite(rawAmount)) return emptyResult
+    const normalizedNum = Object.is(rawAmount, -0) ? 0 : rawAmount
+    return {
+      amount: normalizedNum,
+      currency: explicitCurr || fallbackCurr,
+      extractedCurrency: null,
+      isNegative: normalizedNum < 0,
+      normalizedAmount: String(normalizedNum),
+    }
+  }
+
+  if (rawAmount === undefined || rawAmount === null) {
+    return emptyResult
+  }
+
+  const text = normalizeCostInputChars(String(rawAmount))
+  if (!text) return emptyResult
+
+  // Capture optional leading sign before symbol/code so "-$20" / "-¥1,500" / "-NT$300" are recognized as negative
+  let leadingSign = ""
+  let working = text
+  if (working.startsWith("-") || working.startsWith("+")) {
+    leadingSign = working[0]
+    working = working.slice(1).trim()
+  }
+
+  let extractedCurrency: string | null = null
+
+  // 1. Prefix currency symbol (case-insensitive for multi-char prefixes like NT$, US$)
+  const upperWorking = working.toUpperCase()
+  for (const [sym, code] of CURRENCY_SYMBOL_PREFIXES) {
+    if (upperWorking.startsWith(sym)) {
+      extractedCurrency = code
+      working = working.slice(sym.length).trim()
+      break
+    }
+  }
+
+  // 2. Prefix 3-letter ISO currency code (e.g. "THB 1,500", "JPY1500", "NTD 300")
+  if (!extractedCurrency) {
+    const prefixCodeMatch = working.match(/^([A-Za-z]{3})(?:\s+|(?=[+-]?[\d.]))(.*)$/)
+    if (prefixCodeMatch) {
+      const resolved = resolveKnownCurrencyCode(prefixCodeMatch[1])
+      if (resolved) {
+        extractedCurrency = resolved
+        working = prefixCodeMatch[2].trim()
+      }
+    }
+  }
+
+  // 3. Suffix currency symbol (e.g. "1,500円", "1500¥", "50€", or matching redundant suffix like "¥1,500円")
+  for (const [sym, code] of CURRENCY_SYMBOL_SUFFIXES) {
+    if (working.endsWith(sym)) {
+      if (extractedCurrency && extractedCurrency !== code) {
+        return emptyResult
+      }
+      extractedCurrency = code
+      working = working.slice(0, -sym.length).trim()
+      break
+    }
+  }
+
+  // 4. Suffix 3-letter ISO currency code (e.g. "1500 THB", "1,500THB", "300 NTD", or redundant matching "¥1,500 JPY" / "NT$300 TWD")
+  const suffixCodeMatch = working.match(/^(.*\d)\s*([A-Za-z]{3})$/)
+  if (suffixCodeMatch) {
+    const resolved = resolveKnownCurrencyCode(suffixCodeMatch[2])
+    if (resolved) {
+      if (extractedCurrency && extractedCurrency !== resolved) {
+        return emptyResult
+      }
+      extractedCurrency = resolved
+      working = suffixCodeMatch[1].trim()
+    }
+  }
+
+  // Combine leading sign if working does not already have a sign (reject double signs like "--500")
+  let numericCandidate = working
+  if (leadingSign) {
+    if (numericCandidate.startsWith("-") || numericCandidate.startsWith("+")) {
+      return emptyResult
+    }
+    numericCandidate = `${leadingSign}${numericCandidate}`
+  }
+
+  if (!STRICT_COST_NUMBER_RE.test(numericCandidate)) {
+    return emptyResult
+  }
+
+  const stripped = numericCandidate.replace(/,/g, "")
+  const parsedNum = Number(stripped)
+  if (!Number.isFinite(parsedNum)) {
+    return emptyResult
+  }
+
+  const isNegative = parsedNum < 0
+  const normalizedNum = Object.is(parsedNum, -0) ? 0 : parsedNum
+  let normalizedAmount = stripped.startsWith("+") ? stripped.slice(1) : stripped
+  if (normalizedNum === 0 && normalizedAmount.startsWith("-")) {
+    normalizedAmount = normalizedAmount.slice(1)
+  }
+
+  return {
+    amount: normalizedNum,
+    currency: extractedCurrency || explicitCurr || fallbackCurr,
+    extractedCurrency,
+    isNegative,
+    normalizedAmount,
+  }
+}
+
 /**
  * 🛡️ 容錯清洗金額字串，防止千分位逗號引發 NaN
  * 支援多幣別分組統計，自動隔離主幣別總額
@@ -186,10 +403,11 @@ export function calculateDayCostsSummary(
   costs: Array<{ amount?: string | number; currency?: string }> | undefined | null,
   defaultCurrency = "JPY"
 ): CostSummary {
+  const normalizedDefault = String(defaultCurrency || "JPY").trim().toUpperCase() || "JPY"
   if (!costs || !Array.isArray(costs) || costs.length === 0) {
     return {
       primaryTotal: 0,
-      primaryCurrency: defaultCurrency,
+      primaryCurrency: normalizedDefault,
       hasMultipleCurrencies: false,
     }
   }
@@ -198,13 +416,9 @@ export function calculateDayCostsSummary(
 
   for (const c of costs) {
     if (!c) continue
-    const rawAmount = typeof c.amount === "number"
-      ? c.amount
-      : parseFloat(String(c.amount || "").replace(/,/g, "").trim())
-
-    if (!isNaN(rawAmount) && rawAmount > 0) {
-      const curr = String(c.currency || defaultCurrency).trim().toUpperCase()
-      totalsByCurrency[curr] = (totalsByCurrency[curr] || 0) + rawAmount
+    const parsed = parseCostAmount(c.amount, c.currency, normalizedDefault)
+    if (parsed.amount !== null && parsed.amount > 0) {
+      totalsByCurrency[parsed.currency] = (totalsByCurrency[parsed.currency] || 0) + parsed.amount
     }
   }
 
@@ -212,13 +426,13 @@ export function calculateDayCostsSummary(
   if (currencies.length === 0) {
     return {
       primaryTotal: 0,
-      primaryCurrency: defaultCurrency,
+      primaryCurrency: normalizedDefault,
       hasMultipleCurrencies: false,
     }
   }
 
-  const primaryCurrency = totalsByCurrency[defaultCurrency.toUpperCase()] !== undefined
-    ? defaultCurrency.toUpperCase()
+  const primaryCurrency = totalsByCurrency[normalizedDefault] !== undefined
+    ? normalizedDefault
     : currencies[0]
 
   return {

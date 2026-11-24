@@ -1,0 +1,47 @@
+[
+  {
+    "id": "frontend/components/itinerary/EditableDailyTips.tsx:grapheme_storage_and_micro_form_selectors",
+    "file_path": "frontend/components/itinerary/EditableDailyTips.tsx",
+    "start_line": 90,
+    "end_line": 315,
+    "attack_vector": "surrogate_pair_corruption_or_storage_security_error",
+    "hypothesis": "Verify whether EditableDailyTips extracts the first visual emoji grapheme cluster via Intl.Segmenter / Array.from in extractFirstGrapheme without splitting UTF-16 surrogate pairs or overflowing full strings, wraps localStorage.getItem('user_uuid') in a try/catch inside resolveOwnerId, guards Enter and Escape with e.nativeEvent.isComposing and stopPropagation in IconPicker, and retains initial and extra non-preset currencies in CurrencyPillSelector.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/components/itinerary/EditableDailyTips.tsx:single_frame_lock_and_privacy_handlers",
+    "file_path": "frontend/components/itinerary/EditableDailyTips.tsx",
+    "start_line": 500,
+    "end_line": 965,
+    "attack_vector": "double_tap_duplicate_mutation_or_privacy_owner_leak",
+    "hypothesis": "Verify whether handleAddNote, handleRemoveNote, handleSaveNotes, handleAddCost, handleRemoveCost, handleTogglePrivacyCost, handleSaveCosts, handleAddTicket, handleRemoveTicket, handleTogglePrivacyTicket, and handleSaveTickets enforce synchronous single-frame locks (noteLockRef, costLockRef, ticketLockRef) released in finally blocks, and resolve private_owner_id safely via resolveOwnerId(userId) with optimistic rollback on failure.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/components/itinerary/EditableDailyChecklist.tsx:debounce_counter_conservation_and_add_lock",
+    "file_path": "frontend/components/itinerary/EditableDailyChecklist.tsx",
+    "start_line": 25,
+    "end_line": 360,
+    "attack_vector": "debounce_counter_leak_or_unhandled_promise_rejection",
+    "hypothesis": "Verify whether EditableDailyChecklist increments pendingUpdatesCount at most once per debounce window via hasPendingDebounceRef, cancels pending toggle debounce via cancelPendingDebounce before immediate addItemWithText/removeItem/handleTogglePrivacy/handleSaveEdit mutations, rolls back to committedItemsRef.current when debounced toggleItem fails, guards all async mutations with synchronous actionLockRef.current and catch/finally rollback blocks, and provides a non-crypto fallback in generateId.",
+    "severity": "medium"
+  },
+  {
+    "id": "frontend/components/itinerary/EditableDailyChecklist.tsx:decoupled_row_buttons_and_ime_guard",
+    "file_path": "frontend/components/itinerary/EditableDailyChecklist.tsx",
+    "start_line": 440,
+    "end_line": 745,
+    "attack_vector": "nested_interactive_buttons_or_ime_premature_submit",
+    "hypothesis": "Verify whether EditableDailyChecklist renders decoupled sibling button elements (type='button') for item toggle, privacy toggle, and deletion without nesting interactive buttons, disables quick-add preset chips during updates, and checks e.nativeEvent.isComposing before handling Enter and stops propagation on Escape in edit and add inputs.",
+    "severity": "low"
+  },
+  {
+    "id": "frontend/components/itinerary/EditableDailyAIReview.tsx:sentinel_contract_and_dark_mode_contrast",
+    "file_path": "frontend/components/itinerary/EditableDailyAIReview.tsx",
+    "start_line": 35,
+    "end_line": 305,
+    "attack_vector": "cross_day_optimistic_state_bleed_or_locale_omission",
+    "hypothesis": "Verify whether EditableDailyAIReview scopes optimisticState by scopeKey (${tripId}-${day}), guards handleGenerate and handleClear with synchronous actionLockRef.current, forwards lang to tripsApi.generateAIReview(tripId, day, userId, lang), preserves the bilingual 'AI is reviewing...' loading string, removes misaligned mx-6 margin, and applies dark-mode text contrast classes in formatReview.",
+    "severity": "low"
+  }
+]

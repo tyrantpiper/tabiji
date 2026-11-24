@@ -152,13 +152,19 @@ export interface NoteItem {
 export interface CostItem {
     item: string
     amount: string
+    currency?: string
     note?: string
+    is_private?: boolean
+    private_owner_id?: string
 }
 
 export interface TicketItem {
     name: string
     price: string
+    currency?: string
     note?: string
+    is_private?: boolean
+    private_owner_id?: string
 }
 
 export interface ChecklistItem {

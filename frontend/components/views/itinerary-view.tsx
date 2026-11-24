@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button"
 import { useTripDetail, useOnlineStatus, useHaptic, useTripCapsules } from "@/lib/hooks"
 import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { useLanguage } from "@/lib/LanguageContext"
-import { ItineraryItemState, Trip, Activity, DailyLocation, DayWeather, ChecklistItem } from "@/lib/itinerary-types"
+import { ItineraryItemState, Trip, Activity, DailyLocation, DayWeather, ChecklistItem, NoteItem, CostItem, TicketItem } from "@/lib/itinerary-types"
+import { calculateChecklistProgress } from "@/lib/itinerary-metrics"
 import { ActivityEditModal } from "@/components/itinerary/ActivityEditModal"
 import { CreateTripModal, JoinTripDialog } from "@/components/itinerary/TripDialogs"
 import EditableDailyTips from "@/components/itinerary/EditableDailyTips"
@@ -62,6 +63,12 @@ function getDayData<T>(data: Record<number | string, T> | undefined, day: number
     // Try number key first, then string key
     return data[day] ?? data[String(day)]
 }
+
+// 🛡️ 模組級穩定空陣列常數，避免每次 render 產生新參考覆寫子組件即時協同狀態
+const EMPTY_NOTES: NoteItem[] = []
+const EMPTY_COSTS: CostItem[] = []
+const EMPTY_TICKETS: TicketItem[] = []
+const EMPTY_CHECKLIST: ChecklistItem[] = []
 
 export function ItineraryView() {
     const { t, lang } = useLanguage()
@@ -344,6 +351,38 @@ export function ItineraryView() {
         return currentTrip.days.find((d) => Number(d.day) === Number(day))?.activities || []
     }, [currentTrip?.days, day])
 
+    const currentDayNotes = useMemo(() => {
+        const raw = getDayData(currentTrip?.day_notes, day)
+        return Array.isArray(raw) ? raw : EMPTY_NOTES
+    }, [currentTrip?.day_notes, day])
+    const currentDayCosts = useMemo(() => {
+        const raw = getDayData(currentTrip?.day_costs, day)
+        return Array.isArray(raw) ? raw : EMPTY_COSTS
+    }, [currentTrip?.day_costs, day])
+    const currentDayTickets = useMemo(() => {
+        const raw = getDayData(currentTrip?.day_tickets, day)
+        return Array.isArray(raw) ? raw : EMPTY_TICKETS
+    }, [currentTrip?.day_tickets, day])
+    const currentDayChecklistItems = useMemo(() => {
+        if (day !== 1) {
+            const raw = getDayData(currentTrip?.day_checklists, day)
+            return Array.isArray(raw) ? raw : EMPTY_CHECKLIST
+        }
+        const rawD0 = getDayData(currentTrip?.day_checklists, 0)
+        const rawD1 = getDayData(currentTrip?.day_checklists, 1)
+        const d0 = Array.isArray(rawD0) ? rawD0 : EMPTY_CHECKLIST
+        const d1 = Array.isArray(rawD1) ? rawD1 : EMPTY_CHECKLIST
+        if (d0.length === 0 && d1.length === 0) {
+            return EMPTY_CHECKLIST
+        }
+        const uniqueMap = new Map<string, ChecklistItem>()
+        ;[...d0, ...d1].forEach((item) => {
+            if (item?.id) uniqueMap.set(item.id, item)
+        })
+        return Array.from(uniqueMap.values())
+    }, [currentTrip?.day_checklists, day])
+    const effectiveTripCurrency = currentTrip?.currency?.trim().toUpperCase() || "JPY"
+
     // 🆕 DND Event Handlers
     const handleDragStart = useCallback((event: DragStartEvent) => {
         if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(10) // 📳 Haptic: Lift
@@ -485,6 +524,10 @@ export function ItineraryView() {
         } catch (e) {
             console.error("Failed to update day data:", e)
             toast.error(t('iv_update_failed_short'))
+            if (currentTrip) {
+                reloadTripDetail(currentTrip, false)
+                saveTripSnapshot(activeTripId, currentTrip)
+            }
             reloadTripDetail()
             return false
         }
@@ -1874,11 +1917,11 @@ export function ItineraryView() {
                         <ItineraryDashboardHub
                             day={day}
                             review={getDayData(currentTrip?.day_ai_reviews, day) || (day === 1 ? currentTrip?.ai_review : undefined)}
-                            notes={getDayData(currentTrip?.day_notes, day) || []}
-                            costs={getDayData(currentTrip?.day_costs, day) || []}
-                            tickets={getDayData(currentTrip?.day_tickets, day) || []}
+                            notes={currentDayNotes}
+                            costs={currentDayCosts}
+                            tickets={currentDayTickets}
                             dayChecklists={currentTrip?.day_checklists}
-                            defaultCurrency={currentTrip?.currency}
+                            defaultCurrency={effectiveTripCurrency}
                             isSample={Boolean(currentTrip?.is_sample || currentTrip?.created_by === "SYSTEM")}
                             capsuleSummary={capsuleSummary}
                             onCapsuleClick={() => {
@@ -1915,6 +1958,22 @@ export function ItineraryView() {
                             activeTab={activeDashboardTab}
                             onClose={() => setIsDashboardSheetOpen(false)}
                             onTabChange={(tab) => setActiveDashboardTab(tab)}
+                            tabIndicators={{
+                                ai_review: (() => {
+                                    const rev = getDayData(currentTrip?.day_ai_reviews, day) || (day === 1 ? currentTrip?.ai_review : undefined)
+                                    return Boolean(
+                                        rev &&
+                                        typeof rev === "string" &&
+                                        rev.trim().length > 0 &&
+                                        !rev.includes("尚未安排任何景點") &&
+                                        !rev.includes("尚未安排景點")
+                                    )
+                                })(),
+                                tips: currentDayNotes.length > 0,
+                                checklist: calculateChecklistProgress(currentTrip?.day_checklists, day).total > 0,
+                                tickets: currentDayTickets.length > 0,
+                                costs: currentDayCosts.length > 0,
+                            }}
                         >
                             {activeDashboardTab === "ai_review" && (
                                 <EditableDailyAIReview
@@ -1950,9 +2009,10 @@ export function ItineraryView() {
                                     day={day}
                                     displaySection="notes"
                                     className="space-y-4"
-                                    notes={getDayData(currentTrip?.day_notes, day) || []}
-                                    costs={getDayData(currentTrip?.day_costs, day) || []}
-                                    tickets={getDayData(currentTrip?.day_tickets, day) || []}
+                                    notes={currentDayNotes}
+                                    costs={currentDayCosts}
+                                    tickets={currentDayTickets}
+                                    defaultCurrency={effectiveTripCurrency}
                                     userId={userId || undefined}
                                     onUpdate={handleDayDataUpdate}
                                 />
@@ -1965,9 +2025,10 @@ export function ItineraryView() {
                                     day={day}
                                     displaySection="costs"
                                     className="space-y-4"
-                                    notes={getDayData(currentTrip?.day_notes, day) || []}
-                                    costs={getDayData(currentTrip?.day_costs, day) || []}
-                                    tickets={getDayData(currentTrip?.day_tickets, day) || []}
+                                    notes={currentDayNotes}
+                                    costs={currentDayCosts}
+                                    tickets={currentDayTickets}
+                                    defaultCurrency={effectiveTripCurrency}
                                     userId={userId || undefined}
                                     onUpdate={handleDayDataUpdate}
                                 />
@@ -1980,9 +2041,10 @@ export function ItineraryView() {
                                     day={day}
                                     displaySection="tickets"
                                     className="space-y-4"
-                                    notes={getDayData(currentTrip?.day_notes, day) || []}
-                                    costs={getDayData(currentTrip?.day_costs, day) || []}
-                                    tickets={getDayData(currentTrip?.day_tickets, day) || []}
+                                    notes={currentDayNotes}
+                                    costs={currentDayCosts}
+                                    tickets={currentDayTickets}
+                                    defaultCurrency={effectiveTripCurrency}
                                     userId={userId || undefined}
                                     onUpdate={handleDayDataUpdate}
                                 />
@@ -1993,13 +2055,7 @@ export function ItineraryView() {
                                     key={`sheet-checklist-${day}`}
                                     tripId={activeTripId || ""}
                                     day={day}
-                                    items={day === 1 ? (() => {
-                                        const d0 = getDayData(currentTrip?.day_checklists, 0) || [];
-                                        const d1 = getDayData(currentTrip?.day_checklists, 1) || [];
-                                        const uniqueMap = new Map();
-                                        [...d0, ...d1].forEach(item => { if (item.id) uniqueMap.set(item.id, item); });
-                                        return Array.from(uniqueMap.values()) as ChecklistItem[];
-                                    })() : (getDayData(currentTrip?.day_checklists, day) || [])}
+                                    items={currentDayChecklistItems}
                                     userId={userId || undefined}
                                     onUpdate={async (items) => {
                                         if (!activeTripId) return false
@@ -2007,7 +2063,11 @@ export function ItineraryView() {
                                         if (currentTrip) {
                                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
                                             const optimisticTrip: any = { ...currentTrip }
-                                            optimisticTrip.day_checklists = { ...(optimisticTrip.day_checklists || {}), [day]: items }
+                                            const nextChecklists = { ...(optimisticTrip.day_checklists || {}), [day]: items }
+                                            if (day === 1) {
+                                                nextChecklists[0] = []
+                                            }
+                                            optimisticTrip.day_checklists = nextChecklists
                                             reloadTripDetail(optimisticTrip, false)
                                             saveTripSnapshot(activeTripId, optimisticTrip)
                                         }
@@ -2035,6 +2095,10 @@ export function ItineraryView() {
                                         } catch (e) {
                                             console.error("Failed to update checklist:", e)
                                             toast.error(t('iv_update_failed_short'))
+                                            if (currentTrip) {
+                                                reloadTripDetail(currentTrip, false)
+                                                saveTripSnapshot(activeTripId, currentTrip)
+                                            }
                                             reloadTripDetail()
                                             return false
                                         }

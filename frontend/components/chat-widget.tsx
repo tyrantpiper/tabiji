@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { X, Send, Image as ImageIcon, User } from "lucide-react"
+import { X, User } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,7 @@ import BatchPOIPreviewCard from "@/components/chat/BatchPOIPreviewCard"
 import RemoveItemPreviewCard, { extractRemoveFunctionCall } from "@/components/chat/RemoveItemPreviewCard"
 import ExpensePreviewCard, { extractExpenseFunctionCall } from "@/components/chat/ExpensePreviewCard"
 import DeepResearchCard, { type DeepResearchData } from "@/components/chat/DeepResearchCard"
+import ChatComposer from "@/components/chat/ChatComposer"
 import { streamChat } from "@/lib/sse-parser"
 import { setSearchCache } from "@/lib/search-cache"
 import { toast } from "sonner"
@@ -258,25 +259,47 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
     const [imagePreviewError, setImagePreviewError] = useState(false)
     const [isCompressingImage, setIsCompressingImage] = useState(false)
     const compressingImageRef = useRef(false)
+    const imageUploadGenRef = useRef(0)
+    const isDeepResearchRef = useRef(false)
     // 🆕 v3.5: 保存失敗的訊息用於重試
     const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null)
     // 🆕 v3.6: 記憶摘要永動機
     const [memorySummary, setMemorySummary] = useState<string | null>(null)
     const [isSummarizing, setIsSummarizing] = useState(false)
     const messagesEndRef = useRef<HTMLDivElement>(null)
-    const fileInputRef = useRef<HTMLInputElement>(null)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     // 🆕 v5.3: 行動端 Auto-Dock 狀態 (地圖運鏡時自動下潛收合，避免遮擋主地圖)
     const [isDocked, setIsDocked] = useState(false)
+    const [isComposerMenuOpen, setIsComposerMenuOpen] = useState(false)
     // 🆕 v3.5: AbortController for stopping generation
     const abortControllerRef = useRef<AbortController | null>(null)
     const activePollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set())
+    const activeResearchIdRef = useRef<string | null>(null)
     const isMountedRef = useRef(true)
+
+    useEffect(() => {
+        isDeepResearchRef.current = isDeepResearch
+    }, [isDeepResearch])
 
     const clearAllPollIntervals = () => {
         activePollIntervalsRef.current.forEach((id) => clearInterval(id))
         activePollIntervalsRef.current.clear()
     }
+
+    const cancelResearchBackend = useCallback((interactionId: string) => {
+        try {
+            const k = getSecureApiKey()
+            if (!k) return
+            void fetch(`${API_HOST}/api/agents/interactions/${interactionId}/cancel`, {
+                method: "POST",
+                headers: { "X-Gemini-API-Key": k }
+            }).catch((e) => {
+                console.error("Cancel failed:", e)
+            })
+        } catch (e) {
+            console.error("Cancel failed:", e)
+        }
+    }, [])
 
     // 🛡️ Cleanup AbortController & polling intervals on unmount to prevent memory leaks
     useEffect(() => {
@@ -284,6 +307,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
         const intervals = activePollIntervalsRef.current
         return () => {
             isMountedRef.current = false
+            activeResearchIdRef.current = null
             abortControllerRef.current?.abort()
             intervals.forEach((id) => clearInterval(id))
             intervals.clear()
@@ -293,6 +317,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
     useEffect(() => {
         const handleMapFlyTo = () => {
             if (isOpen && typeof window !== "undefined" && window.innerWidth < 768) {
+                setIsComposerMenuOpen(false)
                 setIsDocked(true)
             }
         }
@@ -310,9 +335,23 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
     useEffect(() => {
         if (activeTripId && prevTripIdRef.current !== activeTripId) {
             // 🚨 關鍵補全：切斷前一個行程還在生成的 AI 回應與背景輪詢
+            imageUploadGenRef.current += 1
+            compressingImageRef.current = false
+            setIsCompressingImage(false)
+            setIsComposerMenuOpen(false)
+            const prevResearchId = activeResearchIdRef.current
+            activeResearchIdRef.current = null
             abortControllerRef.current?.abort()
+            abortControllerRef.current = null
             clearAllPollIntervals()
+            if (prevResearchId) {
+                cancelResearchBackend(prevResearchId)
+            }
             setIsLoading(false)
+            isDeepResearchRef.current = false
+            setIsDeepResearch(false)
+            setSelectedImage(null)
+            setImagePreviewError(false)
 
             // 重置對話清單為初始的打招呼訊息
             setMessages([
@@ -333,7 +372,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                 setIsOpen(false)
             }
         }
-    }, [activeTripId, isOpen])
+    }, [activeTripId, isOpen, cancelResearchBackend])
 
     // Draggable state & 2D Magnetic Snap
     const [position, setPosition] = useState<Position>({ x: 16, y: 100 })
@@ -503,7 +542,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
     }, [isDragging, handleDragMove, handleDragEnd])
 
     const handleSendMessage = async () => {
-        if ((!input.trim() && !selectedImage) || isLoading) return
+        if ((!input.trim() && !selectedImage) || isLoading || compressingImageRef.current) return
 
         // Check for API key
         const apiKey = getSecureApiKey()
@@ -521,6 +560,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
         const userMsg = input
         const currentImage = selectedImage
 
+        imageUploadGenRef.current += 1
         setInput("")
         setSelectedImage(null)
         setImagePreviewError(false)
@@ -539,7 +579,8 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
         setIsLoading(true)
 
         // 🆕 v3.5: 建立 AbortController
-        abortControllerRef.current = new AbortController()
+        const currentController = new AbortController()
+        abortControllerRef.current = currentController
 
         // 🆕 v3.6: 記憶摘要永動機
         const PREHEAT_THRESHOLD = 20  // 預熱觸發點
@@ -664,8 +705,8 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
             displayContent: m.displayContent
         }))
 
-        // 🔬 Antigravity System 2: 深度研究模式分流
-        const isDeepIntent = isDeepResearch || userMsg.startsWith("/research") || userMsg.includes("深度研究") || userMsg.includes("演算法精算")
+        // 🔬 Antigravity System 2: 深度研究模式分流 (附圖時強制走多模態 /api/chat，防止圖片被靜默丟棄)
+        const isDeepIntent = !currentImage && (isDeepResearch || userMsg.startsWith("/research") || userMsg.includes("深度研究") || userMsg.includes("演算法精算"))
         if (isDeepIntent && apiKey) {
             setIsLoading(true)
             setSearchStatus({ phase: "thinking" })
@@ -677,6 +718,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                         "Content-Type": "application/json",
                         "X-Gemini-API-Key": apiKey
                     },
+                    signal: currentController.signal,
                     body: JSON.stringify({
                         prompt: cleanPrompt,
                         destination: activeTrip?.title || undefined,
@@ -695,8 +737,9 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                     throw new Error(startDetail || `HTTP ${res.status}`)
                 }
                 const data = await res.json()
-                if (!isMountedRef.current) return
+                if (!isMountedRef.current || currentController.signal.aborted) return
                 const interactionId = data.interaction_id
+                activeResearchIdRef.current = interactionId
 
                 // 插入初始卡片狀態
                 const initialResearchData: DeepResearchData = {
@@ -711,10 +754,10 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                     researchData: initialResearchData
                 })])
 
-                // 背景輪詢狀態 (含 404/401/連續錯誤熔斷防禦與 Unmount 清理)
+                // 背景輪詢狀態 (含 404/401/連續錯誤熔斷防禦、AbortSignal 中止與 Unmount 清理)
                 let consecutivePollErrors = 0
                 const pollInterval = setInterval(async () => {
-                    if (!isMountedRef.current) {
+                    if (!isMountedRef.current || currentController.signal.aborted) {
                         clearInterval(pollInterval)
                         activePollIntervalsRef.current.delete(pollInterval)
                         return
@@ -722,33 +765,43 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                     const failResearchCard = (errMsg: string) => {
                         clearInterval(pollInterval)
                         activePollIntervalsRef.current.delete(pollInterval)
+                        if (activeResearchIdRef.current === interactionId) {
+                            activeResearchIdRef.current = null
+                        }
+                        if (!isMountedRef.current || currentController.signal.aborted) return
                         setMessages(prev => {
                             const updated = [...prev]
                             const targetIdx = updated.findIndex(m => m.researchData?.id === interactionId)
-                            const idxToUpdate = targetIdx !== -1 ? targetIdx : updated.length - 1
-                            if (idxToUpdate >= 0) {
-                                updated[idxToUpdate] = {
-                                    ...updated[idxToUpdate],
-                                    displayContent: updated[idxToUpdate].displayContent || "",
-                                    researchData: {
-                                        id: interactionId,
-                                        status: "failed",
-                                        prompt: cleanPrompt,
-                                        engine: data.engine,
-                                        error: errMsg
-                                    }
+                            if (targetIdx === -1) return prev
+                            updated[targetIdx] = {
+                                ...updated[targetIdx],
+                                displayContent: updated[targetIdx].displayContent || "",
+                                researchData: {
+                                    id: interactionId,
+                                    status: "failed",
+                                    prompt: cleanPrompt,
+                                    engine: data.engine,
+                                    error: errMsg
                                 }
                             }
                             return updated
                         })
                         toast.error(errMsg)
-                        setIsLoading(false)
+                        if (abortControllerRef.current === currentController) {
+                            setIsLoading(false)
+                        }
                     }
 
                     try {
                         const pollRes = await fetch(`${API_HOST}/api/agents/interactions/${interactionId}`, {
-                            headers: { "X-Gemini-API-Key": apiKey }
+                            headers: { "X-Gemini-API-Key": apiKey },
+                            signal: currentController.signal
                         })
+                        if (!isMountedRef.current || currentController.signal.aborted) {
+                            clearInterval(pollInterval)
+                            activePollIntervalsRef.current.delete(pollInterval)
+                            return
+                        }
                         if (!pollRes.ok) {
                             consecutivePollErrors += 1
                             if (pollRes.status === 404 || pollRes.status === 401 || pollRes.status === 403 || consecutivePollErrors >= 3) {
@@ -763,25 +816,31 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                         }
                         consecutivePollErrors = 0
                         const pollData = await pollRes.json()
+                        if (!isMountedRef.current || currentController.signal.aborted) {
+                            clearInterval(pollInterval)
+                            activePollIntervalsRef.current.delete(pollInterval)
+                            return
+                        }
                         if (pollData.status === "completed" || pollData.status === "failed" || pollData.status === "cancelled") {
                             clearInterval(pollInterval)
                             activePollIntervalsRef.current.delete(pollInterval)
+                            if (activeResearchIdRef.current === interactionId) {
+                                activeResearchIdRef.current = null
+                            }
                             setMessages(prev => {
                                 const updated = [...prev]
                                 const targetIdx = updated.findIndex(m => m.researchData?.id === interactionId)
-                                const idxToUpdate = targetIdx !== -1 ? targetIdx : updated.length - 1
-                                if (idxToUpdate >= 0) {
-                                    updated[idxToUpdate] = {
-                                        ...updated[idxToUpdate],
-                                        displayContent: pollData.output_text || "",
-                                        researchData: {
-                                            id: interactionId,
-                                            status: pollData.status,
-                                            prompt: cleanPrompt,
-                                            outputText: pollData.output_text,
-                                            engine: pollData.engine,
-                                            error: pollData.error
-                                        }
+                                if (targetIdx === -1) return prev
+                                updated[targetIdx] = {
+                                    ...updated[targetIdx],
+                                    displayContent: pollData.output_text || "",
+                                    researchData: {
+                                        id: interactionId,
+                                        status: pollData.status,
+                                        prompt: cleanPrompt,
+                                        outputText: pollData.output_text,
+                                        engine: pollData.engine,
+                                        error: pollData.error
                                     }
                                 }
                                 return updated
@@ -789,9 +848,16 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             if (pollData.status === "failed" && pollData.error) {
                                 toast.error(pollData.error)
                             }
-                            setIsLoading(false)
+                            if (abortControllerRef.current === currentController) {
+                                setIsLoading(false)
+                            }
                         }
                     } catch (err) {
+                        if (!isMountedRef.current || currentController.signal.aborted || (err instanceof Error && err.name === "AbortError")) {
+                            clearInterval(pollInterval)
+                            activePollIntervalsRef.current.delete(pollInterval)
+                            return
+                        }
                         console.error("Polling interaction failed:", err)
                         consecutivePollErrors += 1
                         if (consecutivePollErrors >= 3) {
@@ -801,14 +867,22 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                 }, 2000)
                 activePollIntervalsRef.current.add(pollInterval)
 
+                isDeepResearchRef.current = false
                 setIsDeepResearch(false)
                 return
             } catch (err) {
+                if (currentController.signal.aborted || !isMountedRef.current) {
+                    return
+                }
                 console.error("Failed to start deep research:", err)
                 const errMessage = err instanceof Error ? err.message : ""
                 toast.error(errMessage || (zh ? "啟動深度研究失敗" : "Failed to start research"))
-                setIsLoading(false)
+                if (abortControllerRef.current === currentController) {
+                    setIsLoading(false)
+                }
+                isDeepResearchRef.current = false
                 setIsDeepResearch(false)
+                return
             }
         }
 
@@ -834,6 +908,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             debugLog("🟢 SSE 連線建立")
                         },
                         onThinking: (status, meta) => {
+                            if (currentController.signal.aborted || !isMountedRef.current) return
                             debugLog("🧠 AI 思考中:", status, meta)
                             if (status === "searching" || status === "reading") {
                                 setSearchStatus({
@@ -846,6 +921,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             }
                         },
                         onTool: (toolCall) => {
+                            if (currentController.signal.aborted || !isMountedRef.current) return
                             debugLog("🛠️ SSE 收到 Tool Call:", toolCall)
                             setSearchStatus({ phase: "thinking" })
                             const part: Part = {
@@ -883,6 +959,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             })
                         },
                         onText: (text) => {
+                            if (currentController.signal.aborted || !isMountedRef.current) return
                             setSearchStatus({ phase: "thinking" })
                             streamingText += text
                             // 🆕 即時更新 UI (打字機效果)
@@ -906,6 +983,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             })
                         },
                         onDone: (data) => {
+                            if (currentController.signal.aborted || !isMountedRef.current) return
                             debugLog("✅ SSE 完成:", data.model_used, "來源數:", data.sources?.length ?? 0)
                             setSearchStatus({ phase: "thinking" })
                             streamingRawParts = (data.raw_parts && data.raw_parts.length > 0) ? (data.raw_parts as Part[]) : streamingRawParts
@@ -987,6 +1065,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             })
                         },
                         onReset: () => {
+                            if (currentController.signal.aborted || !isMountedRef.current) return
                             streamingText = ""
                             streamingRawParts = []
                             setSearchStatus({ phase: "thinking" })
@@ -1004,6 +1083,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             })
                         },
                         onError: (error) => {
+                            if (currentController.signal.aborted || !isMountedRef.current) return
                             setSearchStatus({ phase: "thinking" })
                             // 🛡️ 如果 onDone 已經成功處理，忽略後續 error 事件
                             if (streamingSuccess) return
@@ -1044,7 +1124,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             }
                         }
                     },
-                    abortControllerRef.current?.signal,  // 🆕 傳入 AbortSignal
+                    currentController.signal,  // 🆕 傳入 AbortSignal
                     leanItinerary,  // 🆕 行程上下文
                     focusedDay,   // 🆕 v3.8: 傳入當前焦點天數
                     contextUserId || localStorage.getItem("user_uuid") || "",
@@ -1058,7 +1138,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
         }
 
         // 🔄 Fallback: 如果 streaming 失敗或有圖片，使用原有 API (401 金鑰無效或已渲染錯誤中斷部分結果時不重複發請求)
-        if (!streamingSuccess && !streamErroredWithPartial && !streamEmptyError && !streamingFatalAuthError && !abortControllerRef.current?.signal.aborted) {
+        if (!streamingSuccess && !streamErroredWithPartial && !streamEmptyError && !streamingFatalAuthError && !currentController.signal.aborted) {
             try {
                 let token = authSession.getCachedToken()
                 if (!token && typeof window !== "undefined") {
@@ -1088,7 +1168,8 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                 let res = await fetch(`${API_HOST}/api/chat`, {
                     method: "POST",
                     headers,
-                    body: chatPayload
+                    body: chatPayload,
+                    signal: currentController.signal
                 })
 
                 // 🛡️ 401 自癒重試防禦：僅針對後端 Session Token 失效刷新，切勿因 Gemini API Key 401 誤刪用戶 Session
@@ -1109,11 +1190,14 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             res = await fetch(`${API_HOST}/api/chat`, {
                                 method: "POST",
                                 headers,
-                                body: chatPayload
+                                body: chatPayload,
+                                signal: currentController.signal
                             })
                         }
                     }
                 }
+
+                if (currentController.signal.aborted || !isMountedRef.current) return
 
                 const data = await res.json()
 
@@ -1135,6 +1219,9 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
 
                 setMessages(prev => [...prev, aiMessage])
             } catch (error) {
+                if (currentController.signal.aborted || (error instanceof Error && error.name === "AbortError") || !isMountedRef.current) {
+                    return
+                }
                 console.error(error)
                 // 🆕 v3.5: 保存失敗訊息供重試
                 setLastFailedMessage(userMsg)
@@ -1150,13 +1237,56 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
             setLastFailedMessage(null)
         }
 
-        setSearchStatus({ phase: "thinking" })
-        setIsLoading(false)
+        if (isMountedRef.current && abortControllerRef.current === currentController) {
+            setSearchStatus({ phase: "thinking" })
+            setIsLoading(false)
+        }
     }
 
-    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        e.target.value = ""
+    const handleStopGeneration = useCallback(() => {
+        const researchIdToCancel = activeResearchIdRef.current
+        activeResearchIdRef.current = null
+        abortControllerRef.current?.abort()
+        abortControllerRef.current = null
+        if (activePollIntervalsRef.current.size > 0 || researchIdToCancel) {
+            clearAllPollIntervals()
+            setMessages(prev => prev.map(m =>
+                m.researchData?.status === "running"
+                    ? { ...m, researchData: { ...m.researchData, status: "cancelled" } }
+                    : m
+            ))
+            if (researchIdToCancel) {
+                cancelResearchBackend(researchIdToCancel)
+            }
+        }
+        setSearchStatus({ phase: "thinking" })
+        setIsLoading(false)
+    }, [cancelResearchBackend])
+
+    const handleToggleDeepResearch = useCallback((next: boolean) => {
+        if (next && (selectedImage || compressingImageRef.current)) {
+            return
+        }
+        if (next === isDeepResearchRef.current) {
+            return
+        }
+        isDeepResearchRef.current = next
+        setIsDeepResearch(next)
+        toast.info(
+            next ? t('ai_composer_deep_research_on') : t('ai_composer_deep_research_off'),
+            { position: "top-center", duration: 2200 }
+        )
+    }, [selectedImage, t])
+
+    const handleRemoveImage = useCallback(() => {
+        imageUploadGenRef.current += 1
+        compressingImageRef.current = false
+        setIsCompressingImage(false)
+        setSelectedImage(null)
+        setImagePreviewError(false)
+    }, [])
+
+    const handleImageFile = useCallback(async (file: File) => {
         if (!file || compressingImageRef.current) return
 
         if (!isImageFile(file) || (file.type || "").trim().toLowerCase().startsWith("image/svg")) {
@@ -1168,26 +1298,39 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
             return
         }
 
+        const currentGen = ++imageUploadGenRef.current
         compressingImageRef.current = true
         setIsCompressingImage(true)
         try {
             const compressed = await compressImage(file, "ai_input")
+            if (!isMountedRef.current || imageUploadGenRef.current !== currentGen) return
             if (compressed.size > 10 * 1024 * 1024) {
                 toast.error(zh ? "壓縮後圖片仍超過 10MB，請選擇較小圖片" : "Compressed image still exceeds 10MB")
                 return
             }
 
             const dataUrl = await readImageFileAsDataUrl(compressed)
+            if (!isMountedRef.current || imageUploadGenRef.current !== currentGen) return
             setImagePreviewError(false)
             setSelectedImage(dataUrl)
+            if (isDeepResearchRef.current) {
+                isDeepResearchRef.current = false
+                setIsDeepResearch(false)
+                toast.info(t('ai_composer_deep_research_auto_off'), { position: "top-center", duration: 2400 })
+            }
         } catch (err) {
+            if (!isMountedRef.current || imageUploadGenRef.current !== currentGen) return
             console.error("[ChatWidget] Image compression error:", err)
             toast.error(zh ? "圖片處理失敗，請重試" : "Failed to process image")
         } finally {
-            compressingImageRef.current = false
-            setIsCompressingImage(false)
+            if (imageUploadGenRef.current === currentGen) {
+                compressingImageRef.current = false
+                if (isMountedRef.current) {
+                    setIsCompressingImage(false)
+                }
+            }
         }
-    }
+    }, [zh, t])
 
     // 🔒 未登錄時不渲染任何內容
     if (!isLoggedIn) return null
@@ -1234,7 +1377,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                     <p className="text-[10px] text-tabiji-slate opacity-90">{t('ai_subtitle')}</p>
                                 </div>
                             </div>
-                            <button onClick={() => { setIsOpen(false); setIsDocked(false) }} className="hover:bg-tabiji-forest/5 dark:hover:bg-white/10 p-1.5 rounded-full text-tabiji-slate hover:text-tabiji-charcoal dark:hover:text-tabiji-paper transition-colors cursor-pointer">
+                            <button onClick={() => { setIsComposerMenuOpen(false); setIsOpen(false); setIsDocked(false) }} className="hover:bg-tabiji-forest/5 dark:hover:bg-white/10 p-1.5 rounded-full text-tabiji-slate hover:text-tabiji-charcoal dark:hover:text-tabiji-paper transition-colors cursor-pointer">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
@@ -1303,14 +1446,27 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                                     <DeepResearchCard
                                                         data={msg.researchData}
                                                         onCancel={async (id) => {
+                                                            if (activeResearchIdRef.current === id) {
+                                                                activeResearchIdRef.current = null
+                                                                abortControllerRef.current?.abort()
+                                                                abortControllerRef.current = null
+                                                                clearAllPollIntervals()
+                                                                setSearchStatus({ phase: "thinking" })
+                                                                setIsLoading(false)
+                                                            }
+                                                            setMessages(prev => prev.map(m =>
+                                                                m.researchData?.id === id && m.researchData.status === "running"
+                                                                    ? { ...m, researchData: { ...m.researchData, status: "cancelled" } }
+                                                                    : m
+                                                            ))
                                                             try {
-                                                                const k = await getSecureApiKey()
+                                                                const k = getSecureApiKey()
                                                                 if (k) {
                                                                     await fetch(`${API_HOST}/api/agents/interactions/${id}/cancel`, {
                                                                         method: "POST",
                                                                         headers: { "X-Gemini-API-Key": k }
                                                                     })
-                                                                    toast.info(zh ? "已取消深度研究任務" : "Research cancelled")
+                                                                    toast.info(zh ? "已取消深度研究任務" : "Research cancelled", { position: "top-center", duration: 2200 })
                                                                 }
                                                             } catch (e) {
                                                                 console.error("Cancel failed:", e)
@@ -1322,6 +1478,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                                             toast.success(zh ? "已將研究成果傳送至行程匯入器" : "Sent to itinerary importer")
                                                             const navEvent = new CustomEvent("navigate-to-trips")
                                                             window.dispatchEvent(navEvent)
+                                                            setIsComposerMenuOpen(false)
                                                             setIsOpen(false)
                                                         }}
                                                     />
@@ -1433,6 +1590,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                                                 // 自動開啟行程介面 (Itinerary View)
                                                                 const navEvent = new CustomEvent('navigate-to-trips')
                                                                 window.dispatchEvent(navEvent)
+                                                                setIsComposerMenuOpen(false)
                                                                 setIsOpen(false)
                                                             }}
                                                         >
@@ -1474,16 +1632,6 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                                 </span>
                                             </div>
                                         )}
-                                        {/* 🆕 停止按鈕 */}
-                                        <button
-                                            onClick={() => {
-                                                abortControllerRef.current?.abort()
-                                                setIsLoading(false)
-                                            }}
-                                            className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors cursor-pointer"
-                                        >
-                                            <X className="w-3 h-3" /> {t('ai_stop')}
-                                        </button>
                                     </div>
                                 </div>
                             )}
@@ -1506,154 +1654,35 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             <div ref={messagesEndRef} />
                         </div>
 
-                        {/* Input Area */}
-                        <div className="p-3 md:p-4 bg-tabiji-paper/95 dark:bg-tabiji-dark/95 border-t border-tabiji-forest/10 dark:border-white/10 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-                            {/* 🌐 空間感知與探索快捷晶片 (Quick Action Chips) */}
-                            <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none select-none text-[11px]">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        const prompt = zh ? "推薦這附近最熱門的必訪景點與特色美食" : "Recommend popular places and food nearby"
-                                        setInput(prompt)
-                                        textareaRef.current?.focus()
-                                    }}
-                                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-white/10 text-tabiji-forest dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-all active:scale-95 shadow-2xs cursor-pointer font-medium"
-                                >
-                                    <span>📍</span>
-                                    <span>{zh ? "探索周邊" : "Explore Nearby"}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setInput(zh ? "推薦周圍道地的必吃拉麵與排隊名店" : "Recommend authentic ramen nearby")
-                                        textareaRef.current?.focus()
-                                    }}
-                                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-white/10 text-tabiji-charcoal dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-all active:scale-95 shadow-2xs cursor-pointer"
-                                >
-                                    <span>🍜</span>
-                                    <span>{zh ? "必吃拉麵" : "Ramen"}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setInput(zh ? "查詢周邊最近的藥妝店或免稅超市" : "Find nearby pharmacies or supermarkets")
-                                        textareaRef.current?.focus()
-                                    }}
-                                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-white/10 text-tabiji-charcoal dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-all active:scale-95 shadow-2xs cursor-pointer"
-                                >
-                                    <span>💊</span>
-                                    <span>{zh ? "應急藥妝" : "Pharmacy"}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setInput(zh ? "找附近安靜舒適的特色咖啡廳" : "Find cozy cafes nearby")
-                                        textareaRef.current?.focus()
-                                    }}
-                                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-white dark:bg-white/10 text-tabiji-charcoal dark:text-tabiji-paper border border-tabiji-forest/15 dark:border-white/15 hover:bg-tabiji-forest/5 dark:hover:bg-white/15 transition-all active:scale-95 shadow-2xs cursor-pointer"
-                                >
-                                    <span>☕</span>
-                                    <span>{zh ? "特色咖啡" : "Cafe"}</span>
-                                </button>
-                            </div>
-                            {selectedImage && (
-                                <div className="mb-2 relative inline-block">
-                                    {imagePreviewError ? (
-                                        <div className="h-16 px-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/40 flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-200">
-                                            <ImageIcon className="w-4 h-4 shrink-0" />
-                                            <span>{zh ? "HEIC 圖片已就緒" : "HEIC image ready"}</span>
-                                        </div>
-                                    ) : (
-                                        /* eslint-disable-next-line @next/next/no-img-element */
-                                        <img
-                                            src={selectedImage}
-                                            alt="Selected"
-                                            onError={() => setImagePreviewError(true)}
-                                            className="h-16 w-auto rounded-lg border border-slate-200 dark:border-slate-700"
-                                        />
-                                    )}
-                                    <button
-                                        onClick={() => {
-                                            setSelectedImage(null)
-                                            setImagePreviewError(false)
-                                        }}
-                                        className="absolute -top-2 -right-2 bg-slate-500 text-white rounded-full p-0.5 hover:bg-slate-600 cursor-pointer"
-                                    >
-                                        <X className="w-3 h-3" />
-                                    </button>
-                                </div>
-                            )}
-                            <div className="flex gap-2 items-end">
-                                <input
-                                    type="file"
-                                    ref={fileInputRef}
-                                    className="hidden"
-                                    accept="image/*"
-                                    onChange={handleImageUpload}
-                                />
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    disabled={isCompressingImage}
-                                    className="shrink-0 text-tabiji-slate hover:text-tabiji-charcoal dark:hover:text-tabiji-paper cursor-pointer disabled:opacity-50"
-                                    onClick={() => !isCompressingImage && fileInputRef.current?.click()}
-                                >
-                                    <ImageIcon className="w-5 h-5" />
-                                </Button>
-                                {/* 🔬 深度研究模式晶片 Toggle */}
-                                <Button
-                                    type="button"
-                                    variant={isDeepResearch ? "default" : "outline"}
-                                    size="sm"
-                                    onClick={() => {
-                                        setIsDeepResearch(!isDeepResearch)
-                                        toast.info(!isDeepResearch ? (zh ? "已啟用 🔬 AI 深度研究模式" : "Deep Research Enabled") : (zh ? "已切換回即時對話模式" : "Real-time Mode Enabled"))
-                                    }}
-                                    className={cn(
-                                        "h-8 px-2.5 text-xs rounded-xl font-medium transition-all shrink-0 cursor-pointer",
-                                        isDeepResearch ? "bg-tabiji-forest hover:bg-tabiji-forest/90 text-tabiji-paper shadow-xs" : "text-tabiji-forest border-tabiji-forest/20 hover:bg-tabiji-forest/5 dark:border-white/15 dark:text-tabiji-paper"
-                                    )}
-                                >
-                                    🔬 {zh ? "深度研究" : "Deep"}
-                                </Button>
-                                <textarea
-                                    ref={textareaRef}
-                                    rows={1}
-                                    placeholder={t('ai_ask_placeholder')}
-                                    className="flex min-h-9 max-h-32 w-full resize-none rounded-xl border border-tabiji-forest/15 dark:border-white/15 bg-white dark:bg-[#182320] px-3 py-2 text-sm text-tabiji-charcoal dark:text-tabiji-paper placeholder:text-tabiji-slate focus:outline-hidden focus-visible:ring-2 focus-visible:ring-tabiji-forest/30 dark:focus-visible:ring-white/20 transition-all leading-normal"
-                                    value={input}
-                                    onChange={(e) => {
-                                        setInput(e.target.value)
-                                        e.target.style.height = "auto"
-                                        e.target.style.height = `${Math.min(e.target.scrollHeight, 128)}px`
-                                    }}
-                                    onKeyDown={(e) => {
-                                        if (e.nativeEvent.isComposing) return
-                                        if (e.key === "Enter" && !e.shiftKey) {
-                                            e.preventDefault()
-                                            handleSendMessage()
-                                        }
-                                    }}
-                                />
-                                <Button
-                                    size="icon"
-                                    className="shrink-0 bg-tabiji-forest hover:bg-tabiji-forest/90 text-tabiji-paper rounded-xl shadow-xs cursor-pointer active:scale-95 transition-all"
-                                    onClick={handleSendMessage}
-                                    disabled={isLoading || (!input.trim() && !selectedImage)}
-                                >
-                                    <Send className="w-5 h-5" />
-                                </Button>
-                            </div>
-                        </div>
+                        {/* Unified Two-Zone Composer */}
+                        <ChatComposer
+                            input={input}
+                            onInputChange={setInput}
+                            onSend={handleSendMessage}
+                            onStop={handleStopGeneration}
+                            isLoading={isLoading}
+                            isDeepResearch={isDeepResearch}
+                            onToggleDeepResearch={handleToggleDeepResearch}
+                            selectedImage={selectedImage}
+                            imagePreviewError={imagePreviewError}
+                            isCompressingImage={isCompressingImage}
+                            onImageFileSelect={handleImageFile}
+                            onImagePreviewError={() => setImagePreviewError(true)}
+                            onRemoveImage={handleRemoveImage}
+                            textareaRef={textareaRef}
+                            menuOpen={isComposerMenuOpen && !isDocked}
+                            onMenuOpenChange={setIsComposerMenuOpen}
+                            isHidden={isDocked}
+                        />
                     </div>
                 </div>
                 </>
             )}
 
-            {/* Toggle Button - 2D Edge Draggable Liquid Glass */}
+            {/* Toggle Button - 2D Edge Draggable Liquid Glass (hidden when fullscreen chat is open & undocked so it never obscures the Two-Zone Composer) */}
             <div
                 ref={dragRef}
-                className="fixed z-110 will-change-transform transform-gpu"
+                className={cn("fixed z-110 will-change-transform transform-gpu", isOpen && !isDocked && "hidden")}
                 style={{
                     right: position.x,
                     bottom: position.y,
@@ -1666,14 +1695,14 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                     size="icon"
                     className={cn(
                         "h-14 w-14 rounded-full transition-all duration-300 hover:scale-105 touch-none relative overflow-hidden",
-                        "backdrop-blur-2xl border border-tabiji-forest/15 dark:border-white/20",
+                        "backdrop-blur-2xl border border-tabiji-forest/15 dark:border-white/20 hover:bg-tabiji-paper dark:hover:bg-tabiji-dark",
                         isOpen
                             ? "bg-tabiji-paper/90 dark:bg-tabiji-dark/90 text-tabiji-charcoal dark:text-tabiji-paper shadow-md"
                             : "bg-tabiji-paper/90 dark:bg-tabiji-dark/90 text-tabiji-forest dark:text-tabiji-paper shadow-[0_8px_32px_rgba(11,48,38,0.12),inset_0_1px_1px_rgba(255,255,255,0.8)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.1)]",
                         isIdle && !isOpen && !isDragging ? "opacity-40 hover:opacity-100" : "opacity-100",
                         isDragging && "scale-110 shadow-2xl"
                     )}
-                    onClick={() => { if (!hasMovedRef.current) { setIsOpen(!isOpen); setIsDocked(false) } }}
+                    onClick={() => { if (!hasMovedRef.current) { setIsComposerMenuOpen(false); setIsOpen(!isOpen); setIsDocked(false) } }}
                     onMouseDown={handleMouseDown}
                     onTouchStart={handleTouchStart}
                 >
