@@ -87,8 +87,101 @@ class RealtimeChannelCoordinator {
     }
 }
 
+function isPrivateRecord(entry: unknown): boolean {
+    return Boolean(entry && typeof entry === "object" && (entry as { is_private?: boolean }).is_private)
+}
+
+/**
+ * 🛡️ 傳輸層隱私剝離：任何經由共享 WebSocket 頻道廣播的清單／花費／票券
+ * 絕對禁止夾帶 is_private: true 項目或 private_owner_id 原生使用者 UUID。
+ */
+export function stripPrivateForBroadcast<T>(items: T[]): T[] {
+    if (!Array.isArray(items)) return []
+    const result: T[] = []
+    for (const entry of items) {
+        if (!entry || typeof entry !== "object") {
+            result.push(entry)
+            continue
+        }
+        if ((entry as { is_private?: boolean }).is_private) {
+            continue
+        }
+        if ("private_owner_id" in entry) {
+            const { private_owner_id: _omitted, ...publicCopy } = entry as Record<string, unknown>
+            void _omitted
+            result.push(publicCopy as T)
+        } else {
+            result.push(entry)
+        }
+    }
+    return result
+}
+
+/**
+ * 🛡️ 接收端隱私過濾：公開項目放行；具 private_owner_id 之私人項目僅建立者本人可見；
+ * 無主歷史私人項目僅於 allowOwnerlessRescue 為真（行程建立者）時放行。
+ */
+export function filterVisiblePrivateItems<T>(
+    items: T[],
+    currentUserId?: string | null,
+    allowOwnerlessRescue = false
+): T[] {
+    if (!Array.isArray(items)) return []
+    return items.filter((entry) => {
+        if (!entry || typeof entry !== "object") return false
+        const rec = entry as { is_private?: boolean; private_owner_id?: string }
+        if (!rec.is_private) return true
+        if (rec.private_owner_id) {
+            return Boolean(currentUserId && rec.private_owner_id === currentUserId)
+        }
+        return allowOwnerlessRescue
+    })
+}
+
+/**
+ * 🛡️ 接收端安全合併：將旅伴廣播的公開更新與本機既有之個人私人項目合併，
+ * 避免他方公開廣播把自己的私人項目從 DOM 或 SWR 快取中洗掉。
+ */
+export function mergeIncomingWithLocalPrivate<T>(
+    existing: T[] | undefined | null,
+    incoming: T[],
+    currentUserId?: string | null,
+    allowOwnerlessIncoming = false,
+    allowOwnerlessExisting = false
+): T[] {
+    const visibleIncoming = filterVisiblePrivateItems(incoming, currentUserId, allowOwnerlessIncoming)
+    const existingList = Array.isArray(existing) ? existing : []
+    const existingOwnPrivate = filterVisiblePrivateItems(
+        existingList,
+        currentUserId,
+        allowOwnerlessExisting
+    ).filter((entry) => isPrivateRecord(entry))
+
+    if (existingOwnPrivate.length === 0) {
+        return visibleIncoming
+    }
+
+    const incomingIds = new Set<string>()
+    for (const item of visibleIncoming) {
+        if (item && typeof item === "object" && "id" in item && typeof (item as { id?: unknown }).id === "string") {
+            incomingIds.add((item as { id: string }).id)
+        }
+    }
+
+    const preservedPrivate = existingOwnPrivate.filter((item) => {
+        if (item && typeof item === "object" && "id" in item && typeof (item as { id?: unknown }).id === "string") {
+            return !incomingIds.has((item as { id: string }).id)
+        }
+        const sig = JSON.stringify(item)
+        return !visibleIncoming.some((inc) => JSON.stringify(inc) === sig)
+    })
+
+    return [...visibleIncoming, ...preservedPrivate]
+}
+
 /**
  * ⚡ 廣播即時協同事件給同一行程的其他協同者 (Phoenix Channels 記憶體扇出，<10ms)
+ * 🛡️ 強制剝離所有私人項目與原生 private_owner_id UUID，確保 WebSocket 傳輸層零私密外洩
  */
 export const broadcastTripEvent = async (
     tripId: string,
@@ -96,11 +189,25 @@ export const broadcastTripEvent = async (
     data: Record<string, unknown>
 ) => {
     if (typeof window === "undefined" || !tripId) return
+    const safeData: Record<string, unknown> = (() => {
+        if (event === "checklist:update" && Array.isArray(data.items)) {
+            return { ...data, items: stripPrivateForBroadcast(data.items) }
+        }
+        if (
+            event === "tip:update" &&
+            (data.type === "costs" || data.type === "tickets") &&
+            Array.isArray(data.data)
+        ) {
+            return { ...data, data: stripPrivateForBroadcast(data.data) }
+        }
+        return data
+    })()
+
     await RealtimeChannelCoordinator.get().broadcast(tripId, event, {
         tripId,
         senderSessionId: getClientSessionId(),
         timestamp: Date.now(),
-        ...data,
+        ...safeData,
     });
 }
 
@@ -133,26 +240,17 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                 if (!payload || payload.senderSessionId === clientSessionId) return
                 console.log("⚡ [Realtime Broadcast] Remote collab event:", payload.event)
 
-                const filterForeignPrivate = <T,>(items: T[], allowOwnerView = false): T[] =>
-                    items.filter((entry) => {
-                        if (!entry || typeof entry !== "object") return true
-                        const rec = entry as { is_private?: boolean; private_owner_id?: string }
-                        if (!rec.is_private) return true
-                        if (allowOwnerView) return true
-                        return Boolean(userId && rec.private_owner_id && rec.private_owner_id === userId)
-                    })
-
                 // 🛡️ 派發自定義 DOM 事件前先過濾他人的私人項目，防止敏感私人資料閃現至協作者畫面
                 const sanitizedPayload = (() => {
                     if (payload.event === "checklist:update" && Array.isArray(payload.items)) {
-                        return { ...payload, items: filterForeignPrivate(payload.items) }
+                        return { ...payload, items: filterVisiblePrivateItems(payload.items, userId, false) }
                     }
                     if (
                         payload.event === "tip:update" &&
                         (payload.type === "costs" || payload.type === "tickets") &&
                         Array.isArray(payload.data)
                     ) {
-                        return { ...payload, data: filterForeignPrivate(payload.data) }
+                        return { ...payload, data: filterVisiblePrivateItems(payload.data, userId, false) }
                     }
                     return payload
                 })()
@@ -197,13 +295,27 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                             if (!current || typeof current !== "object" || !hasValidDay) return current
                             const isTripOwner = Boolean(userId && current.created_by && current.created_by === userId)
                             if (payload.event === "checklist:update" && Array.isArray(payload.items)) {
-                                const visibleItems = filterForeignPrivate(payload.items, isTripOwner)
+                                const existingDayItems =
+                                    current.day_checklists?.[dayKey] ?? current.day_checklists?.[String(dayKey)]
+                                const mergedItems = mergeIncomingWithLocalPrivate(
+                                    existingDayItems,
+                                    payload.items,
+                                    userId,
+                                    isTripOwner,
+                                    isTripOwner
+                                )
                                 const nextChecklists = {
                                     ...(current.day_checklists || {}),
-                                    [dayKey]: visibleItems,
+                                    [dayKey]: mergedItems,
                                 }
                                 if (dayKey === 1) {
-                                    nextChecklists[0] = []
+                                    const existingDay0 =
+                                        current.day_checklists?.[0] ?? current.day_checklists?.["0"]
+                                    nextChecklists[0] = filterVisiblePrivateItems(
+                                        Array.isArray(existingDay0) ? existingDay0 : [],
+                                        userId,
+                                        isTripOwner
+                                    ).filter((entry) => isPrivateRecord(entry))
                                 }
                                 return {
                                     ...current,
@@ -218,11 +330,23 @@ export function useTripRealtime(tripId: string | null | undefined, userId?: stri
                                 }
                                 const targetField = typeof payload.type === "string" ? fieldMap[payload.type] : undefined
                                 if (targetField) {
+                                    const existingDayData =
+                                        current[targetField]?.[dayKey] ?? current[targetField]?.[String(dayKey)]
+                                    const nextDayValue =
+                                        targetField === "day_notes"
+                                            ? payload.data
+                                            : mergeIncomingWithLocalPrivate(
+                                                existingDayData,
+                                                payload.data,
+                                                userId,
+                                                isTripOwner,
+                                                isTripOwner
+                                            )
                                     return {
                                         ...current,
                                         [targetField]: {
                                             ...(current[targetField] || {}),
-                                            [dayKey]: filterForeignPrivate(payload.data, isTripOwner),
+                                            [dayKey]: nextDayValue,
                                         },
                                     }
                                 }

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { useHaptic } from "@/lib/hooks"
 import { toast } from "sonner"
 import { ChecklistItem } from "@/lib/itinerary-types"
+import { mergeIncomingWithLocalPrivate } from "@/lib/hooks/useTripRealtime"
 import { useLanguage } from "@/lib/LanguageContext"
 import { cn } from "@/lib/utils"
 
@@ -110,12 +111,14 @@ export default function EditableDailyChecklist({
                     !hasPendingDebounceRef.current
                 ) {
                     const currentOwnerId = resolveOwnerId(userId)
-                    const visibleItems = (detail.items as ChecklistItem[]).filter((item) => {
-                        if (!item || typeof item !== "object") return false
-                        if (!item.is_private) return true
-                        return Boolean(currentOwnerId && item.private_owner_id && item.private_owner_id === currentOwnerId)
-                    })
-                    updateLocalItemsState(visibleItems, true)
+                    const mergedItems = mergeIncomingWithLocalPrivate(
+                        localItemsRef.current,
+                        detail.items as ChecklistItem[],
+                        currentOwnerId,
+                        false,
+                        true
+                    )
+                    updateLocalItemsState(mergedItems, true)
                 }
             }
         }
@@ -659,7 +662,7 @@ export default function EditableDailyChecklist({
                                     </motion.span>
                                     <span
                                         className={cn(
-                                            "flex-1 min-w-0 text-sm font-medium wrap-break-word [overflow-wrap:anywhere] transition-colors",
+                                            "flex-1 min-w-0 text-sm font-medium wrap-anywhere transition-colors",
                                             item.checked
                                                 ? "line-through text-slate-400 dark:text-slate-500"
                                                 : "text-tabiji-charcoal dark:text-tabiji-paper"

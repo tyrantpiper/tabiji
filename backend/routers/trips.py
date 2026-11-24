@@ -108,6 +108,176 @@ def mask_member_id(user_id: Any, trip_id: str) -> str:
     """🛡️ 伺服端單向脫敏：非本人 UUID 單向雜湊，杜絕奪舍"""
     return f"mem_{hashlib.sha256((str(user_id) + str(trip_id)).encode()).hexdigest()[:10]}"
 
+
+def _is_trip_creator(trip: Optional[dict], user_id: str, allow_legacy_user_id: bool = False) -> bool:
+    """判定呼叫者是否為行程建立者。
+    注意：user_trips_view 的 user_id 欄位為成員本身 ID，絕不可作為建立者依據；
+    allow_legacy_user_id 僅適用於直接查詢 itineraries 主表之場景。
+    """
+    if not trip or not user_id:
+        return False
+    uid = str(user_id).strip()
+    created_by = str(trip.get("created_by") or "").strip()
+    if created_by:
+        return created_by == uid
+    if allow_legacy_user_id:
+        legacy_uid = str(trip.get("user_id") or "").strip()
+        if legacy_uid:
+            return legacy_uid == uid
+    return False
+
+
+def _is_day_item_visible_to_user(item: Any, user_id: str, is_owner: bool) -> bool:
+    """判斷單筆項目是否對當前使用者可見：
+    - 公開項目（或非 dict 歷史字串）一律可見
+    - 具 private_owner_id 之私人項目僅建立者本人可見（禁止他方窺探或暴露原生 UUID）
+    - 無 private_owner_id 之歷史無主私人項目由行程擁有者精確救援可見
+    """
+    if not isinstance(item, dict):
+        return True
+    if not item.get("is_private"):
+        return True
+    owner_id = str(item.get("private_owner_id") or "").strip()
+    if owner_id:
+        return owner_id == str(user_id or "").strip()
+    return is_owner
+
+
+def _sanitize_visible_day_item(item: Any) -> Any:
+    """出口淨化：公開項目不得夾帶殘留 private_owner_id。"""
+    if not isinstance(item, dict):
+        return item
+    if not item.get("is_private") and "private_owner_id" in item:
+        cleaned = dict(item)
+        cleaned.pop("private_owner_id", None)
+        return cleaned
+    return item
+
+
+def _filter_private_day_items(items_dict: Any, user_id: str, is_owner: bool) -> dict:
+    """過濾每日陣列欄位中的他方私人項目，防止私密內容與原生 UUID 外洩。"""
+    if not isinstance(items_dict, dict):
+        return {}
+    filtered = {}
+    for day_key, items_list in items_dict.items():
+        if isinstance(items_list, list):
+            filtered[day_key] = [
+                _sanitize_visible_day_item(item)
+                for item in items_list
+                if _is_day_item_visible_to_user(item, user_id, is_owner)
+            ]
+        else:
+            filtered[day_key] = items_list
+    return filtered
+
+
+def _merge_day_items_preserving_hidden_private(
+    existing_items: Any,
+    submitted_items: Any,
+    user_id: str,
+    is_owner: bool,
+) -> list:
+    """合併寫入每日項目：
+    1. 無條件保留資料庫中對呼叫者不可見的他方私人項目（消除協作覆寫資料遺失）。
+    2. 呼叫者提交之私人項目強制綁定 JWT 驗證身分 user_id，公開項目剝除殘留 private_owner_id。
+    """
+    uid = str(user_id or "").strip()
+    existing_list = existing_items if isinstance(existing_items, list) else []
+    hidden_foreign_private = [
+        item for item in existing_list
+        if not _is_day_item_visible_to_user(item, uid, is_owner)
+    ]
+
+    normalized_submitted = []
+    for item in (submitted_items if isinstance(submitted_items, list) else []):
+        if not isinstance(item, dict):
+            normalized_submitted.append(item)
+            continue
+        cleaned = dict(item)
+        if cleaned.get("is_private"):
+            cleaned["private_owner_id"] = uid
+        else:
+            cleaned.pop("private_owner_id", None)
+        normalized_submitted.append(cleaned)
+
+    return normalized_submitted + hidden_foreign_private
+
+
+def _is_card_visible_to_user(card: Any, user_id: str, is_owner: bool) -> bool:
+    """判斷信用卡是否對當前使用者可見（公開卡、建立者本人或行程擁有者精確救援無主卡）。"""
+    if not isinstance(card, dict):
+        return True
+    if card.get("is_public"):
+        return True
+    creator_id = str(card.get("creator_id") or "").strip()
+    if creator_id:
+        return creator_id == str(user_id or "").strip()
+    return is_owner
+
+
+def _filter_private_cards(cards: Any, user_id: str, is_owner: bool, trip_id: str = "") -> list:
+    """過濾私人信用卡並脫敏公開卡之他方 creator_id，避免原生 UUID 外洩。"""
+    if not isinstance(cards, list):
+        return []
+    uid = str(user_id or "").strip()
+    result = []
+    for card in cards:
+        if not _is_card_visible_to_user(card, uid, is_owner):
+            continue
+        if isinstance(card, dict):
+            creator_id = str(card.get("creator_id") or "").strip()
+            if creator_id and creator_id != uid and not creator_id.startswith("mem_"):
+                sanitized = dict(card)
+                sanitized["creator_id"] = mask_member_id(creator_id, trip_id) if trip_id else None
+                result.append(sanitized)
+            else:
+                result.append(card)
+        else:
+            result.append(card)
+    return result
+
+
+def _merge_cards_preserving_hidden_private(
+    existing_cards: Any,
+    submitted_cards: Any,
+    user_id: str,
+    is_owner: bool,
+) -> list:
+    """合併寫入信用卡：保留他方隱藏私卡、還原已脫敏既有公開卡原始 creator_id，並對私卡強制綁定 user_id。"""
+    uid = str(user_id or "").strip()
+    existing_list = existing_cards if isinstance(existing_cards, list) else []
+    hidden_foreign_cards = [
+        card for card in existing_list
+        if not _is_card_visible_to_user(card, uid, is_owner)
+    ]
+    existing_by_id = {
+        str(card["id"]): card
+        for card in existing_list
+        if isinstance(card, dict) and card.get("id")
+    }
+
+    normalized_submitted = []
+    for card in (submitted_cards if isinstance(submitted_cards, list) else []):
+        if not isinstance(card, dict):
+            normalized_submitted.append(card)
+            continue
+        cleaned = dict(card)
+        cid = str(cleaned.get("id") or "")
+        prev_card = existing_by_id.get(cid)
+        if not cleaned.get("is_public"):
+            cleaned["creator_id"] = uid
+        else:
+            submitted_creator = str(cleaned.get("creator_id") or "").strip()
+            if prev_card and prev_card.get("creator_id") and (
+                not submitted_creator or submitted_creator.startswith("mem_")
+            ):
+                cleaned["creator_id"] = prev_card["creator_id"]
+            elif not submitted_creator or submitted_creator.startswith("mem_"):
+                cleaned["creator_id"] = uid
+        normalized_submitted.append(cleaned)
+
+    return normalized_submitted + hidden_foreign_cards
+
 # ensure_user_exists moved to utils.helpers
 
 
@@ -256,23 +426,42 @@ async def get_trips(
             res = supabase.table("itineraries").select("*").in_("id", all_ids).order("created_at", desc=True).execute()
             trips_data = res.data or []
 
-        # 整理資料結構 - 🔧 FIX: 解析 content 欄位，將 daily_locations 提升到頂層
+        # 整理資料結構 - 🔧 FIX: 解析 content 欄位，將 daily_locations 提升到頂層，並過濾他方私人項目與原生 UUID
         trips = []
-        for trip in trips_data:
-            content = trip.get('content') or {}
+        for raw_trip in trips_data:
+            trip = dict(raw_trip)
+            content = dict(trip.get('content') or {})
+            trip_id_str = str(trip.get('id') or '')
+            is_owner = _is_trip_creator(trip, user_id, allow_legacy_user_id=False)
+
+            raw_day_costs = trip.get('day_costs') or content.get('day_costs', {})
+            raw_day_tickets = trip.get('day_tickets') or content.get('day_tickets', {})
+            raw_day_checklists = trip.get('day_checklists') or content.get('day_checklists', {})
+            raw_credit_cards = trip.get('credit_cards') or content.get('credit_cards', [])
+
+            filtered_costs = _filter_private_day_items(raw_day_costs, user_id, is_owner)
+            filtered_tickets = _filter_private_day_items(raw_day_tickets, user_id, is_owner)
+            filtered_checklists = _filter_private_day_items(raw_day_checklists, user_id, is_owner)
+            filtered_cards = _filter_private_cards(raw_credit_cards, user_id, is_owner, trip_id=trip_id_str)
+
             # 🆕 將 content 內的欄位提升到頂層，與 get_trip_by_id 格式一致
-            # 如果欄位已在頂層 (從 View 來的)，則保留原值
             trip['daily_locations'] = trip.get('daily_locations') or content.get('daily_locations', {})
             trip['day_notes'] = trip.get('day_notes') or content.get('day_notes', {})
-            trip['day_costs'] = trip.get('day_costs') or content.get('day_costs', {})
-            trip['day_tickets'] = trip.get('day_tickets') or content.get('day_tickets', {})
-            trip['day_checklists'] = trip.get('day_checklists') or content.get('day_checklists', {})
+            trip['day_costs'] = filtered_costs
+            trip['day_tickets'] = filtered_tickets
+            trip['day_checklists'] = filtered_checklists
             trip['ai_review'] = trip.get('ai_review') or content.get('ai_review', "")
-            trip['credit_cards'] = trip.get('credit_cards') or content.get('credit_cards', [])
+            trip['credit_cards'] = filtered_cards
+            if 'content' in trip and isinstance(trip.get('content'), dict):
+                content['day_costs'] = filtered_costs
+                content['day_tickets'] = filtered_tickets
+                content['day_checklists'] = filtered_checklists
+                content['credit_cards'] = filtered_cards
+                trip['content'] = content
             trip['currency'] = resolve_trip_currency(trip, content)
             trip['is_sample'] = content.get('is_sample', False)  # 🎓 Sample trip flag
             # 🛡️ 列表出口脫敏：非建立者本人不暴露原生 created_by UUID，消除 ATO 外洩路徑
-            if str(trip.get('created_by') or '') != user_id:
+            if not is_owner:
                 trip['created_by'] = None
             trips.append(trip)
             
@@ -346,17 +535,14 @@ async def get_trip_by_id(
         # 2. 抓該行程的所有細項 (按 time_slot 排序，確保符合時間軸)
         items_res = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip["id"]).order("day_number").order("time_slot").order("sort_order").execute()
         
-        # 3. 整理成前端要的格式 (含隱私過濾：Option A 行程擁有者視角)
-        is_owner = bool(user_id) and (
-            (bool(trip.get("created_by")) and str(trip.get("created_by")) == str(user_id)) or
-            (bool(trip.get("user_id")) and str(trip.get("user_id")) == str(user_id))
-        )
+        # 3. 整理成前端要的格式 (含隱私過濾與原生 UUID 隔離)
+        is_owner = _is_trip_creator(trip, user_id, allow_legacy_user_id=True)
         days_map = {}
         if items_res.data:
             for item in items_res.data:
-                # 🛡️ 隱私過濾邏輯：只有行程創立者可見私人項目 (is_private: true)，協作者/訪客一律過濾
+                # 🛡️ 隱私過濾邏輯：公開項目全體成員可見；私人項目僅建立者（或無主歷史項目之行程創立者）可見
                 is_private = bool(item.get("is_private", False))
-                if is_private and not is_owner:
+                if not _is_day_item_visible_to_user(item, user_id, is_owner):
                     continue
                 
                 d = item["day_number"]
@@ -387,33 +573,8 @@ async def get_trip_by_id(
                     "sort_order": item.get("sort_order", 0),
                     "is_highlight": item.get("is_highlight", False),
                     "is_private": is_private,
-                    "private_owner_id": item.get("private_owner_id")
+                    "private_owner_id": item.get("private_owner_id") if is_private else None
                 })
-        
-        # 🆕 隱私過濾輔助函數（Option A 行程擁有者視角）
-        def filter_private_items(items_dict: dict) -> dict:
-            """過濾私人項目：行程擁有者可見全部項目，非擁有者過濾 is_private 項目"""
-            filtered = {}
-            for day_key, items_list in items_dict.items():
-                if isinstance(items_list, list):
-                    filtered[day_key] = [
-                        item for item in items_list 
-                        if not item.get("is_private") or is_owner or (item.get("private_owner_id") and item.get("private_owner_id") == user_id)
-                    ]
-                else:
-                    filtered[day_key] = items_list
-            return filtered
-
-        def filter_private_cards(cards: list) -> list:
-            """過濾私人信用卡：只有建立者本人或行程創立者(救援)可見"""
-            if not cards: return []
-            trip_creator_id = trip.get("created_by")
-            return [
-                card for card in cards
-                if card.get("is_public") or 
-                   card.get("creator_id") == user_id or
-                   (user_id == trip_creator_id and not card.get("creator_id")) # 🛡️ 精確救援：僅救回無主資料
-            ]
         
         # 取得 content 並過濾
         content = trip.get("content") or {}
@@ -424,9 +585,9 @@ async def get_trip_by_id(
         raw_day_tickets = content.get("day_tickets") or trip.get("day_tickets") or {}
         raw_day_checklists = content.get("day_checklists") or trip.get("day_checklists") or {}
         
-        day_costs = filter_private_items(raw_day_costs)
-        day_tickets = filter_private_items(raw_day_tickets)
-        day_checklists = filter_private_items(raw_day_checklists)
+        day_costs = _filter_private_day_items(raw_day_costs, user_id, is_owner)
+        day_tickets = _filter_private_day_items(raw_day_tickets, user_id, is_owner)
+        day_checklists = _filter_private_day_items(raw_day_checklists, user_id, is_owner)
         
         return {
             "id": trip["id"],
@@ -449,7 +610,7 @@ async def get_trip_by_id(
             "day_ai_reviews": content.get("day_ai_reviews") or trip.get("day_ai_reviews") or {},  # 🆕 每日 AI 審核報告
             "flight_info": content.get("flight_info") or trip.get("flight_info") or {},
             "hotel_info": content.get("hotel_info") or trip.get("hotel_info") or {},
-            "credit_cards": filter_private_cards(content.get("credit_cards", [])),
+            "credit_cards": _filter_private_cards(content.get("credit_cards", []), user_id, is_owner, trip_id=trip_id),
             "is_member": is_member,  # 🆕 告訴前端是否為成員
             "is_owner": is_owner,    # 🆕 告訴前端是否為創立者
             # 🛡️ 伺服端動態脫敏：非本人 UUID 動態雜湊，杜絕隊友奪舍
@@ -806,17 +967,14 @@ async def get_latest_itinerary(
         # 2. 抓該行程的所有細項 (按 sort_order 排序，支援拖曳)
         items_res = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip["id"]).order("day_number").order("sort_order").order("time_slot").execute()
         
-        # 3. 整理成前端要的格式 (含隱私過濾：Option A 行程擁有者視角)
-        is_owner = bool(user_id) and (
-            (bool(trip.get("created_by")) and str(trip.get("created_by")) == str(user_id)) or
-            (bool(trip.get("user_id")) and str(trip.get("user_id")) == str(user_id))
-        )
+        # 3. 整理成前端要的格式 (注意：user_trips_view 的 user_id 是成員本人 ID，絕不可用於判定 is_owner)
+        is_owner = _is_trip_creator(trip, user_id, allow_legacy_user_id=False)
         days_map = {}
         if items_res.data:
             for item in items_res.data:
-                # 🛡️ 隱私過濾：主畫面只顯示公開或行程擁有者的私人項目
+                # 🛡️ 隱私過濾：主畫面只顯示公開或本人（及行程創立者無主歷史）私人項目
                 is_private = bool(item.get("is_private", False))
-                if is_private and not is_owner:
+                if not _is_day_item_visible_to_user(item, user_id, is_owner):
                     continue
                     
                 d = item["day_number"]
@@ -843,7 +1001,7 @@ async def get_latest_itinerary(
                     "image_url": item.get("image_url"),
                     "image_urls": item.get("image_urls") or ([item.get("image_url")] if item.get("image_url") else []),
                     "is_private": is_private,
-                    "private_owner_id": item.get("private_owner_id")
+                    "private_owner_id": item.get("private_owner_id") if is_private else None
                 })
             
         # 轉成陣列
@@ -853,6 +1011,11 @@ async def get_latest_itinerary(
                 "day": d,
                 "activities": days_map[d]
             })
+
+        content = trip.get("content") or {}
+        filtered_day_costs = _filter_private_day_items(content.get("day_costs", {}), user_id, is_owner)
+        filtered_day_tickets = _filter_private_day_items(content.get("day_tickets", {}), user_id, is_owner)
+        filtered_day_checklists = _filter_private_day_items(content.get("day_checklists", {}), user_id, is_owner)
             
         return {
             "id": trip["id"],
@@ -861,15 +1024,16 @@ async def get_latest_itinerary(
             "start_date": trip["start_date"],  # 👈 關鍵！補上這行
             "end_date": trip.get("end_date"),  # 🐛 FIX: 補上缺失的 end_date
             "share_code": trip.get("share_code", ""),  # 順便補上分享碼
-            "currency": resolve_trip_currency(trip, trip.get("content") or {}),
+            "currency": resolve_trip_currency(trip, content),
             # 👇 讀取並回傳
-            "daily_locations": (trip.get("content") or {}).get("daily_locations", {}),
-            # 🆕 每日提示
-            "day_notes": (trip.get("content") or {}).get("day_notes", {}),
-            "day_costs": (trip.get("content") or {}).get("day_costs", {}),
-            "day_tickets": (trip.get("content") or {}).get("day_tickets", {}),
-            "ai_review": (trip.get("content") or {}).get("ai_review", ""),  # 🆕 AI 審核
-            "day_ai_reviews": (trip.get("content") or {}).get("day_ai_reviews", {}),  # 🆕 每日 AI 審核
+            "daily_locations": content.get("daily_locations", {}),
+            # 🆕 每日提示（過濾他方私人項目與原生 UUID）
+            "day_notes": content.get("day_notes", {}),
+            "day_costs": filtered_day_costs,
+            "day_tickets": filtered_day_tickets,
+            "day_checklists": filtered_day_checklists,
+            "ai_review": content.get("ai_review", ""),  # 🆕 AI 審核
+            "day_ai_reviews": content.get("day_ai_reviews", {}),  # 🆕 每日 AI 審核
             
             "flight_info": trip.get("flight_info") or {},  # 👈 新增航班資訊
             "hotel_info": trip.get("hotel_info") or {},    # 👈 新增住宿資訊
@@ -1344,39 +1508,56 @@ async def update_day_data(
             migrate_field("daily_locations") # Note: Usually fetched separately but good to ensure
             
             # 2. 更新對應的資料 (注意: 前端傳來的 key 是字串或整數，需統一處理)
+            # 🛡️ 多人協作隱私保護：寫入 day_costs / day_tickets / day_checklists 時，必須安全保留資料庫中對呼叫者不可見的他方私人項目
             day_key = str(request.day)
+            is_owner = _is_trip_creator(trip, user_id, allow_legacy_user_id=True)
             
             if request.day_notes is not None:
                 existing_notes = dict(content.get("day_notes") or {})
                 # 前端傳來的格式: { "1": [...] } 或 { 1: [...] }
-                new_data = request.day_notes.get(day_key) or request.day_notes.get(request.day) or []
-                existing_notes[day_key] = new_data
+                new_data = request.day_notes.get(day_key) if day_key in request.day_notes else request.day_notes.get(request.day)
+                existing_notes[day_key] = new_data if new_data is not None else []
                 content["day_notes"] = existing_notes
                 
             if request.day_costs is not None:
                 existing_costs = dict(content.get("day_costs") or {})
-                new_data = request.day_costs.get(day_key) or request.day_costs.get(request.day) or []
-                existing_costs[day_key] = new_data
+                prev_day_costs = existing_costs.get(day_key) if day_key in existing_costs else existing_costs.get(request.day, [])
+                if request.day != day_key and request.day in existing_costs:
+                    existing_costs.pop(request.day, None)
+                new_data = request.day_costs.get(day_key) if day_key in request.day_costs else request.day_costs.get(request.day)
+                existing_costs[day_key] = _merge_day_items_preserving_hidden_private(
+                    prev_day_costs, new_data if new_data is not None else [], user_id, is_owner
+                )
                 content["day_costs"] = existing_costs
                 
             if request.day_tickets is not None:
                 existing_tickets = dict(content.get("day_tickets") or {})
-                new_data = request.day_tickets.get(day_key) or request.day_tickets.get(request.day) or []
-                existing_tickets[day_key] = new_data
+                prev_day_tickets = existing_tickets.get(day_key) if day_key in existing_tickets else existing_tickets.get(request.day, [])
+                if request.day != day_key and request.day in existing_tickets:
+                    existing_tickets.pop(request.day, None)
+                new_data = request.day_tickets.get(day_key) if day_key in request.day_tickets else request.day_tickets.get(request.day)
+                existing_tickets[day_key] = _merge_day_items_preserving_hidden_private(
+                    prev_day_tickets, new_data if new_data is not None else [], user_id, is_owner
+                )
                 content["day_tickets"] = existing_tickets
             
             # 🆕 行前清單
             if request.day_checklists is not None:
                 existing_checklists = dict(content.get("day_checklists") or {})
-                new_data = request.day_checklists.get(day_key) or request.day_checklists.get(request.day) or []
-                existing_checklists[day_key] = new_data
+                prev_day_checklists = existing_checklists.get(day_key) if day_key in existing_checklists else existing_checklists.get(request.day, [])
+                if request.day != day_key and request.day in existing_checklists:
+                    existing_checklists.pop(request.day, None)
+                new_data = request.day_checklists.get(day_key) if day_key in request.day_checklists else request.day_checklists.get(request.day)
+                existing_checklists[day_key] = _merge_day_items_preserving_hidden_private(
+                    prev_day_checklists, new_data if new_data is not None else [], user_id, is_owner
+                )
                 content["day_checklists"] = existing_checklists
                 
             # 🆕 AI 深度審核
             if request.day_ai_reviews is not None:
                 existing_reviews = dict(content.get("day_ai_reviews") or {})
-                new_data = request.day_ai_reviews.get(day_key) or request.day_ai_reviews.get(request.day) or ""
-                existing_reviews[day_key] = new_data
+                new_data = request.day_ai_reviews.get(day_key) if day_key in request.day_ai_reviews else request.day_ai_reviews.get(request.day)
+                existing_reviews[day_key] = new_data if new_data is not None else ""
                 content["day_ai_reviews"] = existing_reviews
                 
             # 3. 儲存更新後的 content
@@ -1389,7 +1570,7 @@ async def update_day_data(
     except Exception as e:
         print(f"Update Day Error: {e}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="更新每日資料失敗，請稍後重試")
         
 
 
@@ -1503,18 +1684,24 @@ async def update_trip_info(
         print(f"🛠️ [Partial Update] Fields to update: {list(provided_data.keys())}")
         
         async with trip_lock(trip_id):
-            # 1. 取得最新 content (單一來源，非 single 容錯查詢)
-            trip_res = supabase.table("itineraries").select("content, flight_info, hotel_info").eq("id", trip_id).execute()
+            # 1. 取得最新 content (單一來源，非 single 容錯查詢；含 created_by 以保留他方私卡)
+            trip_res = supabase.table("itineraries").select("content, flight_info, hotel_info, created_by").eq("id", trip_id).execute()
             trip_row = _first_row(trip_res.data)
             if not trip_row:
                 raise HTTPException(status_code=404, detail="Trip not found")
                 
             current_content = dict(trip_row.get("content") or {})
             update_columns = {}
+            is_owner = _is_trip_creator(trip_row, user_id, allow_legacy_user_id=True)
 
             # 2. 迭代處理提供的欄位
             if "credit_cards" in provided_data:
-                cards = provided_data["credit_cards"]
+                cards = _merge_cards_preserving_hidden_private(
+                    current_content.get("credit_cards", []),
+                    provided_data["credit_cards"],
+                    user_id,
+                    is_owner,
+                )
                 current_content["credit_cards"] = cards
                 print(f"   🃏 Cards updated: {len(cards)} items")
 

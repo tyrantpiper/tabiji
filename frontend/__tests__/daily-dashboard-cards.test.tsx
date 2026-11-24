@@ -8,7 +8,7 @@ import EditableDailyChecklist from "@/components/itinerary/EditableDailyChecklis
 import EditableDailyAIReview from "@/components/itinerary/EditableDailyAIReview"
 import ItineraryDashboardHub from "@/components/itinerary/ItineraryDashboardHub"
 import IOSBottomSheet from "@/components/itinerary/IOSBottomSheet"
-import { useTripRealtime, getClientSessionId } from "@/lib/hooks/useTripRealtime"
+import { useTripRealtime, getClientSessionId, broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
 import { tripsApi } from "@/lib/api"
 import { toast } from "sonner"
 
@@ -1273,5 +1273,215 @@ describe("Daily Dashboard 5-Tab Cards Unification & Safety-Net Suite", () => {
     expect(screen.getByText("公開拉麵")).toBeDefined()
     expect(screen.getByText("我的私人花費")).toBeDefined()
     expect(screen.queryByText("他人秘密伴手禮")).toBeNull()
+  })
+
+  it("reg_live_ws_wire_zero_leak: broadcastTripEvent strips all private items and raw private_owner_id UUIDs before hitting WebSocket", async () => {
+    const sentPayloads: unknown[] = []
+    mockSupabaseChannel.mockImplementationOnce(() => {
+      const ch = {
+        on: vi.fn(() => ch),
+        subscribe: vi.fn((cb?: (status: string) => void) => {
+          cb?.("SUBSCRIBED")
+          return ch
+        }),
+        send: vi.fn(async (arg: unknown) => {
+          sentPayloads.push(arg)
+          return "ok"
+        }),
+      }
+      return ch
+    })
+
+    function SubscribedHost() {
+      useTripRealtime("trip-ws-wire-1", "owner-uuid-9999")
+      return null
+    }
+    const { unmount } = render(<SubscribedHost />)
+
+    await broadcastTripEvent("trip-ws-wire-1", "checklist:update", {
+      dayIndex: 1,
+      items: [
+        { id: "pub-1", text: "Public Item", checked: false, private_owner_id: "owner-uuid-9999" },
+        { id: "priv-1", text: "TOP_SECRET_CHECKLIST", checked: false, is_private: true, private_owner_id: "owner-uuid-9999" },
+      ],
+    })
+    await broadcastTripEvent("trip-ws-wire-1", "tip:update", {
+      dayIndex: 1,
+      type: "costs",
+      data: [
+        { item: "Public Ramen", amount: "1000", currency: "JPY" },
+        { item: "TOP_SECRET_COST", amount: "99999", currency: "JPY", is_private: true, private_owner_id: "owner-uuid-9999" },
+      ],
+    })
+    await broadcastTripEvent("trip-ws-wire-1", "tip:update", {
+      dayIndex: 1,
+      type: "tickets",
+      data: [
+        { name: "Public Pass", price: "500", currency: "JPY" },
+        { name: "TOP_SECRET_TICKET", price: "88888", currency: "JPY", is_private: true, private_owner_id: "owner-uuid-9999" },
+      ],
+    })
+
+    expect(sentPayloads).toHaveLength(3)
+    const wireText = JSON.stringify(sentPayloads)
+    expect(wireText).toContain("Public Item")
+    expect(wireText).toContain("Public Ramen")
+    expect(wireText).toContain("Public Pass")
+    expect(wireText).not.toContain("TOP_SECRET_CHECKLIST")
+    expect(wireText).not.toContain("TOP_SECRET_COST")
+    expect(wireText).not.toContain("TOP_SECRET_TICKET")
+    expect(wireText).not.toContain("owner-uuid-9999")
+    expect(wireText).not.toContain("private_owner_id")
+    unmount()
+  })
+
+  it("reg_live_receiver_preserves_own_private_items_on_peer_broadcast: remote public-only broadcast never wipes local own private items in DOM or SWR cache", () => {
+    const OWNER_UUID = "owner-uuid-1"
+    const COLLAB_UUID = "collab-uuid-2"
+
+    function OwnerLiveHarness() {
+      useTripRealtime("trip-merge-1", OWNER_UUID)
+      return (
+        <div>
+          <EditableDailyChecklist
+            tripId="trip-merge-1"
+            day={1}
+            items={[
+              { id: "c-pub", text: "Shared Passport", checked: false },
+              { id: "c-own-priv", text: "My Secret Ring", checked: false, is_private: true, private_owner_id: OWNER_UUID },
+            ]}
+            userId={OWNER_UUID}
+            onUpdate={vi.fn().mockResolvedValue(true)}
+          />
+          <EditableDailyTips
+            tripId="trip-merge-1"
+            day={1}
+            displaySection="costs"
+            notes={[]}
+            costs={[
+              { item: "Shared Ramen", amount: "1200", currency: "JPY" },
+              { item: "My Secret Gift Cost", amount: "50000", currency: "JPY", is_private: true, private_owner_id: OWNER_UUID },
+            ]}
+            tickets={[]}
+            defaultCurrency="JPY"
+            userId={OWNER_UUID}
+            onUpdate={vi.fn().mockResolvedValue(true)}
+          />
+        </div>
+      )
+    }
+
+    render(<OwnerLiveHarness />)
+    const collabCb = realtimeHandlers["collab:event"]
+    expect(typeof collabCb).toBe("function")
+
+    // Collaborator broadcasts public-only checklist update (zero private items on wire)
+    act(() => {
+      collabCb({
+        payload: {
+          event: "checklist:update",
+          senderSessionId: "peer-session-1",
+          dayIndex: 1,
+          items: [
+            { id: "c-pub", text: "Shared Passport", checked: true },
+            { id: "c-peer", text: "Peer Public Umbrella", checked: false },
+            // Defense-in-depth: even if an older client leaked Collab's own private item, Owner MUST NOT receive it
+            { id: "c-collab-priv", text: "Collab Secret Diary", checked: false, is_private: true, private_owner_id: COLLAB_UUID },
+          ],
+        },
+      })
+    })
+
+    // Owner DOM MUST show Peer's new public item AND preserve Owner's own private item, while blocking Collab's private item
+    expect(screen.getByText("Peer Public Umbrella")).toBeDefined()
+    expect(screen.getByText("My Secret Ring")).toBeDefined()
+    expect(screen.queryByText("Collab Secret Diary")).toBeNull()
+
+    // Verify SWR optimistic updater ALSO preserves Owner's private item & blocks Collab's private item
+    const [, chkUpdater] = mockSwrMutate.mock.calls[0]
+    const patchedTrip = chkUpdater({
+      id: "trip-merge-1",
+      created_by: OWNER_UUID,
+      day_checklists: {
+        1: [
+          { id: "c-pub", text: "Shared Passport", checked: false },
+          { id: "c-own-priv", text: "My Secret Ring", checked: false, is_private: true, private_owner_id: OWNER_UUID },
+        ],
+      },
+    })
+    const chkTexts = patchedTrip.day_checklists[1].map((i: { text: string }) => i.text)
+    expect(chkTexts).toContain("Peer Public Umbrella")
+    expect(chkTexts).toContain("My Secret Ring")
+    expect(chkTexts).not.toContain("Collab Secret Diary")
+
+    // Collaborator broadcasts public-only costs update
+    act(() => {
+      collabCb({
+        payload: {
+          event: "tip:update",
+          senderSessionId: "peer-session-1",
+          dayIndex: 1,
+          type: "costs",
+          data: [
+            { item: "Shared Ramen", amount: "1200", currency: "JPY" },
+            { item: "Peer Coffee", amount: "600", currency: "JPY" },
+          ],
+        },
+      })
+    })
+    expect(screen.getByText("Peer Coffee")).toBeDefined()
+    expect(screen.getByText("My Secret Gift Cost")).toBeDefined()
+  })
+
+  it("reg_live_single_error_toast_and_post_persist_broadcast: privacy toggle emits exactly 1 error toast on failure, and itinerary-view broadcasts only after DB persistence without duplicate parent error toasts", async () => {
+    const failingUpdate = vi.fn().mockResolvedValue(false)
+    render(
+      <EditableDailyTips
+        tripId="trip-toast-1"
+        day={1}
+        notes={[]}
+        costs={[{ item: "Ramen", amount: "1200", currency: "JPY" }]}
+        tickets={[{ name: "Shinkansen", price: "14000", currency: "JPY" }]}
+        defaultCurrency="JPY"
+        userId="owner-1"
+        onUpdate={failingUpdate}
+      />
+    )
+
+    const privacyBtns = screen.getAllByRole("button", { name: /設為私人|設為公開/ })
+    expect(privacyBtns.length).toBeGreaterThanOrEqual(2)
+
+    await act(async () => {
+      fireEvent.click(privacyBtns[0])
+    })
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).toHaveBeenCalledWith("更新失敗")
+
+    vi.clearAllMocks()
+    await act(async () => {
+      fireEvent.click(privacyBtns[1])
+    })
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).toHaveBeenCalledWith("更新失敗")
+
+    // Structural contract on itinerary-view.tsx: persist BEFORE broadcast, strip private, zero duplicate parent toast.error
+    const viewSrc = fs.readFileSync(path.join(frontendDir, "components/views/itinerary-view.tsx"), "utf-8")
+    const dayDataBlock = viewSrc.slice(
+      viewSrc.indexOf("const handleDayDataUpdate"),
+      viewSrc.indexOf("// ⚡ 接收旅伴即時拖曳排序廣播")
+    )
+    expect(dayDataBlock.indexOf("await tripsApi.updateDayData")).toBeGreaterThan(-1)
+    expect(dayDataBlock.indexOf("broadcastTripEvent")).toBeGreaterThan(dayDataBlock.indexOf("await tripsApi.updateDayData"))
+    expect(dayDataBlock).toContain("stripPrivateForBroadcast")
+    expect(dayDataBlock).not.toContain("toast.error(")
+
+    const checklistBlock = viewSrc.slice(
+      viewSrc.indexOf("<EditableDailyChecklist"),
+      viewSrc.indexOf("</IOSBottomSheet>")
+    )
+    expect(checklistBlock.indexOf("await tripsApi.updateDayData")).toBeGreaterThan(-1)
+    expect(checklistBlock.indexOf("broadcastTripEvent")).toBeGreaterThan(checklistBlock.indexOf("await tripsApi.updateDayData"))
+    expect(checklistBlock).toContain("stripPrivateForBroadcast")
+    expect(checklistBlock).not.toContain("toast.error(")
   })
 })

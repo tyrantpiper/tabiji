@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { useTripDetail, useOnlineStatus, useHaptic, useTripCapsules } from "@/lib/hooks"
-import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
+import { broadcastTripEvent, stripPrivateForBroadcast } from "@/lib/hooks/useTripRealtime"
 import { useLanguage } from "@/lib/LanguageContext"
 import { ItineraryItemState, Trip, Activity, DailyLocation, DayWeather, ChecklistItem, NoteItem, CostItem, TicketItem } from "@/lib/itinerary-types"
 import { calculateChecklistProgress } from "@/lib/itinerary-metrics"
@@ -491,7 +491,7 @@ export function ItineraryView() {
         }
     }, [currentDayData, isOnline, currentTrip, day, reloadTripDetail, activeTripId, userId, t, zh])
 
-    // ⚡ 每日重點、費用與票券 0ms 樂觀更新與協同廣播
+    // ⚡ 每日重點、費用與票券 0ms 樂觀更新與持久化後零外洩協同廣播
     const handleDayDataUpdate = useCallback(async (type: "notes" | "costs" | "tickets", data: unknown) => {
         if (!activeTripId) return false
         try {
@@ -511,19 +511,22 @@ export function ItineraryView() {
                 saveTripSnapshot(activeTripId, optimisticTrip)
             }
 
-            // ⚡ 2. 5ms 記憶體廣播給同行程其他成員
-            broadcastTripEvent(activeTripId, "tip:update", {
+            // ⚡ 2. 先持久化寫入資料庫，再廣播已剝離私人項目與原生 UUID 的公開內容
+            await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
+
+            const broadcastData =
+                (type === "costs" || type === "tickets") && Array.isArray(data)
+                    ? stripPrivateForBroadcast(data)
+                    : data
+            void broadcastTripEvent(activeTripId, "tip:update", {
                 dayIndex: day,
                 type,
-                data
+                data: broadcastData
             })
-
-            // ⚡ 3. 背景持久化寫入資料庫
-            await tripsApi.updateDayData(activeTripId, day, updatePayload, userId || "")
             return true
         } catch (e) {
             console.error("Failed to update day data:", e)
-            toast.error(t('iv_update_failed_short'))
+            // 錯誤 Toast 統一由子元件顯示精準語境提示，杜絕 HTTP 500 雙重彈窗
             if (currentTrip) {
                 reloadTripDetail(currentTrip, false)
                 saveTripSnapshot(activeTripId, currentTrip)
@@ -531,7 +534,7 @@ export function ItineraryView() {
             reloadTripDetail()
             return false
         }
-    }, [activeTripId, day, currentTrip, reloadTripDetail, userId, t])
+    }, [activeTripId, day, currentTrip, reloadTripDetail, userId])
 
     // ⚡ 接收旅伴即時拖曳排序廣播 (<10ms 鏡像重排)
     useEffect(() => {
@@ -2072,12 +2075,6 @@ export function ItineraryView() {
                                             saveTripSnapshot(activeTripId, optimisticTrip)
                                         }
 
-                                        // ⚡ 2. 5ms 記憶體廣播給同行程其他成員
-                                        broadcastTripEvent(activeTripId, "checklist:update", {
-                                            dayIndex: day,
-                                            items
-                                        })
-
                                         try {
                                             await tripsApi.updateDayData(activeTripId, day, {
                                                 day_checklists: { [day]: items }
@@ -2091,10 +2088,16 @@ export function ItineraryView() {
                                                 }, userId || "")
                                             }
 
+                                            // ⚡ 2. 持久化成功後再廣播已剝離私人項目與原生 UUID 的公開清單
+                                            void broadcastTripEvent(activeTripId, "checklist:update", {
+                                                dayIndex: day,
+                                                items: stripPrivateForBroadcast(items)
+                                            })
+
                                             return true
                                         } catch (e) {
                                             console.error("Failed to update checklist:", e)
-                                            toast.error(t('iv_update_failed_short'))
+                                            // 錯誤 Toast 統一由子元件顯示精準語境提示，杜絕 HTTP 500 雙重彈窗
                                             if (currentTrip) {
                                                 reloadTripDetail(currentTrip, false)
                                                 saveTripSnapshot(activeTripId, currentTrip)

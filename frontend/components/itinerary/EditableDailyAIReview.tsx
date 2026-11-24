@@ -310,7 +310,7 @@ export default function EditableDailyAIReview({
                     </div>
                 )}
 
-                <div className="text-sm text-tabiji-charcoal dark:text-tabiji-paper leading-relaxed space-y-1 wrap-break-word [overflow-wrap:anywhere]">
+                <div className="text-sm text-tabiji-charcoal dark:text-tabiji-paper leading-relaxed space-y-1 wrap-anywhere">
                     {formatReview(cleanText)}
                 </div>
             </div>

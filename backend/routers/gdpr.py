@@ -45,10 +45,31 @@ async def delete_user_data(
             data = getattr(res, "data", None)
             return data if isinstance(data, list) else []
 
-        # 1. 先取得該用戶創建的所有行程 ID
+        # 1. 先取得該用戶創建的所有行程 ID，以及其參與的 SYSTEM 範例行程候選
         trips_res = supabase.table("itineraries").select("id").eq("created_by", target_user_id).execute()
         trip_ids = [t["id"] for t in _rows(trips_res) if isinstance(t, dict) and t.get("id")]
-        print(f"   📋 找到 {len(trip_ids)} 個行程")
+        owned_trip_set = set(trip_ids)
+        print(f"   📋 找到 {len(trip_ids)} 個自建行程")
+
+        member_rows_res = supabase.table("trip_members").select("itinerary_id").eq("user_id", target_user_id).execute()
+        member_only_ids = list(dict.fromkeys(
+            row["itinerary_id"]
+            for row in _rows(member_rows_res)
+            if isinstance(row, dict) and row.get("itinerary_id") and row["itinerary_id"] not in owned_trip_set
+        ))
+        candidate_system_trip_ids = []
+        for idx in range(0, len(member_only_ids), 50):
+            chunk = member_only_ids[idx:idx + 50]
+            sys_res = (
+                supabase.table("itineraries")
+                .select("id")
+                .in_("id", chunk)
+                .eq("created_by", "SYSTEM")
+                .execute()
+            )
+            candidate_system_trip_ids.extend(
+                row["id"] for row in _rows(sys_res) if isinstance(row, dict) and row.get("id")
+            )
         
         # 2. 刪除消費記錄 (by created_by)
         exp_res = supabase.table("expenses").delete().eq("created_by", target_user_id).execute()
@@ -81,10 +102,33 @@ async def delete_user_data(
         mem_res = supabase.table("trip_members").delete().eq("user_id", target_user_id).execute()
         deleted_counts["members"] = len(_rows(mem_res))
         print(f"   ✅ 成員關係: {deleted_counts['members']} 筆")
+
+        # 4.5. 回收無其他成員的孤兒 SYSTEM 範例行程（避免 GDPR 刪帳後留下殭屍範例列）
+        orphan_system_trips_deleted = 0
+        for sys_tid in candidate_system_trip_ids:
+            rem_res = supabase.table("trip_members").select("user_id").eq("itinerary_id", sys_tid).limit(1).execute()
+            if _rows(rem_res):
+                continue
+            sys_items_res = supabase.table("itinerary_items").delete().eq("itinerary_id", sys_tid).execute()
+            deleted_counts["items"] = deleted_counts.get("items", 0) + len(_rows(sys_items_res))
+            sys_cap_res = supabase.table("trip_capsule_entries").delete().eq("trip_id", sys_tid).execute()
+            sys_cap_rows = _rows(sys_cap_res)
+            deleted_counts["capsules"] = deleted_counts.get("capsules", 0) + len(sys_cap_rows)
+            media_urls.update(collect_cloudinary_urls(sys_cap_rows, fields=("photo_url",)))
+            sys_del_res = (
+                supabase.table("itineraries")
+                .delete()
+                .eq("id", sys_tid)
+                .eq("created_by", "SYSTEM")
+                .execute()
+            )
+            orphan_system_trips_deleted += len(_rows(sys_del_res))
+        if orphan_system_trips_deleted:
+            print(f"   🧹 回收孤兒 SYSTEM 範例行程: {orphan_system_trips_deleted} 筆")
         
         # 5. 刪除主行程 (by creator_id)
         trip_res = supabase.table("itineraries").delete().eq("created_by", target_user_id).execute()
-        deleted_counts["trips"] = len(_rows(trip_res))
+        deleted_counts["trips"] = len(_rows(trip_res)) + orphan_system_trips_deleted
         print(f"   ✅ 主行程: {deleted_counts['trips']} 筆")
 
         # 6. 刪除個人偏好設定與無 FK 的通知/推播訂閱

@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils"
 import { useLanguage } from "@/lib/LanguageContext"
 import { NoteItem, CostItem, TicketItem } from "@/lib/itinerary-types"
 import { parseCostAmount } from "@/lib/itinerary-metrics"
+import { mergeIncomingWithLocalPrivate } from "@/lib/hooks/useTripRealtime"
 
 interface EditableDailyTipsProps {
     tripId: string
@@ -480,12 +481,6 @@ export default function EditableDailyTips({
             const detail = (e as CustomEvent).detail
             if (detail?.event === "tip:update" && Number(detail?.dayIndex) === Number(_day)) {
                 const currentOwnerId = resolveOwnerId(userId)
-                const filterVisiblePrivate = <T extends { is_private?: boolean; private_owner_id?: string }>(items: T[]): T[] =>
-                    items.filter((entry) => {
-                        if (!entry || typeof entry !== "object") return false
-                        if (!entry.is_private) return true
-                        return Boolean(currentOwnerId && entry.private_owner_id && entry.private_owner_id === currentOwnerId)
-                    })
 
                 if (detail.type === "notes" && !editingNotes && !addingNote && !savingNotes) {
                     if (Array.isArray(detail.data)) {
@@ -493,11 +488,15 @@ export default function EditableDailyTips({
                     }
                 } else if (detail.type === "costs" && !editingCosts && !addingCost && !savingCosts && processingCosts.size === 0) {
                     if (Array.isArray(detail.data)) {
-                        setLocalCosts(filterVisiblePrivate(detail.data as CostItem[]))
+                        setLocalCosts((prev) =>
+                            mergeIncomingWithLocalPrivate(prev, detail.data as CostItem[], currentOwnerId, false, true)
+                        )
                     }
                 } else if (detail.type === "tickets" && !editingTickets && !addingTicket && !savingTickets && processingTickets.size === 0) {
                     if (Array.isArray(detail.data)) {
-                        setLocalTickets(filterVisiblePrivate(detail.data as TicketItem[]))
+                        setLocalTickets((prev) =>
+                            mergeIncomingWithLocalPrivate(prev, detail.data as TicketItem[], currentOwnerId, false, true)
+                        )
                     }
                 }
             }
@@ -883,9 +882,11 @@ export default function EditableDailyTips({
                 toast.success(updated[idx].is_private ? (zh ? "已設為私人" : "Set to private") : (zh ? "已設為公開" : "Set to public"))
             } else {
                 setLocalCosts(prevCosts)
+                toast.error(zh ? "更新失敗" : "Update failed")
             }
         } catch {
             setLocalCosts(prevCosts)
+            toast.error(zh ? "更新失敗" : "Update failed")
         } finally {
             setSavingCosts(false)
             costLockRef.current = false
@@ -1063,9 +1064,11 @@ export default function EditableDailyTips({
                 toast.success(updated[idx].is_private ? (zh ? "已設為私人" : "Set to private") : (zh ? "已設為公開" : "Set to public"))
             } else {
                 setLocalTickets(prevTickets)
+                toast.error(zh ? "更新失敗" : "Update failed")
             }
         } catch {
             setLocalTickets(prevTickets)
+            toast.error(zh ? "更新失敗" : "Update failed")
         } finally {
             setSavingTickets(false)
             ticketLockRef.current = false
@@ -1284,11 +1287,11 @@ export default function EditableDailyTips({
                                         {note.icon || "⚠️"}
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <div className="text-sm font-bold text-tabiji-charcoal dark:text-tabiji-paper wrap-break-word [overflow-wrap:anywhere]">
+                                        <div className="text-sm font-bold text-tabiji-charcoal dark:text-tabiji-paper wrap-anywhere">
                                             {note.title}
                                         </div>
                                         {note.content && (
-                                            <div className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 whitespace-pre-line wrap-break-word [overflow-wrap:anywhere]">
+                                            <div className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 whitespace-pre-line wrap-anywhere">
                                                 {note.content}
                                             </div>
                                         )}
@@ -1553,10 +1556,10 @@ export default function EditableDailyTips({
                                                     {cost.is_private && (
                                                         <EyeOff className="w-3.5 h-3.5 shrink-0 text-amber-500" />
                                                     )}
-                                                    <span className="min-w-0 flex-1 wrap-break-word [overflow-wrap:anywhere]">{cost.item}</span>
+                                                    <span className="min-w-0 flex-1 wrap-anywhere">{cost.item}</span>
                                                 </div>
                                                 <div className="flex items-center gap-1.5 ml-auto max-w-full min-w-0">
-                                                    <span className="text-right font-mono tabular-nums font-bold text-tabiji-forest dark:text-emerald-300 text-xs sm:text-sm min-w-0 wrap-break-word [overflow-wrap:anywhere]">
+                                                    <span className="text-right font-mono tabular-nums font-bold text-tabiji-forest dark:text-emerald-300 text-xs sm:text-sm min-w-0 wrap-anywhere">
                                                         {formatCurrency(cost.amount, cost.currency)}
                                                     </span>
                                                     {!readOnly && (
@@ -1620,7 +1623,7 @@ export default function EditableDailyTips({
                                                 </div>
                                             </div>
                                             {cost.note && (
-                                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 wrap-break-word [overflow-wrap:anywhere]">
+                                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 wrap-anywhere">
                                                     {cost.note}
                                                 </div>
                                             )}
@@ -1926,10 +1929,10 @@ export default function EditableDailyTips({
                                                     {ticket.is_private && (
                                                         <EyeOff className="w-3.5 h-3.5 shrink-0 text-amber-500" />
                                                     )}
-                                                    <span className="min-w-0 flex-1 wrap-break-word [overflow-wrap:anywhere]">{ticket.name}</span>
+                                                    <span className="min-w-0 flex-1 wrap-anywhere">{ticket.name}</span>
                                                 </div>
                                                 <div className="flex items-center gap-1.5 ml-auto max-w-full min-w-0">
-                                                    <span className="font-mono tabular-nums font-bold text-sky-700 dark:text-sky-300 text-xs sm:text-sm min-w-0 wrap-break-word [overflow-wrap:anywhere]">
+                                                    <span className="font-mono tabular-nums font-bold text-sky-700 dark:text-sky-300 text-xs sm:text-sm min-w-0 wrap-anywhere">
                                                         {formatCurrency(ticket.price, ticket.currency)}
                                                     </span>
                                                     {!readOnly && (
@@ -1993,7 +1996,7 @@ export default function EditableDailyTips({
                                                 </div>
                                             </div>
                                             {ticket.note && (
-                                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 wrap-break-word [overflow-wrap:anywhere]">
+                                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 wrap-anywhere">
                                                     {ticket.note}
                                                 </div>
                                             )}
