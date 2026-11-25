@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse, unquote, unquote_plus
 
 
-from utils.url_safety import is_safe_url
+from utils.url_safety import is_safe_url, is_safe_url_async
 
 class SmartRedirectTracer:
     """
@@ -64,8 +64,8 @@ class SmartRedirectTracer:
             }
             async with httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(self.timeout)) as client:
                 for hop in range(self.max_hops):
-                    # 🛡️ v35.65: SSRF Protection - Validate every single hop
-                    if not is_safe_url(current_url):
+                    # 🛡️ v35.65: SSRF Protection - Validate every single hop (non-blocking DNS bulkhead)
+                    if not await is_safe_url_async(current_url):
                         print(f"[SSRF Block] SmartTracer blocked unsafe URL at hop {hop}: {current_url}")
                         break
 
@@ -97,20 +97,20 @@ class SmartRedirectTracer:
                                     print(f"[Tracer] Hop {hop}: Captured Name DNA: {name}")
                             except: pass
                     
-                    # Trace next hop (NO auto-follow)
+                    # Trace next hop (NO auto-follow, stream without buffering response body)
                     try:
-                        resp = await client.get(
+                        async with client.stream(
+                            "GET",
                             current_url,
                             follow_redirects=False,
-                            timeout=2.0
-                        )
-                        
-                        # Non-redirect status: chain ends
-                        if resp.status_code not in [301, 302, 303, 307, 308]:
-                            # 🗑️ v35.92: Terminal Hop Body Mining REMOVED due to IP poisoning.
-                            break
-                        
-                        next_url = resp.headers.get('Location')
+                            timeout=2.0,
+                        ) as resp:
+                            # Non-redirect status: chain ends
+                            if resp.status_code not in [301, 302, 303, 307, 308]:
+                                # 🗑️ v35.92: Terminal Hop Body Mining REMOVED due to IP poisoning.
+                                break
+
+                            next_url = resp.headers.get('Location')
                         if not next_url:
                             break
                         

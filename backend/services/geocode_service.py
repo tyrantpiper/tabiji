@@ -1735,7 +1735,7 @@ def _get_facility_standalone_terms(suffix: str, country_code: Optional[str]) -> 
     return terms
 
 
-_PAREN_REMARK_RE = re.compile(r"\s*[\(（\[【][^()（）\[\]【】]{1,80}[\)）\]】]")
+_PAREN_REMARK_RE = re.compile(r"[\(（\[【][^()（）\[\]【】]{1,80}[\)）\]】]")
 _LEADING_ACTIVITY_PREFIX_RE = re.compile(
     r"^(?:"
     r"(?:day\s*\d+|d\d+|第\s*\d+\s*天)\s*[:：\-—–]?\s*"
@@ -3086,7 +3086,7 @@ _LANDMARK_QUERY_MARKERS = (
 )
 _STATION_STRIP_RE = re.compile(
     r"(?:中央火車站|中央車站|火車站|地鐵站|捷運站|轉運站|車站|站|駅"
-    r"|\s+(?:central\s+station|train\s+station|railway\s+station|station|hauptbahnhof|bahnhof|päärautatieasema|rautatieasema|gare\s+centrale|stazione\s+centrale|estación\s+central|centraal\s+station|centralstation))$",
+    r"| (?:central station|train station|railway station|station|hauptbahnhof|bahnhof|päärautatieasema|rautatieasema|gare centrale|stazione centrale|estación central|centraal station|centralstation))$",
     re.IGNORECASE,
 )
 _MACRO_GEO_TYPES = {"country", "state", "province", "city", "county", "municipality", "region", "administrative"}
@@ -3166,7 +3166,8 @@ def rerank_top_k(
     stripped_station_variants: List[str] = []
     if wants_station:
         for v in variants:
-            sv = _STATION_STRIP_RE.sub("", v).strip()
+            norm_v = re.sub(r"\s+", " ", v).strip()
+            sv = _STATION_STRIP_RE.sub("", norm_v).strip()
             if sv and len(sv) >= 2 and sv not in stripped_station_variants:
                 stripped_station_variants.append(sv)
     q_has_non_latin = bool(_NON_LATIN_SCRIPT_RE.search(q_lower))
@@ -4789,7 +4790,7 @@ async def smart_geocode_logic(
     allow_overpass: bool = True,      # 🆕 批次行程自癒時關閉全國 Overpass 掃描
     _allow_paren_fallback: bool = True,  # 🛡️ 括號/前綴長標題單次降級守衛（保護舊版 SW 用戶且防無窮遞迴）
 ) -> dict:
-    clean_query = (query or "").strip()
+    clean_query = (query or "").strip()[:500]
     if not clean_query:
         return {"results": [], "source": "none"}
 

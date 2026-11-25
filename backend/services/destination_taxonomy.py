@@ -304,9 +304,9 @@ def clean_conversational_query(user_msg: str) -> str:
         flags=re.IGNORECASE
     ).strip()
     clean_msg = re.sub(r'(?:現在的|當前的|推薦的|熱門的|有沒有|我想知道|我想了解|有哪些|哪裡有|告訴我)', ' ', clean_msg)
-    clean_msg = re.sub(r'[嗎？\?~～!！\.]+$', '', clean_msg).strip()
+    clean_msg = clean_msg.rstrip("嗎？?~～!！.").strip()
     clean_msg = re.sub(r'(?:最新的?(?:資訊|消息)呢?)$', '', clean_msg).strip()
-    clean_msg = re.sub(r'[嗎呢？\?~～!！\.]+$', '', clean_msg).strip()
+    clean_msg = clean_msg.rstrip("嗎呢？?~～!！.").strip()
     clean_msg = re.sub(r'\s+', ' ', clean_msg).strip()
     return clean_msg or user_msg
 

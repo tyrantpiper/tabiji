@@ -15,7 +15,7 @@ import httpx
 import io
 from urllib.parse import urlparse
 from PIL import Image, ImageOps, UnidentifiedImageError
-from utils.url_safety import is_safe_url
+from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
 try:
     from pillow_heif import register_heif_opener
     register_heif_opener()
@@ -65,47 +65,66 @@ ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "im
 
 async def safe_download_image(url: str) -> tuple[bytes, str]:
     """
-    Safely download image with SSRF protection and granular timeouts.
+    Safely download image with SSRF protection, dedicated DNS bulkhead,
+    and bounded streaming (<= MAX_IMAGE_SIZE) to prevent memory exhaustion.
     Returns (bytes, mime_type).
     """
-    # 1. SSRF Check (Robust centralized validation)
-    parsed = urlparse(url)
-    domain = parsed.netloc.lower()
-    
-    # Exceptions for local dev (if URL is explicitly localhost)
-    if domain in ["localhost", "127.0.0.1"]:
-        # Allow internal fetches only in dev mode if explicitly requested
-        pass 
-    elif not is_safe_url(url):
+    # 1. Centralized SSRF Check (strictly no localhost/127.0.0.1 bypass)
+    if not await is_safe_url_async(url):
         print(f"⚠️ [SSRF Block] Blocked attempt to fetch from unsafe URL: {url}")
         raise HTTPException(status_code=400, detail="Forbidden image source domain (internal network or unsafe)")
 
     # 2. Granular Timeouts
     timeout = httpx.Timeout(5.0, connect=5.0, read=20.0, write=10.0, pool=5.0)
-    
+    is_heic_path = urlparse(url).path.lower().endswith((".heic", ".heif"))
+
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            # First check size with HEAD if possible
-            # head = await client.head(url)
-            # if int(head.headers.get("Content-Length", 0)) > MAX_IMAGE_SIZE:
-            #     raise HTTPException(status_code=400, detail="Image too large (>5MB)")
-            
-            response = await client.get(url)
-            response.raise_for_status()
-            
-            # 3. Post-download Validation
-            content_type = response.headers.get("Content-Type", "").lower()
-            if not any(m in content_type for m in ALLOWED_MIME_TYPES) and not url.lower().endswith(('.heic', '.heif')):
-                # Some servers might not return correct HEIC mime
-                if not content_type: content_type = "image/jpeg" # Fallback guess
-                else: raise HTTPException(status_code=400, detail=f"Unsupported format: {content_type}")
-            
-            data = response.content
-            if len(data) > MAX_IMAGE_SIZE:
-                 raise HTTPException(status_code=400, detail=f"Image too large (>{MAX_IMAGE_SIZE // (1024 * 1024)}MB)")
-            
-            return data, content_type
-            
+        async with create_safe_client(follow_redirects=False, timeout=timeout) as client:
+            async with client.stream("GET", url) as response:
+                if response.status_code in (301, 302, 303, 307, 308):
+                    raise HTTPException(status_code=400, detail="Image URL redirects are not allowed")
+                response.raise_for_status()
+
+                # 3. Pre-body Content-Type & Content-Length Validation
+                raw_ct = response.headers.get("Content-Type", "")
+                content_type = raw_ct.split(";", 1)[0].strip().lower()
+                if content_type not in ALLOWED_MIME_TYPES and not is_heic_path:
+                    # Some servers might not return correct HEIC mime
+                    if not content_type:
+                        content_type = "image/jpeg"  # Fallback guess
+                    else:
+                        raise HTTPException(status_code=400, detail=f"Unsupported format: {content_type}")
+                elif not content_type and is_heic_path:
+                    content_type = "image/heic"
+
+                raw_cl = response.headers.get("Content-Length")
+                if raw_cl:
+                    try:
+                        if int(raw_cl.strip()) > MAX_IMAGE_SIZE:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Image too large (>{MAX_IMAGE_SIZE // (1024 * 1024)}MB)",
+                            )
+                    except ValueError:
+                        pass
+
+                # 4. Bounded Streaming Read (capped at MAX_IMAGE_SIZE = 20MB)
+                chunks = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    chunks.extend(chunk)
+                    if len(chunks) > MAX_IMAGE_SIZE:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Image too large (>{MAX_IMAGE_SIZE // (1024 * 1024)}MB)",
+                        )
+
+                return bytes(chunks), content_type
+
+    except HTTPException:
+        raise
+    except SSRFSecurityError:
+        print(f"⚠️ [SSRF Block] Transport hook blocked attempt to fetch from unsafe URL: {url}")
+        raise HTTPException(status_code=400, detail="Forbidden image source domain (internal network or unsafe)")
     except httpx.TimeoutException:
         raise HTTPException(status_code=408, detail="Image download timeout")
     except Exception as e:
@@ -559,7 +578,7 @@ async def parse_markdown(
             import math
             import re
             from utils.molecular_parser import get_molecular_parser
-            from utils.url_safety import is_safe_url
+            from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
             from services.link_resolver import resolve_google_maps_link
             from services.geocode_service import (
                 smart_geocode_logic,
@@ -579,10 +598,12 @@ async def parse_markdown(
                     pass
                 return None
 
-            def _is_allowed_maps_url(url: Optional[str]) -> bool:
-                if not url or not is_safe_url(url):
+            async def _is_allowed_maps_url(url: Optional[str]) -> bool:
+                if not url:
                     return False
-                return bool(re.search(r'^https?://(?:maps\.app\.goo\.gl|goo\.gl/maps|(?:www\.)?google\.(?:com|co\.jp|com\.tw)/maps)(?:/|\?|$)', url))
+                if not re.search(r'^https?://(?:maps\.app\.goo\.gl|goo\.gl/maps|(?:www\.)?google\.(?:com|co\.jp|com\.tw)/maps)(?:/|\?|$)', url):
+                    return False
+                return await is_safe_url_async(url)
 
             # Step 1: 零成本 URL 座標直解 (MolecularParser) 與並發短網址救援 (Semaphore 10 + 2.5s Timeout)
             sem = asyncio.Semaphore(10)
@@ -591,7 +612,7 @@ async def parse_markdown(
                 it["lat"] = _safe_float(it.get("lat"))
                 it["lng"] = _safe_float(it.get("lng"))
                 link = it.get("link_url")
-                if link and _is_allowed_maps_url(link):
+                if link and await _is_allowed_maps_url(link):
                     coords = mol_parser.parse_url(link)
                     if coords and coords.get("lat") and coords.get("lng"):
                         it["lat"] = coords["lat"]

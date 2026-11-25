@@ -49,6 +49,8 @@ load_dotenv()
 
 # 🛡️ 診斷日誌配置
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 logger = logging.getLogger("ryan-travel-api")
 
 from datetime import datetime, timezone
@@ -330,8 +332,11 @@ async def add_security_headers(request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    # 🆕 強化版 CSP (防止非法內容加載)
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:;"
+    # 🆕 強化版 CSP (防止非法內容加載；setdefault 保留端點更嚴格之專屬 CSP 如 media-proxy sandbox)
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:;",
+    )
     return response
 
 # 4. CORS 設定 (置於最外層，確保所有回應與異常均注入合法 Access-Control 標頭)

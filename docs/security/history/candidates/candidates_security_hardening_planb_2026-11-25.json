@@ -1,0 +1,82 @@
+[
+  {
+    "id": "backend/models/base.py:geocode_and_chat_length_bounds",
+    "file_path": "backend/models/base.py",
+    "start_line": 200,
+    "end_line": 220,
+    "attack_vector": "unbounded_input_validation_and_resource_budget",
+    "hypothesis": "Verify GeocodeSearchRequest.query enforces max_length=4096 without breaking existing 2400-character queries or introducing validation regressions."
+  },
+  {
+    "id": "backend/services/geocode_service.py:regex_linear_time_and_entry_truncation",
+    "file_path": "backend/services/geocode_service.py",
+    "start_line": 3082,
+    "end_line": 3178,
+    "attack_vector": "regex_backtracking_complexity_and_whitespace_normalization",
+    "hypothesis": "Verify _STATION_STRIP_RE and rerank_top_k whitespace normalization execute in linear time without losing multi-space station suffix stripping."
+  },
+  {
+    "id": "frontend/lib/location-utils.ts:paren_remark_linear_time_regex",
+    "file_path": "frontend/lib/location-utils.ts",
+    "start_line": 170,
+    "end_line": 207,
+    "attack_vector": "client_regex_complexity_and_remark_extraction",
+    "hypothesis": "Verify PAREN_REMARK_GLOBAL_RE executes in linear time without leading whitespace quantifiers while preserving extractCleanPlaceQuery and extractPlaceParentheticalNote accuracy."
+  },
+  {
+    "id": "backend/services/destination_taxonomy.py:conversational_query_rstrip_linear_time",
+    "file_path": "backend/services/destination_taxonomy.py",
+    "start_line": 286,
+    "end_line": 313,
+    "attack_vector": "trailing_punctuation_regex_complexity",
+    "hypothesis": "Verify clean_conversational_query replaces trailing character-class regex with rstrip in linear time while preserving trailing CJK and ASCII punctuation trimming."
+  },
+  {
+    "id": "backend/main.py:http_client_log_level_and_csp_setdefault",
+    "file_path": "backend/main.py",
+    "start_line": 49,
+    "end_line": 58,
+    "attack_vector": "outbound_url_token_logging_and_header_preservation",
+    "hypothesis": "Verify httpx and httpx2 loggers are configured at WARNING level so outbound URL query parameters are not emitted at INFO level."
+  },
+  {
+    "id": "backend/utils/url_safety.py:dedicated_dns_bulkhead_executor",
+    "file_path": "backend/utils/url_safety.py",
+    "start_line": 1,
+    "end_line": 205,
+    "attack_vector": "async_dns_resolution_isolation_and_fail_closed_timeout",
+    "hypothesis": "Verify _DNS_SAFETY_EXECUTOR (4 workers) and is_safe_url_async isolate blocking socket.getaddrinfo from the event loop and default thread pool and fail closed on timeout."
+  },
+  {
+    "id": "backend/routers/ai.py:safe_download_image_streaming_and_ssrf_guard",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 65,
+    "end_line": 135,
+    "attack_vector": "outbound_image_fetch_validation_and_memory_cap",
+    "hypothesis": "Verify safe_download_image removes localhost bypass, uses create_safe_client(follow_redirects=False) with 20MB streaming cap, normalizes Content-Type charset, preserves HEIC path support, and propagates HTTPException and SSRFSecurityError cleanly."
+  },
+  {
+    "id": "backend/services/link_resolver.py:shortlink_hostname_bounded_stream_and_ios_rescue",
+    "file_path": "backend/services/link_resolver.py",
+    "start_line": 14,
+    "end_line": 65,
+    "attack_vector": "shortlink_hostname_matching_and_bounded_html_decoding",
+    "hypothesis": "Verify _is_google_shortlink enforces exact hostname matching on http/https URLs and _read_bounded_text enforces a 2MB streaming byte cap with LookupError charset fallback."
+  },
+  {
+    "id": "backend/services/web_search_engine.py:opengraph_bounded_streaming_and_async_url_check",
+    "file_path": "backend/services/web_search_engine.py",
+    "start_line": 346,
+    "end_line": 445,
+    "attack_vector": "unbounded_html_response_buffering_and_async_validation",
+    "hypothesis": "Verify fetch_opengraph_metadata uses bounded 2MB streaming without buffering oversized responses and fetch_jina_reader validates URLs via is_safe_url_async."
+  },
+  {
+    "id": "backend/routers/poi.py:resolve_link_and_media_proxy_hardening",
+    "file_path": "backend/routers/poi.py",
+    "start_line": 618,
+    "end_line": 730,
+    "attack_vector": "media_proxy_host_validation_svg_rejection_size_cap_and_csp",
+    "hypothesis": "Verify media_proxy enforces SlowAPI request signature, exact upload.wikimedia.org HTTPS host, SVG/SVGZ 415 rejection preserving PNG thumbnails, 10MB Content-Length 413 and streaming cap, guaranteed aclose cleanup, and strict sandbox CSP headers."
+  }
+]

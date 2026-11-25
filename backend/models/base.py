@@ -201,7 +201,7 @@ class ResolveAddressErrorResponse(BaseModel):
 
 class GeocodeSearchRequest(BaseModel):
     """地理編碼搜尋請求（limit 為 None 或 <=0 時回傳上游取得並智慧排序之全部去重結果）"""
-    query: str
+    query: str = Field(..., max_length=4096)
     limit: Optional[int] = None
     tripTitle: Optional[str] = None
     lat: Optional[float] = None
@@ -432,7 +432,7 @@ class RouteRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     """AI 聊天請求"""
-    message: str
+    message: str = Field(..., max_length=50000)
     history: List[dict] = Field(default_factory=list)
     thought_signatures: Optional[List[dict]] = None
     image: Optional[str] = None

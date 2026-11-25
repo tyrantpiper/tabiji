@@ -168,7 +168,7 @@ export function isUsableMacroExtent(extent: unknown): extent is [number, number,
     return true
 }
 
-const PAREN_REMARK_GLOBAL_RE = /\s*[(（[【]([^()（）[\]【】]{1,80})[)）\]】]/g
+const PAREN_REMARK_GLOBAL_RE = /[(（[【]([^()（）[\]【】]{1,80})[)）\]】]/g
 const LEADING_ACTIVITY_PREFIX_RE = /^(?:(?:day\s*\d+|d\d+|第\s*\d+\s*天)\s*[:：\-—–]?\s*|\d{1,2}:\d{2}(?:\s*[-~～]\s*\d{1,2}:\d{2})?\s+|(?:上午|下午|晚上|早上|中午|傍晚|早餐|午餐|晚餐|宵夜|前往|參觀|拜訪|逛逛|逛|吃)\s*[:：]\s*|(?:前往|參觀|拜訪|抵達|入住)\s+)/i
 
 /**

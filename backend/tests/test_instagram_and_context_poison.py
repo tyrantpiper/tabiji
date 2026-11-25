@@ -29,13 +29,33 @@ Day 2: 故宮博物院
     assert len(tools_wrapped) > 0, "SEARCH intent must mount search tools"
 
 
+def _make_stream_cm(status_code: int, body_text: str, encoding: str = "utf-8"):
+    """Build an async context manager mimicking httpx.AsyncClient.stream()."""
+    raw_bytes = body_text.encode(encoding)
+
+    class _MockStreamResp:
+        def __init__(self):
+            self.status_code = status_code
+            self.encoding = encoding
+
+        async def aiter_bytes(self, chunk_size: int = 65536):
+            yield raw_bytes
+
+    class _StreamCM:
+        async def __aenter__(self):
+            return _MockStreamResp()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    return _StreamCM()
+
+
 @pytest.mark.asyncio
 async def test_instagram_reel_opengraph_fallback():
     """驗證 Instagram Reel 網址能透過 OpenGraph 確定性抽取貼文內容（不依賴 CI 外網連線）"""
     ig_url = "https://www.instagram.com/reel/DX8x6XOtEqI/?stkn=MXZ3YWxibjJzejBtZg=="
-    og_resp = MagicMock(spec=httpx.Response)
-    og_resp.status_code = 200
-    og_resp.text = (
+    og_html = (
         "<html><head>"
         '<meta property="og:title" content="大阪難波超人氣燒肉 焼肉エイト" />'
         '<meta property="og:site_name" content="Instagram" />'
@@ -44,7 +64,7 @@ async def test_instagram_reel_opengraph_fallback():
     )
 
     mock_client = AsyncMock()
-    mock_client.get.return_value = og_resp
+    mock_client.stream = MagicMock(return_value=_make_stream_cm(200, og_html))
 
     with patch("services.web_search_engine.get_search_client", return_value=mock_client):
         result = await fetch_jina_reader(ig_url)
@@ -61,9 +81,7 @@ async def test_instagram_login_wall_rejected_and_degrades_cleanly():
     """驗證遭遇 IG 登入牆（中/英文）與 Jina 阻擋時，不回傳偽陽性 success 並可優雅降級"""
     ig_url = "https://www.instagram.com/reel/DX8x6XOtEqI/?stkn=MXZ3YWxibjJzejBtZg=="
 
-    zh_login_resp = MagicMock(spec=httpx.Response)
-    zh_login_resp.status_code = 200
-    zh_login_resp.text = (
+    zh_login_html = (
         "<html><head><title>登入 • Instagram</title>"
         '<meta property="og:description" content="歡迎回到 Instagram。登入以查看親朋好友的更新動態。" />'
         "</head><body></body></html>"
@@ -74,7 +92,8 @@ async def test_instagram_login_wall_rejected_and_degrades_cleanly():
     jina_403_resp.text = "Blocked ASN"
 
     mock_client = AsyncMock()
-    mock_client.get.side_effect = [zh_login_resp, jina_403_resp]
+    mock_client.stream = MagicMock(side_effect=lambda *a, **kw: _make_stream_cm(200, zh_login_html))
+    mock_client.get.side_effect = [jina_403_resp]
 
     with patch("services.web_search_engine.get_search_client", return_value=mock_client):
         result = await fetch_jina_reader(ig_url)
@@ -82,7 +101,8 @@ async def test_instagram_login_wall_rejected_and_degrades_cleanly():
     assert result["status"] == "error"
     assert result["error_code"] == "READER_UNAVAILABLE"
     assert result["markdown"] == ""
-    assert mock_client.get.await_count == 2  # OpenGraph 不應重複請求兩次
+    assert mock_client.stream.call_count == 1  # OpenGraph 不應重複請求兩次
+    assert mock_client.get.await_count == 1    # Jina 僅呼叫一次
 
     # Case B: Jina 回傳 200 但內容仍為英文 Login Wall
     en_login_resp = MagicMock(spec=httpx.Response)
@@ -90,7 +110,8 @@ async def test_instagram_login_wall_rejected_and_degrades_cleanly():
     en_login_resp.text = "# Login • Instagram\n\nWelcome back to Instagram. Sign in to check out what your friends are sharing."
 
     mock_client_en = AsyncMock()
-    mock_client_en.get.side_effect = [zh_login_resp, en_login_resp]
+    mock_client_en.stream = MagicMock(side_effect=lambda *a, **kw: _make_stream_cm(200, zh_login_html))
+    mock_client_en.get.side_effect = [en_login_resp]
 
     with patch("services.web_search_engine.get_search_client", return_value=mock_client_en):
         res_login = await fetch_jina_reader(ig_url)

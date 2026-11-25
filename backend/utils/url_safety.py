@@ -1,9 +1,15 @@
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import ipaddress
 import re
 import socket
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 import httpx
+
+# Dedicated 4-thread DNS bulkhead isolating blocking socket.getaddrinfo() from both the
+# asyncio event loop and the default ThreadPoolExecutor used by synchronous SDKs (e.g. Supabase).
+_DNS_SAFETY_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ssrf-dns")
 
 # [NEW] Phase 5.4: Domain Whitelist (Bypass blocking DNS checks for known safe hosts)
 SAFE_WIKI_DOMAINS: List[str] = [
@@ -152,13 +158,32 @@ def is_safe_url(url: str) -> bool:
     return get_safe_ip(url_str) is not None
 
 
+async def is_safe_url_async(url: str, timeout: float = 3.0) -> bool:
+    """
+    Non-blocking SSRF URL safety check executed on the dedicated 4-thread DNS bulkhead.
+    Fails closed (returns False) on timeout or unexpected errors.
+    """
+    if not url or not isinstance(url, str):
+        return False
+    loop = asyncio.get_running_loop()
+    try:
+        return bool(
+            await asyncio.wait_for(
+                loop.run_in_executor(_DNS_SAFETY_EXECUTOR, is_safe_url, url),
+                timeout=timeout,
+            )
+        )
+    except (asyncio.TimeoutError, Exception):
+        return False
+
+
 async def _enforce_request_ssrf_safety(request: httpx.Request) -> None:
     """
     Request hook to intercept outbound HTTP requests before sending,
     preventing SSRF and intranet redirects.
     """
     url_str = str(request.url)
-    if not is_safe_url(url_str):
+    if not await is_safe_url_async(url_str):
         raise SSRFSecurityError(f"[SSRF Blocked] Outbound connection to {url_str} targets a disallowed or private destination.")
 
 

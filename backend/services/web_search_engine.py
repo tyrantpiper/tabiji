@@ -15,7 +15,8 @@ import ipaddress
 import httpx
 from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup
-from utils.url_safety import is_safe_url, create_safe_client
+from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client
+from services.link_resolver import _read_bounded_text
 
 # 全域共用非同步 HTTP 連線池
 _http_client: Optional[httpx.AsyncClient] = None
@@ -106,7 +107,7 @@ async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict
             results = []
             for r in raw_list:
                 u = r.get("url")
-                if u and is_safe_external_url(u):
+                if u and await is_safe_url_async(u):
                     results.append({
                         "title": r.get("title", ""),
                         "snippet": r.get("snippet", ""),
@@ -145,7 +146,7 @@ async def _search_wikipedia_fallback(query: str, max_results: int = 3) -> List[D
             urls = data[3] if len(data) > 3 else []
             results = []
             for t, s, u in zip(titles, snippets, urls):
-                if u and is_safe_external_url(u):
+                if u and await is_safe_url_async(u):
                     results.append({
                         "title": f"{t} (維基百科)",
                         "snippet": s or f"關於 {t} 的開放百科條目詳細資訊",
@@ -180,7 +181,7 @@ async def _search_ddg_html_fallback(query: str, max_results: int = 3) -> List[Di
                 raw_href = link_tag.get("href", "")
                 real_url = unwrap_ddg_redirect(raw_href)
                 snippet_text = snippets[idx].get_text(strip=True) if idx < len(snippets) else ""
-                if real_url and is_safe_external_url(real_url):
+                if real_url and await is_safe_url_async(real_url):
                     results.append({
                         "title": link_tag.get_text(strip=True),
                         "snippet": snippet_text,
@@ -206,7 +207,7 @@ async def _search_ddg_html_fallback(query: str, max_results: int = 3) -> List[Di
                 snippet_tag = item.find("a", class_="result__snippet")
                 if title_tag and title_tag.get("href"):
                     real_url = unwrap_ddg_redirect(title_tag["href"])
-                    if real_url and is_safe_external_url(real_url):
+                    if real_url and await is_safe_url_async(real_url):
                         results.append({
                             "title": title_tag.get_text(strip=True),
                             "snippet": snippet_tag.get_text(strip=True) if snippet_tag else "",
@@ -355,44 +356,51 @@ async def fetch_opengraph_metadata(url: str) -> Optional[Dict[str, str]]:
     }
     client = get_search_client()
     try:
-        resp = await client.get(url, headers=headers, timeout=4.0)
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
+        stream_ctx = client.stream("GET", url, headers=headers, timeout=4.0)
+        if asyncio.iscoroutine(stream_ctx):
+            stream_ctx.close()
+            return None
+        async with stream_ctx as resp:
+            if resp.status_code != 200:
+                return None
+            html_text = await _read_bounded_text(resp, max_bytes=2 * 1024 * 1024)
 
-            def _get_meta(prop_names: List[str]) -> str:
-                for name in prop_names:
-                    tag = soup.find("meta", property=name) or soup.find("meta", attrs={"name": name})
-                    if tag and tag.get("content"):
-                        return tag["content"].strip()
-                return ""
+        soup = BeautifulSoup(html_text, "html.parser")
 
-            title = _get_meta(["og:title", "twitter:title"])
-            if not title and soup.title:
-                title = soup.title.get_text(strip=True)
+        def _get_meta(prop_names: List[str]) -> str:
+            for name in prop_names:
+                tag = soup.find("meta", property=name) or soup.find("meta", attrs={"name": name})
+                if tag and tag.get("content"):
+                    return tag["content"].strip()
+            return ""
 
-            description = _get_meta(["og:description", "twitter:description", "description"])
-            site_name = _get_meta(["og:site_name"])
+        title = _get_meta(["og:title", "twitter:title"])
+        if not title and soup.title:
+            title = soup.title.get_text(strip=True)
 
-            if title or description:
-                clean_title = html.unescape(title) if title else ""
-                clean_desc = html.unescape(description) if description else ""
-                if _is_social_login_wall(url, title=clean_title, description=clean_desc):
-                    print("⚠️ [SearchEngine] OpenGraph 命中社群登入牆，捨棄無效登入頁摘要")
-                    return None
+        description = _get_meta(["og:description", "twitter:description", "description"])
+        site_name = _get_meta(["og:site_name"])
 
-                parts = []
-                if clean_title:
-                    parts.append(f"# {clean_title}")
-                if site_name:
-                    parts.append(f"**來源平台**: {site_name}")
-                if clean_desc:
-                    parts.append(f"### 貼文內文 / 摘要資訊\n{clean_desc}")
+        if title or description:
+            clean_title = html.unescape(title) if title else ""
+            clean_desc = html.unescape(description) if description else ""
+            if _is_social_login_wall(url, title=clean_title, description=clean_desc):
+                print("⚠️ [SearchEngine] OpenGraph 命中社群登入牆，捨棄無效登入頁摘要")
+                return None
 
-                return {
-                    "title": clean_title,
-                    "description": clean_desc,
-                    "markdown": "\n\n".join(parts)[:3500],
-                }
+            parts = []
+            if clean_title:
+                parts.append(f"# {clean_title}")
+            if site_name:
+                parts.append(f"**來源平台**: {site_name}")
+            if clean_desc:
+                parts.append(f"### 貼文內文 / 摘要資訊\n{clean_desc}")
+
+            return {
+                "title": clean_title,
+                "description": clean_desc,
+                "markdown": "\n\n".join(parts)[:3500],
+            }
     except Exception as e:
         print(f"⚠️ [SearchEngine] OpenGraph 抓取失敗: {e}")
     return None
@@ -410,7 +418,7 @@ async def fetch_jina_reader(
     - 遇到 401 (ASN 信譽阻斷) 或連線逾時，自動優雅回退至 OpenGraph 或搜尋摘要，不崩潰
     """
     real_url = unwrap_ddg_redirect(url)
-    if not is_safe_external_url(real_url):
+    if not await is_safe_url_async(real_url):
         return {
             "status": "error",
             "error_code": "INVALID_URL",

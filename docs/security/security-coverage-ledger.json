@@ -1,15 +1,147 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-25T03:52:00Z",
+  "last_audit_date": "2026-11-25T13:25:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 454,
-    "audited_targets": 454,
+    "total_targets": 464,
+    "audited_targets": 464,
     "verified_vulnerabilities": 53,
-    "remediated_vulnerabilities": 214,
+    "remediated_vulnerabilities": 224,
     "dismissed_hypotheses": 187
   },
   "targets": [
+    {
+      "id": "backend/routers/poi.py:resolve_link_and_media_proxy_hardening",
+      "target_type": "backend_api_route",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "media_proxy_host_validation_svg_rejection_size_cap_and_csp",
+        "slowapi_rate_limit_signature"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Red->Green PoC & Sentinel runner.py DISMISSED post-patch: fixed SlowAPI signature + 30/min limit + streamed shortlink trace on /api/poi/resolve-link; hardened /api/poi/media-proxy with exact upload.wikimedia.org HTTPS host check, SVG/SVGZ 415 rejection preserving PNG thumbnails, 10MB Content-Length 413 and chunk cap, guaranteed aclose cleanup, 400/413/415/502/504 mapping, and Vercel-grade sandbox CSP.",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_security_hardening_planb_2026-11-25.diff"
+    },
+    {
+      "id": "backend/services/web_search_engine.py:opengraph_bounded_streaming_and_async_url_check",
+      "target_type": "backend_search_crawler",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "unbounded_html_response_buffering_and_async_validation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Red->Green PoC & Sentinel runner.py DISMISSED post-patch: bounded fetch_opengraph_metadata streaming read to 2MB and switched async URL safety checks to is_safe_url_async while preserving sync is_safe_external_url contract.",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_security_hardening_planb_2026-11-25.diff"
+    },
+    {
+      "id": "backend/services/link_resolver.py:shortlink_hostname_bounded_stream_and_ios_rescue",
+      "target_type": "backend_link_resolver",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "shortlink_hostname_matching_and_bounded_html_decoding",
+        "arcgis_static_map_token_leak"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Red->Green PoC & Sentinel runner.py DISMISSED post-patch: removed retired ArcGIS static-map token leak, added strict _is_google_shortlink and 2MB _read_bounded_text with LookupError fallback, reordered iOS share extraction ahead of GAS rescue, and streamed redirect traces/OG HTML without ResponseNotRead.",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_security_hardening_planb_2026-11-25.diff"
+    },
+    {
+      "id": "backend/routers/ai.py:safe_download_image_streaming_and_ssrf_guard",
+      "target_type": "backend_api_route",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "outbound_image_fetch_validation_and_memory_cap"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Red->Green PoC & Sentinel runner.py DISMISSED post-patch: removed localhost/127.0.0.1 bypass in safe_download_image, enforced create_safe_client(follow_redirects=False) + 20MB streaming cap + Content-Type charset normalization + clean HTTPException/SSRFSecurityError propagation.",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_security_hardening_planb_2026-11-25.diff"
+    },
+    {
+      "id": "backend/utils/url_safety.py:dedicated_dns_bulkhead_executor",
+      "target_type": "backend_network_security",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "async_dns_resolution_isolation_and_fail_closed_timeout"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Red->Green PoC & Sentinel runner.py DISMISSED post-patch: added 4-thread _DNS_SAFETY_EXECUTOR bulkhead and fail-closed is_safe_url_async(timeout=3.0) wired into _enforce_request_ssrf_safety and async SSRF pre-checks.",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_security_hardening_planb_2026-11-25.diff"
+    },
+    {
+      "id": "backend/main.py:http_client_log_level_and_csp_setdefault",
+      "target_type": "backend_middleware_and_logging",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "outbound_url_token_logging_and_header_preservation"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Red->Green PoC & Sentinel runner.py DISMISSED post-patch: set httpx and httpx2 loggers to WARNING to suppress query-token INFO logs, and switched middleware CSP header assignment to setdefault to preserve stricter endpoint sandbox CSPs.",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_security_hardening_planb_2026-11-25.diff"
+    },
+    {
+      "id": "backend/services/destination_taxonomy.py:conversational_query_rstrip_linear_time",
+      "target_type": "backend_taxonomy_sanitizer",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "trailing_punctuation_regex_complexity"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Red->Green PoC & Sentinel runner.py DISMISSED post-patch: replaced quadratic trailing punctuation regexes in clean_conversational_query with linear str.rstrip.",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_security_hardening_planb_2026-11-25.diff"
+    },
+    {
+      "id": "frontend/lib/location-utils.ts:paren_remark_linear_time_regex",
+      "target_type": "frontend_location_utility",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "client_regex_complexity_and_remark_extraction"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Vitest Red->Green PoC (FE_RED_RC=1 -> GREEN_RC=0) & Sentinel runner.py DISMISSED post-patch: removed leading \\s* from PAREN_REMARK_GLOBAL_RE while preserving extractCleanPlaceQuery and extractPlaceParentheticalNote.",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "Enforced in frontend/__tests__/location-utils-redos-sentinel.test.ts"
+    },
+    {
+      "id": "backend/services/geocode_service.py:regex_linear_time_and_entry_truncation",
+      "target_type": "backend_spatial_engine",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "regex_backtracking_complexity_and_whitespace_normalization"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Red->Green PoC (pre-patch _PAREN_REMARK_RE 11.98s -> post-patch <1ms) & Sentinel runner.py DISMISSED post-patch: removed leading \\s* from _PAREN_REMARK_RE, normalized whitespace before single-space _STATION_STRIP_RE, and truncated smart_geocode_logic clean_query to [:500].",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_security_hardening_planb_2026-11-25.diff"
+    },
+    {
+      "id": "backend/models/base.py:geocode_and_chat_length_bounds",
+      "target_type": "backend_pydantic_schema",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "unbounded_input_validation_and_resource_budget"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sandbox Red->Green PoC (RED_RC=1 -> GREEN_RC=0) & Sentinel runner.py DISMISSED post-patch: GeocodeSearchRequest.query bounded to max_length=4096 (preserving 2400-char test) and ChatRequest.message bounded to max_length=50000.",
+      "remediated_at": "2026-11-25T13:25:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_security_hardening_planb_2026-11-25.diff"
+    },
     {
       "id": "backend/services/model_manager.py:free_api_key_grounding_trap",
       "target_type": "model_config_sanitizer",

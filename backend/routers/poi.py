@@ -11,6 +11,7 @@ Handles Point of Interest related endpoints including:
 import json
 import re
 import asyncio
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, Query
 from fastapi.responses import StreamingResponse
@@ -24,8 +25,13 @@ from google.genai import types
 
 from models.base import POIAIEnrichRequest, POIEnrichRequest, POIRecommendRequest, SmartSearchRequest
 from utils.deps import get_gemini_key, get_supabase
-from utils.url_safety import is_safe_url, create_safe_client
-from services.link_resolver import resolve_google_maps_link, resolve_google_maps_placelist
+from utils.limiter import limiter
+from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
+from services.link_resolver import (
+    resolve_google_maps_link,
+    resolve_google_maps_placelist,
+    _is_google_shortlink,
+)
 from services.geocode_service import smart_geocode_logic, reverse_geocode_with_photon
 from utils.ai_config import LITE_MODEL, DAILY_ROUTING
 from services.poi_service import (
@@ -62,7 +68,8 @@ class PoiResolveLinkRequest(BaseModel):
 
 
 @router.post("/poi/resolve-link")
-async def poi_resolve_link(request: PoiResolveLinkRequest):
+@limiter.limit("30/minute")
+async def poi_resolve_link(request: Request, body: PoiResolveLinkRequest):
     """
     🔗 全局 POI 網址解析端點 (Universal Link-to-Pin Engine)
     支援：
@@ -70,7 +77,7 @@ async def poi_resolve_link(request: PoiResolveLinkRequest):
     2. Google Maps 共享清單 (Placelists / Saved Lists)
     回傳洗滌後的乾淨繁中地名、門牌地址、座標與備註陣列。
     """
-    raw_url = (request.url or "").strip()
+    raw_url = (body.url or "").strip()
     if not raw_url:
         raise HTTPException(status_code=400, detail="Missing url parameter")
         
@@ -78,24 +85,26 @@ async def poi_resolve_link(request: PoiResolveLinkRequest):
     url_match = re.search(r'(https?://[^\s]+)', raw_url)
     clean_url = url_match.group(1).rstrip('.,!?:;"\'。，！？') if url_match else raw_url
 
-    # 🛡️ SSRF 防護守門
-    if not is_safe_url(clean_url):
+    # 🛡️ SSRF 防護守門 (non-blocking DNS bulkhead)
+    if not await is_safe_url_async(clean_url):
         raise HTTPException(status_code=400, detail="Disallowed target URL (SSRF Blocked)")
 
     is_placelist = "/placelists/list" in clean_url or "/placelists/" in clean_url or "!11m2!2s" in clean_url
     
-    # 針對短網址判斷是否可能重定向為清單
-    if not is_placelist and any(d in clean_url for d in ["goo.gl", "maps.app.goo.gl"]):
+    # 針對短網址判斷是否可能重定向為清單 (嚴格主機名檢查 + 串流不緩衝 body)
+    if not is_placelist and _is_google_shortlink(clean_url):
         try:
             # 🛡️ 對齊下游清單 RPC 超時閾值 (12.0s)，防範行動網路下過早放棄造成誤導流至單點 POI
             async with create_safe_client(follow_redirects=True, timeout=12.0) as client:
-                head_resp = await client.get(clean_url, headers={
+                async with client.stream("GET", clean_url, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-                })
-                final_traced_url = str(head_resp.url)
+                }) as head_resp:
+                    final_traced_url = str(head_resp.url)
                 if "/placelists/list" in final_traced_url or "/placelists/" in final_traced_url or "!11m2!2s" in final_traced_url:
                     is_placelist = True
                     clean_url = final_traced_url
+        except SSRFSecurityError:
+            raise HTTPException(status_code=400, detail="Disallowed target URL (SSRF Blocked)")
         except Exception as e:
             print(f"[poi_resolve_link] Head redirect trace error: {e}")
 
@@ -612,32 +621,107 @@ async def ai_smart_search(request: SmartSearchRequest):
 # Media Proxy (Phase 5.4)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_MEDIA_PROXY_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+_MEDIA_PROXY_CSP = "script-src 'none'; frame-src 'none'; sandbox;"
+
+
 @router.get("/poi/media-proxy")
-async def media_proxy(url: str):
+@limiter.limit("30/minute")
+async def media_proxy(request: Request, url: str):
     """
     🖼️ 媒體代理端點 - 解決維基百科圖片的 CORS 與 Referrer 限制
+    防禦：嚴格 upload.wikimedia.org 主機白名單、阻斷 SVG/SVGZ 與非圖片 MIME、
+    10 MB Content-Length 預檢與串流上限、Vercel Next.js 級別 sandbox CSP。
     """
-    if not url.startswith("https://upload.wikimedia.org/"):
+    raw_url = (url or "").strip()
+    parsed = urlparse(raw_url)
+    if (
+        parsed.scheme != "https"
+        or (parsed.hostname or "").lower() != "upload.wikimedia.org"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+        or not parsed.path.startswith("/")
+    ):
         raise HTTPException(status_code=400, detail="Invalid media source")
 
+    # 阻斷直連 .svg / .svgz（保留 Wikimedia PNG 渲染縮圖如 .../320px-Flag.svg.png）
+    if parsed.path.lower().endswith((".svg", ".svgz")):
+        raise HTTPException(status_code=415, detail="Unsupported media type: SVG is not allowed")
+
+    headers = {
+        "User-Agent": "RyanTravelApp/1.2 (https://www.tabijiapp.com)",
+        "Referer": "https://www.wikipedia.org/",
+    }
+    timeout = httpx.Timeout(10.0, connect=5.0, read=15.0, write=5.0, pool=5.0)
+    client = create_safe_client(follow_redirects=False, timeout=timeout)
+    upstream_resp: Optional[httpx.Response] = None
+    async def _cleanup_upstream() -> None:
+        try:
+            if upstream_resp is not None:
+                await upstream_resp.aclose()
+        finally:
+            await client.aclose()
+
+    try:
+        req = client.build_request("GET", raw_url, headers=headers)
+        upstream_resp = await client.send(req, stream=True)
+
+        if upstream_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Upstream media unavailable")
+
+        raw_ct = upstream_resp.headers.get("Content-Type", "")
+        media_type = raw_ct.split(";", 1)[0].strip().lower()
+        if not media_type.startswith("image/") or media_type.startswith("image/svg"):
+            raise HTTPException(status_code=415, detail="Unsupported upstream media type")
+
+        raw_cl = upstream_resp.headers.get("Content-Length")
+        if raw_cl:
+            try:
+                if int(raw_cl.strip()) > _MEDIA_PROXY_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="Upstream media exceeds size limit")
+            except ValueError:
+                pass
+    except HTTPException:
+        await _cleanup_upstream()
+        raise
+    except SSRFSecurityError:
+        await _cleanup_upstream()
+        raise HTTPException(status_code=400, detail="Invalid media source")
+    except httpx.TimeoutException:
+        await _cleanup_upstream()
+        raise HTTPException(status_code=504, detail="Upstream media timeout")
+    except httpx.HTTPError:
+        await _cleanup_upstream()
+        raise HTTPException(status_code=502, detail="Upstream media fetch failed")
+    except Exception:
+        await _cleanup_upstream()
+        raise HTTPException(status_code=502, detail="Upstream media proxy error")
+
     async def stream_image():
-        headers = {
-            "User-Agent": "RyanTravelApp/1.2 (contact@example.com)",
-            "Referer": "https://www.wikipedia.org/"
-        }
-        async with httpx.AsyncClient() as client:
-            async with client.stream("GET", url, headers=headers) as response:
-                if response.status_code != 200:
-                    return
-                async for chunk in response.aiter_bytes():
-                    yield chunk
+        total = 0
+        try:
+            async for chunk in upstream_resp.aiter_bytes(chunk_size=65536):
+                if not chunk:
+                    continue
+                remaining = _MEDIA_PROXY_MAX_BYTES - total
+                if remaining <= 0:
+                    break
+                if len(chunk) > remaining:
+                    yield chunk[:remaining]
+                    break
+                total += len(chunk)
+                yield chunk
+        finally:
+            await _cleanup_upstream()
 
-    # 簡單偵測 content_type (或是預設為 image/jpeg)
-    content_type = "image/jpeg"
-    if url.lower().endswith(".png"): content_type = "image/png"
-    elif url.lower().endswith(".svg"): content_type = "image/svg+xml"
-    elif url.lower().endswith(".gif"): content_type = "image/gif"
-
-    return StreamingResponse(stream_image(), media_type=content_type)
+    return StreamingResponse(
+        stream_image(),
+        media_type=media_type,
+        headers={
+            "Content-Security-Policy": _MEDIA_PROXY_CSP,
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 

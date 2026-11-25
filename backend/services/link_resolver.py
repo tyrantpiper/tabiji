@@ -11,11 +11,50 @@ from bs4 import BeautifulSoup
 from typing import Dict, Any
 from datetime import datetime
 
-from utils.url_safety import is_safe_url, create_safe_client
+from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
 
 # 🆕 v35.26: Anti-Acidosis Protocol - Smart Redirect Tracer
 from utils.smart_redirect_tracer import get_smart_tracer
 from utils.molecular_parser import get_molecular_parser
+
+_GOOGLE_SHORTLINK_HOSTS = frozenset({"goo.gl", "www.goo.gl", "maps.app.goo.gl"})
+_MAX_HTML_BYTES = 2 * 1024 * 1024  # 2 MB cap for HTML/OG scraping
+
+
+def _is_google_shortlink(url: str) -> bool:
+    """Strict hostname check for Google Maps shortlinks (blocks substring spoofing such as evil.com/?r=goo.gl)."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url.strip())
+    except Exception:
+        return False
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower().rstrip(".")
+    return host in _GOOGLE_SHORTLINK_HOSTS
+
+
+async def _read_bounded_text(resp: httpx.Response, max_bytes: int = _MAX_HTML_BYTES) -> str:
+    """Read at most `max_bytes` from a streaming httpx.Response and decode safely with LookupError fallback."""
+    buf = bytearray()
+    async for chunk in resp.aiter_bytes(chunk_size=65536):
+        if not chunk:
+            continue
+        remaining = max_bytes - len(buf)
+        if remaining <= 0:
+            break
+        if len(chunk) > remaining:
+            buf.extend(chunk[:remaining])
+            break
+        buf.extend(chunk)
+        if len(buf) >= max_bytes:
+            break
+    encoding = resp.encoding or "utf-8"
+    try:
+        return bytes(buf).decode(encoding, errors="replace")
+    except LookupError:
+        return bytes(buf).decode("utf-8", errors="replace")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🛰️ GAS Two-Shot Rescue Gateway (Failure-Only Fallback)
@@ -226,17 +265,18 @@ async def fetch_og_metadata(url: str) -> Dict[str, Any]:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
         }
-        async with create_safe_client(follow_redirects=True, timeout=5.0) as client:
-            # 🛡️ SSRF Check
-            if not is_safe_url(url):
-                 print(f"[SSRF Block] Metadata fetch aborted for unsafe URL: {url}")
-                 return metadata
+        # 🛡️ SSRF Check (non-blocking DNS bulkhead)
+        if not await is_safe_url_async(url):
+            print(f"[SSRF Block] Metadata fetch aborted for unsafe URL: {url}")
+            return metadata
 
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                return metadata
-            
-            soup = BeautifulSoup(resp.text, 'html.parser')
+        async with create_safe_client(follow_redirects=True, timeout=5.0) as client:
+            async with client.stream("GET", url, headers=headers) as resp:
+                if resp.status_code != 200:
+                    return metadata
+                html_text = await _read_bounded_text(resp)
+
+            soup = BeautifulSoup(html_text, 'html.parser')
             
             # 1. 提取 OG 標籤
             og_title = soup.find("meta", property="og:title")
@@ -268,8 +308,8 @@ async def fetch_og_metadata(url: str) -> Dict[str, Any]:
 
             # 3. Engine 2 - 深度獵捕 (Deep Scraper Regex Probe)
             if not metadata["image"] and "google.com/maps" in url:
-                # 搜尋埋藏在 JS 中的高畫質圖片模式
-                lh_matches = re.findall(r'https://lh\d\.googleusercontent\.com/p/[^\\"]+=w\d+-h\d+', resp.text)
+                # 搜尋埋藏在 JS 中的高畫質圖片模式 (重用已讀取之 bounded html_text，避免 ResponseNotRead)
+                lh_matches = re.findall(r'https://lh\d\.googleusercontent\.com/p/[^\\"]+=w\d+-h\d+', html_text)
                 if lh_matches:
                     best_match = lh_matches[0]
                     # 重寫為 1000x800 高清格式
@@ -338,33 +378,33 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
         "metadata": {}
     }
 
+    # 🕵️ Step 0.5: Aggressive Text-to-URL Extraction FIRST (Defense in Depth)
+    # 必須先自 iOS/Android 分享字串抽出純淨網址並剝除尾端標點，再賦值 original_input_url，
+    # 確保後續嚴格主機名檢查 _is_google_shortlink(original_input_url) 不會誤擋 GAS Rescue。
+    if url:
+        clean_match = re.search(r'(https?://[^\s]+)', url)
+        if clean_match:
+            url = clean_match.group(1).rstrip('.,!?:;"\'。，！？')
+
     # 🆕 v35.26: Anti-Acidosis Protocol - Use SmartRedirectTracer
     original_input_url = url
     final_url = url
+    result["resolved_url"] = url
     smart_tracer = get_smart_tracer()
     
     # 🛡️ Step 0: Sanitization (針對 iOS 分享連結進行淨化)
     # 目的：移除 g_st 等參數以強制 Google 回傳帶座標的 Desktop 版 URL
-    if any(domain in url for domain in ["goo.gl", "maps.app.goo.gl"]):
+    if _is_google_shortlink(url):
         # 移除 g_st (share type), si, utm 等追蹤參數
         url = re.sub(r'([?&])(g_st|si|utm_\w+)=[^&]+', '', url)
         # 清理可能殘留的問號或 &
         url = url.rstrip("?&")
-        # log_debug or standard print for tracer traceability is currently used here
-        # Keeping it consistent with the existing file's debug style
-    
-    # 🕵️ Step 0.5: Aggressive Text-to-URL Extraction (Defense in Depth)
-    if url and ('\n' in url or ' ' in url):
-        clean_match = re.search(r'(https?://[^\s]+)', url)
-        if clean_match:
-            # Using silence for production clean url extraction
-            url = clean_match.group(1)
     
     try:
         # Step 1: Smart Trace with precision analysis
-        if any(domain in url for domain in ["goo.gl", "maps.app.goo.gl"]):
-            # 🛡️ SSRF Check before tracing
-            if not is_safe_url(url):
+        if _is_google_shortlink(url):
+            # 🛡️ SSRF Check before tracing (non-blocking DNS bulkhead)
+            if not await is_safe_url_async(url):
                 print(f"[SSRF Block] SmartTrace aborted for unsafe URL: {url}")
                 return result
 
@@ -410,16 +450,16 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
         # 🛡️ Graceful fallback: Use legacy logic if new tracer fails
         print(f"[WARN] SmartTracer/MolecularParser failed, fallback to legacy: {e}")
         try:
-            # 🛡️ SSRF Check
-            if not is_safe_url(url):
+            # 🛡️ SSRF Check (non-blocking DNS bulkhead)
+            if not await is_safe_url_async(url):
                 print(f"[SSRF Block] Legacy redirect aborted for unsafe URL: {url}")
                 return result
 
             async with create_safe_client(follow_redirects=True, timeout=10.0) as client:
-                resp = await client.get(url)
-                final_url = str(resp.url)
-                result["resolved_url"] = final_url
-                result["method"] = "legacy_redirect"
+                async with client.stream("GET", url) as resp:
+                    final_url = str(resp.url)
+                    result["resolved_url"] = final_url
+                    result["method"] = "legacy_redirect"
         except Exception as legacy_e:
             print(f"[WARN] Legacy fallback failed: {legacy_e}")
             return result
@@ -484,7 +524,7 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
     # 條件: (1) 所有本地引擎失敗 (2) 原始輸入是短網址
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    if not result["lat"] and any(d in original_input_url for d in ["goo.gl", "maps.app.goo.gl"]):
+    if not result["lat"] and _is_google_shortlink(original_input_url):
         try:
             gas_input = original_input_url  # 使用原始短網址呼叫 GAS 效果最好
             print(f"[GAS Rescue] Local engines failed, invoking GAS for original URL: {gas_input[:60]}...")
@@ -612,23 +652,6 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
         except:
             pass
 
-    # 🆕 v35.46: Engine 2 Fallback - ArcGIS Static Map Snapshot
-    # If no real photo found, generate a static map preview if coords exist
-    if not result["metadata"].get("image") and result.get("lat") and result.get("lng"):
-        arcgis_key = (os.getenv("ARCGIS_API_KEY") or "").strip()
-        if arcgis_key:
-            # ArcGIS Static Map API
-            # Size: 800x600, Zoom: 16 (Street Level), Style: World_Street_Map
-            static_url = (
-                f"https://static-maps-api.arcgis.com/arcgis/rest/services/static-maps-service/beta/static-maps/arcgis/streets/with-point?"
-                f"pointX={result['lng']}&pointY={result['lat']}&"
-                f"zoom=16&width=800&height=600&"
-                f"markerColor=red&"
-                f"token={arcgis_key}&_type=staticmap"
-            )
-            result["metadata"]["image"] = static_url
-            print(f"[ArcGIS] Engine 2 Fallback: Generated static map: {static_url[:60]}...")
-
     # 📍 雙軌門牌地址提煉 (Description 正則優先 ➔ Photon 反查兜底)
     resolved_address = None
     if result.get("metadata", {}).get("description"):
@@ -717,16 +740,19 @@ async def resolve_google_maps_placelist(url: str) -> Dict[str, Any]:
     }
     
     clean_url = url
-    if any(d in url for d in ["goo.gl", "maps.app.goo.gl"]):
+    if _is_google_shortlink(url):
+        if not await is_safe_url_async(url):
+            result["error"] = "UNSAFE_URL"
+            return result
         try:
             async with create_safe_client(follow_redirects=True, timeout=12.0) as client:
-                if not is_safe_url(url):
-                    result["error"] = "UNSAFE_URL"
-                    return result
-                resp = await client.get(url, headers={
+                async with client.stream("GET", url, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-                })
-                clean_url = str(resp.url)
+                }) as resp:
+                    clean_url = str(resp.url)
+        except SSRFSecurityError:
+            result["error"] = "UNSAFE_URL"
+            return result
         except Exception as e:
             print(f"[Placelist] Redirect trace failed: {e}")
             clean_url = url
