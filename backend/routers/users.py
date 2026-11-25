@@ -6,6 +6,7 @@ Now interacts with the dedicated `public.users` table (Phase 27).
 """
 
 from fastapi import APIRouter, HTTPException, Depends, Header
+from starlette.concurrency import run_in_threadpool
 from typing import Any, Iterable, Optional, Set, Tuple
 import uuid
 from datetime import datetime, timezone
@@ -251,36 +252,43 @@ async def get_user_profile(user_id: str, supabase=Depends(get_supabase)):
 
     try:
         print(f"🔍 正在尋找使用者 {user_id} 的資料...")
-        
-        # 1. 直接查詢 public.users (使用 .limit(1) 避免 PGRST116 0-row 例外)
-        res = supabase.table("users").select("id, name, avatar_url, email").eq("id", user_id).limit(1).execute()
 
-        raw_user_data = getattr(res, "data", None)
-        user_row = raw_user_data[0] if isinstance(raw_user_data, list) and raw_user_data else (
-            raw_user_data if isinstance(raw_user_data, dict) else None
-        )
-        if user_row:
-            user = user_row
+        def _fetch_profile():
+            # 1. 直接查詢 public.users (使用 .limit(1) 避免 PGRST116 0-row 例外)
+            res = supabase.table("users").select("id, name, avatar_url, email").eq("id", user_id).limit(1).execute()
+
+            raw_user_data = getattr(res, "data", None)
+            user_row = raw_user_data[0] if isinstance(raw_user_data, list) and raw_user_data else (
+                raw_user_data if isinstance(raw_user_data, dict) else None
+            )
+            if user_row:
+                return ("user", user_row)
+
+            # 2. 如果找不到 (可能是 Legacy users 或 Trigger 尚未同步)
+            # Fallback: 嘗試從 itineraries table 找 (舊邏輯，作為安全網)
+            print("⚠️ users 表找不到資料，嘗試使用 Legacy Fallback...")
+            res_legacy = supabase.table("itineraries")\
+                .select("creator_name")\
+                .eq("created_by", user_id)\
+                .order("created_at", desc=True)\
+                .limit(1)\
+                .execute()
+            return ("legacy", res_legacy)
+
+        source_kind, payload = await run_in_threadpool(_fetch_profile)
+        if source_kind == "user":
+            user = payload
             nickname = user.get("name") or "Unknown Traveler"
             avatar_url = user.get("avatar_url")
             print(f"✅ 找到使用者: {nickname}")
-            
+
             return {
                 "id": user_id,
                 "name": nickname,
                 "avatar_url": avatar_url
             }
-            
-        # 2. 如果找不到 (可能是 Legacy users 或 Trigger 尚未同步)
-        # Fallback: 嘗試從 itineraries table 找 (舊邏輯，作為安全網)
-        print("⚠️ users 表找不到資料，嘗試使用 Legacy Fallback...")
-        res_legacy = supabase.table("itineraries")\
-            .select("creator_name")\
-            .eq("created_by", user_id)\
-            .order("created_at", desc=True)\
-            .limit(1)\
-            .execute()
-            
+
+        res_legacy = payload
         if res_legacy.data and len(res_legacy.data) > 0:
             nickname = res_legacy.data[0].get("creator_name", "Legacy Traveler")
             print(f"✅ (Fallback) 找到暱稱: {nickname}")

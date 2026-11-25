@@ -91,7 +91,7 @@ from services.intent_router import (
     PRAISE_PATTERN,
 )
 from services.stream_sanitizer import StreamLookaheadSanitizer
-from services.web_search_engine import execute_web_search, fetch_jina_reader
+from services.web_search_engine import execute_web_search, fetch_jina_reader, _sanitize_url_for_log
 from services.destination_taxonomy import (
     generate_dual_queries,
     extract_search_queries_with_lite,
@@ -114,6 +114,57 @@ from google.genai import errors as genai_errors
 # Preserve original genai.Client reference so production reuses cached async pools while tests patching main.genai.Client stay isolated
 _ORIGINAL_GENAI_CLIENT = genai.Client
 _ORIGINAL_CLASSIFY_CHAT_INTENT = classify_chat_intent
+
+_URL_DETECT_RE = re.compile(
+    r'https?://[^\s<>"。，、；：！？（）【】《》「」『』]+'
+    r'|(?<![A-Za-z0-9_.-])www\.[^\s<>"。，、；：！？（）【】《》「」『』]+'
+)
+_URL_UNAMBIGUOUS_TRAILING_PUNCT = '.,!?:;"\'<>。，、；：！？）】》」』'
+_URL_BALANCED_CLOSERS = {")": "(", "]": "[", "}": "{"}
+_URL_FILLER_RE = re.compile(
+    r"^(?:請問|請|麻煩|可以|能不能|能否)?(?:幫我)?(?:看一下|看看|看|查一下|查詢|查|解析|整理|介紹|分析|翻譯|讀一下|讀|打開|開一下)?(?:這篇|這個|這家|這間|這支|這段|這條|這裡|此)?(?:連結|網址|影片|貼文|文章|網頁)?(?:嗎|呢|喔|吧)?$"
+    r"|^這是(?:什麼|啥|哪裡|哪家)$"
+    r"|^(?:(?:can|could)\s+you\s+)?(?:please\s+)?(?:check|look\s+at|read|analyze|summarize|open|view|explain)(?:\s+out)?(?:\s+(?:this|the))?(?:\s+(?:link|url|post|reel|video|page))?(?:\s+for\s+me)?$"
+    r"|^what(?:'s|\s+is)\s+this(?:\s+(?:link|url|post|reel|video|page))?$",
+    re.IGNORECASE,
+)
+
+
+def _clean_detected_url(raw_url: str) -> str:
+    """剝除網址尾端中英文標點與未成對括號（保留維基百科等平衡括號），並補全 www. 協議前綴。"""
+    cleaned = (raw_url or "").strip()
+    while cleaned:
+        last = cleaned[-1]
+        if last in _URL_UNAMBIGUOUS_TRAILING_PUNCT:
+            cleaned = cleaned[:-1]
+        elif last in _URL_BALANCED_CLOSERS:
+            opener = _URL_BALANCED_CLOSERS[last]
+            if cleaned.count(last) > cleaned.count(opener):
+                cleaned = cleaned[:-1]
+            else:
+                break
+        elif last in ("(", "[", "{"):
+            cleaned = cleaned[:-1]
+        else:
+            break
+    if cleaned.startswith("www."):
+        cleaned = "https://" + cleaned
+    return cleaned
+
+
+def _has_searchable_text_beyond_urls(text: str, raw_urls: List[str]) -> bool:
+    """判斷移除網址與通用語氣填充詞後，是否仍具可獨立檢索的實質關鍵字。"""
+    remainder = text or ""
+    for raw_u in raw_urls:
+        remainder = remainder.replace(raw_u, " ")
+    remainder = re.sub(
+        r'[\s.,!?:;"\'()\[\]{}<>/\\|~`@#$%^&*_+=。，、；：！？（）【】《》「」『』—–-]+',
+        " ",
+        remainder,
+    ).strip()
+    if len(remainder) < 2:
+        return False
+    return not bool(_URL_FILLER_RE.fullmatch(remainder))
 
 
 def _get_main_genai_client(api_key: str):
@@ -1590,26 +1641,37 @@ async def stream_chat_generator(
         # 如果最後一筆是 user (例如剛剛補上的 functionResponse)，直接合併 text part，不要新增 Content
         # 🌐 2026: 確定性 URL 主動預爬取與 RAG Grounding 融合
         # 若使用者訊息中含有明確網址，不依賴 LLM 是否輸出 tool call，保證 100% 聯網爬取
-        detected_urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', eval_message)
-        fetched_urls = set()
+        detected_urls = _URL_DETECT_RE.findall(eval_message)
+        cleaned_urls: List[str] = []
+        seen_clean_urls = set()
+        for raw_u in detected_urls:
+            cu = _clean_detected_url(raw_u)
+            if cu and cu not in ("http://", "https://") and cu not in seen_clean_urls:
+                seen_clean_urls.add(cu)
+                cleaned_urls.append(cu)
+
+        succeeded_urls = set()
+        failed_urls: List[tuple[str, str]] = []
         grounding_context_text = ""
-        if detected_urls and not is_pure_greeting:
-            for raw_u in detected_urls[:2]:
-                target_url = ("https://" + raw_u) if raw_u.startswith("www.") else raw_u
-                fetched_urls.add(target_url)
+        if cleaned_urls and not is_pure_greeting:
+            for target_url in cleaned_urls[:2]:
                 yield f'event: thinking\ndata: {json.dumps({"status": "reading", "url": target_url})}\n\n'
                 await asyncio.sleep(0)
-                
+
                 try:
                     page_data = await asyncio.wait_for(
                         fetch_jina_reader(target_url),
-                        timeout=4.0
+                        timeout=11.0
                     )
-                    if page_data.get("url"):
-                        sources.append({"title": page_data.get("title") or page_data.get("url"), "uri": page_data.get("url")})
-                    
-                    content_body = page_data.get("markdown", "").strip() or page_data.get("description", "").strip()
-                    if content_body:
+                    content_body = (
+                        (page_data.get("markdown") or "").strip()
+                        or (page_data.get("description") or "").strip()
+                    ) if isinstance(page_data, dict) else ""
+
+                    if content_body and page_data.get("status") != "error":
+                        succeeded_urls.add(target_url)
+                        src_url = page_data.get("url") or target_url
+                        sources.append({"title": page_data.get("title") or src_url, "uri": src_url})
                         if is_en_stream:
                             safe_body = content_body[:4000] + ("\n...(truncated)" if len(content_body) > 4000 else "")
                             grounding_context_text += (
@@ -1626,8 +1688,35 @@ async def stream_chat_generator(
                                 f"內容摘要:\n{safe_body}\n"
                                 f"[/系統即時解析外部網頁資訊]\n"
                             )
+                    else:
+                        fail_code = (page_data.get("error_code") if isinstance(page_data, dict) else None) or "EMPTY_CONTENT"
+                        failed_urls.append((target_url, str(fail_code)))
                 except Exception as prefetch_err:
-                    print(f"⚠️ [StreamChat] URL 主動預爬取失敗 (平滑降級): {prefetch_err}")
+                    fail_code = "TIMEOUT" if isinstance(prefetch_err, (asyncio.TimeoutError, TimeoutError)) else type(prefetch_err).__name__
+                    failed_urls.append((target_url, fail_code))
+                    err_detail = str(prefetch_err).strip()
+                    safe_detail = "" if (not err_detail or "http://" in err_detail or "https://" in err_detail) else f": {err_detail[:120]}"
+                    print(
+                        f"⚠️ [StreamChat] URL 主動預爬取失敗 ({_sanitize_url_for_log(target_url)}): "
+                        f"{type(prefetch_err).__name__}{safe_detail}"
+                    )
+
+            if failed_urls:
+                for fail_url, fail_code in failed_urls:
+                    if is_en_stream:
+                        grounding_context_text += (
+                            f"\n\n[Live External Webpage Content (Source: {fail_url})]\n"
+                            f"Status: Unable to read this link directly (blocked by login wall, anti-scraping protection, private account, or timeout; code={fail_code}).\n"
+                            f"Instruction: Do NOT fabricate or guess the post/page content. Clearly inform the user that this link could not be read directly, and guide them to upload a screenshot of the post (multimodal image recognition is supported) or copy-paste the post text.\n"
+                            f"[/Live External Webpage Content]\n"
+                        )
+                    else:
+                        grounding_context_text += (
+                            f"\n\n[系統即時解析外部網頁資訊 (來源: {fail_url})]\n"
+                            f"狀態: 無法讀取該連結（受登入牆／防爬限制、私人帳號或逾時；代碼={fail_code}）。\n"
+                            f"指示: 請勿捏造貼文內容，請明確告知使用者無法直接讀取該網頁，並引導使用者直接貼上貼文截圖（支援多模態圖片辨識）或複製貼文文字。\n"
+                            f"[/系統即時解析外部網頁資訊]\n"
+                        )
 
         # 🟢 將 Grounding Context 安全附加於 User 訊息，徹底免疫 thought_signature 400 協議報錯
         user_prompt_text = message
@@ -1649,7 +1738,8 @@ async def stream_chat_generator(
         # 🌐 2026: 雙軌在地與全球搜尋 Grounding 預檢索 (在模型降級迴圈外執行一次，避免降級重複爬蟲與遺失檢索資料)
         executed_geo_results = []
         executed_geo_anchor = ""
-        if detected_intent == "SEARCH" and active_tools and not fetched_urls:
+        allow_search_when_url_failed = (not cleaned_urls) or _has_searchable_text_beyond_urls(eval_message, detected_urls)
+        if detected_intent == "SEARCH" and active_tools and not succeeded_urls and allow_search_when_url_failed:
             executed_world_time: Dict[str, Any] = {}
             # 雙軌目的地識別與關鍵字提煉 (gemini-3.1-flash-lite 上下文消解 + 本地雙軌保底)
             local_q, global_q, dest_meta = generate_dual_queries(

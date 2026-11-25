@@ -32,6 +32,7 @@ import time
 import random
 import math
 import unicodedata
+from urllib.parse import urlsplit
 from typing import Optional, List, Dict, Any
 
 # 🆕 模糊搜尋 (Restore rapidfuzz for Cloud Run optimization)
@@ -573,6 +574,23 @@ Output:"""
 
 _DEAD_URL_CACHE = {}
 
+
+def _mask_gas_url_id(gas_url: str) -> str:
+    """日誌脫敏：僅輸出 GAS 部署 ID 結尾 4 碼，嚴禁印出完整 GAS 網址。"""
+    try:
+        path = urlsplit(gas_url or "").path.rstrip("/")
+        parts = [p for p in path.split("/") if p]
+        if parts and parts[-1] in ("exec", "dev") and len(parts) >= 2:
+            token = parts[-2]
+        elif parts:
+            token = parts[-1]
+        else:
+            token = ""
+        return f"***{token[-4:]}" if len(token) >= 4 else "***"
+    except Exception:
+        return "***"
+
+
 async def geocode_with_gas(place_name: str) -> dict | None:
     """🛡️ Tier 0: GAS 無代理伺服器輪詢引擎 (Zero-Cost Load Balancer)"""
     urls_str = os.getenv("GAS_GEOCODE_URLS", "").strip()
@@ -609,14 +627,23 @@ async def geocode_with_gas(place_name: str) -> dict | None:
                     "address": addr
                 }
             elif data and data.get("error") and data.get("quota_exceeded"):
-                print(f"⚠️ [Tier 0] GAS URL Quota Exceeded. Banning URL for 12 hours.")
+                print(f"⚠️ [Tier 0] GAS endpoint {_mask_gas_url_id(url)} Quota Exceeded. Banning URL for 12 hours.")
                 _DEAD_URL_CACHE[url] = now
             elif data and "error_message" in data:
-                print(f"⚠️ [Tier 0] GAS Maps API Error: {data['error_message']}")
+                print(f"⚠️ [Tier 0] GAS Maps API Error ({_mask_gas_url_id(url)}): {data['error_message']}")
                 if "quota" in data['error_message'].lower() or "over_query_limit" in data.get("status", "").lower():
                     _DEAD_URL_CACHE[url] = now
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code if e.response is not None else None
+            tag = _mask_gas_url_id(url)
+            if status_code in (404, 410):
+                _DEAD_URL_CACHE[url] = now
+                print(f"⚠️ [Tier 0] GAS endpoint {tag} returned HTTP {status_code}. Banning URL for 12 hours.")
+            else:
+                print(f"⚠️ [Tier 0] GAS endpoint {tag} returned HTTP {status_code}.")
+            continue
         except Exception as e:
-            print(f"⚠️ [Tier 0] GAS Request Failed: {e}")
+            print(f"⚠️ [Tier 0] GAS Request Failed ({_mask_gas_url_id(url)}): {type(e).__name__}")
             continue
             
     return None

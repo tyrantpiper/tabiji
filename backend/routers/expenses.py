@@ -1,5 +1,6 @@
 from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Header, HTTPException, Depends
+from starlette.concurrency import run_in_threadpool
 from models.base import (
     ExpenseRequest, 
     UpdateExpenseRequest, 
@@ -317,11 +318,14 @@ async def get_expenses(
 ):
     """獲取行程的費用列表 (v23.1 Normalization)"""
     try:
-        # 🛡️ BOLA 物件授權防衛：檢查呼叫者是否為行程成員或建立者
-        if not check_trip_access(supabase, trip_id, user_id):
-            raise HTTPException(status_code=403, detail="您不是此行程的成員，無法存取費用列表")
+        def _fetch_expenses():
+            # 🛡️ BOLA 物件授權防衛：檢查呼叫者是否為行程成員或建立者
+            if not check_trip_access(supabase, trip_id, user_id):
+                raise HTTPException(status_code=403, detail="您不是此行程的成員，無法存取費用列表")
 
-        res = supabase.table("expenses").select("*").eq("itinerary_id", trip_id).execute()
+            return supabase.table("expenses").select("*").eq("itinerary_id", trip_id).execute()
+
+        res = await run_in_threadpool(_fetch_expenses)
         
         filtered = []
         for exp in res.data:

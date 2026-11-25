@@ -10,12 +10,16 @@ import os
 import asyncio
 import re
 import html
+import json
+import time
+import weakref
 import urllib.parse
 import ipaddress
+from collections import OrderedDict
 import httpx
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from bs4 import BeautifulSoup
-from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client
+from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
 from services.link_resolver import _read_bounded_text
 
 # 全域共用非同步 HTTP 連線池
@@ -27,22 +31,35 @@ BROWSER_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
+# 合規識別 User-Agent (一般外部網站直連，避免 Wikipedia 403 並支援 Markdown for Agents)
+DIRECT_FETCH_USER_AGENT = "TabidachiTravelPWA/1.0 (+https://tabidachi.app)"
+
 # SSRF 私有 IP 阻擋清單
 PRIVATE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 
 
 def get_search_client() -> httpx.AsyncClient:
-    """取得或初始化全域非同步 HTTP 連線"""
+    """取得或初始化全域非同步 HTTP 連線（回應後自動清空 Cookie 防跨站污染）"""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = create_safe_client(
+        client_holder: List[Optional[httpx.AsyncClient]] = [None]
+
+        async def _clear_response_cookies(response: httpx.Response) -> None:
+            client_ref = client_holder[0]
+            if client_ref is not None and not client_ref.is_closed:
+                client_ref.cookies.clear()
+
+        created = create_safe_client(
             timeout=httpx.Timeout(4.5, connect=2.0),
             headers={
                 "User-Agent": BROWSER_USER_AGENT,
                 "Accept-Language": "zh-TW,zh;q=0.9,ja;q=0.8,en;q=0.7",
             },
             follow_redirects=True,
+            event_hooks={"response": [_clear_response_cookies]},
         )
+        client_holder[0] = created
+        _http_client = created
     return _http_client
 
 
@@ -224,8 +241,8 @@ def _sync_ddgs_call(final_query: str, region: str, max_results: int) -> List[Dic
     """以獨立同步執行緒調用 ddgs Dux 8 引擎全併發，排除百科避免動漫雜訊"""
     from ddgs import DDGS
     DDGS.threads = 8  # 🚀 解鎖執行緒池上限，允許所有引擎同時併發
-    # 剔除 wikipedia 與 grokipedia 百科引擎，優先調度真實網路搜尋引擎
-    search_backends = "yahoo,duckduckgo,startpage,brave,mojeek,google"
+    # 剔除 wikipedia、grokipedia 與已停用之 google 後端，優先調度有效網路搜尋引擎
+    search_backends = "yahoo,duckduckgo,startpage,brave,mojeek"
     with DDGS(timeout=4) as ddgs:
         raw_res = list(ddgs.text(final_query, backend=search_backends, region=region, max_results=max_results))
         results: List[Dict[str, str]] = []
@@ -297,9 +314,19 @@ async def execute_web_search(
     return []
 
 
-# 社群媒體網址模式 (IG / Threads / FB / TikTok / X / Twitter)
+# 社群媒體網址模式 (IG / Threads / FB / TikTok / X / Twitter，涵蓋行動版與短網址；嚴格錨定開頭防查詢參數偽冒)
 SOCIAL_MEDIA_PATTERN = re.compile(
-    r"https?://(?:www\.)?(instagram\.com|threads\.net|facebook\.com|fb\.watch|tiktok\.com|twitter\.com|x\.com)/",
+    r"^\s*https?://(?:"
+    r"(?:www\.|m\.)?instagram\.com|"
+    r"(?:www\.)?instagr\.am|"
+    r"(?:www\.)?ig\.me|"
+    r"(?:www\.)?threads\.(?:net|com)|"
+    r"(?:www\.|m\.|mbasic\.)?facebook\.com|"
+    r"(?:www\.)?fb\.watch|"
+    r"(?:www\.|m\.|vm\.|vt\.)?tiktok\.com|"
+    r"(?:www\.|mobile\.)?twitter\.com|"
+    r"(?:www\.)?x\.com"
+    r")(?::\d+)?(?:/|\?|#|$)",
     re.IGNORECASE,
 )
 
@@ -318,9 +345,510 @@ _SOCIAL_LOGIN_WALL_PHRASES = (
     "歡迎回到 instagram",
     "welcome back to instagram",
     "create an account or log in to instagram",
+    "建立帳號或登入 instagram",
+    "log in to see photos and videos",
+    "sign up to see photos and videos",
     "log into facebook to start sharing",
     "登入即可查看",
 )
+
+# Tier 0: LRU 成功快取與 Event-Loop 分桶 Singleflight 去重 (FP-113)
+_URL_CACHE_MAX_SIZE = 128
+_SOCIAL_CACHE_TTL_SEC = 3600.0
+_GENERAL_CACHE_TTL_SEC = 1800.0
+_URL_READER_CACHE: "OrderedDict[str, Tuple[float, Dict[str, Any]]]" = OrderedDict()
+_URL_INFLIGHT_BY_LOOP: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, List[Any]]]" = (
+    weakref.WeakKeyDictionary()
+)
+_CACHE_TRACKING_PARAMS = frozenset({"igsh", "igshid", "stkn", "fbclid", "gclid", "si", "g_st"})
+
+# Instagram 短碼與分享短網址正則（嚴格線性 O(n)）
+_IG_HOSTS = frozenset({
+    "instagram.com",
+    "www.instagram.com",
+    "m.instagram.com",
+    "instagr.am",
+    "www.instagr.am",
+    "ig.me",
+    "www.ig.me",
+})
+_IG_RESERVED_SEGMENTS = frozenset({"share", "explore", "accounts", "stories", "direct", "p", "reel", "reels", "tv"})
+_IG_SHORTCODE_PATH_RE = re.compile(
+    r"^/(?:([A-Za-z0-9_.]{1,64})/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]{5,64})(?:/|$)"
+)
+_IG_SHARE_PATH_RE = re.compile(
+    r"^/share/(?:(?:reel|p|tv)/)?([A-Za-z0-9_-]{5,64})(?:/|$)"
+)
+
+
+def __reset_web_search_cache_for_testing() -> None:
+    """顯式重置 Tier 0 快取與 Singleflight 狀態，供 pytest 徹底隔離跨測試狀態。"""
+    _URL_READER_CACHE.clear()
+    for bucket in list(_URL_INFLIGHT_BY_LOOP.values()):
+        for entry in list(bucket.values()):
+            task = entry[0] if entry else None
+            if task is not None and not task.done():
+                try:
+                    task.cancel()
+                except Exception:
+                    pass
+        bucket.clear()
+    _URL_INFLIGHT_BY_LOOP.clear()
+
+
+def _sanitize_url_for_log(url: str) -> str:
+    """日誌脫敏：僅輸出協議、主機名與有限路徑，嚴禁輸出 query/token/stkn。"""
+    try:
+        parts = urllib.parse.urlsplit(url or "")
+        host = parts.hostname or "unknown"
+        path = (parts.path or "")[:64]
+        return f"{parts.scheme}://{host}{path}" if parts.scheme else host
+    except Exception:
+        return "unknown"
+
+
+def _normalize_reader_cache_key(
+    url: str,
+    wait_for_selector: Optional[str] = None,
+    target_selector: Optional[str] = None,
+) -> str:
+    """正規化 URL 作為 Tier 0 快取與 Singleflight 鍵值（剝除追蹤參數與 fragment）。"""
+    try:
+        parts = urllib.parse.urlsplit((url or "").strip())
+        scheme = parts.scheme.lower()
+        netloc = parts.netloc.lower()
+        path = parts.path or "/"
+        if SOCIAL_MEDIA_PATTERN.search(url or "") and path != "/":
+            path = path.rstrip("/")
+        filtered_qs = [
+            (k, v)
+            for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+            if k.lower() not in _CACHE_TRACKING_PARAMS and not k.lower().startswith("utm_")
+        ]
+        norm_query = urllib.parse.urlencode(filtered_qs, doseq=True)
+        base = urllib.parse.urlunsplit((scheme, netloc, path, norm_query, ""))
+    except Exception:
+        base = (url or "").strip()
+    return f"{base}|w={wait_for_selector or ''}|t={target_selector or ''}"
+
+
+def _reader_cache_get(cache_key: str) -> Optional[Dict[str, Any]]:
+    entry = _URL_READER_CACHE.get(cache_key)
+    if entry is None:
+        return None
+    expires_at, payload = entry
+    if time.monotonic() >= expires_at:
+        _URL_READER_CACHE.pop(cache_key, None)
+        return None
+    _URL_READER_CACHE.move_to_end(cache_key)
+    return dict(payload)
+
+
+def _reader_cache_set(cache_key: str, payload: Dict[str, Any], is_social: bool) -> None:
+    if payload.get("status") != "success" or not (payload.get("markdown") or "").strip():
+        return
+    ttl = _SOCIAL_CACHE_TTL_SEC if is_social else _GENERAL_CACHE_TTL_SEC
+    _URL_READER_CACHE[cache_key] = (time.monotonic() + ttl, dict(payload))
+    _URL_READER_CACHE.move_to_end(cache_key)
+    while len(_URL_READER_CACHE) > _URL_CACHE_MAX_SIZE:
+        _URL_READER_CACHE.popitem(last=False)
+
+
+def _extract_markdown_title(md_content: str) -> str:
+    """自 Jina Reader 或原生 Markdown 前段抽出乾淨標題。"""
+    if not md_content:
+        return ""
+    for raw_line in md_content.splitlines()[:12]:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("title:"):
+            candidate = line[6:].strip()
+            if candidate:
+                return candidate[:200]
+        if line.startswith("#"):
+            candidate = line.lstrip("#").strip()
+            if candidate:
+                return candidate[:200]
+    return ""
+
+
+def _is_instagram_url(url: str) -> bool:
+    try:
+        host = (urllib.parse.urlsplit((url or "").strip()).hostname or "").lower().rstrip(".")
+        return host in _IG_HOSTS
+    except Exception:
+        return False
+
+
+def _is_instagram_share_url(url: str) -> bool:
+    try:
+        parts = urllib.parse.urlsplit((url or "").strip())
+        host = (parts.hostname or "").lower().rstrip(".")
+        if host not in _IG_HOSTS:
+            return False
+        return bool(_IG_SHARE_PATH_RE.match(parts.path or "")) or host in ("ig.me", "www.ig.me")
+    except Exception:
+        return False
+
+
+def _extract_instagram_shortcode(url: str) -> Optional[str]:
+    """從 Instagram 貼文/Reel/TV 網址線性提取 shortcode（排除 /share/ 路徑）。"""
+    try:
+        parts = urllib.parse.urlsplit((url or "").strip())
+        host = (parts.hostname or "").lower().rstrip(".")
+        if host not in _IG_HOSTS:
+            return None
+        path = parts.path or ""
+        if _IG_SHARE_PATH_RE.match(path):
+            return None
+        match = _IG_SHORTCODE_PATH_RE.match(path)
+        if not match:
+            return None
+        prefix_user, shortcode = match.group(1), match.group(2)
+        if prefix_user and prefix_user.lower() in _IG_RESERVED_SEGMENTS:
+            return None
+        return shortcode
+    except Exception:
+        return None
+
+
+def _extract_instagram_shortcode_from_redirect(url: str) -> Optional[str]:
+    """自 IG 重導向目標提取 shortcode（同時相容 Meta 機房 IP 跳轉 /accounts/login/?next=...）。"""
+    direct = _extract_instagram_shortcode(url)
+    if direct:
+        return direct
+    try:
+        parts = urllib.parse.urlsplit((url or "").strip())
+        host = (parts.hostname or "").lower().rstrip(".")
+        if host not in _IG_HOSTS:
+            return None
+        if parts.path.startswith("/accounts/login"):
+            next_vals = urllib.parse.parse_qs(parts.query).get("next") or []
+            for next_val in next_vals:
+                candidate = urllib.parse.urljoin("https://www.instagram.com/", next_val)
+                code = _extract_instagram_shortcode(candidate)
+                if code:
+                    return code
+    except Exception:
+        return None
+    return None
+
+
+async def _resolve_instagram_share_url(url: str, timeout: float = 2.0) -> Optional[str]:
+    """透過逐跳零 Body 有界串流追蹤 IG /share/ 轉址取得真實 shortcode（全程受 SSRF 保護，命中即停）。"""
+    if not await is_safe_url_async(url):
+        return None
+    client = get_search_client()
+    headers = {
+        "User-Agent": BROWSER_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-TW,zh;q=0.9,ja;q=0.8,en;q=0.7",
+    }
+    cur_url = url
+    max_hops = 5
+    try:
+        for _ in range(max_hops):
+            if not await is_safe_url_async(cur_url):
+                return None
+            try:
+                stream_ctx = client.stream(
+                    "GET", cur_url, headers=headers, timeout=timeout, follow_redirects=False
+                )
+            except TypeError:
+                stream_ctx = client.stream("GET", cur_url, headers=headers, timeout=timeout)
+            if asyncio.iscoroutine(stream_ctx):
+                stream_ctx.close()
+                return None
+            next_loc: Optional[str] = None
+            async with stream_ctx as resp:
+                # 優先檢查 resp.history 與 resp.url（相容自訂 mock 已自動跟隨轉址之情境）
+                for hist_resp in getattr(resp, "history", None) or []:
+                    hist_headers = getattr(hist_resp, "headers", None)
+                    hist_loc = hist_headers.get("location") if hist_headers else None
+                    if hist_loc:
+                        cand = urllib.parse.urljoin(str(getattr(hist_resp, "url", cur_url) or cur_url), hist_loc)
+                        code = _extract_instagram_shortcode_from_redirect(cand)
+                        if code:
+                            return code
+                resp_url = str(getattr(resp, "url", "") or "")
+                code = _extract_instagram_shortcode_from_redirect(resp_url)
+                if code:
+                    return code
+                resp_headers = getattr(resp, "headers", None)
+                loc = resp_headers.get("location") if resp_headers else None
+                if loc:
+                    next_loc = urllib.parse.urljoin(resp_url or cur_url, loc)
+
+            if not next_loc:
+                return None
+            if not await is_safe_url_async(next_loc):
+                print(f"🛡️ [SearchEngine] IG Share 重導向目標命中 SSRF 攔截: {_sanitize_url_for_log(url)}")
+                return None
+            code = _extract_instagram_shortcode_from_redirect(next_loc)
+            if code:
+                return code
+            if next_loc == cur_url:
+                return None
+            cur_url = next_loc
+        return None
+    except SSRFSecurityError:
+        print(f"🛡️ [SearchEngine] IG Share 重導向命中 SSRF 攔截: {_sanitize_url_for_log(url)}")
+        return None
+    except Exception as e:
+        print(f"⚠️ [SearchEngine] IG Share 轉址展開失敗 ({_sanitize_url_for_log(url)}): {type(e).__name__}")
+        return None
+
+
+def _extract_caption_from_media_obj(media_obj: Dict[str, Any]) -> Tuple[str, str, Optional[str]]:
+    """自 Instagram shortcode_media 物件抽取 username、caption 與封面圖。"""
+    username = ""
+    owner = media_obj.get("owner")
+    if isinstance(owner, dict):
+        username = str(owner.get("username") or "").strip()
+
+    caption = ""
+    caption_edge = media_obj.get("edge_media_to_caption")
+    if isinstance(caption_edge, dict):
+        edges = caption_edge.get("edges")
+        if isinstance(edges, list) and edges:
+            first_node = edges[0].get("node") if isinstance(edges[0], dict) else None
+            if isinstance(first_node, dict):
+                caption = str(first_node.get("text") or "").strip()
+
+    image_url = media_obj.get("display_url") or media_obj.get("thumbnail_src")
+    if isinstance(image_url, str):
+        image_url = html.unescape(image_url.strip()) or None
+    else:
+        image_url = None
+
+    return username, caption, image_url
+
+
+def _extract_shortcode_media_from_json_str(
+    raw: str,
+    decoder: json.JSONDecoder,
+) -> Tuple[str, str, Optional[str]]:
+    """自純 JSON 片段中線性掃描 `"shortcode_media"`（跳過 null/非物件，最多掃描 8 次）。"""
+    key_token = '"shortcode_media"'
+    pos = 0
+    for _ in range(8):
+        idx = raw.find(key_token, pos)
+        if idx == -1:
+            break
+        pos = idx + len(key_token)
+        # 跳過冒號前後空白，確認後接 '{'（避免 "shortcode_media": null 跳到不相干的物件）
+        scan = pos
+        n = len(raw)
+        while scan < n and raw[scan] in " \t\r\n":
+            scan += 1
+        if scan >= n or raw[scan] != ":":
+            continue
+        scan += 1
+        while scan < n and raw[scan] in " \t\r\n":
+            scan += 1
+        if scan >= n or raw[scan] != "{":
+            continue
+        try:
+            media_obj, _ = decoder.raw_decode(raw, scan)
+            if isinstance(media_obj, dict):
+                u, cap, img = _extract_caption_from_media_obj(media_obj)
+                if cap or img:
+                    return u, cap, img
+        except Exception:
+            continue
+    return "", "", None
+
+
+def _decode_enclosing_json_string(
+    text: str,
+    marker_idx: int,
+    decoder: json.JSONDecoder,
+) -> Optional[str]:
+    """自 marker_idx 往前有界線性尋找包裹之未轉義雙引號，以 JSONDecoder 解碼該字串。"""
+    search_floor = max(0, marker_idx - 200_000)
+    pos = marker_idx - 1
+    while pos >= search_floor:
+        if text[pos] == '"':
+            bs = 0
+            while pos - 1 - bs >= 0 and text[pos - 1 - bs] == "\\":
+                bs += 1
+            if bs % 2 == 0:
+                try:
+                    decoded, _ = decoder.raw_decode(text, pos)
+                    if isinstance(decoded, str):
+                        return decoded
+                except Exception:
+                    return None
+                return None
+        pos -= 1
+    return None
+
+
+def _extract_ig_shortcode_media_from_scripts(soup: BeautifulSoup) -> Tuple[str, str, Optional[str]]:
+    """當 Embed DOM 缺漏內文時，以線性 JSONDecoder 從 <script> 萃取 shortcode_media（零 ReDoS，支援單層與雙層轉義）。"""
+    decoder = json.JSONDecoder()
+    for script in soup.find_all("script"):
+        text = script.string or script.get_text() or ""
+        if "shortcode_media" not in text:
+            continue
+
+        # 1. 直接 JSON 物件："shortcode_media":{...}
+        u, cap, img = _extract_shortcode_media_from_json_str(text, decoder)
+        if cap or img:
+            return u, cap, img
+
+        # 2. 轉義 JSON 字串（Instagram TimeSliceImpl / contextJSON，同時支援單層 \" 與雙層 \\\" 轉義）
+        marker_token = "shortcode_media"
+        esc_pos = 0
+        for _ in range(5):
+            esc_idx = text.find(marker_token, esc_pos)
+            if esc_idx == -1:
+                break
+            esc_pos = esc_idx + len(marker_token)
+            decoded_str = _decode_enclosing_json_string(text, esc_idx, decoder)
+            if not decoded_str:
+                continue
+            u, cap, img = _extract_shortcode_media_from_json_str(decoded_str, decoder)
+            if cap or img:
+                return u, cap, img
+            # 雙層轉義 contextJSON（例如外層為 ServerJS JSON 字串，內層再嵌 contextJSON 字串）
+            nested_idx = decoded_str.find(marker_token)
+            if nested_idx != -1:
+                nested_str = _decode_enclosing_json_string(decoded_str, nested_idx, decoder)
+                if nested_str:
+                    u, cap, img = _extract_shortcode_media_from_json_str(nested_str, decoder)
+                    if cap or img:
+                        return u, cap, img
+
+    return "", "", None
+
+
+async def fetch_instagram_embed(url: str, timeout: float = 2.0) -> Optional[Dict[str, Any]]:
+    """
+    Tier 1.5 (InstaFix 同款): 抓取 Instagram `/p/{shortcode}/embed/captioned/` 輕量頁面。
+    - 支援 /p/, /reel/, /reels/, /tv/, /{user}/(p|reel|reels|tv)/ 與 /share/(reel|p|tv)/ 轉址展開
+    - 嚴格 2MB 有界串流與登入牆過濾
+    """
+    if not _is_instagram_url(url):
+        return None
+    if not await is_safe_url_async(url):
+        return None
+
+    shortcode = _extract_instagram_shortcode(url)
+    if not shortcode and _is_instagram_share_url(url):
+        shortcode = await _resolve_instagram_share_url(url, timeout=timeout)
+    if not shortcode:
+        return None
+
+    embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
+    headers = {
+        "User-Agent": BROWSER_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-TW,zh;q=0.9,ja;q=0.8,en;q=0.7",
+    }
+    client = get_search_client()
+    try:
+        stream_ctx = client.stream("GET", embed_url, headers=headers, timeout=timeout)
+        if asyncio.iscoroutine(stream_ctx):
+            stream_ctx.close()
+            return None
+        async with stream_ctx as resp:
+            if resp.status_code != 200:
+                return None
+            html_text = await _read_bounded_text(resp, max_bytes=2 * 1024 * 1024)
+
+        soup = BeautifulSoup(html_text, "html.parser")
+        page_title = soup.title.get_text(strip=True) if soup.title else ""
+
+        username = ""
+        username_el = soup.select_one(".UsernameText") or soup.select_one(".CaptionUsername")
+        if username_el:
+            username = html.unescape(username_el.get_text(strip=True))
+
+        caption_text = ""
+        caption_el = soup.select_one(".Caption")
+        if caption_el is not None:
+            for noisy in caption_el.select(".CaptionComments, .CaptionUsername"):
+                noisy.decompose()
+            for br in caption_el.find_all("br"):
+                br.replace_with("\n")
+            raw_caption = html.unescape(caption_el.get_text())
+            lines = [line.strip() for line in raw_caption.replace("\r\n", "\n").split("\n")]
+            caption_text = "\n".join(line for line in lines if line).strip()
+
+        image_url: Optional[str] = None
+        img_el = soup.select_one(".EmbeddedMediaImage")
+        if img_el and img_el.get("src"):
+            image_url = html.unescape(str(img_el.get("src")).strip())
+        if not image_url:
+            video_el = soup.select_one(".EmbeddedMediaVideo")
+            if video_el:
+                raw_vid_img = video_el.get("poster") or video_el.get("src")
+                if raw_vid_img:
+                    image_url = html.unescape(str(raw_vid_img).strip())
+        # 若 DOM 缺漏內文或媒體，自 <script> shortcode_media 補全
+        if not caption_text or not image_url:
+            s_user, s_caption, s_image = _extract_ig_shortcode_media_from_scripts(soup)
+            if not username and s_user:
+                username = s_user
+            if not caption_text and s_caption:
+                caption_text = html.unescape(s_caption).strip()
+            if not image_url and s_image:
+                image_url = s_image
+
+        # 統一對 DOM 與 <script> 來源之 image_url 實施協議正規化與 http(s) 白名單檢查
+        if image_url and image_url.startswith("//"):
+            image_url = "https:" + image_url
+        if image_url and not image_url.startswith(("http://", "https://")):
+            image_url = None
+
+        if not caption_text and not image_url:
+            return None
+
+        title_text = ""
+        if username and caption_text:
+            first_line = caption_text.splitlines()[0].strip()[:80]
+            title_text = f"@{username}: {first_line}" if first_line else f"@{username} on Instagram"
+        elif caption_text:
+            title_text = caption_text.splitlines()[0].strip()[:80]
+        elif username:
+            title_text = f"@{username} on Instagram"
+
+        # 嚴格把關社群登入牆（無 caption 時以去標籤可見文字檢查，避免被大段 <head> 樣式擠出前 600 字）
+        login_check_text = caption_text if caption_text else soup.get_text(" ", strip=True)[:1200]
+        if _is_social_login_wall(
+            url,
+            title=title_text or page_title,
+            description=caption_text,
+            markdown=login_check_text,
+        ):
+            print("⚠️ [SearchEngine] IG Embed 命中社群登入牆，捨棄無效內容")
+            return None
+
+        markdown = ""
+        if caption_text:
+            parts = []
+            if title_text:
+                parts.append(f"# {title_text}")
+            parts.append("**來源平台**: Instagram")
+            if username:
+                parts.append(f"**作者**: @{username}")
+            parts.append(f"### 貼文內文 / 摘要資訊\n{caption_text}")
+            markdown = "\n\n".join(parts)[:3500]
+
+        return {
+            "title": title_text,
+            "username": username,
+            "description": caption_text,
+            "image": image_url,
+            "markdown": markdown,
+        }
+    except SSRFSecurityError:
+        print(f"🛡️ [SearchEngine] IG Embed 命中 SSRF 攔截: {_sanitize_url_for_log(url)}")
+    except Exception as e:
+        print(f"⚠️ [SearchEngine] IG Embed 抓取失敗 ({_sanitize_url_for_log(url)}): {type(e).__name__}")
+    return None
 
 
 def _is_social_login_wall(
@@ -340,32 +868,74 @@ def _is_social_login_wall(
     if norm_title == "instagram" and not norm_desc:
         return True
 
-    combined = f"{norm_title}\n{norm_desc}\n{markdown[:600].strip().lower()}"
+    combined = f"{norm_title}\n{norm_desc}\n{markdown[:1200].strip().lower()}"
     return any(phrase in combined for phrase in _SOCIAL_LOGIN_WALL_PHRASES)
 
 
-async def fetch_opengraph_metadata(url: str) -> Optional[Dict[str, str]]:
+async def fetch_opengraph_metadata(url: str, timeout: float = 2.2) -> Optional[Dict[str, str]]:
     """
-    使用社群爬蟲 User-Agent (facebookexternalhit / Googlebot) 直接抽取 OpenGraph Metadata
-    專門防禦社群媒體 (IG/Threads/FB) 登入牆與 Jina Reader 403 阻擋
+    Tier 1:
+    - 社群網域採用 facebookexternalhit/1.1 抽取 OpenGraph Metadata 並嚴格過濾登入牆
+    - 一般外部網站採合規識別 UA 並帶 Accept: text/markdown, text/html;q=0.9, */*;q=0.8，
+      若目標站支援 Cloudflare Markdown for Agents (Content-Type: text/markdown) 則直通回傳乾淨 Markdown
     """
-    headers = {
-        "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-TW,zh;q=0.9,ja;q=0.8,en;q=0.7",
-    }
+    is_social = bool(SOCIAL_MEDIA_PATTERN.search(url or ""))
+    if is_social:
+        headers = {
+            "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-TW,zh;q=0.9,ja;q=0.8,en;q=0.7",
+        }
+    else:
+        headers = {
+            "User-Agent": DIRECT_FETCH_USER_AGENT,
+            "Accept": "text/markdown, text/html;q=0.9, */*;q=0.8",
+            "Accept-Language": "zh-TW,zh;q=0.9,ja;q=0.8,en;q=0.7",
+        }
+
     client = get_search_client()
     try:
-        stream_ctx = client.stream("GET", url, headers=headers, timeout=4.0)
+        stream_ctx = client.stream("GET", url, headers=headers, timeout=timeout)
         if asyncio.iscoroutine(stream_ctx):
             stream_ctx.close()
             return None
         async with stream_ctx as resp:
             if resp.status_code != 200:
                 return None
-            html_text = await _read_bounded_text(resp, max_bytes=2 * 1024 * 1024)
+            resp_headers = getattr(resp, "headers", None)
+            content_type = (resp_headers.get("content-type", "") if resp_headers else "").lower()
+            media_type = content_type.split(";")[0].strip()
+            # 拒絕下載二進位媒體/PDF 等非文字內容，避免浪費頻寬並阻塞 Event Loop
+            if media_type and media_type not in (
+                "text/markdown",
+                "text/x-markdown",
+                "text/html",
+                "application/xhtml+xml",
+                "text/plain",
+            ):
+                return None
+            raw_text = await _read_bounded_text(resp, max_bytes=2 * 1024 * 1024)
 
-        soup = BeautifulSoup(html_text, "html.parser")
+        # Cloudflare Markdown for Agents / Anthropic 原生 Markdown 直通路徑
+        if media_type in ("text/markdown", "text/x-markdown"):
+            md_text = raw_text.strip()
+            if not md_text:
+                return None
+            md_title = _extract_markdown_title(md_text)
+            if _is_social_login_wall(url, title=md_title, markdown=md_text):
+                print("⚠️ [SearchEngine] 原生 Markdown 回應命中社群登入牆，捨棄無效內容")
+                return None
+            return {
+                "title": md_title,
+                "description": "",
+                "markdown": md_text[:3500],
+                "content_type": "text/markdown",
+            }
+
+        # OpenGraph meta 與 <title> 僅存於 <head>，先切出 head 區段避免在 Event Loop 同步剖析數 MB <body>
+        head_end = raw_text.lower().find("</head>")
+        parse_slice = raw_text[: head_end + 7] if head_end != -1 else raw_text[:262144]
+        soup = BeautifulSoup(parse_slice, "html.parser")
 
         def _get_meta(prop_names: List[str]) -> str:
             for name in prop_names:
@@ -402,69 +972,101 @@ async def fetch_opengraph_metadata(url: str) -> Optional[Dict[str, str]]:
                 "markdown": "\n\n".join(parts)[:3500],
             }
     except Exception as e:
-        print(f"⚠️ [SearchEngine] OpenGraph 抓取失敗: {e}")
+        print(f"⚠️ [SearchEngine] OpenGraph 抓取失敗 ({_sanitize_url_for_log(url)}): {type(e).__name__}")
     return None
 
 
-async def fetch_jina_reader(
-    url: str,
+async def _fetch_jina_reader_uncached(
+    real_url: str,
     wait_for_selector: Optional[str] = None,
-    target_selector: Optional[str] = None
+    target_selector: Optional[str] = None,
+    cache_key: str = "",
 ) -> Dict[str, Any]:
-    """
-    呼叫 Jina Reader (https://r.jina.ai/{url}) 進行深度網頁精讀
-    - 免 Key 支援 (20 RPM)
-    - 智慧社群分流：若為 IG/Threads/FB 等社群平台，優先採用 OpenGraph 專用爬蟲秒解貼文
-    - 遇到 401 (ASN 信譽阻斷) 或連線逾時，自動優雅回退至 OpenGraph 或搜尋摘要，不崩潰
-    """
-    real_url = unwrap_ddg_redirect(url)
-    if not await is_safe_url_async(real_url):
-        return {
-            "status": "error",
-            "error_code": "INVALID_URL",
-            "message": "不支援或不安全的網址協議",
-            "markdown": ""
-        }
-
+    """四層漏斗核心執行體（Tier 1 -> Tier 1.5 -> Tier 2 Jina Reader）。"""
+    is_social = bool(SOCIAL_MEDIA_PATTERN.search(real_url))
     og_attempted = False
+    prefetched_og_fallback: Optional[Dict[str, Any]] = None
+
+    def _cache_and_return(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if cache_key:
+            _reader_cache_set(cache_key, payload, is_social=is_social)
+        return payload
 
     async def _og_fallback_or_error(error_code: str, message: str) -> Dict[str, Any]:
+        if prefetched_og_fallback and prefetched_og_fallback.get("markdown"):
+            return _cache_and_return({
+                "status": "success",
+                "url": real_url,
+                "title": prefetched_og_fallback.get("title", ""),
+                "markdown": prefetched_og_fallback["markdown"],
+            })
         # 避免社群 URL 已在 Tier 1 失敗／命中登入牆後重複請求兩次 OpenGraph
         if not og_attempted:
             og_fallback = await fetch_opengraph_metadata(real_url)
             if og_fallback and og_fallback.get("markdown"):
-                return {
+                return _cache_and_return({
                     "status": "success",
                     "url": real_url,
-                    "markdown": og_fallback["markdown"]
-                }
+                    "title": og_fallback.get("title", ""),
+                    "markdown": og_fallback["markdown"],
+                })
         return {
             "status": "error",
             "error_code": error_code,
             "message": message,
-            "markdown": ""
+            "markdown": "",
         }
 
-    # 1. 社群媒體網址優先路徑 (IG / Threads / FB 防爬牆極強，OpenGraph 直取最穩)
-    if SOCIAL_MEDIA_PATTERN.search(real_url):
+    # 1. Tier 1 / Tier 1.5 智慧分流
+    if is_social:
         og_attempted = True
         og_data = await fetch_opengraph_metadata(real_url)
         if og_data and og_data.get("markdown"):
-            return {
+            return _cache_and_return({
                 "status": "success",
                 "url": real_url,
-                "markdown": og_data["markdown"]
-            }
+                "title": og_data.get("title", ""),
+                "markdown": og_data["markdown"],
+            })
 
-    # 2. 標準 Jina Reader 路徑
+        # Tier 1.5: Instagram `/p/{shortcode}/embed/captioned/` 輕量備援
+        if _is_instagram_url(real_url):
+            embed_data = await fetch_instagram_embed(real_url)
+            if embed_data and embed_data.get("markdown"):
+                return _cache_and_return({
+                    "status": "success",
+                    "url": real_url,
+                    "title": embed_data.get("title", ""),
+                    "markdown": embed_data["markdown"],
+                })
+    elif not wait_for_selector and not target_selector:
+        # 一般外部網站：發起 1.5s 機會型 Accept: text/markdown 探針（最壞 1.5s + Jina 8.5s = 10.0s < 11.0s 外層預算）；
+        # 若回 HTML 則暫存 OG 供 Jina 失敗時零額外 I/O 備援
+        og_attempted = True
+        direct_data = await fetch_opengraph_metadata(real_url, timeout=1.5)
+        if direct_data and direct_data.get("markdown"):
+            if direct_data.get("content_type") == "text/markdown":
+                return _cache_and_return({
+                    "status": "success",
+                    "url": real_url,
+                    "title": direct_data.get("title", ""),
+                    "markdown": direct_data["markdown"],
+                })
+            prefetched_og_fallback = direct_data
+
+    # 2. Tier 2: Jina Reader（對齊 jina-ai/reader crawler-options.ts，移除會誤殺長頁之 X-Token-Budget）
     client = get_search_client()
     jina_endpoint = f"https://r.jina.ai/{real_url}"
+    jina_timeout = httpx.Timeout(8.5, connect=3.0)
 
     headers = {
         "Accept": "text/markdown",
         "X-Respond-With": "markdown",
-        "X-Timeout": "4000",
-        "X-Token-Budget": "2500",
+        "X-Timeout": "8",
+        "X-Max-Tokens": "3500",
+        "X-Retain-Images": "alt",
+        "X-Retain-Media": "none",
+        "X-Retain-Links": "text",
     }
     if wait_for_selector:
         headers["X-Wait-For-Selector"] = wait_for_selector
@@ -472,49 +1074,142 @@ async def fetch_jina_reader(
         headers["X-Target-Selector"] = target_selector
 
     try:
-        resp = await client.get(jina_endpoint, headers=headers)
-        if resp.status_code == 200:
-            md_content = resp.text.strip()
+        stream_ctx = client.stream("GET", jina_endpoint, headers=headers, timeout=jina_timeout)
+        if asyncio.iscoroutine(stream_ctx):
+            stream_ctx.close()
+            resp = await client.get(jina_endpoint, headers=headers, timeout=jina_timeout)
+            status_code = resp.status_code
+            raw_text = (resp.text or "") if status_code == 200 else ""
+        else:
+            async with stream_ctx as resp:
+                status_code = resp.status_code
+                raw_text = await _read_bounded_text(resp, max_bytes=2 * 1024 * 1024) if status_code == 200 else ""
+
+        if status_code == 200:
+            md_content = raw_text.strip()
             if md_content:
-                if _is_social_login_wall(real_url, markdown=md_content):
+                md_title = _extract_markdown_title(md_content)
+                if _is_social_login_wall(real_url, title=md_title, markdown=md_content):
                     return {
                         "status": "error",
                         "error_code": "LOGIN_WALL",
                         "message": "該社群貼文受登入牆保護，無法直接讀取內文，已為您自動採用搜尋摘要進行分析",
-                        "markdown": ""
+                        "markdown": "",
                     }
-                return {
+                return _cache_and_return({
                     "status": "success",
                     "url": real_url,
-                    "markdown": md_content[:3500]  # 後端上限防護
-                }
+                    "title": md_title,
+                    "markdown": md_content[:3500],  # 後端上限防護
+                })
             return {
                 "status": "error",
                 "error_code": "EMPTY_CONTENT",
                 "message": "網頁無可讀取之正文內容",
-                "markdown": ""
+                "markdown": "",
             }
-        elif resp.status_code in [401, 403]:
-            # Jina 免費節點 ASN 聲譽風控或目標網站反爬 -> 嘗試 OpenGraph 回退
-            print(f"⚠️ [SearchEngine] Jina Reader HTTP {resp.status_code}，嘗試 OpenGraph 備援...")
+        elif status_code in [401, 403]:
+            print(f"⚠️ [SearchEngine] Jina Reader HTTP {status_code} ({_sanitize_url_for_log(real_url)})，嘗試 OpenGraph 備援...")
             return await _og_fallback_or_error(
                 "READER_UNAVAILABLE",
                 "該網頁受防爬保護或連線受限，已為您自動採用搜尋摘要進行分析",
             )
         else:
+            print(f"⚠️ [SearchEngine] Jina Reader HTTP {status_code} ({_sanitize_url_for_log(real_url)})")
             return await _og_fallback_or_error(
-                f"HTTP_{resp.status_code}",
-                f"網頁讀取服務回應異常代碼 {resp.status_code}",
+                f"HTTP_{status_code}",
+                f"網頁讀取服務回應異常代碼 {status_code}",
             )
     except httpx.TimeoutException:
-        print("⏱️ [SearchEngine] Jina Reader 讀取逾時 (>4.0s)，嘗試 OpenGraph 備援...")
+        print(f"⏱️ [SearchEngine] Jina Reader 讀取逾時 (>8.5s) ({_sanitize_url_for_log(real_url)})，嘗試 OpenGraph 備援...")
         return await _og_fallback_or_error(
             "TIMEOUT",
             "網頁回應過慢，已為您自動採用搜尋摘要進行分析",
         )
     except Exception as e:
-        print(f"⚠️ [SearchEngine] Jina Reader 讀取異常: {e}，嘗試 OpenGraph 備援...")
+        print(f"⚠️ [SearchEngine] Jina Reader 讀取異常 ({_sanitize_url_for_log(real_url)}): {type(e).__name__}，嘗試 OpenGraph 備援...")
         return await _og_fallback_or_error(
             "NETWORK_ERROR",
             "網路連線異常，已為您自動採用搜尋摘要進行分析",
         )
+
+
+async def fetch_jina_reader(
+    url: str,
+    wait_for_selector: Optional[str] = None,
+    target_selector: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    四層零成本網頁／社群提取漏斗：
+    - Tier 0: LRU 成功快取（社群 1h / 一般 30m）+ Event-Loop 分桶 Singleflight 去重
+    - Tier 1: 社群 OpenGraph 爬蟲 / 一般網站 `Accept: text/markdown` 直通
+    - Tier 1.5: Instagram `/p/{shortcode}/embed/captioned/`（含 `/share/reel/` 轉址展開）
+    - Tier 2: Jina Reader (`X-Timeout: 8`, `X-Max-Tokens: 3500`, 2MB 有界串流)
+    """
+    real_url = unwrap_ddg_redirect(url)
+    if not await is_safe_url_async(real_url):
+        return {
+            "status": "error",
+            "error_code": "INVALID_URL",
+            "message": "不支援或不安全的網址協議",
+            "markdown": "",
+        }
+
+    cache_key = _normalize_reader_cache_key(
+        real_url,
+        wait_for_selector=wait_for_selector,
+        target_selector=target_selector,
+    )
+    cached = _reader_cache_get(cache_key)
+    if cached is not None:
+        cached["url"] = real_url
+        return cached
+
+    loop = asyncio.get_running_loop()
+    loop_inflight = _URL_INFLIGHT_BY_LOOP.get(loop)
+    if loop_inflight is None:
+        loop_inflight = {}
+        _URL_INFLIGHT_BY_LOOP[loop] = loop_inflight
+
+    entry = loop_inflight.get(cache_key)
+    if entry is not None and entry[1] > 0 and not entry[0].done():
+        task = entry[0]
+        entry[1] += 1
+    else:
+        task = loop.create_task(
+            _fetch_jina_reader_uncached(
+                real_url,
+                wait_for_selector=wait_for_selector,
+                target_selector=target_selector,
+                cache_key=cache_key,
+            )
+        )
+        entry = [task, 1]
+        loop_inflight[cache_key] = entry
+
+        def _cleanup_inflight(
+            done_task: asyncio.Task,
+            _key: str = cache_key,
+            _bucket: Dict[str, List[Any]] = loop_inflight,
+        ) -> None:
+            current = _bucket.get(_key)
+            if current is not None and current[0] is done_task:
+                _bucket.pop(_key, None)
+            if not done_task.cancelled():
+                try:
+                    done_task.exception()
+                except Exception:
+                    pass
+
+        task.add_done_callback(_cleanup_inflight)
+
+    try:
+        res = await asyncio.shield(task)
+    finally:
+        entry[1] -= 1
+        if entry[1] <= 0 and not task.done():
+            task.cancel()
+
+    if res.get("status") == "success":
+        return dict(res, url=real_url)
+    return dict(res)

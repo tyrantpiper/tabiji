@@ -510,16 +510,28 @@ async def get_public_trip_by_public_id(
     if not re.match(r'^pub_[a-z0-9]{8}$', public_id):
         raise HTTPException(status_code=400, detail="Invalid public ID format")
     try:
-        # 1. 透過 public_id 查詢行程
-        trip_res = supabase.table("itineraries").select("*").eq("public_id", public_id).execute()
-        
-        if not trip_res.data or len(trip_res.data) == 0:
-            raise HTTPException(status_code=404, detail="Trip not found")
-            
-        trip = trip_res.data[0]
-        
-        # 2. 抓該行程的所有細項 (公開資料，不過濾)
-        items_res = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip["id"]).order("day_number").order("sort_order").order("time_slot").execute()
+        def _fetch_public_trip():
+            # 1. 透過 public_id 查詢行程
+            trip_res = supabase.table("itineraries").select("*").eq("public_id", public_id).execute()
+
+            if not trip_res.data or len(trip_res.data) == 0:
+                raise HTTPException(status_code=404, detail="Trip not found")
+
+            trip_row = trip_res.data[0]
+
+            # 2. 抓該行程的所有細項 (公開資料，不過濾)
+            items_res = (
+                supabase.table("itinerary_items")
+                .select("*")
+                .eq("itinerary_id", trip_row["id"])
+                .order("day_number")
+                .order("sort_order")
+                .order("time_slot")
+                .execute()
+            )
+            return trip_row, items_res
+
+        trip, items_res = await run_in_threadpool(_fetch_public_trip)
         
         # 3. 整理成前端要的格式 (含隱私過濾)
         days_map = {}
@@ -603,37 +615,40 @@ async def get_trips(
         raise HTTPException(status_code=401, detail="需要提供 X-User-ID Header")
     
     try:
-        # 🆕 Phase 3: 使用 user_trips_view 一次性取得所有相關行程 (Dashboard Optimization)
-        # 這取代了原本需要兩次查詢 (trip_members + itineraries) 的邏輯
-        try:
-            res = supabase.table("user_trips_view")\
-                .select("*")\
-                .eq("user_id", user_id)\
-                .execute()
-            trips_data = res.data or []
-            print(f"📊 Dashboard: Using optimized user_trips_view")
-        except Exception as view_err:
-            # 🛡️ Zero-Regression Fallback: If view is broken (e.g. missing column), 
-            # switch to robust table join to ensure itineraries remain visible.
-            error_msg = str(view_err)
-            print(f"⚠️ [Resilience Fallback] user_trips_view issue: {error_msg}")
-            
-            # Explicitly log if it's the known column missing error (42703)
-            if "42703" in error_msg:
-                print("🚨 Detectable Pathogen: Missing column in trip_members. Activating surgical fallback.")
-            # 🔄 Fallback Logic: 同時抓取成員表與創立表
-            members_res = supabase.table("trip_members").select("itinerary_id").eq("user_id", user_id).execute()
-            member_ids = [m['itinerary_id'] for m in members_res.data] if members_res.data else []
-            
-            owned_res = supabase.table("itineraries").select("id").eq("created_by", user_id).execute()
-            owned_ids = [i['id'] for i in owned_res.data] if owned_res.data else []
-            
-            all_ids = list(set(member_ids + owned_ids))
-            if not all_ids:
-                return []
+        def _fetch_user_trips():
+            # 🆕 Phase 3: 使用 user_trips_view 一次性取得所有相關行程 (Dashboard Optimization)
+            # 這取代了原本需要兩次查詢 (trip_members + itineraries) 的邏輯
+            try:
+                res = supabase.table("user_trips_view")\
+                    .select("*")\
+                    .eq("user_id", user_id)\
+                    .execute()
+                print(f"📊 Dashboard: Using optimized user_trips_view")
+                return res.data or []
+            except Exception as view_err:
+                # 🛡️ Zero-Regression Fallback: If view is broken (e.g. missing column), 
+                # switch to robust table join to ensure itineraries remain visible.
+                error_msg = str(view_err)
+                print(f"⚠️ [Resilience Fallback] user_trips_view issue: {error_msg}")
                 
-            res = supabase.table("itineraries").select("*").in_("id", all_ids).order("created_at", desc=True).execute()
-            trips_data = res.data or []
+                # Explicitly log if it's the known column missing error (42703)
+                if "42703" in error_msg:
+                    print("🚨 Detectable Pathogen: Missing column in trip_members. Activating surgical fallback.")
+                # 🔄 Fallback Logic: 同時抓取成員表與創立表
+                members_res = supabase.table("trip_members").select("itinerary_id").eq("user_id", user_id).execute()
+                member_ids = [m['itinerary_id'] for m in members_res.data] if members_res.data else []
+                
+                owned_res = supabase.table("itineraries").select("id").eq("created_by", user_id).execute()
+                owned_ids = [i['id'] for i in owned_res.data] if owned_res.data else []
+                
+                all_ids = list(set(member_ids + owned_ids))
+                if not all_ids:
+                    return []
+                    
+                res = supabase.table("itineraries").select("*").in_("id", all_ids).order("created_at", desc=True).execute()
+                return res.data or []
+
+        trips_data = await run_in_threadpool(_fetch_user_trips)
 
         # 整理資料結構 - 🔧 FIX: 解析 content 欄位，將 daily_locations 提升到頂層，並過濾他方私人項目與原生 UUID
         trips = []
@@ -690,6 +705,8 @@ async def get_trips(
         print(f"✅ 找到 {len(trips)} 個行程")
         return trips
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 Get Trips Error: {e}")
         traceback.print_exc()
@@ -709,42 +726,46 @@ async def get_trip_by_id(
     - 非成員：私人項目會被過濾
     """
     try:
-        # 1. 查詢指定的行程
-        trip_res = supabase.table("itineraries").select("*").eq("id", trip_id).execute()
-        
-        if not trip_res.data or len(trip_res.data) == 0:
-            print(f"ℹ️ [Trips] Trip {trip_id} not found for user {user_id}. Returning 404 for client self-healing.")
-            raise HTTPException(status_code=404, detail="Trip not found")
+        def _fetch_trip_detail():
+            # 1. 查詢指定的行程
+            trip_res = supabase.table("itineraries").select("*").eq("id", trip_id).execute()
             
-        trip = trip_res.data[0]
-        
-        # 🆕 Auto-Migration: If public_id is missing, generate and save it
-        if not trip.get("public_id"):
-            # generate_public_id is now at top level
-            new_public_id = generate_public_id()
-            try:
-                # 僅在此處嘗試更新，若 column 不存在會失敗但會被 catch
-                supabase.table("itineraries").update({"public_id": new_public_id}).eq("id", trip_id).execute()
-                trip["public_id"] = new_public_id
-                print(f"🪄 Auto-Migrated Legacy Trip: Generated public_id={new_public_id}")
-            except Exception as e:
-                print(f"⚠️ Failed to auto-migrate public_id: {e} (Maybe column missing?)")
+            if not trip_res.data or len(trip_res.data) == 0:
+                print(f"ℹ️ [Trips] Trip {trip_id} not found for user {user_id}. Returning 404 for client self-healing.")
+                raise HTTPException(status_code=404, detail="Trip not found")
+                
+            trip_row = trip_res.data[0]
+            
+            # 🆕 Auto-Migration: If public_id is missing, generate and save it
+            if not trip_row.get("public_id"):
+                # generate_public_id is now at top level
+                new_public_id = generate_public_id()
+                try:
+                    # 僅在此處嘗試更新，若 column 不存在會失敗但會被 catch
+                    supabase.table("itineraries").update({"public_id": new_public_id}).eq("id", trip_id).execute()
+                    trip_row["public_id"] = new_public_id
+                    print(f"🪄 Auto-Migrated Legacy Trip: Generated public_id={new_public_id}")
+                except Exception as e:
+                    print(f"⚠️ Failed to auto-migrate public_id: {e} (Maybe column missing?)")
 
-        # 🆕 取得所有成員 (整合查詢：一次性抓取全員包含記錄主鍵 id，並在記憶體完成「成員 + 創立者」雙重核驗)
-        all_members_res = supabase.table("trip_members").select("id, user_id, user_name, user_avatar").eq("itinerary_id", trip_id).execute()
-        members = all_members_res.data or []
-        created_by = str(trip.get("created_by") or "")
-        
-        is_owner = (user_id == created_by)
-        is_member = is_owner or any(str(m.get("user_id") or "") == user_id for m in members)
-        print(f"🔍 [Trips] user_id={user_id}, is_creator={is_owner}, is_member={is_member}")
-        
-        # 🛡️ BOLA 物件授權防衛：非成員一律嚴格 403 阻斷，陌生人絕不可窺探整趟行程
-        if not is_member:
-            raise HTTPException(status_code=403, detail="您不是此行程的成員，無法存取詳細資訊")
-        
-        # 2. 抓該行程的所有細項 (按 time_slot 排序，確保符合時間軸)
-        items_res = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip["id"]).order("day_number").order("time_slot").order("sort_order").execute()
+            # 🆕 取得所有成員 (整合查詢：一次性抓取全員包含記錄主鍵 id，並在記憶體完成「成員 + 創立者」雙重核驗)
+            all_members_res = supabase.table("trip_members").select("id, user_id, user_name, user_avatar").eq("itinerary_id", trip_id).execute()
+            member_rows = all_members_res.data or []
+            trip_created_by = str(trip_row.get("created_by") or "")
+            
+            owner_flag = (user_id == trip_created_by)
+            member_flag = owner_flag or any(str(m.get("user_id") or "") == user_id for m in member_rows)
+            print(f"🔍 [Trips] user_id={user_id}, is_creator={owner_flag}, is_member={member_flag}")
+            
+            # 🛡️ BOLA 物件授權防衛：非成員一律嚴格 403 阻斷，陌生人絕不可窺探整趟行程
+            if not member_flag:
+                raise HTTPException(status_code=403, detail="您不是此行程的成員，無法存取詳細資訊")
+            
+            # 2. 抓該行程的所有細項 (按 time_slot 排序，確保符合時間軸)
+            items_result = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip_row["id"]).order("day_number").order("time_slot").order("sort_order").execute()
+            return trip_row, member_rows, trip_created_by, member_flag, items_result
+
+        trip, members, created_by, is_member, items_res = await run_in_threadpool(_fetch_trip_detail)
         
         # 3. 整理成前端要的格式 (含隱私過濾與原生 UUID 隔離)
         is_owner = _is_trip_creator(trip, user_id, allow_legacy_user_id=True)

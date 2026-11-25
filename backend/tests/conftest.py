@@ -24,3 +24,19 @@ def _prevent_accidental_prod_supabase_in_agents(monkeypatch):
         return None
 
     monkeypatch.setattr(agents_router, "_resolve_supabase", _safe_resolve)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_web_search_and_gas_caches():
+    """Reset module-level Tier 0 URL reader cache, singleflight map, and GAS dead caches between tests."""
+    from services.web_search_engine import __reset_web_search_cache_for_testing
+    from services.link_resolver import __reset_link_resolver_caches_for_testing
+    from services import geocode_service
+
+    __reset_web_search_cache_for_testing()
+    __reset_link_resolver_caches_for_testing()
+    geocode_service._DEAD_URL_CACHE.clear()
+    yield
+    __reset_web_search_cache_for_testing()
+    __reset_link_resolver_caches_for_testing()
+    geocode_service._DEAD_URL_CACHE.clear()

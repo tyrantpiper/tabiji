@@ -80,6 +80,8 @@ async def test_execute_web_search_ddgs_success():
         assert results[0]["title"] == "東京晴空塔 TOKYO SKYTREE"
         assert results[0]["url"] == "https://www.tokyo-skytree.jp/"
         assert "10:00" in results[0]["snippet"]
+        backend_arg = mock_ddgs_instance.text.call_args.kwargs.get("backend", "")
+        assert "google" not in [b.strip() for b in backend_arg.split(",") if b.strip()]
 
 
 @pytest.mark.asyncio

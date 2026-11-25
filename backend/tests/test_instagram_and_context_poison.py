@@ -78,8 +78,10 @@ async def test_instagram_reel_opengraph_fallback():
 
 @pytest.mark.asyncio
 async def test_instagram_login_wall_rejected_and_degrades_cleanly():
-    """驗證遭遇 IG 登入牆（中/英文）與 Jina 阻擋時，不回傳偽陽性 success 並可優雅降級"""
+    """驗證遭遇 IG 登入牆（中/英文）與 Jina 阻擋時，依序嘗試 OG(1次) -> Embed(1次) -> Jina(1次)，不回傳偽陽性且絕不重打 OG/Embed"""
     ig_url = "https://www.instagram.com/reel/DX8x6XOtEqI/?stkn=MXZ3YWxibjJzejBtZg=="
+    expected_embed_url = "https://www.instagram.com/p/DX8x6XOtEqI/embed/captioned/"
+    expected_jina_url = f"https://r.jina.ai/{ig_url}"
 
     zh_login_html = (
         "<html><head><title>登入 • Instagram</title>"
@@ -87,13 +89,17 @@ async def test_instagram_login_wall_rejected_and_degrades_cleanly():
         "</head><body></body></html>"
     )
 
-    jina_403_resp = MagicMock(spec=httpx.Response)
-    jina_403_resp.status_code = 403
-    jina_403_resp.text = "Blocked ASN"
+    # Case A: OG 登入牆 -> Embed 登入牆 -> Jina 403，嚴格各呼叫 1 次且 Jina 失敗後絕不重試 OG/Embed
+    stream_urls_a = []
+
+    def _dispatch_stream_a(method, url, *args, **kwargs):
+        stream_urls_a.append(url)
+        if url.startswith("https://r.jina.ai/"):
+            return _make_stream_cm(403, "Blocked ASN")
+        return _make_stream_cm(200, zh_login_html)
 
     mock_client = AsyncMock()
-    mock_client.stream = MagicMock(side_effect=lambda *a, **kw: _make_stream_cm(200, zh_login_html))
-    mock_client.get.side_effect = [jina_403_resp]
+    mock_client.stream = MagicMock(side_effect=_dispatch_stream_a)
 
     with patch("services.web_search_engine.get_search_client", return_value=mock_client):
         result = await fetch_jina_reader(ig_url)
@@ -101,17 +107,23 @@ async def test_instagram_login_wall_rejected_and_degrades_cleanly():
     assert result["status"] == "error"
     assert result["error_code"] == "READER_UNAVAILABLE"
     assert result["markdown"] == ""
-    assert mock_client.stream.call_count == 1  # OpenGraph 不應重複請求兩次
-    assert mock_client.get.await_count == 1    # Jina 僅呼叫一次
+    assert stream_urls_a == [ig_url, expected_embed_url, expected_jina_url]
+    assert stream_urls_a.count(ig_url) == 1              # 原 OG URL 僅請求 1 次
+    assert stream_urls_a.count(expected_embed_url) == 1  # Embed URL 僅請求 1 次
+    assert stream_urls_a.count(expected_jina_url) == 1   # Jina 僅呼叫 1 次且失敗後不重打 OG/Embed
 
     # Case B: Jina 回傳 200 但內容仍為英文 Login Wall
-    en_login_resp = MagicMock(spec=httpx.Response)
-    en_login_resp.status_code = 200
-    en_login_resp.text = "# Login • Instagram\n\nWelcome back to Instagram. Sign in to check out what your friends are sharing."
+    en_login_md = "# Login • Instagram\n\nWelcome back to Instagram. Sign in to check out what your friends are sharing."
+    stream_urls_b = []
+
+    def _dispatch_stream_b(method, url, *args, **kwargs):
+        stream_urls_b.append(url)
+        if url.startswith("https://r.jina.ai/"):
+            return _make_stream_cm(200, en_login_md)
+        return _make_stream_cm(200, zh_login_html)
 
     mock_client_en = AsyncMock()
-    mock_client_en.stream = MagicMock(side_effect=lambda *a, **kw: _make_stream_cm(200, zh_login_html))
-    mock_client_en.get.side_effect = [en_login_resp]
+    mock_client_en.stream = MagicMock(side_effect=_dispatch_stream_b)
 
     with patch("services.web_search_engine.get_search_client", return_value=mock_client_en):
         res_login = await fetch_jina_reader(ig_url)
@@ -119,6 +131,7 @@ async def test_instagram_login_wall_rejected_and_degrades_cleanly():
     assert res_login["status"] == "error"
     assert res_login["error_code"] == "LOGIN_WALL"
     assert res_login["markdown"] == ""
+    assert stream_urls_b == [ig_url, expected_embed_url, expected_jina_url]
 
     # Benign control: 一般美食部落格提到 Instagram 不應被誤判為登入牆
     blog_resp = MagicMock(spec=httpx.Response)

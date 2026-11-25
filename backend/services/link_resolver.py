@@ -78,6 +78,28 @@ async def _read_bounded_text(resp: httpx.Response, max_bytes: int = _MAX_HTML_BY
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _GAS_RESOLVE_DEAD_CACHE: Dict[str, float] = {}
 
+
+def __reset_link_resolver_caches_for_testing() -> None:
+    """顯式重置 GAS 解析冷宮快取，供單元測試隔離狀態。"""
+    _GAS_RESOLVE_DEAD_CACHE.clear()
+
+
+def _mask_gas_url_id(gas_url: str) -> str:
+    """日誌脫敏：僅輸出 GAS 部署 ID 結尾 4 碼，嚴禁印出完整 GAS 網址。"""
+    try:
+        path = urllib.parse.urlsplit(gas_url or "").path.rstrip("/")
+        parts = [p for p in path.split("/") if p]
+        if parts and parts[-1] in ("exec", "dev") and len(parts) >= 2:
+            token = parts[-2]
+        elif parts:
+            token = parts[-1]
+        else:
+            token = ""
+        return f"***{token[-4:]}" if len(token) >= 4 else "***"
+    except Exception:
+        return "***"
+
+
 async def resolve_via_gas(short_url: str) -> Dict[str, Any] | None:
     """
     🛰️ GAS Rescue: 只在所有本地引擎失敗後才啟動。
@@ -128,10 +150,19 @@ async def resolve_via_gas(short_url: str) -> Dict[str, Any] | None:
                     "method": "gas_rescue"
                 }
             elif data and "quota" in str(data.get("error", "")).lower():
-                print(f"[GAS Rescue] Quota exceeded. Banning URL for 12 hours.")
+                print(f"[GAS Rescue] Endpoint {_mask_gas_url_id(gas_url)} quota exceeded. Banning URL for 12 hours.")
                 _GAS_RESOLVE_DEAD_CACHE[gas_url] = now
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code if e.response is not None else None
+            tag = _mask_gas_url_id(gas_url)
+            if status_code in (404, 410):
+                _GAS_RESOLVE_DEAD_CACHE[gas_url] = now
+                print(f"[GAS Rescue] Endpoint {tag} returned HTTP {status_code}. Banning URL for 12 hours.")
+            else:
+                print(f"[GAS Rescue] Endpoint {tag} returned HTTP {status_code}.")
+            continue
         except Exception as e:
-            print(f"[GAS Rescue] Request failed: {e}")
+            print(f"[GAS Rescue] Request failed ({_mask_gas_url_id(gas_url)}): {type(e).__name__}")
             continue
     
     return None
@@ -269,29 +300,67 @@ async def fetch_place_from_google_rpc(cid_hex: str) -> dict | None:
 async def fetch_og_metadata(url: str) -> Dict[str, Any]:
     """
     Scrapes Open Graph metadata from a URL.
+    對社群媒體網址（IG/Threads/FB 等）啟用 facebookexternalhit UA、登入牆過濾與 IG Embed 救援。
     """
+    from services.web_search_engine import (
+        SOCIAL_MEDIA_PATTERN,
+        _is_social_login_wall,
+        _is_instagram_url,
+        fetch_instagram_embed,
+    )
+
     metadata = {
         "title": None,
         "image": None,
         "description": None,
         "site_name": None
     }
-    
+    is_social = bool(SOCIAL_MEDIA_PATTERN.search(url or ""))
+    is_ig = _is_instagram_url(url)
+
+    async def _try_ig_embed_rescue() -> None:
+        if not is_ig:
+            return
+        embed = await fetch_instagram_embed(url, timeout=2.0)
+        if not embed:
+            return
+        if not metadata["title"] and embed.get("title"):
+            metadata["title"] = embed["title"]
+        if not metadata["description"] and embed.get("description"):
+            metadata["description"] = embed["description"]
+        if not metadata["image"] and embed.get("image"):
+            metadata["image"] = embed["image"]
+        if not metadata["site_name"]:
+            metadata["site_name"] = "Instagram"
+
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
-        }
+        if is_social:
+            headers = {
+                "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+            }
+        else:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+            }
         # 🛡️ SSRF Check (non-blocking DNS bulkhead)
         if not await is_safe_url_async(url):
             print(f"[SSRF Block] Metadata fetch aborted for unsafe URL: {url}")
             return metadata
 
         async with create_safe_client(follow_redirects=True, timeout=5.0) as client:
+            non_200 = False
             async with client.stream("GET", url, headers=headers) as resp:
                 if resp.status_code != 200:
-                    return metadata
-                html_text = await _read_bounded_text(resp)
+                    non_200 = True
+                else:
+                    html_text = await _read_bounded_text(resp)
+
+            if non_200:
+                if is_ig:
+                    await _try_ig_embed_rescue()
+                return metadata
 
             soup = BeautifulSoup(html_text, 'html.parser')
             
@@ -376,8 +445,31 @@ async def fetch_og_metadata(url: str) -> Dict[str, Any]:
                 if desc:
                     metadata["description"] = desc.get("content")
 
+            # 6. 🛡️ 社群登入牆過濾與 IG Embed 救援（避免「登入 • Instagram」污染景點參考連結卡片）
+            if is_social:
+                hit_login_wall = _is_social_login_wall(
+                    url,
+                    title=str(metadata.get("title") or ""),
+                    description=str(metadata.get("description") or ""),
+                )
+                if hit_login_wall:
+                    print("[LinkResolver] Social OG hit login wall; purging polluted preview fields.")
+                    metadata["title"] = None
+                    metadata["description"] = None
+                    metadata["image"] = None
+                if is_ig and (hit_login_wall or not metadata.get("title") or not metadata.get("image")):
+                    await _try_ig_embed_rescue()
+
+    except SSRFSecurityError:
+        print("[SSRF Block] Metadata fetch blocked during redirect; skipping IG Embed rescue.")
+        return metadata
     except Exception as e:
         print(f"[WARN] Metadata fetch failed for {url}: {e}")
+        if is_ig and (not metadata.get("title") or not metadata.get("image")):
+            try:
+                await _try_ig_embed_rescue()
+            except Exception:
+                pass
         
     return metadata
 
