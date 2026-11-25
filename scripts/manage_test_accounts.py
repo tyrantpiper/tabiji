@@ -83,10 +83,29 @@ TRIGGER_BATCH_SLEEP_SEC = 0.3
 UPGRADE_REQUEST_TIMEOUT_SEC = 30.0
 UPGRADE_REQUEST_SPACING_SEC = 0.5
 SYSTEM_COOLDOWN_HOURS = 1.0
+DEFAULT_STALE_TRAVELER_MIN_AGE_DAYS = 7
+MIN_STALE_TRAVELER_AGE_DAYS = 1
 DEFAULT_API_BASE = "https://www.tabijiapp.com"
 DEFAULT_ENV_OUT = ".env.test-pool.local"
 USER_AGENT = "Tabiji-TestPool-Manager/1.0"
 SAMPLE_TRIP_TITLE = "3 Day Taipei Explorer ✨"
+SAMPLE_TRIP_PLACE_NAMES: frozenset[str] = frozenset(
+    {
+        "Day 1 台北市區攻略",
+        "台北 101 觀景台",
+        "鼎泰豐 (101 店)",
+        "象山步道",
+        "饒河街觀光夜市",
+        "故宮博物院",
+        "士林市場",
+        "北投溫泉博物館",
+        "淡水老街",
+        "九份老街",
+        "西門町",
+        "台北車站",
+    }
+)
+DEFAULT_SAMPLE_MEMBER_NAMES: frozenset[str] = frozenset({"", "explorer", "traveler"})
 
 BACKUPS_DIR = REPO_ROOT / "docs" / "migrations" / "backups"
 
@@ -1193,6 +1212,397 @@ def build_purge_plan(
     }
 
 
+def build_stale_travelers_purge_plan(
+    snapshot: Dict[str, List[Dict[str, Any]]],
+    *,
+    now: Optional[datetime] = None,
+    min_age_days: int = DEFAULT_STALE_TRAVELER_MIN_AGE_DAYS,
+) -> Dict[str, Any]:
+    """
+    Build deterministic purge plan strictly targeting stale historical crawler/audit
+    'Traveler' zombie accounts that satisfy ALL safety invariants simultaneously:
+    1. Exact name == 'Traveler' (never touches real/custom-named users).
+    2. Valid UUID and NOT in HARD_PROTECTED_USER_ID_HASHES (main account + 6-account test pool).
+    3. Valid created_at strictly older than NOW() - min_age_days (default 7 days; protects recent
+       resurrected real devices such as 24b0b81a).
+    4. Zero avatar_url and zero email.
+    5. Zero owned/created itineraries (checked via BOTH itineraries.created_by AND itineraries.user_id).
+    6. Zero participation in any real/shared/edited/recent itinerary: only allowed either 0 memberships
+       or exclusive membership on an unedited created_by == 'SYSTEM' sample trip ('3 Day Taipei Explorer ✨',
+       user_id IS NULL, single member == uid, 0 expenses, 0 capsules, created_at < cutoff).
+    7. Zero expenses (created_by or payer_id), zero capsule entries (author_id),
+       zero push subscriptions, and zero user preferences.
+    """
+    if not isinstance(min_age_days, int) or isinstance(min_age_days, bool) or min_age_days < MIN_STALE_TRAVELER_AGE_DAYS:
+        raise ValueError(
+            f"min_age_days must be an integer >= {MIN_STALE_TRAVELER_AGE_DAYS}, got {min_age_days!r}"
+        )
+
+    if now is None:
+        now_utc = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now_utc = now.replace(tzinfo=timezone.utc)
+    else:
+        now_utc = now.astimezone(timezone.utc)
+    cutoff = now_utc - timedelta(days=min_age_days)
+
+    users = snapshot.get("users", [])
+    itineraries = snapshot.get("itineraries", [])
+    members = snapshot.get("trip_members", [])
+    expenses = snapshot.get("expenses", [])
+    capsules = snapshot.get("trip_capsule_entries", [])
+    pushes = snapshot.get("push_subscriptions", [])
+    notifs = snapshot.get("notifications", [])
+    prefs = snapshot.get("user_preferences", [])
+
+    itins_by_id: Dict[str, Dict[str, Any]] = {
+        str(t["id"]).strip().lower(): t for t in itineraries if t.get("id")
+    }
+    owned_trips_by_user: Dict[str, List[Dict[str, Any]]] = {}
+    for t in itineraries:
+        for col in ("created_by", "user_id"):
+            val = str(t.get(col) or "").strip().lower()
+            if val:
+                owned_trips_by_user.setdefault(val, []).append(t)
+
+    members_by_trip: Dict[str, List[Dict[str, Any]]] = {}
+    members_by_user: Dict[str, List[Dict[str, Any]]] = {}
+    for m in members:
+        tid = str(m.get("itinerary_id") or "").strip().lower()
+        uid = str(m.get("user_id") or "").strip().lower()
+        if tid:
+            members_by_trip.setdefault(tid, []).append(m)
+        if uid:
+            members_by_user.setdefault(uid, []).append(m)
+
+    expenses_by_trip: Dict[str, List[Dict[str, Any]]] = {}
+    expenses_by_user: Dict[str, List[Dict[str, Any]]] = {}
+    for e in expenses:
+        tid = str(e.get("itinerary_id") or "").strip().lower()
+        if tid:
+            expenses_by_trip.setdefault(tid, []).append(e)
+        for col in ("created_by", "payer_id"):
+            val = str(e.get(col) or "").strip().lower()
+            if val:
+                expenses_by_user.setdefault(val, []).append(e)
+
+    capsules_by_trip: Dict[str, List[Dict[str, Any]]] = {}
+    capsules_by_author: Dict[str, List[Dict[str, Any]]] = {}
+    for c in capsules:
+        tid = str(c.get("trip_id") or "").strip().lower()
+        aid = str(c.get("author_id") or "").strip().lower()
+        if tid:
+            capsules_by_trip.setdefault(tid, []).append(c)
+        if aid:
+            capsules_by_author.setdefault(aid, []).append(c)
+
+    pushes_by_user: Dict[str, List[Dict[str, Any]]] = {}
+    for p in pushes:
+        uid = str(p.get("user_id") or "").strip().lower()
+        if uid:
+            pushes_by_user.setdefault(uid, []).append(p)
+
+    prefs_by_user: Dict[str, List[Dict[str, Any]]] = {}
+    for pr in prefs:
+        uid = str(pr.get("user_id") or "").strip().lower()
+        if uid:
+            prefs_by_user.setdefault(uid, []).append(pr)
+
+    notifs_by_user: Dict[str, List[Dict[str, Any]]] = {}
+    for n in notifs:
+        uid = str(n.get("user_id") or "").strip().lower()
+        if uid:
+            notifs_by_user.setdefault(uid, []).append(n)
+
+    qualified_users: List[Dict[str, Any]] = []
+    qualified_user_id_set: Set[str] = set()
+    disqualified_users: List[Dict[str, Any]] = []
+    disqualified_reason_counts: Dict[str, int] = {}
+    user_exclusive_system_trip_ids: Set[str] = set()
+    total_traveler_users_scanned = 0
+
+    def _disqualify(uid_val: str, user_row: Dict[str, Any], reason: str) -> None:
+        disqualified_users.append(
+            {
+                "user_id": uid_val,
+                "name": user_row.get("name"),
+                "created_at": user_row.get("created_at"),
+                "reason": reason,
+            }
+        )
+        disqualified_reason_counts[reason] = disqualified_reason_counts.get(reason, 0) + 1
+
+    for u in sorted(users, key=lambda row: str(row.get("id") or "").strip().lower()):
+        if u.get("name") != "Traveler":
+            continue
+        total_traveler_users_scanned += 1
+        raw_uid = str(u.get("id") or "").strip()
+        uid = raw_uid.lower()
+
+        if not is_valid_uuid(uid):
+            _disqualify(raw_uid, u, "invalid_uuid_format")
+            continue
+        if is_hard_protected_user(uid):
+            _disqualify(uid, u, "hard_protected_user")
+            continue
+
+        created_dt = parse_iso_timestamp(u.get("created_at"))
+        if created_dt is None:
+            _disqualify(uid, u, "missing_or_invalid_created_at")
+            continue
+        if created_dt >= cutoff:
+            _disqualify(uid, u, "within_min_age_window")
+            continue
+
+        avatar_url = u.get("avatar_url")
+        if isinstance(avatar_url, str) and avatar_url.strip():
+            _disqualify(uid, u, "has_avatar")
+            continue
+
+        email = u.get("email")
+        if isinstance(email, str) and email.strip():
+            _disqualify(uid, u, "has_email")
+            continue
+
+        if owned_trips_by_user.get(uid):
+            _disqualify(uid, u, "owns_or_created_itinerary")
+            continue
+
+        if expenses_by_user.get(uid):
+            _disqualify(uid, u, "has_expenses")
+            continue
+
+        if capsules_by_author.get(uid):
+            _disqualify(uid, u, "has_capsule_entries")
+            continue
+
+        if pushes_by_user.get(uid):
+            _disqualify(uid, u, "has_push_subscriptions")
+            continue
+
+        if prefs_by_user.get(uid):
+            _disqualify(uid, u, "has_user_preferences")
+            continue
+
+        if notifs_by_user.get(uid):
+            _disqualify(uid, u, "has_notifications")
+            continue
+
+        member_reason: Optional[str] = None
+        candidate_sys_trips: Set[str] = set()
+        for m in members_by_user.get(uid, []):
+            tid = str(m.get("itinerary_id") or "").strip().lower()
+            t = itins_by_id.get(tid)
+            if not t:
+                member_reason = "dangling_trip_membership"
+                break
+            if t.get("created_by") != "SYSTEM":
+                member_reason = "member_of_non_system_itinerary"
+                break
+            if t.get("title") != SAMPLE_TRIP_TITLE:
+                member_reason = "edited_sample_itinerary_title"
+                break
+            if t.get("user_id") is not None:
+                member_reason = "system_trip_has_user_id_fk"
+                break
+            member_display_name = str(m.get("user_name") or "").strip().lower()
+            if member_display_name not in DEFAULT_SAMPLE_MEMBER_NAMES:
+                member_reason = "customized_member_name"
+                break
+            trip_member_uids = {
+                str(tm.get("user_id") or "").strip().lower()
+                for tm in members_by_trip.get(tid, [])
+            }
+            if trip_member_uids != {uid}:
+                member_reason = "shared_itinerary_member"
+                break
+            if expenses_by_trip.get(tid):
+                member_reason = "system_trip_has_expenses"
+                break
+            if capsules_by_trip.get(tid):
+                member_reason = "system_trip_has_capsules"
+                break
+            t_created_dt = parse_iso_timestamp(t.get("created_at"))
+            if t_created_dt is None or t_created_dt >= cutoff:
+                member_reason = "recent_or_invalid_system_trip"
+                break
+            if m.get("created_at") is not None:
+                m_created_dt = parse_iso_timestamp(m.get("created_at"))
+                if m_created_dt is None or m_created_dt >= cutoff:
+                    member_reason = "recent_or_invalid_membership"
+                    break
+            candidate_sys_trips.add(tid)
+
+        if member_reason:
+            _disqualify(uid, u, member_reason)
+            continue
+
+        qualified_users.append(u)
+        qualified_user_id_set.add(uid)
+        user_exclusive_system_trip_ids.update(candidate_sys_trips)
+
+    qualified_user_ids = sorted(qualified_user_id_set)
+    all_target_trip_ids = sorted(user_exclusive_system_trip_ids)
+    all_target_trip_set = set(all_target_trip_ids)
+
+    target_members = [
+        m
+        for m in members
+        if str(m.get("itinerary_id") or "").strip().lower() in all_target_trip_set
+        or str(m.get("user_id") or "").strip().lower() in qualified_user_id_set
+    ]
+
+    return {
+        "mode": "purge_stale_travelers",
+        "generated_at": now_utc.isoformat(),
+        "min_age_days": min_age_days,
+        "cutoff_at": cutoff.isoformat(),
+        "total_traveler_users_scanned": total_traveler_users_scanned,
+        "qualified_users": qualified_users,
+        "qualified_user_ids": qualified_user_ids,
+        "disqualified_users": disqualified_users,
+        "disqualified_reason_counts": disqualified_reason_counts,
+        "user_exclusive_system_trip_ids": all_target_trip_ids,
+        "all_target_trip_ids": all_target_trip_ids,
+        "all_target_trips": [itins_by_id[tid] for tid in all_target_trip_ids if tid in itins_by_id],
+        "target_expenses": [],
+        "target_capsules": [],
+        "target_members": target_members,
+        "target_notifications": [],
+        "target_notif_user_ids": [],
+        "target_preferences": [],
+        "target_pref_user_ids": [],
+        "orphan_push_subs": [],
+        "orphan_push_user_ids": [],
+        "exempt_member_rows": [],
+        "orphan_explorer_members": [],
+        "cloudinary_urls": [],
+    }
+
+
+def refine_stale_travelers_plan_with_items(
+    plan: Dict[str, Any],
+    itinerary_items: Sequence[Dict[str, Any]],
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """
+    Secondary item-level guardrail for --purge-stale-travelers:
+    Inspects fetched itinerary_items for candidate exclusive SYSTEM sample trips and
+    disqualifies any user whose sample trip was customized (non-canonical place_name,
+    duplicate place_name, or item created within the protected min_age_days window).
+    """
+    cutoff = parse_iso_timestamp(plan.get("cutoff_at"))
+    target_trip_ids = {str(tid).strip().lower() for tid in plan.get("all_target_trip_ids", []) if tid}
+    if not target_trip_ids:
+        return plan, []
+
+    items_by_trip: Dict[str, List[Dict[str, Any]]] = {}
+    for item in itinerary_items:
+        tid = str(item.get("itinerary_id") or "").strip().lower()
+        if tid in target_trip_ids:
+            items_by_trip.setdefault(tid, []).append(item)
+
+    trip_owner_by_trip: Dict[str, str] = {}
+    for m in plan.get("target_members", []):
+        tid = str(m.get("itinerary_id") or "").strip().lower()
+        uid = str(m.get("user_id") or "").strip().lower()
+        if tid in target_trip_ids and uid:
+            trip_owner_by_trip[tid] = uid
+
+    disqualified_user_reasons: Dict[str, str] = {}
+    for tid in sorted(target_trip_ids):
+        trip_items = items_by_trip.get(tid, [])
+        seen_places: Set[str] = set()
+        bad_reason: Optional[str] = None
+        for item in trip_items:
+            place_name = str(item.get("place_name") or "").strip()
+            if place_name not in SAMPLE_TRIP_PLACE_NAMES or place_name in seen_places:
+                bad_reason = "edited_sample_itinerary_items"
+                break
+            seen_places.add(place_name)
+            if cutoff is not None and item.get("created_at") is not None:
+                item_dt = parse_iso_timestamp(item.get("created_at"))
+                if item_dt is None or item_dt >= cutoff:
+                    bad_reason = "recent_or_invalid_sample_item"
+                    break
+        if bad_reason:
+            owner_uid = trip_owner_by_trip.get(tid)
+            if owner_uid and owner_uid not in disqualified_user_reasons:
+                disqualified_user_reasons[owner_uid] = bad_reason
+
+    if not disqualified_user_reasons:
+        filtered_items = [
+            item
+            for item in itinerary_items
+            if str(item.get("itinerary_id") or "").strip().lower() in target_trip_ids
+        ]
+        return plan, filtered_items
+
+    disqualified_uids = set(disqualified_user_reasons.keys())
+    users_by_id = {
+        str(u.get("id") or "").strip().lower(): u
+        for u in plan.get("qualified_users", [])
+        if u.get("id")
+    }
+    disqualified_trips = {
+        str(m.get("itinerary_id") or "").strip().lower()
+        for m in plan.get("target_members", [])
+        if str(m.get("user_id") or "").strip().lower() in disqualified_uids
+    }
+
+    updated_disqualified = list(plan.get("disqualified_users", []))
+    updated_reason_counts = dict(plan.get("disqualified_reason_counts", {}))
+    for uid in sorted(disqualified_uids):
+        reason = disqualified_user_reasons[uid]
+        u_row = users_by_id.get(uid, {})
+        updated_disqualified.append(
+            {
+                "user_id": uid,
+                "name": u_row.get("name"),
+                "created_at": u_row.get("created_at"),
+                "reason": reason,
+            }
+        )
+        updated_reason_counts[reason] = updated_reason_counts.get(reason, 0) + 1
+
+    remaining_users = [
+        u for u in plan.get("qualified_users", [])
+        if str(u.get("id") or "").strip().lower() not in disqualified_uids
+    ]
+    remaining_user_ids = sorted(
+        uid for uid in plan.get("qualified_user_ids", []) if uid not in disqualified_uids
+    )
+    remaining_trip_ids = sorted(
+        tid for tid in plan.get("all_target_trip_ids", []) if tid not in disqualified_trips
+    )
+    remaining_trip_set = set(remaining_trip_ids)
+    remaining_trips = [
+        t for t in plan.get("all_target_trips", [])
+        if str(t.get("id") or "").strip().lower() in remaining_trip_set
+    ]
+    remaining_members = [
+        m for m in plan.get("target_members", [])
+        if str(m.get("user_id") or "").strip().lower() not in disqualified_uids
+        and str(m.get("itinerary_id") or "").strip().lower() in remaining_trip_set
+    ]
+    remaining_items = [
+        item for item in itinerary_items
+        if str(item.get("itinerary_id") or "").strip().lower() in remaining_trip_set
+    ]
+
+    refined = {
+        **plan,
+        "qualified_users": remaining_users,
+        "qualified_user_ids": remaining_user_ids,
+        "disqualified_users": updated_disqualified,
+        "disqualified_reason_counts": updated_reason_counts,
+        "user_exclusive_system_trip_ids": remaining_trip_ids,
+        "all_target_trip_ids": remaining_trip_ids,
+        "all_target_trips": remaining_trips,
+        "target_members": remaining_members,
+    }
+    return refined, remaining_items
+
+
 def build_audit_report(
     snapshot: Dict[str, List[Dict[str, Any]]],
     *,
@@ -1243,6 +1653,7 @@ def build_audit_report(
     main_row = next((u for u in users if sha256_uid(u.get("id", "")) == MAIN_USER_UID_SHA256), None)
 
     plan = build_purge_plan(snapshot, now=now)
+    stale_plan = build_stale_travelers_purge_plan(snapshot, now=now)
 
     # Detect any NEW suspect test accounts not in the approved list and not protected
     new_suspect_accounts: List[Dict[str, Any]] = []
@@ -1283,6 +1694,14 @@ def build_audit_report(
             "cloudinary_assets": len(plan["cloudinary_urls"]),
             "protected_null_creator_trips": plan["skipped_null_creator_trips_count"],
             "cooldown_skipped_system_trips": plan["skipped_recent_system_trips_count"],
+        },
+        "stale_travelers_summary": {
+            "min_age_days": stale_plan["min_age_days"],
+            "total_traveler_users": stale_plan["total_traveler_users_scanned"],
+            "qualified_stale_travelers": len(stale_plan["qualified_user_ids"]),
+            "exclusive_system_trips": len(stale_plan["all_target_trip_ids"]),
+            "retained_travelers": len(stale_plan["disqualified_users"]),
+            "retained_breakdown": stale_plan["disqualified_reason_counts"],
         },
         "new_suspect_accounts": new_suspect_accounts,
     }
@@ -1941,6 +2360,18 @@ def _print_audit(report: Dict[str, Any]) -> None:
     print(f"  Target Notifications (incl. test-uuid & c4f87a37): {ps['target_notifications']} (unapproved historical orphans untouched: {ps['unapproved_orphan_notifs']})")
     print(f"  Cloudinary Assets to Destroy    : {ps['cloudinary_assets']}")
 
+    st = report.get("stale_travelers_summary")
+    if st:
+        print(f"\n--- Stale Crawler/Audit Traveler Summary (>= {st['min_age_days']}d, Zero Real Activity) ---")
+        print(
+            f"  Qualified Stale Travelers       : {st['qualified_stale_travelers']} / {st['total_traveler_users']} "
+            f"(exclusive SYSTEM sample trips: {st['exclusive_system_trips']})"
+        )
+        print(
+            f"  Retained / Protected Travelers  : {st['retained_travelers']} "
+            f"(breakdown: {st['retained_breakdown']})"
+        )
+
     suspects = report["new_suspect_accounts"]
     print(f"\n--- Unlisted Suspect Test Accounts (Audit Only, Never Auto-Purged): {len(suspects)} ---")
     for s in suspects[:15]:
@@ -1955,9 +2386,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--audit", action="store_true", help="Read-only audit of 6-account pool and orphans.")
     mode.add_argument("--purge", action="store_true", help="Purge approved test accounts & orphans (Dry-Run unless --execute).")
+    mode.add_argument(
+        "--purge-stale-travelers",
+        action="store_true",
+        help="Purge stale zero-activity 'Traveler' zombie accounts older than --min-age-days (Dry-Run unless --execute).",
+    )
     mode.add_argument("--upgrade-pool", action="store_true", help="Upgrade 4 Legacy pool roles via API (Dry-Run unless --execute).")
 
     parser.add_argument("--execute", action="store_true", default=False, help="Apply mutations (default: strict Dry-Run).")
+    parser.add_argument(
+        "--min-age-days",
+        type=int,
+        default=DEFAULT_STALE_TRAVELER_MIN_AGE_DAYS,
+        help=f"Minimum account age in days for --purge-stale-travelers (default: {DEFAULT_STALE_TRAVELER_MIN_AGE_DAYS}, min: {MIN_STALE_TRAVELER_AGE_DAYS}).",
+    )
     parser.add_argument(
         "--backup-path",
         type=str,
@@ -1968,12 +2410,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--write-backup",
         action="store_true",
         default=False,
-        help="Write redacted JSON backup during --purge Dry-Run as well (always written on --execute).",
+        help="Write redacted JSON backup during Dry-Run as well (always written on --execute).",
     )
     parser.add_argument("--api-base", type=str, default=DEFAULT_API_BASE, help="Production API base URL for --upgrade-pool.")
     parser.add_argument("--env-out", type=str, default=DEFAULT_ENV_OUT, help="Gitignored local env file for upgraded keys.")
 
     args = parser.parse_args(argv)
+    if args.purge_stale_travelers and args.min_age_days < MIN_STALE_TRAVELER_AGE_DAYS:
+        parser.error(f"--min-age-days must be >= {MIN_STALE_TRAVELER_AGE_DAYS}")
+
     supabase = get_supabase_client()
 
     if args.audit:
@@ -1997,8 +2442,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"docs/migrations/backups/test_accounts_backup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
         )
         target_backup_arg = args.backup_path or default_backup
-        safe_backup_path = resolve_safe_backup_path(target_backup_arg)
-        assert_git_ignored(safe_backup_path, "Backup file")
+        safe_backup_path = resolve_safe_backup_path(target_backup_arg, repo_root=REPO_ROOT)
+        assert_git_ignored(safe_backup_path, "Backup file", repo_root=REPO_ROOT)
 
         serialized_preview = json.dumps(backup_payload, indent=2, ensure_ascii=False)
         preview_sha = hashlib.sha256(serialized_preview.encode("utf-8")).hexdigest()
@@ -2025,16 +2470,78 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         if not args.execute:
             if args.write_backup:
-                written_path, digest = write_redacted_backup(backup_payload, safe_backup_path)
+                written_path, digest = write_redacted_backup(backup_payload, safe_backup_path, repo_root=REPO_ROOT)
                 print(f"  💾 Dry-Run Redacted Backup Saved: {written_path} (SHA256={digest[:16]}...)")
             print("\n🛡️ [DRY RUN COMPLETED - ZERO MUTATIONS APPLIED]")
             print("=" * 80 + "\n")
             return 0
 
-        written_path, digest = write_redacted_backup(backup_payload, safe_backup_path)
+        written_path, digest = write_redacted_backup(backup_payload, safe_backup_path, repo_root=REPO_ROOT)
         print(f"  💾 Redacted Physical Backup Saved: {written_path} (SHA256={digest[:16]}...)")
         result = execute_purge(supabase, plan, target_items)
         print("\n🎉 [PURGE EXECUTION COMPLETE]")
+        print(f"  Deleted counts     : {result['counts']}")
+        print(f"  Cloudinary results : {result['cloudinary_results']}")
+        print("=" * 80 + "\n")
+        return 0
+
+    if args.purge_stale_travelers:
+        snapshot = load_database_snapshot(supabase, include_auth_status=False)
+        plan = build_stale_travelers_purge_plan(snapshot, min_age_days=args.min_age_days)
+        raw_target_items = fetch_rows_by_in_chunks(
+            supabase,
+            "itinerary_items",
+            SAFE_SELECT_COLS["itinerary_items"],
+            "itinerary_id",
+            uuid_only(plan["all_target_trip_ids"]),
+        )
+        plan, target_items = refine_stale_travelers_plan_with_items(plan, raw_target_items)
+        backup_payload = build_redacted_backup_payload(plan, target_items)
+        default_backup = (
+            f"docs/migrations/backups/stale_travelers_backup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        target_backup_arg = args.backup_path or default_backup
+        safe_backup_path = resolve_safe_backup_path(target_backup_arg, repo_root=REPO_ROOT)
+        assert_git_ignored(safe_backup_path, "Backup file", repo_root=REPO_ROOT)
+
+        serialized_preview = json.dumps(backup_payload, indent=2, ensure_ascii=False)
+        preview_sha = hashlib.sha256(serialized_preview.encode("utf-8")).hexdigest()
+
+        print("\n" + "=" * 80)
+        print(f"🛡️ Tabidachi Stale Traveler Zombie Purge ({'EXECUTE' if args.execute else 'DRY-RUN'})")
+        print("=" * 80)
+        print(f"  Min Age Window                  : >= {plan['min_age_days']} day(s) (cutoff UTC: {plan['cutoff_at']})")
+        print(f"  Total 'Traveler' Users Scanned  : {plan['total_traveler_users_scanned']}")
+        print(f"  Qualified Stale Travelers       : {len(plan['qualified_user_ids'])} (retained/protected: {len(plan['disqualified_users'])})")
+        if plan["qualified_users"]:
+            dates = sorted(str(u.get("created_at") or "") for u in plan["qualified_users"])
+            print(f"  Qualified Created-At Range      : {dates[0]} .. {dates[-1]}")
+        print(f"  Retained Reason Breakdown       : {plan['disqualified_reason_counts']}")
+        recent_protected = [
+            dq for dq in plan["disqualified_users"] if dq["reason"] == "within_min_age_window"
+        ]
+        if recent_protected:
+            print(f"  Protected Recent (<{plan['min_age_days']}d) Accounts : {len(recent_protected)}")
+            for dq in recent_protected:
+                print(f"    🛡️ Retained {dq['user_id'][:8]}... | created_at={dq['created_at']}")
+        print(f"  Exclusive SYSTEM Sample Trips   : {len(plan['all_target_trip_ids'])}")
+        print(f"  Target Sample Itinerary Items   : {len(target_items)}")
+        print(f"  Target Trip Members             : {len(plan['target_members'])}")
+        print(f"  Target Notifications            : {len(plan['target_notifications'])}")
+        print(f"  Redacted Backup Preview         : {len(serialized_preview):,} bytes | SHA256={preview_sha[:16]}...")
+
+        if not args.execute:
+            if args.write_backup:
+                written_path, digest = write_redacted_backup(backup_payload, safe_backup_path, repo_root=REPO_ROOT)
+                print(f"  💾 Dry-Run Redacted Backup Saved: {written_path} (SHA256={digest[:16]}...)")
+            print("\n🛡️ [DRY RUN COMPLETED - ZERO MUTATIONS APPLIED]")
+            print("=" * 80 + "\n")
+            return 0
+
+        written_path, digest = write_redacted_backup(backup_payload, safe_backup_path, repo_root=REPO_ROOT)
+        print(f"  💾 Redacted Physical Backup Saved: {written_path} (SHA256={digest[:16]}...)")
+        result = execute_purge(supabase, plan, target_items)
+        print("\n🎉 [STALE TRAVELER PURGE EXECUTION COMPLETE]")
         print(f"  Deleted counts     : {result['counts']}")
         print(f"  Cloudinary results : {result['cloudinary_results']}")
         print("=" * 80 + "\n")

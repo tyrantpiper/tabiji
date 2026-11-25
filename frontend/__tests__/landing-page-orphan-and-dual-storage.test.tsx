@@ -123,6 +123,120 @@ describe('LandingPage Orphan Nickname Guard & Dual-Storage Coherency', () => {
         expect(localStorage.getItem('user_nickname')).toBeNull()
     })
 
+    it('handleLogin passes trimmed initialName to ensureValidSession AND preserves usersApi.updateProfile fallback', async () => {
+        vi.mocked(ensureValidSession).mockImplementationOnce(async () => {
+            localStorage.setItem('user_uuid', '77777777-7777-4777-8777-777777777777')
+            return 'jwt-atomic'
+        })
+
+        const view = render(
+            <LanguageProvider>
+                <LandingPage />
+            </LanguageProvider>
+        )
+
+        const nickInput = await screen.findByPlaceholderText('例如：小明')
+        fireEvent.change(nickInput, { target: { value: '  海獺  ' } })
+        fireEvent.click(screen.getByRole('button', { name: /開始旅程/ }))
+
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+
+        expect(ensureValidSession).toHaveBeenCalledWith(false, { initialName: '海獺' })
+        expect(localStorage.getItem('user_nickname')).toBe('海獺')
+        expect(usersApi.updateProfile).toHaveBeenCalledWith(
+            '77777777-7777-4777-8777-777777777777',
+            { name: '海獺' }
+        )
+        view.unmount()
+    })
+
+    it('handleLogin rejects invisible-only & literal null/undefined nicknames AND sends identical Unicode/grapheme-sanitized name to session, localStorage, and updateProfile', async () => {
+        vi.mocked(ensureValidSession).mockImplementationOnce(async () => {
+            localStorage.setItem('user_uuid', '77777777-7777-4777-8777-777777777777')
+            return 'jwt-sanitized'
+        })
+
+        const view = render(
+            <LanguageProvider>
+                <LandingPage />
+            </LanguageProvider>
+        )
+
+        const nickInput = await screen.findByPlaceholderText('例如：小明')
+        for (const bad of ['\u200b', '\ufeff\u200d\ufe0f', 'null', '  undefined  ']) {
+            fireEvent.change(nickInput, { target: { value: bad } })
+            fireEvent.click(screen.getByRole('button', { name: /開始旅程/ }))
+            expect(ensureValidSession).not.toHaveBeenCalled()
+            expect(usersApi.updateProfile).not.toHaveBeenCalled()
+            expect(localStorage.getItem('user_nickname')).toBeNull()
+        }
+
+        // Input with internal fullwidth whitespace, Bidi override, and >64 grapheme boundary
+        const overlong = '\u202e' + 'A'.repeat(62) + '👨‍💻' + 'extra'
+        fireEvent.change(nickInput, { target: { value: overlong } })
+        fireEvent.click(screen.getByRole('button', { name: /開始旅程/ }))
+
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+
+        const expected = 'A'.repeat(62)
+        expect(ensureValidSession).toHaveBeenCalledWith(false, { initialName: expected })
+        expect(localStorage.getItem('user_nickname')).toBe(expected)
+        expect(usersApi.updateProfile).toHaveBeenCalledWith(
+            '77777777-7777-4777-8777-777777777777',
+            { name: expected }
+        )
+        view.unmount()
+    })
+
+    it('handleLogin bootstraps pre-existing orphan UUID without cached token and retries fresh session if visitor self-healing purges stale UUID', async () => {
+        localStorage.setItem('user_uuid', '88888888-8888-4888-8888-888888888888')
+        // Call 1: visitor self-healing detects 401 on stale UUID and purges user_uuid
+        vi.mocked(ensureValidSession)
+            .mockImplementationOnce(async () => {
+                localStorage.removeItem('user_uuid')
+                return null
+            })
+            // Call 2: immediate fresh bootstrap succeeds with server-minted UUID + atomic name
+            .mockImplementationOnce(async () => {
+                localStorage.setItem('user_uuid', '99999999-9999-4999-8999-999999999999')
+                localStorage.setItem('tabiji_session_token', 'jwt-fresh')
+                return 'jwt-fresh'
+            })
+
+        const view = render(
+            <LanguageProvider>
+                <LandingPage />
+            </LanguageProvider>
+        )
+
+        const nickInput = await screen.findByPlaceholderText('例如：小明')
+        fireEvent.change(nickInput, { target: { value: 'Chungshi' } })
+        fireEvent.click(screen.getByRole('button', { name: /開始旅程/ }))
+
+        await act(async () => {
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+        })
+
+        expect(ensureValidSession).toHaveBeenCalledTimes(2)
+        expect(ensureValidSession).toHaveBeenNthCalledWith(1, false, { initialName: 'Chungshi' })
+        expect(ensureValidSession).toHaveBeenNthCalledWith(2, false, { initialName: 'Chungshi' })
+        expect(localStorage.getItem('user_uuid')).toBe('99999999-9999-4999-8999-999999999999')
+        expect(localStorage.getItem('user_nickname')).toBe('Chungshi')
+        expect(usersApi.updateProfile).toHaveBeenCalledWith(
+            '99999999-9999-4999-8999-999999999999',
+            { name: 'Chungshi' }
+        )
+        view.unmount()
+    })
+
     it('handleRecover (online) clears activeTripId, activeTripTitle, and stale userId in BOTH trip-storage and tabidachi-trip-storage', async () => {
         vi.useFakeTimers()
         seedTripStorage()

@@ -82,6 +82,7 @@ const AppShell = dynamic(() => import("@/components/views/app-shell").then(mod =
 import { toast } from "sonner"
 import { usersApi } from "@/lib/api"
 import { restoreAccountWithKey, ensureValidSession } from "@/lib/auth-session"
+import { normalizeUserInputNickname } from "@/lib/nickname-utils"
 import { debugLog, debugWarn } from "@/lib/debug"
 
 import { generateSecureUUID, isValidRecoveryKey, TBJ_REC_REGEX } from "@/lib/security"
@@ -197,24 +198,40 @@ export function LandingPage() {
 
     const handleLogin = async () => {
         if (isLoggingInRef.current || isRecoveringRef.current) return
-        if (!nickname.trim()) { toast.warning(t('landing_please_enter_nickname')); return }
+        const sanitizedNickname = normalizeUserInputNickname(nickname)
+        if (!sanitizedNickname) { toast.warning(t('landing_please_enter_nickname')); return }
 
         clearActiveSelection(nicknameInputRef.current)
         isLoggingInRef.current = true
         setIsLoggingIn(true)
 
         try {
-            // 1. 若連線正常，優先透過 ensureValidSession 讓伺服器正規派發合法憑證與使用者 ID (若本機已有則複用)
+            // 1. 若連線正常，優先透過 ensureValidSession 讓伺服器正規派發合法憑證與使用者 ID (原子帶入初始暱稱，若本機殘留孤兒 UUID 亦一併補登/自癒)
             let uuid = localStorage.getItem("user_uuid")?.trim() || null
             if (uuid === "null" || uuid === "undefined") {
                 uuid = null
             }
-            if (!uuid && navigator.onLine) {
-                await Promise.resolve(ensureValidSession()).catch(() => null)
+            const hasCachedToken = Boolean(localStorage.getItem("tabiji_session_token")?.trim())
+            if ((!uuid || !hasCachedToken) && navigator.onLine) {
+                const hadPreexistingUuid = Boolean(uuid)
+                await Promise.resolve(
+                    ensureValidSession(false, { initialName: sanitizedNickname })
+                ).catch(() => null)
                 if (!isMountedRef.current) return
                 uuid = localStorage.getItem("user_uuid")?.trim() || null
                 if (uuid === "null" || uuid === "undefined") {
                     uuid = null
+                }
+                // 🛡️ 若原本殘留無效孤兒 UUID 在換票時遭訪客自癒清除，立即補發一次全新建帳請求
+                if (hadPreexistingUuid && !uuid && navigator.onLine) {
+                    await Promise.resolve(
+                        ensureValidSession(false, { initialName: sanitizedNickname })
+                    ).catch(() => null)
+                    if (!isMountedRef.current) return
+                    uuid = localStorage.getItem("user_uuid")?.trim() || null
+                    if (uuid === "null" || uuid === "undefined") {
+                        uuid = null
+                    }
                 }
             }
 
@@ -224,13 +241,13 @@ export function LandingPage() {
                 localStorage.setItem("user_uuid", uuid)
             }
 
-            localStorage.setItem("user_nickname", nickname)
+            localStorage.setItem("user_nickname", sanitizedNickname)
 
-            // 🆕 Sync nickname to backend database (Nickname <-> RecoveryKey Binding)
+            // 🆕 Sync nickname to backend database (Nickname <-> RecoveryKey Binding; 五雲過渡期相容保底)
             if (navigator.onLine) {
                 try {
-                    await usersApi.updateProfile(uuid, { name: nickname })
-                    debugLog("✅ [Profile] Nickname synced to backend:", nickname)
+                    await usersApi.updateProfile(uuid, { name: sanitizedNickname })
+                    debugLog("✅ [Profile] Nickname synced to backend:", sanitizedNickname)
                 } catch (err) {
                     // Non-blocking: sync failure shouldn't block login
                     debugWarn("⚠️ [Profile] Failed to sync nickname to backend:", err)

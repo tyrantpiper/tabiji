@@ -1148,3 +1148,342 @@ def test_upgrade_pool_transport_error_desync_non_json_200_and_windows_replace_re
     written = mta.atomic_merge_write_env(env_file, {"TEST_RETRY_KEY": "ok"}, repo_root=tmp_path)
     assert attempts["count"] == 2
     assert mta.parse_env_file(written)[1]["TEST_RETRY_KEY"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# 11. --purge-stale-travelers Guardrails, Dry-Run, Age Window & Execution
+# ---------------------------------------------------------------------------
+def test_build_stale_travelers_purge_plan_enforces_all_safety_invariants():
+    """
+    Exhaustively tests every single safety invariant of build_stale_travelers_purge_plan:
+    - Qualifies ONLY exact 'Traveler' accounts older than min_age_days with zero real activity
+      (either 0 trips or exclusive unedited old SYSTEM sample trip).
+    - Protects recent (<7d & exact 7d boundary) accounts like 24b0b81a, hard-protected pool/main,
+      non-exact names, avatars, emails, owned itineraries (created_by & user_id), real/NULL/shared/
+      edited/recent SYSTEM trips, expenses (created_by & payer_id), capsules, push subs, preferences,
+      and missing created_at.
+    """
+    now = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+    old_ts = (now - timedelta(days=14)).isoformat()
+    recent_ts = (now - timedelta(days=2)).isoformat()
+    exact_boundary_ts = (now - timedelta(days=7)).isoformat()
+
+    # Qualifying candidates
+    q_empty = str(uuid.uuid4())
+    q_with_sys = str(uuid.uuid4())
+    t_q_sys = str(uuid.uuid4())
+
+    # Disqualified / protected accounts
+    real_named = str(uuid.uuid4())
+    case_diff_name = str(uuid.uuid4())
+    recent_iphone = "24b0b81a-1111-4111-8111-111111111111"
+    exact_boundary_u = str(uuid.uuid4())
+    no_created_at_u = str(uuid.uuid4())
+    has_avatar_u = str(uuid.uuid4())
+    has_email_u = str(uuid.uuid4())
+    owns_created_by_u = str(uuid.uuid4())
+    owns_user_id_u = str(uuid.uuid4())
+    member_real_u = str(uuid.uuid4())
+    member_null_creator_u = str(uuid.uuid4())
+    shared_sys_u1 = str(uuid.uuid4())
+    shared_sys_u2 = str(uuid.uuid4())
+    edited_sys_u = str(uuid.uuid4())
+    recent_sys_u = str(uuid.uuid4())
+    sys_with_exp_u = str(uuid.uuid4())
+    sys_with_cap_u = str(uuid.uuid4())
+    has_exp_creator_u = str(uuid.uuid4())
+    has_exp_payer_u = str(uuid.uuid4())
+    has_capsule_u = str(uuid.uuid4())
+    has_push_u = str(uuid.uuid4())
+    has_pref_u = str(uuid.uuid4())
+    has_notif_u = str(uuid.uuid4())
+    custom_member_name_u = str(uuid.uuid4())
+
+    t_owned_cb = str(uuid.uuid4())
+    t_owned_uid = str(uuid.uuid4())
+    t_real_trip = str(uuid.uuid4())
+    t_null_trip = str(uuid.uuid4())
+    t_shared_sys = str(uuid.uuid4())
+    t_edited_sys = str(uuid.uuid4())
+    t_recent_sys = str(uuid.uuid4())
+    t_sys_exp = str(uuid.uuid4())
+    t_sys_cap = str(uuid.uuid4())
+    t_custom_mname_sys = str(uuid.uuid4())
+
+    snapshot = _empty_snapshot(
+        users=[
+            {"id": q_empty, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": q_with_sys, "name": "Traveler", "avatar_url": "", "email": "", "created_at": old_ts},
+            {"id": TEST_USER_OWNER_ID, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": real_named, "name": "Chungshi", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": case_diff_name, "name": "traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": recent_iphone, "name": "Traveler", "avatar_url": None, "email": None, "created_at": recent_ts},
+            {"id": exact_boundary_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": exact_boundary_ts},
+            {"id": no_created_at_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": None},
+            {"id": has_avatar_u, "name": "Traveler", "avatar_url": "https://res.cloudinary.com/demo/image/upload/v1/a.png", "email": None, "created_at": old_ts},
+            {"id": has_email_u, "name": "Traveler", "avatar_url": None, "email": "real@example.com", "created_at": old_ts},
+            {"id": owns_created_by_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": owns_user_id_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": member_real_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": member_null_creator_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": shared_sys_u1, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": shared_sys_u2, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": edited_sys_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": recent_sys_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": sys_with_exp_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": sys_with_cap_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": has_exp_creator_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": has_exp_payer_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": has_capsule_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": has_push_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": has_pref_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": has_notif_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": custom_member_name_u, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+        ],
+        itineraries=[
+            {"id": t_q_sys, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+            {"id": t_owned_cb, "title": "My Trip", "created_by": owns_created_by_u, "user_id": None, "created_at": old_ts},
+            {"id": t_owned_uid, "title": "FK Trip", "created_by": real_named, "user_id": owns_user_id_u, "created_at": old_ts},
+            {"id": t_real_trip, "title": "Shared Real", "created_by": real_named, "user_id": None, "created_at": old_ts},
+            {"id": t_null_trip, "title": "Historical NULL", "created_by": None, "user_id": None, "created_at": old_ts},
+            {"id": t_shared_sys, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+            {"id": t_edited_sys, "title": "My Edited Taipei", "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+            {"id": t_recent_sys, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": recent_ts},
+            {"id": t_sys_exp, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+            {"id": t_sys_cap, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+            {"id": t_custom_mname_sys, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+        ],
+        trip_members=[
+            {"id": str(uuid.uuid4()), "itinerary_id": t_q_sys, "user_id": q_with_sys, "user_name": "Explorer", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_real_trip, "user_id": member_real_u, "user_name": "Traveler", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_null_trip, "user_id": member_null_creator_u, "user_name": "Traveler", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_shared_sys, "user_id": shared_sys_u1, "user_name": "Explorer", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_shared_sys, "user_id": shared_sys_u2, "user_name": "Explorer", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_edited_sys, "user_id": edited_sys_u, "user_name": "Explorer", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_recent_sys, "user_id": recent_sys_u, "user_name": "Explorer", "created_at": recent_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_sys_exp, "user_id": sys_with_exp_u, "user_name": "Explorer", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_sys_cap, "user_id": sys_with_cap_u, "user_name": "Explorer", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_custom_mname_sys, "user_id": custom_member_name_u, "user_name": "海獺", "created_at": old_ts},
+        ],
+        expenses=[
+            {"id": str(uuid.uuid4()), "itinerary_id": t_sys_exp, "created_by": real_named, "payer_id": None},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_real_trip, "created_by": has_exp_creator_u, "payer_id": None},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_real_trip, "created_by": real_named, "payer_id": has_exp_payer_u},
+        ],
+        trip_capsule_entries=[
+            {"id": str(uuid.uuid4()), "trip_id": t_sys_cap, "author_id": real_named, "photo_url": None},
+            {"id": str(uuid.uuid4()), "trip_id": t_real_trip, "author_id": has_capsule_u, "photo_url": None},
+        ],
+        push_subscriptions=[
+            {"id": str(uuid.uuid4()), "user_id": has_push_u, "endpoint": "https://push.example/1"},
+        ],
+        user_preferences=[
+            {"id": str(uuid.uuid4()), "user_id": has_pref_u, "category": "diet"},
+        ],
+        notifications=[
+            {"id": str(uuid.uuid4()), "user_id": has_notif_u, "title": "Trip invite", "created_at": old_ts},
+        ],
+    )
+
+    plan = mta.build_stale_travelers_purge_plan(snapshot, now=now, min_age_days=7)
+    assert set(plan["qualified_user_ids"]) == {q_empty, q_with_sys}
+    assert plan["all_target_trip_ids"] == [t_q_sys]
+    assert len(plan["target_members"]) == 1
+    assert plan["target_members"][0]["user_id"] == q_with_sys
+
+    dq = {d["user_id"]: d["reason"] for d in plan["disqualified_users"]}
+    assert dq[TEST_USER_OWNER_ID] == "hard_protected_user"
+    assert dq[recent_iphone] == "within_min_age_window"
+    assert dq[exact_boundary_u] == "within_min_age_window"
+    assert dq[no_created_at_u] == "missing_or_invalid_created_at"
+    assert dq[has_avatar_u] == "has_avatar"
+    assert dq[has_email_u] == "has_email"
+    assert dq[owns_created_by_u] == "owns_or_created_itinerary"
+    assert dq[owns_user_id_u] == "owns_or_created_itinerary"
+    assert dq[member_real_u] == "member_of_non_system_itinerary"
+    assert dq[member_null_creator_u] == "member_of_non_system_itinerary"
+    assert dq[shared_sys_u1] == "shared_itinerary_member"
+    assert dq[shared_sys_u2] == "shared_itinerary_member"
+    assert dq[edited_sys_u] == "edited_sample_itinerary_title"
+    assert dq[recent_sys_u] == "recent_or_invalid_system_trip"
+    assert dq[sys_with_exp_u] == "system_trip_has_expenses"
+    assert dq[sys_with_cap_u] == "system_trip_has_capsules"
+    assert dq[has_exp_creator_u] == "has_expenses"
+    assert dq[has_exp_payer_u] == "has_expenses"
+    assert dq[has_capsule_u] == "has_capsule_entries"
+    assert dq[has_push_u] == "has_push_subscriptions"
+    assert dq[has_pref_u] == "has_user_preferences"
+    assert dq[has_notif_u] == "has_notifications"
+    assert dq[custom_member_name_u] == "customized_member_name"
+    # Non-exact names were never even considered candidates
+    assert real_named not in dq and real_named not in plan["qualified_user_ids"]
+    assert case_diff_name not in dq and case_diff_name not in plan["qualified_user_ids"]
+
+    # Naive datetime `now` is deterministically normalized as UTC (never host local TZ)
+    naive_now = datetime(2026, 11, 25, 12, 0, 0)
+    naive_plan = mta.build_stale_travelers_purge_plan(snapshot, now=naive_now, min_age_days=7)
+    assert naive_plan["cutoff_at"] == plan["cutoff_at"]
+    assert set(naive_plan["qualified_user_ids"]) == {q_empty, q_with_sys}
+
+    # Invalid min_age_days fails closed
+    for bad_days in (0, -7, True):
+        with pytest.raises(ValueError):
+            mta.build_stale_travelers_purge_plan(snapshot, now=now, min_age_days=bad_days)
+
+
+def test_refine_stale_travelers_plan_disqualifies_modified_or_recent_sample_items():
+    """
+    Verifies item-level secondary guardrail: a Traveler whose SYSTEM sample trip kept the
+    default title but has custom/duplicate/recent itinerary_items MUST be disqualified before
+    backup or deletion.
+    """
+    now = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+    old_ts = (now - timedelta(days=14)).isoformat()
+    recent_ts = (now - timedelta(days=1)).isoformat()
+
+    u_clean = str(uuid.uuid4())
+    u_custom_item = str(uuid.uuid4())
+    u_recent_item = str(uuid.uuid4())
+    t_clean = str(uuid.uuid4())
+    t_custom = str(uuid.uuid4())
+    t_recent = str(uuid.uuid4())
+
+    snapshot = _empty_snapshot(
+        users=[
+            {"id": u_clean, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": u_custom_item, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": u_recent_item, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+        ],
+        itineraries=[
+            {"id": t_clean, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+            {"id": t_custom, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+            {"id": t_recent, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+        ],
+        trip_members=[
+            {"id": str(uuid.uuid4()), "itinerary_id": t_clean, "user_id": u_clean, "user_name": "Explorer", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_custom, "user_id": u_custom_item, "user_name": "Explorer", "created_at": old_ts},
+            {"id": str(uuid.uuid4()), "itinerary_id": t_recent, "user_id": u_recent_item, "user_name": "Explorer", "created_at": old_ts},
+        ],
+    )
+
+    plan = mta.build_stale_travelers_purge_plan(snapshot, now=now, min_age_days=7)
+    assert set(plan["qualified_user_ids"]) == {u_clean, u_custom_item, u_recent_item}
+
+    fetched_items = [
+        {"id": str(uuid.uuid4()), "itinerary_id": t_clean, "place_name": "台北 101 觀景台", "created_at": old_ts},
+        {"id": str(uuid.uuid4()), "itinerary_id": t_custom, "place_name": "淺草寺", "created_at": old_ts},
+        {"id": str(uuid.uuid4()), "itinerary_id": t_recent, "place_name": "台北 101 觀景台", "created_at": recent_ts},
+    ]
+
+    refined, filtered_items = mta.refine_stale_travelers_plan_with_items(plan, fetched_items)
+    assert refined["qualified_user_ids"] == [u_clean]
+    assert refined["all_target_trip_ids"] == [t_clean]
+    assert len(filtered_items) == 1
+    assert filtered_items[0]["itinerary_id"] == t_clean
+
+    dq = {d["user_id"]: d["reason"] for d in refined["disqualified_users"]}
+    assert dq[u_custom_item] == "edited_sample_itinerary_items"
+    assert dq[u_recent_item] == "recent_or_invalid_sample_item"
+
+
+def test_purge_stale_travelers_cli_dry_run_and_execute_safety_net(tmp_path, monkeypatch):
+    """
+    - Default --purge-stale-travelers (without --execute) runs zero .delete() calls.
+    - --min-age-days 0 is rejected by CLI parser before touching DB.
+    - --purge-stale-travelers --execute writes redacted backup inside docs/migrations/backups/
+      and executes FK-ordered throttled purge reusing execute_purge().
+    """
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
+    recent_ts = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    stale_uid = str(uuid.uuid4())
+    recent_uid = "24b0b81a-2222-4222-8222-222222222222"
+    sys_trip_id = str(uuid.uuid4())
+    sys_member_id = str(uuid.uuid4())
+
+    snapshot = _empty_snapshot(
+        users=[
+            {"id": stale_uid, "name": "Traveler", "avatar_url": None, "email": None, "created_at": old_ts},
+            {"id": recent_uid, "name": "Traveler", "avatar_url": None, "email": None, "created_at": recent_ts},
+        ],
+        itineraries=[
+            {"id": sys_trip_id, "title": mta.SAMPLE_TRIP_TITLE, "created_by": "SYSTEM", "user_id": None, "created_at": old_ts},
+        ],
+        trip_members=[
+            {"id": sys_member_id, "itinerary_id": sys_trip_id, "user_id": stale_uid, "user_name": "Explorer", "created_at": old_ts},
+        ],
+    )
+
+    # 1. Invalid --min-age-days 0 rejected before DB access
+    with pytest.raises(SystemExit) as exc_info:
+        mta.main(["--purge-stale-travelers", "--min-age-days", "0"])
+    assert exc_info.value.code == 2
+
+    # 2. Strict Dry-Run makes zero deletes
+    mock_sb_dry = MagicMock()
+    mock_sb_dry.table.return_value.delete.side_effect = AssertionError("Dry-Run must NEVER call .delete()!")
+    monkeypatch.setattr(mta, "get_supabase_client", lambda: mock_sb_dry)
+    monkeypatch.setattr(mta, "load_database_snapshot", lambda sb, include_auth_status=False: snapshot)
+    monkeypatch.setattr(
+        mta,
+        "fetch_rows_by_in_chunks",
+        lambda *a, **kw: [
+            {
+                "id": str(uuid.uuid4()),
+                "itinerary_id": sys_trip_id,
+                "place_name": "台北 101 觀景台",
+                "created_at": old_ts,
+            }
+        ],
+    )
+    monkeypatch.setattr(mta, "assert_git_ignored", lambda *a, **kw: None)
+
+    assert mta.main(["--purge-stale-travelers"]) == 0
+    mock_sb_dry.table.return_value.delete.assert_not_called()
+
+    # 3. --execute writes redacted backup and invokes execute_purge cleanly without touching recent_uid
+    backup_target = tmp_path / "docs" / "migrations" / "backups" / "stale_test.json"
+    monkeypatch.setattr(mta, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mta, "verify_git_ignored", lambda *a, **kw: True)
+    monkeypatch.setattr(mta, "assert_git_ignored", lambda *a, **kw: None)
+
+    deleted_calls: List[tuple[str, str, List[str]]] = []
+    mock_sb_exec = MagicMock()
+
+    def table_side_effect(table_name: str):
+        tbl = MagicMock()
+
+        def delete_side_effect():
+            del_q = MagicMock()
+
+            def in_side_effect(col: str, vals: List[str]):
+                deleted_calls.append((table_name, col, list(vals)))
+                return MagicMock(execute=lambda: MagicMock(data=[{"id": v} for v in vals]))
+
+            del_q.in_.side_effect = in_side_effect
+            return del_q
+
+        tbl.delete.side_effect = delete_side_effect
+        return tbl
+
+    mock_sb_exec.table.side_effect = table_side_effect
+    monkeypatch.setattr(mta, "get_supabase_client", lambda: mock_sb_exec)
+    monkeypatch.setattr(mta.time, "sleep", lambda _: None)
+
+    rc = mta.main([
+        "--purge-stale-travelers",
+        "--execute",
+        "--backup-path",
+        "docs/migrations/backups/stale_test.json",
+    ])
+    assert rc == 0
+    assert backup_target.exists()
+    backup_data = json.loads(backup_target.read_text(encoding="utf-8"))
+    assert backup_data["summary"]["users"] == 1
+    assert backup_data["summary"]["itineraries"] == 1
+    assert [u["id"] for u in backup_data["users"]] == [stale_uid]
+
+    deleted_users = [v for tbl, col, vals in deleted_calls if tbl == "users" and col == "id" for v in vals]
+    deleted_trips = [v for tbl, col, vals in deleted_calls if tbl == "itineraries" and col == "id" for v in vals]
+    assert deleted_users == [stale_uid]
+    assert recent_uid not in deleted_users
+    assert deleted_trips == [sys_trip_id]

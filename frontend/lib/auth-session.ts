@@ -9,11 +9,35 @@
  */
 
 import { SyncEngineControl } from "./sync-engine";
+import {
+    isDefaultPlaceholderNickname,
+    normalizeUserInputNickname,
+    sanitizeEffectiveNickname,
+} from "./nickname-utils";
+
+export {
+    isDefaultPlaceholderNickname,
+    normalizeUserInputNickname,
+    sanitizeEffectiveNickname,
+};
 
 const TOKEN_KEY = "tabiji_session_token";
 const POP_TOKEN_KEY = "tabiji_pop_token";
 const RECOVERY_KEY = "user_uuid";
 const TBJ_REC_REGEX = /^tbj_rec_[0-9a-f]{8}_[0-9a-f]{32}$/i;
+
+function readLocalNickname(): string | null {
+    if (typeof window === "undefined") return null;
+    try {
+        return localStorage.getItem("user_nickname");
+    } catch {
+        return null;
+    }
+}
+
+export interface EnsureSessionOptions {
+    initialName?: string;
+}
 
 let inFlightSession: { id: number; fingerprint: string; promise: Promise<string | null> } | null = null;
 let sessionAttemptCounter = 0;
@@ -257,7 +281,10 @@ export async function getValidSessionToken(): Promise<string | null> {
  * - 若離線狀態：靜默回傳 null，保障 PWA 離線自癒不中斷
  * - 若聯網狀態：背景向後端換票/領票 (攜帶現有 Token 作為持有證明 Proof-of-Possession 以支援舊裝置升級)
  */
-export async function ensureValidSession(forceRefresh: boolean = false): Promise<string | null> {
+export async function ensureValidSession(
+    forceRefresh: boolean = false,
+    options?: EnsureSessionOptions
+): Promise<string | null> {
     if (typeof window === "undefined") return null;
 
     if (!forceRefresh) {
@@ -339,13 +366,29 @@ export async function ensureValidSession(forceRefresh: boolean = false): Promise
                 headers["Authorization"] = `Bearer ${rawToken}`;
             }
 
+            const isModernRecoveryKey = Boolean(latestKey && TBJ_REC_REGEX.test(latestKey.trim()));
+            const bootstrapName = isModernRecoveryKey
+                ? undefined
+                : (options?.initialName !== undefined
+                    ? sanitizeEffectiveNickname(options.initialName)
+                    : sanitizeEffectiveNickname(readLocalNickname()));
+
+            const requestBody: {
+                recovery_key?: string;
+                expected_user_id?: string;
+                name?: string;
+            } = {
+                recovery_key: latestKey || undefined,
+                expected_user_id: latestEstablishedUuid || undefined,
+            };
+            if (bootstrapName) {
+                requestBody.name = bootstrapName;
+            }
+
             const res = await fetch("/api/auth/session", {
                 method: "POST",
                 headers,
-                body: JSON.stringify({
-                    recovery_key: latestKey || undefined,
-                    expected_user_id: latestEstablishedUuid || undefined,
-                })
+                body: JSON.stringify(requestBody)
             });
 
             const postFetchFingerprint = buildExchangeFingerprint(
@@ -672,10 +715,11 @@ export async function resetAndStartFreshSession(): Promise<SessionInfo | null> {
     isReauthDismissedInMemory = false;
 
     try {
+        const bootstrapName = sanitizeEffectiveNickname(readLocalNickname());
         const res = await fetch("/api/auth/session", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({})
+            body: JSON.stringify(bootstrapName ? { name: bootstrapName } : {})
         });
 
         if (!res.ok) return null;

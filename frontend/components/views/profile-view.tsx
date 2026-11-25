@@ -9,6 +9,7 @@ import {
     BookOpen, Mail, Check, BellRing, Type, RefreshCw, Bot
 } from "lucide-react"
 import { rotateAccountRecoveryKey, fetchLatestRecoveryKey } from "@/lib/auth-session"
+import { isDefaultPlaceholderNickname, normalizeUserInputNickname, sanitizeEffectiveNickname } from "@/lib/nickname-utils"
 import { getSupabaseClient } from "@/lib/supabase"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
@@ -165,6 +166,8 @@ export function ProfileView() {
     const [showDonation, setShowDonation] = useState(true)
     const [donationExpanded, setDonationExpanded] = useState(false)
     const donationReqSeqRef = useRef(0)
+    const profileReqSeqRef = useRef(0)
+    const isEditingRef = useRef(false)
     const isMountedRef = useRef(true)
 
     // 🆕 POI 推薦偏好設定
@@ -192,16 +195,22 @@ export function ProfileView() {
     // 🔔 推播通知狀態
     const { permissionState, isSubscribed, subscribe, unsubscribe, isSupported, isLoading: isPushLoading } = usePushNotifications()
 
-    const fetchProfileData = useCallback(async (isMounted: boolean) => {
+    useEffect(() => {
+        isEditingRef.current = isEditing
+    }, [isEditing])
+
+    const fetchProfileData = useCallback(async () => {
+        const reqSeq = ++profileReqSeqRef.current
         const userId = localStorage.getItem("user_uuid")
         const name = localStorage.getItem("user_nickname")
         const avatar = localStorage.getItem("user_avatar")
 
-        // 1. Load from cache first (Optimistic)
-        if (isMounted) {
+        // 1. Load from cache first (Optimistic — 編輯中絕不覆寫草稿)
+        const safeCachedName = normalizeUserInputNickname(name) || "Traveler"
+        if (isMountedRef.current) {
             setProfile(prev => ({
                 ...prev,
-                nickname: name || "Traveler",
+                nickname: isEditingRef.current ? prev.nickname : safeCachedName,
                 avatarUrl: avatar || ""
             }))
         }
@@ -210,41 +219,69 @@ export function ProfileView() {
         if (userId) {
             usersApi.getProfile(userId)
                 .then(data => {
-                    if (!isMounted) return
+                    if (!isMountedRef.current || reqSeq !== profileReqSeqRef.current) return
+                    if (localStorage.getItem("user_uuid") !== userId) return
+
+                    const rawServerName = typeof data.name === "string" ? data.name.trim() : ""
+                    const sanitizedServerRealName = sanitizeEffectiveNickname(rawServerName)
+                    const isPlaceholderTraveler =
+                        !sanitizedServerRealName &&
+                        Boolean(rawServerName) &&
+                        isDefaultPlaceholderNickname(rawServerName) &&
+                        /traveler/i.test(rawServerName)
+                    const localName = localStorage.getItem("user_nickname")
+                    const hasValidLocalRealName = !isDefaultPlaceholderNickname(localName)
+                    const shouldApplyServerName =
+                        !isEditingRef.current &&
+                        (Boolean(sanitizedServerRealName) || (isPlaceholderTraveler && !hasValidLocalRealName))
+                    const resolvedServerName = sanitizedServerRealName ?? "Traveler"
+
                     setProfile(prev => ({
                         ...prev,
-                        nickname: data.name || prev.nickname,
+                        nickname: shouldApplyServerName ? resolvedServerName : prev.nickname,
                         avatarUrl: data.avatar_url || prev.avatarUrl
                     }))
-                    // Sync cache
-                    if (data.name) localStorage.setItem("user_nickname", data.name)
+                    // Sync cache (🛡️ 禁止以後端預設佔位名覆蓋本機有效真名，且編輯中或過期請求不覆寫)
+                    if (shouldApplyServerName) localStorage.setItem("user_nickname", resolvedServerName)
                     if (data.avatar_url) localStorage.setItem("user_avatar", data.avatar_url)
                 })
                 .catch(err => {
-                    if (isMounted) console.error("Failed to fetch profile:", err)
+                    if (isMountedRef.current && reqSeq === profileReqSeqRef.current) {
+                        console.error("Failed to fetch profile:", err)
+                    }
                 })
 
             // 🧠 載入 AI 記憶偏好
-            setIsLoadPrefs(true)
+            if (isMountedRef.current) setIsLoadPrefs(true)
             usersApi.getPreferences(userId)
                 .then(data => {
-                    if (isMounted) setPreferences(data)
+                    if (
+                        isMountedRef.current &&
+                        reqSeq === profileReqSeqRef.current &&
+                        localStorage.getItem("user_uuid") === userId
+                    ) {
+                        setPreferences(data)
+                    }
                 })
                 .catch(err => console.error("Failed to load preferences:", err))
                 .finally(() => {
-                    if (isMounted) setIsLoadPrefs(false)
+                    if (isMountedRef.current && reqSeq === profileReqSeqRef.current) {
+                        setIsLoadPrefs(false)
+                    }
                 })
         }
     }, [])
 
     useEffect(() => {
-        let isMounted = true
-        fetchProfileData(isMounted)
+        isMountedRef.current = true
+        let effectActive = true
+        let authRevalidateTimer: ReturnType<typeof setTimeout> | null = null
+        void fetchProfileData()
 
         // Check keys & listen for updates
         const updateKeyStatus = () => {
             const secureKey = getSecureApiKey()
-            if (isMounted) {
+            if (effectActive && isMountedRef.current) {
                 setHasApiKey(!!secureKey)
             }
         }
@@ -253,22 +290,28 @@ export function ProfileView() {
 
         // 🛡️ 監聽金鑰更新/重認證完成事件，延遲 300ms 自動刷新 Profile 與偏好
         const handleAuthRevalidated = () => {
-            setTimeout(() => {
-                if (isMounted) fetchProfileData(isMounted)
+            if (authRevalidateTimer !== null) clearTimeout(authRevalidateTimer)
+            authRevalidateTimer = setTimeout(() => {
+                authRevalidateTimer = null
+                if (effectActive && isMountedRef.current) void fetchProfileData()
             }, 300)
         }
         window.addEventListener("tabiji:recovery_key_updated", handleAuthRevalidated)
 
         // 🆕 載入 POI 偏好設定
         const savedPoiPrefs = localStorage.getItem("poi_preferences")
-        if (savedPoiPrefs && isMounted) {
+        if (savedPoiPrefs && effectActive && isMountedRef.current) {
             try {
                 setPoiPreferences(JSON.parse(savedPoiPrefs))
             } catch { /* ignore */ }
         }
 
         return () => {
-            isMounted = false
+            effectActive = false
+            if (authRevalidateTimer !== null) {
+                clearTimeout(authRevalidateTimer)
+                authRevalidateTimer = null
+            }
             window.removeEventListener("apiKeyUpdated", updateKeyStatus)
             window.removeEventListener("tabiji:recovery_key_updated", handleAuthRevalidated)
         }
@@ -344,7 +387,7 @@ export function ProfileView() {
     useEffect(() => {
         const handleRefresh = () => {
             console.log("🔄 ProfileView: Global refresh triggered via Tab Hub")
-            fetchProfileData(true)
+            void fetchProfileData()
             void refreshDonationProgress()
         }
         window.addEventListener('refresh-active-view', handleRefresh)
@@ -382,21 +425,35 @@ export function ProfileView() {
             return
         }
 
-        const previousNickname = localStorage.getItem("user_nickname") || "Traveler"
+        const nextNickname = normalizeUserInputNickname(profile.nickname)
+        if (!nextNickname) {
+            toast.warning(t('landing_please_enter_nickname'))
+            return
+        }
+
+        const previousNickname = normalizeUserInputNickname(localStorage.getItem("user_nickname")) || "Traveler"
+        // 🛡️ 作廢所有在途舊版 getProfile 請求，杜絕慢速舊回應覆蓋剛儲存的新暱稱
+        profileReqSeqRef.current += 1
+        isEditingRef.current = false
 
         try {
             // Optimistic update
-            localStorage.setItem("user_nickname", profile.nickname)
+            localStorage.setItem("user_nickname", nextNickname)
+            setProfile(prev => ({ ...prev, nickname: nextNickname }))
             setIsEditing(false)
 
             // API update
-            await usersApi.updateProfile(userId, { name: profile.nickname })
+            await usersApi.updateProfile(userId, { name: nextNickname })
             toast.success(t('profile_updated'))
         } catch (error) {
             console.error(error)
-            // Rollback
-            localStorage.setItem("user_nickname", previousNickname)
-            setProfile(prev => ({ ...prev, nickname: previousNickname }))
+            // Rollback (僅於帳號未切換時回滾 localStorage，元件未卸載時回滾 UI)
+            if (localStorage.getItem("user_uuid") === userId) {
+                localStorage.setItem("user_nickname", previousNickname)
+            }
+            if (isMountedRef.current && localStorage.getItem("user_uuid") === userId) {
+                setProfile(prev => ({ ...prev, nickname: previousNickname }))
+            }
             toast.error(error instanceof Error ? error.message : "Failed to update profile on server")
         }
     }
@@ -634,7 +691,19 @@ export function ProfileView() {
                                                 placeholder="Enter nickname"
                                             />
                                             <div className="flex gap-2 w-full">
-                                                <Button variant="outline" size="sm" className="flex-1 h-11 rounded-xl border-[#0B3026]/10 dark:border-white/10" onClick={() => setIsEditing(false)}>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="flex-1 h-11 rounded-xl border-[#0B3026]/10 dark:border-white/10"
+                                                    onClick={() => {
+                                                        isEditingRef.current = false
+                                                        setProfile(prev => ({
+                                                            ...prev,
+                                                            nickname: normalizeUserInputNickname(localStorage.getItem("user_nickname")) || "Traveler"
+                                                        }))
+                                                        setIsEditing(false)
+                                                    }}
+                                                >
                                                     Cancel
                                                 </Button>
                                                 <Button size="sm" className="flex-1 h-11 bg-[#0B3026] text-white dark:bg-white dark:text-[#121A18] rounded-xl shadow-md hover:bg-[#164E40]" onClick={handleSaveProfile}>
@@ -647,7 +716,10 @@ export function ProfileView() {
                                             <h2 className="text-2xl font-bold text-[#1E2927] dark:text-[#E5EBEA] flex items-center justify-center gap-2 group">
                                                 {profile.nickname}
                                                 <button
-                                                    onClick={() => setIsEditing(true)}
+                                                    onClick={() => {
+                                                        isEditingRef.current = true
+                                                        setIsEditing(true)
+                                                    }}
                                                     className="p-1.5 bg-white/80 hover:bg-white dark:bg-[#1E2927]/80 dark:hover:bg-[#1E2927] rounded-full transition-all shadow-2xs border border-[#0B3026]/10 dark:border-white/10 -mr-8 cursor-pointer"
                                                     title={t('profile_edit_tooltip')}
                                                 >

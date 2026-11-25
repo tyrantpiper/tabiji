@@ -44,9 +44,17 @@ FIXTURE_CORE_USER_1 = "11111111-2222-3333-4444-555555555551"
 FIXTURE_CORE_USER_2 = "11111111-2222-3333-4444-555555555552"
 FIXTURE_CORE_USER_3 = "11111111-2222-3333-4444-555555555553"
 
-# SHA-256 of production main user and personal QA account (never embed plaintext personal QA UUID)
+# SHA-256 of production main user, personal QA account, and protected external legacy users
+# (NEVER embed plaintext production UUIDs in public source, tests, or docs)
 MAIN_USER_SHA256 = "1b9110f155d92fc3cee7dba9833489dd1e29c5ee57b54fafb7d7ed6b5e100d2d"
 PERSONAL_QA_SHA256 = "df53a6abe0fa38b52ecf55f21d794ac5d47e6d370af2c6ac7d6f6d3c829e0c29"
+FORBIDDEN_PUBLIC_UUID_SHA256S = frozenset({
+    PERSONAL_QA_SHA256,
+    # Protected external production Legacy user UUIDs (must NEVER appear in tracked public files)
+    "9ab6e258e5b70848f5ceab1d236c86fb69455464e80049d181a03a04edfc1700",
+    "98faa948601211050c9d5954044c094d054ced7fa0ad41b3a543f9139e0369c3",
+    "0e0fbb95a29482adb987ff48fa9bf15043e3680b8a07d5d4aa5f93800001f0d7",
+})
 
 
 def _sha256(val: str) -> str:
@@ -167,27 +175,35 @@ def test_sentinel_ryan_test_env_injection_and_zero_plaintext_leak(monkeypatch):
     monkeypatch.setenv("NEXT_PUBLIC_TEST_USER_RYAN_TEST_ID", valid_v4)
     assert resolve_ryan_test_user_id() == valid_v4.lower()
 
-    # Cross-stack alignment & zero plaintext personal QA UUID in public backend/frontend source
-    backend_src = (REPO_ROOT / "backend" / "tests" / "fixtures" / "test_users.py").read_text(encoding="utf-8")
+    # Cross-stack alignment & zero plaintext personal QA / external legacy user UUIDs across public tests, scripts, and docs
     frontend_src = (REPO_ROOT / "frontend" / "lib" / "constants" / "test-fixtures.ts").read_text(encoding="utf-8")
-    frontend_test_src = (REPO_ROOT / "frontend" / "__tests__" / "test-fixtures.test.ts").read_text(encoding="utf-8")
-    script_src = (REPO_ROOT / "scripts" / "manage_test_accounts.py").read_text(encoding="utf-8")
-    script_test_src = (REPO_ROOT / "backend" / "tests" / "test_manage_test_accounts.py").read_text(encoding="utf-8")
-    memory_src = (REPO_ROOT / ".agents" / "domains" / "devops_security.md").read_text(encoding="utf-8")
 
     uuid_re = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
-    for label, src in (
-        ("backend/tests/fixtures/test_users.py", backend_src),
-        ("frontend/lib/constants/test-fixtures.ts", frontend_src),
-        ("frontend/__tests__/test-fixtures.test.ts", frontend_test_src),
-        ("scripts/manage_test_accounts.py", script_src),
-        ("backend/tests/test_manage_test_accounts.py", script_test_src),
-        (".agents/domains/devops_security.md", memory_src),
-    ):
-        for found_uuid in uuid_re.findall(src):
-            assert _sha256(found_uuid) != PERSONAL_QA_SHA256, (
-                f"Plaintext personal QA UUID leaked into public file {label}!"
-            )
+    scan_roots = (
+        REPO_ROOT / "backend" / "tests",
+        REPO_ROOT / "frontend" / "__tests__",
+        REPO_ROOT / "frontend" / "lib" / "constants",
+        REPO_ROOT / "scripts",
+        REPO_ROOT / ".agents" / "domains",
+        REPO_ROOT / "docs" / "journals",
+    )
+    allowed_suffixes = {".py", ".ts", ".tsx", ".js", ".mjs", ".md"}
+    for root in scan_roots:
+        if not root.exists():
+            continue
+        for file_path in root.rglob("*"):
+            if (
+                not file_path.is_file()
+                or file_path.suffix.lower() not in allowed_suffixes
+                or "__pycache__" in file_path.parts
+            ):
+                continue
+            src = file_path.read_text(encoding="utf-8", errors="ignore")
+            rel_label = file_path.relative_to(REPO_ROOT).as_posix()
+            for found_uuid in uuid_re.findall(src):
+                assert _sha256(found_uuid) not in FORBIDDEN_PUBLIC_UUID_SHA256S, (
+                    f"Plaintext protected production/QA UUID leaked into public file {rel_label}!"
+                )
 
     for role in ("OWNER", "EDITOR", "VIEWER", "CAPSULE", "STRANGER", "RYAN_TEST"):
         assert role in frontend_src

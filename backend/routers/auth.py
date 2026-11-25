@@ -13,6 +13,7 @@ Provides:
 import os
 import re
 import time
+import unicodedata
 import uuid
 import hmac
 import hashlib
@@ -47,11 +48,111 @@ if not RECOVERY_PEPPER:
 
 
 UNIFORM_AUTH_ERROR = "引繼碼驗證失敗，無法在此設備恢復同步。請確認引繼碼是否正確。"
+DEFAULT_BOOTSTRAP_NAME = "Traveler"
+MAX_BOOTSTRAP_NAME_LEN = 64
+_BOOTSTRAP_WHITESPACE_RE = re.compile(r"\s+")
+_BOOTSTRAP_CTRL_STRIP_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f"
+    r"\u00ad\u061c\u200b\u200c\u200e\u200f\u202a-\u202e\u2060-\u206f\ufeff]"
+)
+_BOOTSTRAP_INVISIBLE_ONLY_RE = re.compile(r"[\u200d\ufe0e\ufe0f\s]+")
+_BOOTSTRAP_PLACEHOLDER_NAMES = frozenset({
+    "traveler",
+    "new traveler",
+    "unknown traveler",
+    "legacy traveler",
+    "null",
+    "undefined",
+})
+
+
+def _is_regional_indicator(ch: str) -> bool:
+    cp = ord(ch)
+    return 0x1F1E6 <= cp <= 0x1F1FF
+
+
+def _is_grapheme_extender(ch: str) -> bool:
+    cp = ord(ch)
+    if cp in (0xFE0E, 0xFE0F, 0x20E3) or 0x1F3FB <= cp <= 0x1F3FF or 0xE0020 <= cp <= 0xE007F:
+        return True
+    return unicodedata.category(ch) in ("Mn", "Mc", "Me")
+
+
+def _truncate_grapheme_safe(text: str, max_len: int) -> str:
+    """
+    Truncate text to at most `max_len` Unicode code points without splitting
+    ZWJ emoji sequences, regional indicator flag pairs, emoji modifiers,
+    variation selectors, or combining mark clusters.
+    """
+    if len(text) <= max_len:
+        return text
+
+    clusters: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        start = i
+        ch = text[i]
+        i += 1
+        if _is_regional_indicator(ch) and i < n and _is_regional_indicator(text[i]):
+            i += 1
+            clusters.append(text[start:i])
+            continue
+        while i < n:
+            if _is_grapheme_extender(text[i]):
+                i += 1
+                continue
+            if text[i] == "\u200d" and i + 1 < n and not text[i + 1].isspace():
+                i += 2
+                continue
+            break
+        clusters.append(text[start:i])
+
+    out_parts: list[str] = []
+    used = 0
+    for cluster in clusters:
+        c_len = len(cluster)
+        if used + c_len > max_len:
+            break
+        out_parts.append(cluster)
+        used += c_len
+    return "".join(out_parts).strip().strip("\u200d").strip()
+
+
+def sanitize_bootstrap_name(raw_name: Optional[str]) -> str:
+    """
+    Sanitize optional initial display name for new-user / orphan-UUID bootstrap.
+    Strips control/invisible/Bidi characters, collapses all Unicode whitespace,
+    enforces a grapheme-safe length bound, and falls back to DEFAULT_BOOTSTRAP_NAME
+    ('Traveler') when blank, invisible-only, or placeholder.
+    """
+    if not isinstance(raw_name, str):
+        return DEFAULT_BOOTSTRAP_NAME
+    cleaned = _BOOTSTRAP_CTRL_STRIP_RE.sub("", raw_name)
+    cleaned = _BOOTSTRAP_WHITESPACE_RE.sub(" ", cleaned).strip().strip("\u200d").strip()
+    if not cleaned or not _BOOTSTRAP_INVISIBLE_ONLY_RE.sub("", cleaned):
+        return DEFAULT_BOOTSTRAP_NAME
+    if cleaned.lower() in _BOOTSTRAP_PLACEHOLDER_NAMES:
+        return DEFAULT_BOOTSTRAP_NAME
+    if len(cleaned) > MAX_BOOTSTRAP_NAME_LEN:
+        cleaned = _truncate_grapheme_safe(cleaned, MAX_BOOTSTRAP_NAME_LEN)
+    if (
+        not cleaned
+        or not _BOOTSTRAP_INVISIBLE_ONLY_RE.sub("", cleaned)
+        or cleaned.lower() in _BOOTSTRAP_PLACEHOLDER_NAMES
+    ):
+        return DEFAULT_BOOTSTRAP_NAME
+    return cleaned
 
 
 class SessionRequest(BaseModel):
     recovery_key: Optional[str] = Field(None, description="Existing user recovery key (tbj_rec_*) or legacy UUID")
     expected_user_id: Optional[str] = Field(None, description="Expected user UUID when re-anchoring an existing device session")
+    name: Optional[str] = Field(
+        None,
+        max_length=256,
+        description="Optional initial display name applied ONLY when creating a new user or bootstrapping an orphan UUID",
+    )
 
 
 class SessionResponse(BaseModel):
@@ -311,6 +412,7 @@ async def create_or_exchange_session(
 
         # 🛠️ Bug Hunter 修復：有效 UUID v4 且通過 expected_user_id 檢查之離線/已清理孤兒身分，原地靜默補登並核發 tbj_rec_*
         if not exists or not user_rec:
+            bootstrap_name = sanitize_bootstrap_name(body.name)
             full_key, key_id, secret_hash = generate_prefixed_recovery_key()
             vault_key = derive_vault_key(secret)
             encrypted_key = encrypt_recovery_key(full_key, vault_key)
@@ -319,7 +421,7 @@ async def create_or_exchange_session(
                 await run_in_threadpool(
                     lambda: supabase.table("users").insert({
                         "id": clean_uid,
-                        "name": "Traveler",
+                        "name": bootstrap_name,
                         "recovery_key_id": key_id,
                         "recovery_secret_hash": secret_hash,
                         "recovery_key_encrypted": encrypted_key,
@@ -419,7 +521,8 @@ async def create_or_exchange_session(
     if raw_key:
         raise HTTPException(status_code=400, detail="Invalid recovery key format")
 
-    # 4. 全新無金鑰裝置秒開 (生成全新 UUID 與專屬引繼金鑰)
+    # 4. 全新無金鑰裝置秒開 (生成全新 UUID 與專屬引繼金鑰，原子寫入初始暱稱)
+    bootstrap_name = sanitize_bootstrap_name(body.name)
     new_uid = str(uuid.uuid4())
     full_key, key_id, secret_hash = generate_prefixed_recovery_key()
     vault_key = derive_vault_key(secret)
@@ -428,7 +531,7 @@ async def create_or_exchange_session(
         await run_in_threadpool(
             lambda: supabase.table("users").insert({
                 "id": new_uid,
-                "name": "Traveler",
+                "name": bootstrap_name,
                 "recovery_key_id": key_id,
                 "recovery_secret_hash": secret_hash,
                 "recovery_key_encrypted": encrypted_key,
@@ -439,7 +542,7 @@ async def create_or_exchange_session(
         # 後備：若 users 表無新欄位，降級寫入基礎資訊
         try:
             await run_in_threadpool(
-                lambda: supabase.table("users").insert({"id": new_uid, "name": "Traveler"}).execute()
+                lambda: supabase.table("users").insert({"id": new_uid, "name": bootstrap_name}).execute()
             )
         except Exception as e2:
             print(f"🔥 [Auth] DB bootstrap error: {e2}")
