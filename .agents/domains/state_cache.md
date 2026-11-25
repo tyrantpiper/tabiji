@@ -3,6 +3,8 @@
 > **所屬領域**: SWR v2, Zustand v5, 自癒狀態機, 深層連結 (Deep Link), 路由跳轉
 
 ## 🏛️ 架構決策 (Decisions)
+- **零外洩後落盤即時廣播、本地私密保留合併、防抖計數守恆與 Day 0/1 清單同步契約 (AD-250)**: 協同端點 broadcastTripEvent 必須在 await tripsApi.updateDayData(...) 後端落盤成功後才發送，且 payload 必經 stripPrivateForBroadcast() 淨化，嚴禁將 is_private: true 條目或原始 private_owner_id UUID 送上 Supabase Realtime WebSocket。接收端 (useTripRealtime.ts, EditableDailyChecklist.tsx, EditableDailyTips.tsx) 必以 mergeIncomingWithLocalPrivate(..., allowOwnerlessIncoming=false) 將外部公開廣播與本端私密項合併，防止同伴更新洗掉本機私密項；itinerary-view.tsx 須以 useMemo 穩定每日陣列參照並對 500 錯誤去重單一 Toast；Day 1 清單樂觀寫入須同步歸零 day_checklists[0] = [] 對齊後端 Day 0 合併清理；500ms 勾選防抖必以 hasPendingDebounceRef 每視窗僅累加一次 pendingUpdatesCount、失敗回滾至 committedItemsRef，且所有立即變更 (add/remove/privacy/saveEdit) 前須先執行 cancelPendingDebounce() 杜絕過期計時器復活已刪項目。
+
 - **雙語儲存雙獨立容錯、執行期白名單與安全模板插值契約 (AD-236)**: LanguageContext.tsx 必須將 localStorage.setItem 與 document.cookie 分離為兩個獨立 try/catch 區塊（QuotaExceededError 不可阻斷 Cookie 同步），並於掛載讀取與 LandingPage 掛載 useEffect 全面包裹 try/catch；setLang 必須執行 isValidLanguage() 校驗同時保持 useCallback([], []) 穩定性。共用 translateTemplate() 必須以 Object.prototype.hasOwnProperty.call(dict, key) 阻擋原型鍵查詢，並以 split/join 替代動態 RegExp.replace 消除 $& 展開缺陷且支援 SSR fallback params。
 
 - **認證失敗指紋鎖與永久彈窗靜默取代短時間冷卻法 (AD-228)**: 當 SWR refreshInterval (15s) 大於冷卻時間時，10s/5s 時間冷卻會演變為無限 401 風暴。ensureValidSession 必須改採 JSON 防碰撞憑證指紋鎖 (lastFailedExchangeFingerprint)：相同憑證指紋於本頁內永久阻斷重試，憑證一更新立即解鎖；dismissReauthPrompt 以 isReauthDismissedInMemory 在當前頁面維持離線靜默（僅保留 lastRestoredAt < 5000ms 吸收恢復前在途請求）；useExpenses/useTripCapsules/usePoiPool 一律停試 401/403/404。
@@ -63,6 +65,8 @@
 - **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **SWR v2 dequal 參照穩定性導致失敗不回滾與 useEffect([..., isEditing]) 覆蓋離線編輯陷阱 (FP-120)**: 前端突變失敗 (401/409/500) 時伺服器資料未變，SWR v2 dequal 會保留同一份 activeTripData 物件參照，導致 useEffect([activeTripData]) 永不重跑，單靠 reloadTripDetail() 無法回滾樂觀狀態；寫入處理器必須快照前態並顯式回滾，同時將 200 成功後之 reloadTripDetail()/tripMutate() 加上 .catch(() => {}) 避免重抓抖動觸發假回滾。反之若將 isEditing/innerEditing 放入 useEffect 而未以 lastSyncedTripRef 追蹤 (tripId, activeTripData)，離線排隊存檔後退出編輯態時會被舊快取反寫覆蓋樂觀編輯。
+
 - **僅護 Context 漏護 LandingPage 掛載期 Web Storage 導致受限環境整頁崩潰陷阱 (FP-105)**: 僅在 LanguageContext 補齊 localStorage try/catch 並只用 renderHook(() => useLanguage()) 測試會誤以為具備 Safari 隱私瀏覽／受限 iframe 防護；實測掛載 <LandingPage />（特別是 URL 含 ?trip= 時）會在掛載 useEffect 裸呼叫 sessionStorage.setItem / localStorage.getItem 處拋出未捕獲 DOMException('SecurityError') 導致整頁崩潰。Web Storage 防護必須於入口元件對稱落地並以整頁元件渲染驗證。
 
 - **SSE 註解心跳行誤殺整段資料區塊與 Stream Mock 契約破壞陷阱 (FP-104)**: frontend/lib/api.ts 解析 SSE \n\n 區塊時，嚴禁只判斷 trimmed.startsWith(':') 就 continue 整段區塊（會把同區塊內的 event:/data: 一併吞掉），必須先以 line => !line.startsWith(':') 逐行剔除註解行。後端將核心端點重構為 call_extraction_stream 時，必須加入 _is_mocked 相容檢查，否則既有用例 mock 舊 call_extraction 將被靜默繞過。

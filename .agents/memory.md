@@ -41,4 +41,6 @@
 - **Three-Master-Key Decoupling**: Cloud Run `SESSION_SECRET_KEY` (JWT 門票)、`VAULT_MASTER_KEY` (AES-GCM 保險庫)、`RECOVERY_PEPPER` (HMAC 指紋) 三權嚴格獨立於 `SUPABASE_KEY`（`sb_*` 僅置於 `apikey` 標頭）。
 - **CJK Orthographic & Lexical Bridge**: 針對公用 Photon 無中文索引與日本 OSM 95% 長尾缺 `name:zh` 之結構限制，建立繁簡日新字體正規化（`澀→渋`/`車站→駅`）、品牌泛用尾詞剝除與保序 Bigram Top-K 橋接，補足自架開源引擎亦缺的東亞在地能力。
 - **Five-Cloud Ordered Rollout**: 因 Vercel (~1m) 快於 Cloud Run (3–5m)、Cloudflare Worker 無自動 CI 且 `/sw.js` 具 4h 快取，涉及跨雲契約與邊緣快取之發佈必須嚴守 `Cloud Run 驗收 ➔ 手動 wrangler deploy 升版快取 ➔ Git Push 觸發 Vercel`。
+- **Pure Postgres Row-Lock Atomic Merge**: 跨容器 JSONB 併發改以 Postgres `FOR NO KEY UPDATE` ＋ `lock_timeout` ＋頂層 `|| jsonb_build_object(...)` 單交易原子寫入，以零 Redis 成本根除 read-modify-write 覆蓋。
+- **Post-Persist Zero-Leak Broadcast**: 協同 WebSocket 廣播必於後端落盤後發送且經 `stripPrivateForBroadcast()` 剔除私密項與原始 UUID，接收端以 `mergeIncomingWithLocalPrivate()` 保留本端私密狀態。
 

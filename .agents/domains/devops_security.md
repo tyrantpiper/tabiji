@@ -104,6 +104,8 @@
 - **Mantis-Critic 假陽性修剪與中性語意轉化**: 假說生成前洗滌 DoS/flood 等黑話為中性軟體工程術語，杜絕安全模型誤報；Critic 預審排除防禦在層。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **靜態假設偏離線上五雲實況與 MagicMock hasattr(rpc) 偽路徑測試崩壞陷阱 (FP-122)**: 未直查線上五雲實況而單憑本地 migration 與靜態碼推論曾兩度誤判（線上 public.update_trip_credit_cards 實則具 auth.uid() 守衛、線上 cleanup-cloudinary v8 僅掃 itineraries.cover_image 不掃 hotel_info），架構審核前必須直連線上五雲取證。另後端新增 .rpc() 快路徑搭配舊 Python 降級時，因 hasattr(MagicMock(), 'rpc') 恆為 True，必須以 isinstance(supabase, NonCallableMock) 搭配 ENABLE_ATOMIC_TRIP_RPC 熔斷開關雙重護衛，確保既有 mock 測試與秒級回退均安全運作。
+
 - **Edge Cache HIT 淨化標頭漏反射 CORS 停擺與五雲發布競態 7 天毒快取陷阱 (FP-116)**: Cloudflare Worker cache.put 淨化為純 Content-Type + Cache-Control 後，若 cache HIT 未依白名單動態反射 Access-Control-Allow-Origin，將導致 .vercel.app 跨網域快取命中全面 CORS 失敗 7 天；且因 Vercel 快於 Cloud Run 且無 Worker 自動 CI，直接 push main 會使新前端打舊後端並把錯誤結果毒化寫入舊版邊緣快取。
 
 - **Windows 隔離 Git Worktree 殘留目錄引發 VS Code TS Server 假紅字陷阱 (FP-111)**: 在 Windows 進行隔離 Git Worktree 沙盒測試時，若刪除 worktree 期間編輯器或 tsserver 鎖住檔案，會殘留無 .ts 檔的空殼目錄導致 VS Code Problems 顯示 No inputs were found in config file 假紅字。清理沙盒必須先以 rmdir 安全卸載 NTFS Junction，再徹底 Remove-Item 確認目錄不存在並執行 git worktree prune。
