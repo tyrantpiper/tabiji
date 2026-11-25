@@ -11,7 +11,7 @@ Handles Point of Interest related endpoints including:
 import json
 import re
 import asyncio
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, Query
 from fastapi.responses import StreamingResponse
@@ -634,19 +634,26 @@ async def media_proxy(request: Request, url: str):
     10 MB Content-Length 預檢與串流上限、Vercel Next.js 級別 sandbox CSP。
     """
     raw_url = (url or "").strip()
-    parsed = urlparse(raw_url)
+    if not raw_url or any(ord(ch) < 32 or ord(ch) == 127 for ch in raw_url):
+        raise HTTPException(status_code=400, detail="Invalid media source")
+    try:
+        parsed = urlparse(raw_url)
+        port = parsed.port
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid media source")
     if (
-        parsed.scheme != "https"
+        parsed.scheme.lower() != "https"
         or (parsed.hostname or "").lower() != "upload.wikimedia.org"
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.port not in (None, 443)
+        or port not in (None, 443)
         or not parsed.path.startswith("/")
     ):
         raise HTTPException(status_code=400, detail="Invalid media source")
 
-    # 阻斷直連 .svg / .svgz（保留 Wikimedia PNG 渲染縮圖如 .../320px-Flag.svg.png）
-    if parsed.path.lower().endswith((".svg", ".svgz")):
+    # 阻斷直連 .svg / .svgz（含百分比編碼如 .%73vg、%2esvg 及尾端斜線；保留 PNG 渲染縮圖如 .../320px-Flag.svg.png）
+    decoded_path = unquote(unquote(parsed.path)).rstrip("/").lower()
+    if decoded_path.endswith((".svg", ".svgz")):
         raise HTTPException(status_code=415, detail="Unsupported media type: SVG is not allowed")
 
     headers = {
@@ -672,7 +679,7 @@ async def media_proxy(request: Request, url: str):
 
         raw_ct = upstream_resp.headers.get("Content-Type", "")
         media_type = raw_ct.split(";", 1)[0].strip().lower()
-        if not media_type.startswith("image/") or media_type.startswith("image/svg"):
+        if not media_type.startswith("image/") or "svg" in media_type or "xml" in media_type:
             raise HTTPException(status_code=415, detail="Unsupported upstream media type")
 
         raw_cl = upstream_resp.headers.get("Content-Length")
@@ -697,6 +704,9 @@ async def media_proxy(request: Request, url: str):
     except Exception:
         await _cleanup_upstream()
         raise HTTPException(status_code=502, detail="Upstream media proxy error")
+    except BaseException:
+        await _cleanup_upstream()
+        raise
 
     async def stream_image():
         total = 0

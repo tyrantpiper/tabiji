@@ -638,3 +638,187 @@ def test_sentinel_poc_media_proxy_hardening_and_vercel_csp():
         )
     assert r_504.status_code == 504
     assert len(closed_504) >= 1
+
+
+# ============================================================================
+# Round 2 Adversarial Review PoCs (6 Confirmed Edge-Case Bugs + SlowAPI 429)
+# ============================================================================
+
+
+def test_sentinel_poc_r2_media_proxy_malformed_url_encoded_svg_and_xsvg():
+    """R2 Bug #1 & #2: Malformed ports/IPv6/control chars return 400 (never 500/502); encoded .svg/.svgz rejected pre-flight 415; image/x-svg+xml rejected 415."""
+    from main import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # 1. Malformed URLs (invalid port, out-of-range port, malformed IPv6, CRLF control chars) -> 400
+    for bad_url in (
+        "https://upload.wikimedia.org:abc/a.png",
+        "https://upload.wikimedia.org:99999/a.png",
+        "https://[invalid/a.png",
+        "https://upload.wikimedia.org/wikipedia/commons/a.png\r\nX-Inject: 1",
+    ):
+        r = client.get("/api/poi/media-proxy", params={"url": bad_url})
+        assert r.status_code == 400, f"Expected 400 for {bad_url!r}, got {r.status_code}"
+
+    # 2. Percent-encoded .svg / .svgz / trailing slash MUST be blocked pre-flight (415, ZERO upstream hits)
+    upstream_hits: List[str] = []
+
+    def _xsvg_handler(req: httpx.Request) -> httpx.Response:
+        upstream_hits.append(str(req.url))
+        return httpx.Response(200, headers={"Content-Type": "image/x-svg+xml"}, content=b"<svg/>")
+
+    with patch("utils.url_safety.httpx.AsyncClient", side_effect=_make_transport_client_factory(_xsvg_handler)):
+        for enc_svg in (
+            "https://upload.wikimedia.org/wikipedia/commons/a/ab/Xss.%73vg",
+            "https://upload.wikimedia.org/wikipedia/commons/a/ab/Xss%2esvg",
+            "https://upload.wikimedia.org/wikipedia/commons/a/ab/Xss%252esvg",
+            "https://upload.wikimedia.org/wikipedia/commons/a/ab/Xss.svg/",
+            "https://upload.wikimedia.org/wikipedia/commons/a/ab/Xss.%73vgz",
+        ):
+            r_enc = client.get("/api/poi/media-proxy", params={"url": enc_svg})
+            assert r_enc.status_code == 415, f"Expected pre-flight 415 for {enc_svg}, got {r_enc.status_code}"
+        assert upstream_hits == [], f"Encoded SVG bypassed pre-flight and hit upstream: {upstream_hits}"
+
+        # 3. Non-canonical SVG/XML upstream MIME (image/x-svg+xml) on a .png URL -> 415
+        r_xsvg = client.get(
+            "/api/poi/media-proxy",
+            params={"url": "https://upload.wikimedia.org/wikipedia/commons/a/ab/Fake.png"},
+        )
+        assert r_xsvg.status_code == 415
+
+
+@pytest.mark.asyncio
+async def test_sentinel_poc_r2_media_proxy_cancelled_error_closes_upstream():
+    """R2 Bug #3: asyncio.CancelledError during client.send() or mid-stream disconnect ALWAYS closes client and response."""
+    from starlette.requests import Request
+    from routers import poi as poi_router
+
+    real_cls = httpx.AsyncClient
+    closed_on_send_cancel: List[bool] = []
+
+    class _CancelSendClient(real_cls):
+        async def send(self, request, *args, **kwargs):
+            raise asyncio.CancelledError()
+
+        async def aclose(self):
+            closed_on_send_cancel.append(True)
+            await super().aclose()
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/poi/media-proxy",
+        "headers": [],
+        "client": ("127.0.0.1", 12345),
+        "query_string": b"",
+    }
+    with patch("routers.poi.create_safe_client", side_effect=lambda **kw: _CancelSendClient(**kw)):
+        with pytest.raises(asyncio.CancelledError):
+            await poi_router.media_proxy(
+                Request(scope),
+                url="https://upload.wikimedia.org/wikipedia/commons/a/ab/Valid.png",
+            )
+    assert len(closed_on_send_cancel) >= 1, "Client leaked on asyncio.CancelledError during send()"
+
+
+@pytest.mark.asyncio
+async def test_sentinel_poc_r2_dns_bulkhead_fast_path_under_saturation():
+    """R2 Bug #4: Saturating all 4 DNS threads MUST NOT stall or fail-closed SAFE_WIKI_DOMAINS, BLOCKED_HOSTNAMES, or IP literals."""
+    def _hanging_dns(*args, **kwargs):
+        time.sleep(0.5)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    with patch("utils.url_safety.socket.getaddrinfo", side_effect=_hanging_dns):
+        slow_tasks = [
+            asyncio.create_task(url_safety.is_safe_url_async(f"https://stall-{i}.example.invalid/", timeout=0.35))
+            for i in range(4)
+        ]
+        await asyncio.sleep(0.05)  # All 4 bulkhead workers now occupied in getaddrinfo
+
+        t0 = time.perf_counter()
+        wiki_safe = await url_safety.is_safe_url_async("https://upload.wikimedia.org/wikipedia/commons/a.png", timeout=0.1)
+        blocked_safe = await url_safety.is_safe_url_async("http://127.0.0.1/secret", timeout=0.1)
+        meta_safe = await url_safety.is_safe_url_async("http://metadata.google.internal/", timeout=0.1)
+        pub_ip_safe = await url_safety.is_safe_url_async("https://93.184.216.34/img.png", timeout=0.1)
+        elapsed = time.perf_counter() - t0
+
+        await asyncio.gather(*slow_tasks)
+
+    assert wiki_safe is True, "SAFE_WIKI_DOMAINS must fast-path inline when DNS bulkhead is saturated"
+    assert blocked_safe is False
+    assert meta_safe is False
+    assert pub_ip_safe is True
+    assert elapsed < 0.05, f"Pure-CPU fast-path stalled behind saturated DNS bulkhead: {elapsed:.3f}s"
+
+
+@pytest.mark.asyncio
+async def test_sentinel_poc_r2_gst_first_param_preserves_query_delimiter():
+    """R2 Bug #5: Stripping g_st when it is the FIRST query parameter must preserve '?' for remaining parameters."""
+    captured_traced: List[str] = []
+
+    class _SpyTracer:
+        async def trace_full_chain_smart(self, u: str):
+            captured_traced.append(u)
+            return {"final_url": u}
+
+    mock_gas = AsyncMock(return_value=None)
+    with patch.object(link_resolver, "get_smart_tracer", return_value=_SpyTracer()), \
+         patch.object(link_resolver, "is_safe_url_async", new_callable=AsyncMock, return_value=True), \
+         patch.object(link_resolver, "resolve_via_gas", mock_gas), \
+         patch.object(link_resolver, "fetch_og_metadata", new_callable=AsyncMock, return_value={"title": None, "image": None, "description": None, "site_name": None}):
+        await link_resolver.resolve_google_maps_link("https://maps.app.goo.gl/Test123?g_st=ic&hl=zh-TW&utm_source=ios")
+
+    assert captured_traced == ["https://maps.app.goo.gl/Test123?hl=zh-TW"]
+    mock_gas.assert_awaited_once_with("https://maps.app.goo.gl/Test123?g_st=ic&hl=zh-TW&utm_source=ios")
+
+
+@pytest.mark.asyncio
+async def test_sentinel_poc_r2_safe_download_image_heic_mime_validation():
+    """R2 Bug #6: .heic path rejects text/html and image/svg+xml (400) while still allowing application/octet-stream normalized to image/heic."""
+    from routers import ai as ai_router
+
+    for bad_ct in ("text/html", "image/svg+xml"):
+        def _bad_handler(req: httpx.Request, ct: str = bad_ct) -> httpx.Response:
+            return httpx.Response(200, headers={"Content-Type": ct}, content=b"<html>evil</html>")
+
+        with patch("routers.ai.is_safe_url_async", new_callable=AsyncMock, return_value=True), \
+             patch("utils.url_safety.is_safe_url", return_value=True), \
+             patch("utils.url_safety.httpx.AsyncClient", side_effect=_make_transport_client_factory(_bad_handler)):
+            with pytest.raises(HTTPException) as exc:
+                await ai_router.safe_download_image("https://cdn.example.com/photo.heic")
+        assert exc.value.status_code == 400
+        assert "Unsupported format" in exc.value.detail
+
+    def _octet_handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"Content-Type": "application/octet-stream"}, content=b"\x00\x00\x00\x18ftypheic")
+
+    with patch("routers.ai.is_safe_url_async", new_callable=AsyncMock, return_value=True), \
+         patch("utils.url_safety.is_safe_url", return_value=True), \
+         patch("utils.url_safety.httpx.AsyncClient", side_effect=_make_transport_client_factory(_octet_handler)):
+        data, ct = await ai_router.safe_download_image("https://cdn.example.com/photo.heic")
+    assert ct == "image/heic"
+    assert len(data) > 0
+
+
+def test_sentinel_poc_r2_slowapi_31st_request_returns_429():
+    """R2 Rate-Limit Verification: Both /api/poi/resolve-link and /api/poi/media-proxy enforce HTTP 429 on 31st request/minute."""
+    from main import app
+
+    client = TestClient(app)
+
+    limiter._storage.reset()
+    resolve_codes = [
+        client.post("/api/poi/resolve-link", json={"url": "http://127.0.0.1/blocked"}).status_code
+        for _ in range(31)
+    ]
+    assert resolve_codes[:30] == [400] * 30
+    assert resolve_codes[30] == 429
+
+    limiter._storage.reset()
+    media_codes = [
+        client.get("/api/poi/media-proxy", params={"url": "https://evil.com/x.png"}).status_code
+        for _ in range(31)
+    ]
+    assert media_codes[:30] == [400] * 30
+    assert media_codes[30] == 429

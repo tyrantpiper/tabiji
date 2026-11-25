@@ -130,21 +130,25 @@ def get_safe_ip(url: str) -> Optional[str]:
         return None
 
 
-def is_safe_url(url: str) -> bool:
+def _classify_url_without_dns(url: str) -> Optional[bool]:
     """
-    [SAFETY] Centralized SSRF Prevention Utility.
-    Checks if a URL is safe to fetch by the server.
+    Pure-CPU SSRF pre-classification (no network/DNS I/O).
+    Returns:
+      - False for invalid/disallowed schemes, malformed ports, BLOCKED_HOSTNAMES, or unsafe IP literals
+      - True for whitelisted SAFE_WIKI_DOMAINS or public direct IP literals
+      - None when blocking OS DNS resolution (socket.getaddrinfo) is required
     """
     if not url or not isinstance(url, str):
         return False
 
     url_str = url.strip()
     try:
-        parsed = urlparse(url_str.lower())
+        parsed = urlparse(url_str)
+        _ = parsed.port
     except Exception:
         return False
 
-    if parsed.scheme not in ["http", "https"]:
+    if parsed.scheme.lower() not in ("http", "https"):
         return False
 
     hostname = parsed.hostname or ""
@@ -155,16 +159,43 @@ def is_safe_url(url: str) -> bool:
     if any(clean_host == domain or clean_host.endswith("." + domain) for domain in SAFE_WIKI_DOMAINS):
         return True
 
-    return get_safe_ip(url_str) is not None
+    try:
+        if clean_host.isdigit():
+            direct_ip = ipaddress.ip_address(int(clean_host))
+        else:
+            direct_ip = ipaddress.ip_address(clean_host.strip("[]"))
+        return is_ip_safe(direct_ip)
+    except (ValueError, OverflowError):
+        return None
+
+
+def is_safe_url(url: str) -> bool:
+    """
+    [SAFETY] Centralized SSRF Prevention Utility.
+    Checks if a URL is safe to fetch by the server.
+    """
+    fast_verdict = _classify_url_without_dns(url)
+    if fast_verdict is not None:
+        return fast_verdict
+    return get_safe_ip(url.strip()) is not None
+
+
+_DEFAULT_IS_SAFE_URL = is_safe_url
 
 
 async def is_safe_url_async(url: str, timeout: float = 3.0) -> bool:
     """
     Non-blocking SSRF URL safety check executed on the dedicated 4-thread DNS bulkhead.
+    Pure-CPU verdicts (SAFE_WIKI_DOMAINS, BLOCKED_HOSTNAMES, invalid schemes, direct IP literals)
+    resolve inline on the event loop so saturated DNS workers cannot starve whitelisted traffic.
     Fails closed (returns False) on timeout or unexpected errors.
     """
     if not url or not isinstance(url, str):
         return False
+    if is_safe_url is _DEFAULT_IS_SAFE_URL:
+        fast_verdict = _classify_url_without_dns(url)
+        if fast_verdict is not None:
+            return fast_verdict
     loop = asyncio.get_running_loop()
     try:
         return bool(

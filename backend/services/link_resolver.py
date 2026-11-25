@@ -35,6 +35,23 @@ def _is_google_shortlink(url: str) -> bool:
     return host in _GOOGLE_SHORTLINK_HOSTS
 
 
+def _strip_tracking_params(url: str) -> str:
+    """Strip g_st / si / utm_* tracking params cleanly without corrupting remaining query delimiters."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if not parts.query:
+            return url.rstrip("?&")
+        filtered = [
+            (k, v)
+            for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+            if k.lower() not in ("g_st", "si") and not k.lower().startswith("utm_")
+        ]
+        new_query = urllib.parse.urlencode(filtered, doseq=True)
+        return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+    except Exception:
+        return url
+
+
 async def _read_bounded_text(resp: httpx.Response, max_bytes: int = _MAX_HTML_BYTES) -> str:
     """Read at most `max_bytes` from a streaming httpx.Response and decode safely with LookupError fallback."""
     buf = bytearray()
@@ -393,12 +410,9 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
     smart_tracer = get_smart_tracer()
     
     # 🛡️ Step 0: Sanitization (針對 iOS 分享連結進行淨化)
-    # 目的：移除 g_st 等參數以強制 Google 回傳帶座標的 Desktop 版 URL
+    # 目的：移除 g_st 等參數以強制 Google 回傳帶座標的 Desktop 版 URL（使用 query 解析防首參剝除破壞 '?'）
     if _is_google_shortlink(url):
-        # 移除 g_st (share type), si, utm 等追蹤參數
-        url = re.sub(r'([?&])(g_st|si|utm_\w+)=[^&]+', '', url)
-        # 清理可能殘留的問號或 &
-        url = url.rstrip("?&")
+        url = _strip_tracking_params(url)
     
     try:
         # Step 1: Smart Trace with precision analysis

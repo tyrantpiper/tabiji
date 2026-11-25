@@ -48,7 +48,7 @@ index 98415f2..512243f 100644
      thought_signatures: Optional[List[dict]] = None
      image: Optional[str] = None
 diff --git a/backend/routers/ai.py b/backend/routers/ai.py
-index 0b1c77a..bb76448 100644
+index 0b1c77a..d2f8897 100644
 --- a/backend/routers/ai.py
 +++ b/backend/routers/ai.py
 @@ -15,7 +15,7 @@ import httpx
@@ -60,7 +60,11 @@ index 0b1c77a..bb76448 100644
  try:
      from pillow_heif import register_heif_opener
      register_heif_opener()
-@@ -65,47 +65,66 @@ ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "im
+@@ -62,50 +62,70 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
+ ALLOWED_IMAGE_DOMAINS = ["*"] # Effectively allow all, but safe_download_image still checks IP
+ MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB
+ ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "image/tiff", "application/pdf"] # Added TIFF/PDF support
++_HEIC_FALLBACK_MIME_TYPES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
  
  async def safe_download_image(url: str) -> tuple[bytes, str]:
      """
@@ -120,14 +124,14 @@ index 0b1c77a..bb76448 100644
 +                # 3. Pre-body Content-Type & Content-Length Validation
 +                raw_ct = response.headers.get("Content-Type", "")
 +                content_type = raw_ct.split(";", 1)[0].strip().lower()
-+                if content_type not in ALLOWED_MIME_TYPES and not is_heic_path:
-+                    # Some servers might not return correct HEIC mime
-+                    if not content_type:
++                if content_type not in ALLOWED_MIME_TYPES:
++                    # Some servers return empty or generic octet-stream for HEIC/HEIF
++                    if is_heic_path and content_type in _HEIC_FALLBACK_MIME_TYPES:
++                        content_type = "image/heic"
++                    elif not content_type:
 +                        content_type = "image/jpeg"  # Fallback guess
 +                    else:
 +                        raise HTTPException(status_code=400, detail=f"Unsupported format: {content_type}")
-+                elif not content_type and is_heic_path:
-+                    content_type = "image/heic"
 +
 +                raw_cl = response.headers.get("Content-Length")
 +                if raw_cl:
@@ -143,12 +147,12 @@ index 0b1c77a..bb76448 100644
 +                # 4. Bounded Streaming Read (capped at MAX_IMAGE_SIZE = 20MB)
 +                chunks = bytearray()
 +                async for chunk in response.aiter_bytes(chunk_size=65536):
-+                    chunks.extend(chunk)
-+                    if len(chunks) > MAX_IMAGE_SIZE:
++                    if len(chunks) + len(chunk) > MAX_IMAGE_SIZE:
 +                        raise HTTPException(
 +                            status_code=400,
 +                            detail=f"Image too large (>{MAX_IMAGE_SIZE // (1024 * 1024)}MB)",
 +                        )
++                    chunks.extend(chunk)
 +
 +                return bytes(chunks), content_type
 +
@@ -160,16 +164,16 @@ index 0b1c77a..bb76448 100644
      except httpx.TimeoutException:
          raise HTTPException(status_code=408, detail="Image download timeout")
      except Exception as e:
-@@ -559,7 +578,7 @@ async def parse_markdown(
+@@ -559,7 +579,7 @@ async def parse_markdown(
              import math
              import re
              from utils.molecular_parser import get_molecular_parser
 -            from utils.url_safety import is_safe_url
-+            from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
++            from utils.url_safety import is_safe_url_async
              from services.link_resolver import resolve_google_maps_link
              from services.geocode_service import (
                  smart_geocode_logic,
-@@ -579,10 +598,12 @@ async def parse_markdown(
+@@ -579,10 +599,12 @@ async def parse_markdown(
                      pass
                  return None
  
@@ -185,7 +189,7 @@ index 0b1c77a..bb76448 100644
  
              # Step 1: 零成本 URL 座標直解 (MolecularParser) 與並發短網址救援 (Semaphore 10 + 2.5s Timeout)
              sem = asyncio.Semaphore(10)
-@@ -591,7 +612,7 @@ async def parse_markdown(
+@@ -591,7 +613,7 @@ async def parse_markdown(
                  it["lat"] = _safe_float(it.get("lat"))
                  it["lng"] = _safe_float(it.get("lng"))
                  link = it.get("link_url")
@@ -195,14 +199,14 @@ index 0b1c77a..bb76448 100644
                      if coords and coords.get("lat") and coords.get("lng"):
                          it["lat"] = coords["lat"]
 diff --git a/backend/routers/poi.py b/backend/routers/poi.py
-index a119092..2e5dafa 100644
+index a119092..43a15b7 100644
 --- a/backend/routers/poi.py
 +++ b/backend/routers/poi.py
 @@ -11,6 +11,7 @@ Handles Point of Interest related endpoints including:
  import json
  import re
  import asyncio
-+from urllib.parse import urlparse
++from urllib.parse import urlparse, unquote
  
  from fastapi import APIRouter, Depends, HTTPException, Request, Header, Query
  from fastapi.responses import StreamingResponse
@@ -275,7 +279,7 @@ index a119092..2e5dafa 100644
          except Exception as e:
              print(f"[poi_resolve_link] Head redirect trace error: {e}")
  
-@@ -612,32 +621,107 @@ async def ai_smart_search(request: SmartSearchRequest):
+@@ -612,32 +621,117 @@ async def ai_smart_search(request: SmartSearchRequest):
  # Media Proxy (Phase 5.4)
  # ═══════════════════════════════════════════════════════════════════════════════
  
@@ -294,19 +298,26 @@ index a119092..2e5dafa 100644
      """
 -    if not url.startswith("https://upload.wikimedia.org/"):
 +    raw_url = (url or "").strip()
-+    parsed = urlparse(raw_url)
++    if not raw_url or any(ord(ch) < 32 or ord(ch) == 127 for ch in raw_url):
++        raise HTTPException(status_code=400, detail="Invalid media source")
++    try:
++        parsed = urlparse(raw_url)
++        port = parsed.port
++    except ValueError:
++        raise HTTPException(status_code=400, detail="Invalid media source")
 +    if (
-+        parsed.scheme != "https"
++        parsed.scheme.lower() != "https"
 +        or (parsed.hostname or "").lower() != "upload.wikimedia.org"
 +        or parsed.username is not None
 +        or parsed.password is not None
-+        or parsed.port not in (None, 443)
++        or port not in (None, 443)
 +        or not parsed.path.startswith("/")
 +    ):
 +        raise HTTPException(status_code=400, detail="Invalid media source")
 +
-+    # 阻斷直連 .svg / .svgz（保留 Wikimedia PNG 渲染縮圖如 .../320px-Flag.svg.png）
-+    if parsed.path.lower().endswith((".svg", ".svgz")):
++    # 阻斷直連 .svg / .svgz（含百分比編碼如 .%73vg、%2esvg 及尾端斜線；保留 PNG 渲染縮圖如 .../320px-Flag.svg.png）
++    decoded_path = unquote(unquote(parsed.path)).rstrip("/").lower()
++    if decoded_path.endswith((".svg", ".svgz")):
 +        raise HTTPException(status_code=415, detail="Unsupported media type: SVG is not allowed")
 +
 +    headers = {
@@ -332,7 +343,7 @@ index a119092..2e5dafa 100644
 +
 +        raw_ct = upstream_resp.headers.get("Content-Type", "")
 +        media_type = raw_ct.split(";", 1)[0].strip().lower()
-+        if not media_type.startswith("image/") or media_type.startswith("image/svg"):
++        if not media_type.startswith("image/") or "svg" in media_type or "xml" in media_type:
 +            raise HTTPException(status_code=415, detail="Unsupported upstream media type")
 +
 +        raw_cl = upstream_resp.headers.get("Content-Length")
@@ -357,6 +368,9 @@ index a119092..2e5dafa 100644
 +    except Exception:
 +        await _cleanup_upstream()
 +        raise HTTPException(status_code=502, detail="Upstream media proxy error")
++    except BaseException:
++        await _cleanup_upstream()
++        raise
  
      async def stream_image():
 -        headers = {
@@ -461,10 +475,10 @@ index 5bbc712..d8fc075 100644
          return {"results": [], "source": "none"}
  
 diff --git a/backend/services/link_resolver.py b/backend/services/link_resolver.py
-index 6a4c995..05cf7b6 100644
+index 6a4c995..b02f4e0 100644
 --- a/backend/services/link_resolver.py
 +++ b/backend/services/link_resolver.py
-@@ -11,12 +11,51 @@ from bs4 import BeautifulSoup
+@@ -11,12 +11,68 @@ from bs4 import BeautifulSoup
  from typing import Dict, Any
  from datetime import datetime
  
@@ -493,6 +507,23 @@ index 6a4c995..05cf7b6 100644
 +    return host in _GOOGLE_SHORTLINK_HOSTS
 +
 +
++def _strip_tracking_params(url: str) -> str:
++    """Strip g_st / si / utm_* tracking params cleanly without corrupting remaining query delimiters."""
++    try:
++        parts = urllib.parse.urlsplit(url)
++        if not parts.query:
++            return url.rstrip("?&")
++        filtered = [
++            (k, v)
++            for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
++            if k.lower() not in ("g_st", "si") and not k.lower().startswith("utm_")
++        ]
++        new_query = urllib.parse.urlencode(filtered, doseq=True)
++        return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
++    except Exception:
++        return url
++
++
 +async def _read_bounded_text(resp: httpx.Response, max_bytes: int = _MAX_HTML_BYTES) -> str:
 +    """Read at most `max_bytes` from a streaming httpx.Response and decode safely with LookupError fallback."""
 +    buf = bytearray()
@@ -517,7 +548,7 @@ index 6a4c995..05cf7b6 100644
  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  # 🛰️ GAS Two-Shot Rescue Gateway (Failure-Only Fallback)
  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-@@ -226,17 +265,18 @@ async def fetch_og_metadata(url: str) -> Dict[str, Any]:
+@@ -226,17 +282,18 @@ async def fetch_og_metadata(url: str) -> Dict[str, Any]:
              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
              "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
          }
@@ -545,7 +576,7 @@ index 6a4c995..05cf7b6 100644
              
              # 1. 提取 OG 標籤
              og_title = soup.find("meta", property="og:title")
-@@ -268,8 +308,8 @@ async def fetch_og_metadata(url: str) -> Dict[str, Any]:
+@@ -268,8 +325,8 @@ async def fetch_og_metadata(url: str) -> Dict[str, Any]:
  
              # 3. Engine 2 - 深度獵捕 (Deep Scraper Regex Probe)
              if not metadata["image"] and "google.com/maps" in url:
@@ -556,7 +587,7 @@ index 6a4c995..05cf7b6 100644
                  if lh_matches:
                      best_match = lh_matches[0]
                      # 重寫為 1000x800 高清格式
-@@ -338,33 +378,33 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
+@@ -338,33 +395,30 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
          "metadata": {}
      }
  
@@ -575,13 +606,12 @@ index 6a4c995..05cf7b6 100644
      smart_tracer = get_smart_tracer()
      
      # 🛡️ Step 0: Sanitization (針對 iOS 分享連結進行淨化)
-     # 目的：移除 g_st 等參數以強制 Google 回傳帶座標的 Desktop 版 URL
+-    # 目的：移除 g_st 等參數以強制 Google 回傳帶座標的 Desktop 版 URL
 -    if any(domain in url for domain in ["goo.gl", "maps.app.goo.gl"]):
-+    if _is_google_shortlink(url):
-         # 移除 g_st (share type), si, utm 等追蹤參數
-         url = re.sub(r'([?&])(g_st|si|utm_\w+)=[^&]+', '', url)
-         # 清理可能殘留的問號或 &
-         url = url.rstrip("?&")
+-        # 移除 g_st (share type), si, utm 等追蹤參數
+-        url = re.sub(r'([?&])(g_st|si|utm_\w+)=[^&]+', '', url)
+-        # 清理可能殘留的問號或 &
+-        url = url.rstrip("?&")
 -        # log_debug or standard print for tracer traceability is currently used here
 -        # Keeping it consistent with the existing file's debug style
 -    
@@ -591,6 +621,9 @@ index 6a4c995..05cf7b6 100644
 -        if clean_match:
 -            # Using silence for production clean url extraction
 -            url = clean_match.group(1)
++    # 目的：移除 g_st 等參數以強制 Google 回傳帶座標的 Desktop 版 URL（使用 query 解析防首參剝除破壞 '?'）
++    if _is_google_shortlink(url):
++        url = _strip_tracking_params(url)
      
      try:
          # Step 1: Smart Trace with precision analysis
@@ -603,7 +636,7 @@ index 6a4c995..05cf7b6 100644
                  print(f"[SSRF Block] SmartTrace aborted for unsafe URL: {url}")
                  return result
  
-@@ -410,16 +450,16 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
+@@ -410,16 +464,16 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
          # 🛡️ Graceful fallback: Use legacy logic if new tracer fails
          print(f"[WARN] SmartTracer/MolecularParser failed, fallback to legacy: {e}")
          try:
@@ -626,7 +659,7 @@ index 6a4c995..05cf7b6 100644
          except Exception as legacy_e:
              print(f"[WARN] Legacy fallback failed: {legacy_e}")
              return result
-@@ -484,7 +524,7 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
+@@ -484,7 +538,7 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
      # 條件: (1) 所有本地引擎失敗 (2) 原始輸入是短網址
      # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  
@@ -635,7 +668,7 @@ index 6a4c995..05cf7b6 100644
          try:
              gas_input = original_input_url  # 使用原始短網址呼叫 GAS 效果最好
              print(f"[GAS Rescue] Local engines failed, invoking GAS for original URL: {gas_input[:60]}...")
-@@ -612,23 +652,6 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
+@@ -612,23 +666,6 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
          except:
              pass
  
@@ -659,7 +692,7 @@ index 6a4c995..05cf7b6 100644
      # 📍 雙軌門牌地址提煉 (Description 正則優先 ➔ Photon 反查兜底)
      resolved_address = None
      if result.get("metadata", {}).get("description"):
-@@ -717,16 +740,19 @@ async def resolve_google_maps_placelist(url: str) -> Dict[str, Any]:
+@@ -717,16 +754,19 @@ async def resolve_google_maps_placelist(url: str) -> Dict[str, Any]:
      }
      
      clean_url = url
@@ -982,7 +1015,7 @@ index 6d5c6b1..4bd726c 100644
                              break
                          
 diff --git a/backend/utils/url_safety.py b/backend/utils/url_safety.py
-index 449e5ed..e96dfb7 100644
+index 449e5ed..5d5037d 100644
 --- a/backend/utils/url_safety.py
 +++ b/backend/utils/url_safety.py
 @@ -1,3 +1,5 @@
@@ -1002,17 +1035,79 @@ index 449e5ed..e96dfb7 100644
  # [NEW] Phase 5.4: Domain Whitelist (Bypass blocking DNS checks for known safe hosts)
  SAFE_WIKI_DOMAINS: List[str] = [
      "wikipedia.org",
-@@ -152,13 +158,32 @@ def is_safe_url(url: str) -> bool:
-     return get_safe_ip(url_str) is not None
+@@ -124,21 +130,25 @@ def get_safe_ip(url: str) -> Optional[str]:
+         return None
  
  
+-def is_safe_url(url: str) -> bool:
++def _classify_url_without_dns(url: str) -> Optional[bool]:
+     """
+-    [SAFETY] Centralized SSRF Prevention Utility.
+-    Checks if a URL is safe to fetch by the server.
++    Pure-CPU SSRF pre-classification (no network/DNS I/O).
++    Returns:
++      - False for invalid/disallowed schemes, malformed ports, BLOCKED_HOSTNAMES, or unsafe IP literals
++      - True for whitelisted SAFE_WIKI_DOMAINS or public direct IP literals
++      - None when blocking OS DNS resolution (socket.getaddrinfo) is required
+     """
+     if not url or not isinstance(url, str):
+         return False
+ 
+     url_str = url.strip()
+     try:
+-        parsed = urlparse(url_str.lower())
++        parsed = urlparse(url_str)
++        _ = parsed.port
+     except Exception:
+         return False
+ 
+-    if parsed.scheme not in ["http", "https"]:
++    if parsed.scheme.lower() not in ("http", "https"):
+         return False
+ 
+     hostname = parsed.hostname or ""
+@@ -149,7 +159,53 @@ def is_safe_url(url: str) -> bool:
+     if any(clean_host == domain or clean_host.endswith("." + domain) for domain in SAFE_WIKI_DOMAINS):
+         return True
+ 
+-    return get_safe_ip(url_str) is not None
++    try:
++        if clean_host.isdigit():
++            direct_ip = ipaddress.ip_address(int(clean_host))
++        else:
++            direct_ip = ipaddress.ip_address(clean_host.strip("[]"))
++        return is_ip_safe(direct_ip)
++    except (ValueError, OverflowError):
++        return None
++
++
++def is_safe_url(url: str) -> bool:
++    """
++    [SAFETY] Centralized SSRF Prevention Utility.
++    Checks if a URL is safe to fetch by the server.
++    """
++    fast_verdict = _classify_url_without_dns(url)
++    if fast_verdict is not None:
++        return fast_verdict
++    return get_safe_ip(url.strip()) is not None
++
++
++_DEFAULT_IS_SAFE_URL = is_safe_url
++
++
 +async def is_safe_url_async(url: str, timeout: float = 3.0) -> bool:
 +    """
 +    Non-blocking SSRF URL safety check executed on the dedicated 4-thread DNS bulkhead.
++    Pure-CPU verdicts (SAFE_WIKI_DOMAINS, BLOCKED_HOSTNAMES, invalid schemes, direct IP literals)
++    resolve inline on the event loop so saturated DNS workers cannot starve whitelisted traffic.
 +    Fails closed (returns False) on timeout or unexpected errors.
 +    """
 +    if not url or not isinstance(url, str):
 +        return False
++    if is_safe_url is _DEFAULT_IS_SAFE_URL:
++        fast_verdict = _classify_url_without_dns(url)
++        if fast_verdict is not None:
++            return fast_verdict
 +    loop = asyncio.get_running_loop()
 +    try:
 +        return bool(
@@ -1023,11 +1118,10 @@ index 449e5ed..e96dfb7 100644
 +        )
 +    except (asyncio.TimeoutError, Exception):
 +        return False
-+
-+
+ 
+ 
  async def _enforce_request_ssrf_safety(request: httpx.Request) -> None:
-     """
-     Request hook to intercept outbound HTTP requests before sending,
+@@ -158,7 +214,7 @@ async def _enforce_request_ssrf_safety(request: httpx.Request) -> None:
      preventing SSRF and intranet redirects.
      """
      url_str = str(request.url)

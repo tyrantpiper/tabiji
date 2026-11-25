@@ -62,6 +62,7 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 ALLOWED_IMAGE_DOMAINS = ["*"] # Effectively allow all, but safe_download_image still checks IP
 MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB
 ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "image/tiff", "application/pdf"] # Added TIFF/PDF support
+_HEIC_FALLBACK_MIME_TYPES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
 
 async def safe_download_image(url: str) -> tuple[bytes, str]:
     """
@@ -88,14 +89,14 @@ async def safe_download_image(url: str) -> tuple[bytes, str]:
                 # 3. Pre-body Content-Type & Content-Length Validation
                 raw_ct = response.headers.get("Content-Type", "")
                 content_type = raw_ct.split(";", 1)[0].strip().lower()
-                if content_type not in ALLOWED_MIME_TYPES and not is_heic_path:
-                    # Some servers might not return correct HEIC mime
-                    if not content_type:
+                if content_type not in ALLOWED_MIME_TYPES:
+                    # Some servers return empty or generic octet-stream for HEIC/HEIF
+                    if is_heic_path and content_type in _HEIC_FALLBACK_MIME_TYPES:
+                        content_type = "image/heic"
+                    elif not content_type:
                         content_type = "image/jpeg"  # Fallback guess
                     else:
                         raise HTTPException(status_code=400, detail=f"Unsupported format: {content_type}")
-                elif not content_type and is_heic_path:
-                    content_type = "image/heic"
 
                 raw_cl = response.headers.get("Content-Length")
                 if raw_cl:
@@ -111,12 +112,12 @@ async def safe_download_image(url: str) -> tuple[bytes, str]:
                 # 4. Bounded Streaming Read (capped at MAX_IMAGE_SIZE = 20MB)
                 chunks = bytearray()
                 async for chunk in response.aiter_bytes(chunk_size=65536):
-                    chunks.extend(chunk)
-                    if len(chunks) > MAX_IMAGE_SIZE:
+                    if len(chunks) + len(chunk) > MAX_IMAGE_SIZE:
                         raise HTTPException(
                             status_code=400,
                             detail=f"Image too large (>{MAX_IMAGE_SIZE // (1024 * 1024)}MB)",
                         )
+                    chunks.extend(chunk)
 
                 return bytes(chunks), content_type
 
@@ -578,7 +579,7 @@ async def parse_markdown(
             import math
             import re
             from utils.molecular_parser import get_molecular_parser
-            from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
+            from utils.url_safety import is_safe_url_async
             from services.link_resolver import resolve_google_maps_link
             from services.geocode_service import (
                 smart_geocode_logic,

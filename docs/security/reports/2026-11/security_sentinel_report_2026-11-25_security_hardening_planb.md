@@ -54,7 +54,20 @@
 
 ---
 
-## 4. Deliverables 索引
+## 4. Round 2 對抗審查補足 (Adversarial Hardening Follow-up)
+
+針對 commit `34568aa` 進行獨立紅隊實測後，額外發現並修復 6 項邊界缺陷（皆納入 `test_security_hardening_planb_sentinel.py` `test_sentinel_poc_r2_*` 實證與 `patch_candidate_security_hardening_planb_2026-11-25.diff`）：
+
+1. **`media_proxy` 畸形 URL / 埠號 / 控制字元 500 崩潰修復 (`backend/routers/poi.py`)**：包覆 `urlparse` 與 `parsed.port` 之 `ValueError` 並阻斷 ASCII 控制字元，全數映射回確定性 HTTP `400`（原 `:abc`、`:99999`、`[invalid` 觸發未攔截 500）。
+2. **`media_proxy` URL 編碼 SVG 繞過與非標準 SVG MIME 封堵 (`backend/routers/poi.py`)**：以雙層 `unquote` + 去尾斜線於上游發請求前即回 `415` 攔截 `.%73vg` / `%2esvg` / `.svg/`，並將上游 Content-Type 阻斷條件擴展至 `"svg" in media_type or "xml" in media_type`（攔截 `image/x-svg+xml`）。
+3. **`media_proxy` `asyncio.CancelledError` 連線洩漏修復 (`backend/routers/poi.py`)**：新增 `except BaseException: await _cleanup_upstream(); raise` 確保用戶端在等待上游標頭期間斷線取消時 100% 關閉 `httpx.AsyncClient`。
+4. **`url_safety` 4 執行緒 DNS Bulkhead 飽和防餓死快速路徑 (`backend/utils/url_safety.py`)**：抽出 `_classify_url_without_dns()` 於事件迴圈內聯即時裁決 `SAFE_WIKI_DOMAINS`、`BLOCKED_HOSTNAMES`、無效協議與直接 IP 字面量，確保 4 條外部慢 DNS 查詢飽和時不拖垮 `/api/poi/media-proxy` 與 Wikipedia 查詢（且相容單元測試對 `is_safe_url` 之 monkeypatch）。
+5. **`link_resolver` 首參數 `g_st` 剝除破壞 `?` 分隔符修復 (`backend/services/link_resolver.py`)**：以 `urllib.parse.urlsplit` / `parse_qsl` / `urlencode` (`_strip_tracking_params`) 取代正則刪除，保留後續查詢參數 `?hl=zh-TW` 而非損毀為 `&hl=zh-TW`。
+6. **`safe_download_image` `.heic` 路徑 MIME 縮嚴與 SlowAPI 429 實證 (`backend/routers/ai.py`)**：`.heic`/`.heif` 僅容許空值或 `application/octet-stream` / `binary/octet-stream` 並正規化為 `image/heic`（阻斷偽裝 `.heic` 之 `text/html` / `image/svg+xml`），改於 `chunks.extend` 前先判 20 MB 上限；同時實測驗證 `/api/poi/resolve-link` 與 `/api/poi/media-proxy` 第 31 次請求確定性回傳 HTTP `429`。
+
+---
+
+## 5. Deliverables 索引
 
 - **後端回歸哨兵**: [`test_security_hardening_planb_sentinel.py`](file:///d:/Project/tabiji/travel-pwa/backend/tests/test_security_hardening_planb_sentinel.py)
 - **前端回歸哨兵**: [`location-utils-redos-sentinel.test.ts`](file:///d:/Project/tabiji/travel-pwa/frontend/__tests__/location-utils-redos-sentinel.test.ts)
