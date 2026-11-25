@@ -45,4 +45,5 @@
 - **Post-Persist Zero-Leak Broadcast**: 協同 WebSocket 廣播必於後端落盤後發送且經 `stripPrivateForBroadcast()` 剔除私密項與原始 UUID，接收端以 `mergeIncomingWithLocalPrivate()` 保留本端私密狀態。
 - **Atomic Bootstrap & Grapheme-Safe Nickname**: `POST /api/auth/session` 於建帳與孤兒補登單步帶入跨端 Unicode/Grapheme 安全清洗之初始暱稱（絕不覆寫既有老用戶），搭配 `ProfileView` `Traveler` 防覆蓋鎖與四重競態守衛，根除兩段式改名斷裂。
 - **Dual-Track 6-Account Fixed Test Pool**: 線上實測一律複用 6 帳固定池（環境變數 RFC 4122 v4 `RYAN_TEST` 專測 D1 POI/UI、`00001/00002/00004/00005` 現代 `tbj_rec_*`、`00003` 硬鎖 Legacy），由 `scripts/manage_test_accounts.py` 統一巡檢、脫敏清理與線上升級。
+- **Single-Worker DNS Bulkhead & Bounded Streaming**: 單進程 Cloud Run (`1 vCPU / 1Gi`) 下出站 DNS 檢查隔離於獨立 4 執行緒艙壁並對白名單走 0ms 純 CPU 快車道，外部抓取一律採 `client.stream` 有界截斷、線性 $O(n)$ 正則與 Vercel 同款 `sandbox` CSP。
 
