@@ -43,4 +43,6 @@
 - **Five-Cloud Ordered Rollout**: 因 Vercel (~1m) 快於 Cloud Run (3–5m)、Cloudflare Worker 無自動 CI 且 `/sw.js` 具 4h 快取，涉及跨雲契約與邊緣快取之發佈必須嚴守 `Cloud Run 驗收 ➔ 手動 wrangler deploy 升版快取 ➔ Git Push 觸發 Vercel`。
 - **Pure Postgres Row-Lock Atomic Merge**: 跨容器 JSONB 併發改以 Postgres `FOR NO KEY UPDATE` ＋ `lock_timeout` ＋頂層 `|| jsonb_build_object(...)` 單交易原子寫入，以零 Redis 成本根除 read-modify-write 覆蓋。
 - **Post-Persist Zero-Leak Broadcast**: 協同 WebSocket 廣播必於後端落盤後發送且經 `stripPrivateForBroadcast()` 剔除私密項與原始 UUID，接收端以 `mergeIncomingWithLocalPrivate()` 保留本端私密狀態。
+- **Atomic Bootstrap & Grapheme-Safe Nickname**: `POST /api/auth/session` 於建帳與孤兒補登單步帶入跨端 Unicode/Grapheme 安全清洗之初始暱稱（絕不覆寫既有老用戶），搭配 `ProfileView` `Traveler` 防覆蓋鎖與四重競態守衛，根除兩段式改名斷裂。
+- **Dual-Track 6-Account Fixed Test Pool**: 線上實測一律複用 6 帳固定池（環境變數 RFC 4122 v4 `RYAN_TEST` 專測 D1 POI/UI、`00001/00002/00004/00005` 現代 `tbj_rec_*`、`00003` 硬鎖 Legacy），由 `scripts/manage_test_accounts.py` 統一巡檢、脫敏清理與線上升級。
 
