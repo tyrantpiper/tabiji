@@ -1,12 +1,12 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-24T04:48:00Z",
+  "last_audit_date": "2026-11-25T03:52:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 444,
-    "audited_targets": 444,
+    "total_targets": 454,
+    "audited_targets": 454,
     "verified_vulnerabilities": 53,
-    "remediated_vulnerabilities": 204,
+    "remediated_vulnerabilities": 214,
     "dismissed_hypotheses": 187
   },
   "targets": [
@@ -5700,6 +5700,136 @@
       "status": "DISMISSED",
       "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-24_daily_dashboard_cards.md",
       "validator_details": "Verified by post-audit-remediation-sentinel.test.tsx, daily-dashboard-cards.test.tsx, and Security Sentinel runner.py --mode fast (DISMISSED): optimisticState is keyed by scopeKey (${tripId}-${day}), lang is forwarded to tripsApi.generateAIReview(tripId, day, userId, lang), bilingual 'AI is reviewing...' loading text is preserved, misaligned mx-6 margin is removed, and formatReview applies explicit dark-mode high-contrast classes."
+    },
+    {
+      "id": "supabase/migrations/20261125_atomic_trip_content_rpcs.sql:trigger_and_day_data_atomic_rpc",
+      "target_type": "postgres_atomic_rpc_and_trigger",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "bola_privilege_escalation_or_jsonb_corruption_or_deadlock"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): Static review confirms that all security, concurrency, and data integrity guarantees are fully satisfied: (1) public.update_trip_credit_cards(UUID, JSONB) is explicitly dropped, eliminating legacy authenticated RPC exposure; (2) webhook_cleanup_cloudinary() includes an itineraries UPDATE no-op guard restricted to cover_image modifications; (3) patch_trip_day_data_atomic() is marked SECURITY DEFINER with search_path pinned to 'public', 'pg_temp' and execution strictly restricted to service_role; (4) lock_timeout (3000ms) and statement_timeout (8000ms) prevent transaction starvation while FOR NO KEY UPDATE prevents row lock escalation and deadlocks; (5) dual-track authorization correctly enforces 403-before-404 membership checks for member endpoints while allowing owner bypass for review endpoints; (6) day number validation rejects negative days with ERRCODE 22023; (7) JSONB updates use non-destructive top-level merge operations (|| jsonb_build_object); (8) delete_day_ai_review removes the specified day key; and (9) hidden foreign private items are preserved without type errors using jsonb_typeof checks.",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
+    },
+    {
+      "id": "supabase/migrations/20261125_atomic_trip_content_rpcs.sql:info_and_import_atomic_rpcs",
+      "target_type": "postgres_atomic_rpc",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "credit_card_ownership_hijacking_or_date_shrinkage_or_dac_exposure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): Static inspection verifies that patch_trip_info_atomic and merge_trip_import_content_atomic satisfy all quality and defensive architecture requirements: (1) All 5 credit card ownership invariants are enforced: foreign private cards are partitioned into v_hidden_cards and merged back; ID collisions against hidden IDs trigger gen_random_uuid() re-minting; creator_id is bound to v_uid for new or self-owned cards; v_prev_creator is restored for other members' cards (reversing mem_* masking); and is_public=true is forced if a non-owner attempts privatization. (2) Explicit JSON null on flight_info/hotel_info sets v_flight_col/v_hotel_col to NULL, which propagates to the table columns as SQL NULL via CASE WHEN. (3) merge_trip_import_content_atomic preserves existing daily_locations precedence using (imported || existing) JSONB concatenation where existing keys overwrite colliding imported keys. (4) Private imported items under day_costs, day_tickets, and day_checklists are strictly bound to v_uid as private_owner_id, while non-private items have private_owner_id removed. (5) Trip rows are locked using FOR NO KEY UPDATE, start_date is backfilled if null, and end_date is only updated when candidate_end > existing_end, guaranteeing non-shrinking extension.",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
+    },
+    {
+      "id": "backend/utils/deps.py:threadsafe_http11_supabase_pool",
+      "target_type": "supabase_http_client_pool",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "multithread_http2_race_or_connection_leak"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): The code correctly implements all specified defensive architecture requirements. `create_threadsafe_supabase_client` instantiates `httpx.Client(http2=False)` and passes it via `ClientOptions(httpx_client=http_client)`, mitigating HTTP/2 concurrency crashes under Starlette threadpool dispatch. It explicitly warms up `client.postgrest` on the creating thread. It cleans up connections on instantiation failure (`http_client.close()`), on credential rotation within `get_supabase()`, and during shutdown or cleanup via `close_fallback_supabase_client()`. Thread safety is ensured by `_FALLBACK_SUPABASE_LOCK`, and `__reset_supabase_fallback_for_testing()` is properly exposed for test suite isolation.",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:atomic_rpc_helper_and_import_wiring",
+      "target_type": "fastapi_rpc_orchestrator",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "uuid_22p02_oracle_or_fail_open_fallback_or_event_loop_block"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): Static inspection verifies that all required defensive architecture and safety constraints are fully enforced: (1) `_is_atomic_rpc_enabled` and `_can_use_atomic_rpc` properly honor the `ENABLE_ATOMIC_TRIP_RPC` environment kill-switch; (2) `_can_use_atomic_rpc` reliably distinguishes unconfigured legacy `NonCallableMock`/`MagicMock` instances from configured RPC mocks and real Supabase clients; (3) `_precheck_atomic_trip_id` pre-validates UUID formats using `UUID_V4_REGEX` before hitting Postgres, raising 404 when `allow_creator_bypass=True` and 403 otherwise, fully preventing 22P02 database crashes; (4) blocking database operations are executed off the event loop via `run_in_threadpool`; (5) PostgreSQL lock timeouts and deadlocks (`55P03`, `40P01`) execute exactly one jittered retry (`asyncio.sleep(random.uniform(0.06, 0.16))`) before raising an HTTP 409 Conflict; (6) fallback to Python RMW (`return None`) is strictly limited to missing RPC functions (`PGRST202` / 'Could not find the function') or disabled RPC; and (7) all other SQLSTATE errors and unexpected responses fail closed by re-raising the exception.",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
+    },
+    {
+      "id": "backend/routers/trips.py:day_data_location_info_rpc_and_500_sanitization",
+      "target_type": "fastapi_trips_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "error_information_disclosure_or_partial_clobber_or_bola"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): Static review confirms that all audited security and defensive architecture controls are correctly implemented: (1) update_day_data and update_trip_location enforce negative-day validation (request.day < 0 raising HTTP 400); (2) update_day_data, update_trip_location, and update_trip_info execute _precheck_atomic_trip_id for UUID and existence validation before downstream logic; (3) all three endpoints wrap atomic RPC execution (_execute_atomic_trip_rpc) inside 'async with trip_lock(trip_id)'; (4) legacy RMW fallbacks with explicit membership authorization checks and trip_lock protection are fully retained for PGRST202 / mock environments when RPC is unavailable or returns None; and (5) unexpected exceptions in update_trip_info (as well as update_day_data and update_trip_location) are caught and sanitized to return generic 500 messages rather than exposing raw exception strings via detail=str(e).",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
+    },
+    {
+      "id": "backend/routers/ai.py:day_review_atomic_rpc_and_creator_bypass",
+      "target_type": "fastapi_ai_router",
+      "trust_boundary": "authenticated_to_internal",
+      "vectors_checked": [
+        "bola_bypass_or_llm_inside_db_lock_or_stale_overwrite"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): Static inspection verifies that the implementation fulfills all quality and defensive criteria: (1) `call_extraction` is executed asynchronously prior to acquiring `async with trip_lock(trip_id)`, ensuring slow external LLM network latency is strictly kept outside DB and concurrency locks; (2) `generate_day_review` writes updates using `patch_trip_day_data_atomic` with `p_allow_creator_bypass=True`; (3) `clear_day_review` delegates removal to `patch_trip_day_data_atomic` with `{\"delete_day_ai_review\": True}` and `p_allow_creator_bypass=True`; (4) Both endpoints validate `day < 0` raising HTTP 400 and call `_precheck_atomic_trip_id` at entry, safely handling invalid UUID formats and nonexistent trips before initiating operations; (5) BOLA protections are maintained across both endpoints via creator/member role checks and database-level user validation.",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
+    },
+    {
+      "id": "frontend/components/views/tools-view.tsx:credit_card_jwt_offline_and_rollback",
+      "target_type": "frontend_tools_view",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "unauthenticated_mutation_silent_data_loss_or_stale_clobber"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): Static analysis confirms that the proposed robustness and security issue does not exist. (1) saveTripInfo delegates updates to tripsApi.updateInfo, which handles authenticated offlineFetch (JWT, 401 refresh, idempotency, and offline queueing); (2) the payload isolates `{ credit_cards: mergedSharedCards }` to prevent stale field clobbering; (3) errors are not swallowed (there is no catch block suppressing exceptions), allowing promise rejections from tripsApi.updateInfo or tripMutate to naturally bubble up to callers for rollback and toast notifications; (4) it explicitly evaluates `if (!res?.offline)` before invoking `await tripMutate()`, correctly skipping SWR revalidation when changes are queued offline to avoid stale cache overwrites.",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
+    },
+    {
+      "id": "frontend/components/views/tools-view.tsx:credit_card_save_delete_rollback_and_local_persistence",
+      "target_type": "frontend_tools_view",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "premature_localstorage_wipe_or_missing_no_trip_persistence"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): Static review confirms that all audited resilience mechanisms are correctly implemented: 1) When !activeTripId, private card entries are explicitly appended and persisted to local storage via saveCardsToLocalStorage(updatedLocal). 2) In active trip contexts, migration cleanup of local storage (purgedLocal) is deferred until after saveTripInfo(updatedShared) successfully resolves, preventing premature data wiping if remote save fails. 3) Both handleSaveCard and confirmDeleteCard capture initial state snapshots (prevShared/prevLocal and oldShared/oldLocal) and properly restore state, revalidate SWR cache via tripMutate(), and dispatch error toasts and haptic feedback upon any caught exception.",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
+    },
+    {
+      "id": "frontend/components/views/info-view.tsx:hotel_inner_edit_rollback_and_draft_preservation",
+      "target_type": "frontend_info_view",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "optimistic_state_drift_or_draft_wipe_on_save_failure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): Static inspection verifies that handleSave explicitly returns Promise<boolean> (true on success, false on error/guard exit). When offline queueing is active (res?.offline), both reloadTripDetail/tripMutate revalidation and broadcastTripEvent are correctly bypassed. In the catch block of handleSave, reloadTripDetail() is invoked with error suppression. handleSaveInner awaits handleSave(newHotels), and upon failure (!ok), correctly restores prevHotels, sets innerEditing back to true, and preserves the draft via setTempHotel(draftHotel). The preserveInnerDraftRef guard in the detail modal useEffect properly blocks hotels dependency updates from clobbering tempHotel and resetting innerEditing during the save and rollback lifecycle.",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
+    },
+    {
+      "id": "frontend/lib/sync-hooks.ts:offline_mutation_online_jwt_and_401_retry",
+      "target_type": "frontend_sync_hooks",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "missing_jwt_header_or_unhandled_401_token_expiry"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_atomic_trip_content_rpc.md",
+      "validator_details": "Verified by Pre-Execution Worktree Spiking Red->Green PoC (8/8 backend + 4/4 frontend RED_RC=1 -> GREEN_RC=0) and Security Sentinel runner.py --mode fast (10/10 DISMISSED): Static inspection confirms that the online branch of useOfflineMutation properly injects the Authorization Bearer token via Headers when activeToken is retrieved and not already set. It handles token expiration through a bounded single 401 retry via ensureValidSession(true), and protects against circular auth loops across both initial session check and 401 retry using !url.includes('/api/auth/'). The proposed robustness and security issue does not exist in the snippet.",
+      "remediated_at": "2026-11-25T03:52:00Z",
+      "resolution": "docs/security/history/patches/patch_candidate_atomic_trip_content_rpc_2026-11-25.diff"
     }
   ],
   "known_design_intents": {

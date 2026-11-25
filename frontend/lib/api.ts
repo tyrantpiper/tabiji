@@ -578,17 +578,22 @@ export const tripsApi = {
         return res.json()
     },
 
-    /** Update trip info (flight, accommodation, etc.) */
+    /** Update trip info (flight, accommodation, credit cards, etc.) */
     updateInfo: async (tripId: string, info: Record<string, unknown>, userId?: string) => {
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API.TRIPS}/${tripId}/info`, {
-            method: "PATCH", // 🔧 Standardized to PATCH
+        const res = await offlineFetch(`${API.TRIPS}/${tripId}/info`, {
+            method: "PATCH", // 🔧 Standardized to PATCH + offline/Lie-Fi queue & JWT auth
             headers,
             body: JSON.stringify(info)
         })
-        if (!res.ok) throw new Error("Failed to update info")
+        if (!res.ok) {
+            const errMsg = await extractError(res, "Failed to update info")
+            const err = new Error(errMsg) as Error & { status?: number }
+            err.status = res.status
+            throw err
+        }
         return res.json()
     },
 

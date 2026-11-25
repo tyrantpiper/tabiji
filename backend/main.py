@@ -98,7 +98,14 @@ from services.destination_taxonomy import (
     classify_and_filter_results,
     prune_and_align_citations,
 )
-from utils.deps import get_gemini_key, get_verified_user, get_supabase, build_supabase_rest_headers
+from utils.deps import (
+    get_gemini_key,
+    get_verified_user,
+    get_supabase,
+    build_supabase_rest_headers,
+    create_threadsafe_supabase_client,
+    close_fallback_supabase_client,
+)
 from utils.ai_config import DAILY_ROUTING, WORKHORSE_MODEL
 from google.genai import errors as genai_errors
 
@@ -143,16 +150,20 @@ async def lifespan(app: FastAPI):
         print(f"❌ [Lifespan] CRITICAL: Missing environment variables: {missing_env}")
         # In production (Cloud Run), we might want to fail hard here
     
-    # 2. 初始化 Supabase
+    # 2. 初始化 Supabase (HTTP/1.1 執行緒安全連線池，防止 httpcore 1.0.9 HTTP/2 多執行緒競爭)
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
     supabase_key = os.getenv("SUPABASE_KEY", "").strip()
+    app.state.supabase_http_client = None
     if supabase_url and supabase_key:
         try:
-            app.state.supabase = create_client(supabase_url, supabase_key)
-            print("[Supabase] ✅ Client initialized")
+            sb_client, sb_http_client = create_threadsafe_supabase_client(supabase_url, supabase_key)
+            app.state.supabase = sb_client
+            app.state.supabase_http_client = sb_http_client
+            print("[Supabase] ✅ Client initialized (HTTP/1.1 thread-safe pool)")
         except Exception as e:
             print(f"⚠️ [Supabase] Startup Initialization Failed: {e}")
             app.state.supabase = None
+            app.state.supabase_http_client = None
     else:
         app.state.supabase = None
 
@@ -183,6 +194,14 @@ async def lifespan(app: FastAPI):
         await close_all_cached_clients()
     except Exception as e:
         print(f"⚠️ [Shutdown] Error closing AI clients: {e}")
+    try:
+        if getattr(app.state, "supabase_http_client", None) is not None:
+            app.state.supabase_http_client.close()
+            app.state.supabase_http_client = None
+            print("[HTTPX] ✅ Supabase HTTP/1.1 client closed")
+        close_fallback_supabase_client()
+    except Exception as e:
+        print(f"⚠️ [Shutdown] Error closing Supabase HTTP client: {e}")
     try:
         if hasattr(app.state, "client"):
             await app.state.client.aclose()

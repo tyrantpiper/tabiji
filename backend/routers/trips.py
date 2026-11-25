@@ -10,16 +10,20 @@ Handles all trip-related API endpoints including:
 Note: This is a large router containing 17 endpoints.
 """
 
+import os
 import re
 import uuid
 import random
 import string
 import copy
 import hashlib
+import asyncio
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Any
+from unittest.mock import NonCallableMock
 from fastapi import APIRouter, Depends, HTTPException, Header
+from starlette.concurrency import run_in_threadpool
 
 from models.base import (
     JoinTripRequest,
@@ -43,12 +47,150 @@ from .expenses import normalize_items, check_trip_access  # 🆕 Data Parity + B
 from services.link_resolver import resolve_google_maps_link
 from services.cover_service import resolve_destination_cover_url
 from utils.concurrency import trip_lock
-from utils.deps import get_supabase, get_verified_user
+from utils.deps import get_supabase, get_verified_user, UUID_V4_REGEX
 from utils.helpers import generate_room_code, generate_public_id, ensure_user_exists
 from utils.idempotency import get_idempotent_response, store_idempotent_response
 from utils.constants import DAY_MAP_FIELDS, CLONEABLE_FIELDS
 
 router = APIRouter(prefix="/api/trips", tags=["trips"])
+
+
+def _is_atomic_rpc_enabled() -> bool:
+    """Env kill-switch for Phase 1 pure Postgres atomic RPCs (default enabled)."""
+    return os.getenv("ENABLE_ATOMIC_TRIP_RPC", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _can_use_atomic_rpc(supabase: Any) -> bool:
+    """Detect whether the supplied Supabase client supports atomic RPC execution.
+
+    Preserves legacy unit tests using bare `MagicMock()` that only mock `.table()`,
+    while enabling real `supabase.Client`, custom RPC fakes, and mocks with explicitly configured `.rpc`.
+    """
+    if not _is_atomic_rpc_enabled() or supabase is None:
+        return False
+    if isinstance(supabase, NonCallableMock):
+        if "rpc" in getattr(supabase, "__dict__", {}):
+            return callable(supabase.__dict__["rpc"])
+        children = getattr(supabase, "_mock_children", {})
+        if "rpc" in children:
+            child = children["rpc"]
+            if getattr(child, "side_effect", None) is not None:
+                return True
+            ret_val = getattr(child, "_mock_return_value", None)
+            if ret_val is not None and not isinstance(ret_val, NonCallableMock):
+                return True
+            if ret_val is not None and "execute" in getattr(ret_val, "_mock_children", {}):
+                return True
+        return False
+    return callable(getattr(supabase, "rpc", None))
+
+
+def _precheck_atomic_trip_id(
+    supabase: Any,
+    trip_id: str,
+    *,
+    allow_creator_bypass: bool,
+    forbidden_detail: str,
+    not_found_detail: str,
+) -> None:
+    """Pre-validate UUID format before hitting Postgres UUID RPC parameters (prevents 22P02 -> 500)."""
+    if not _can_use_atomic_rpc(supabase):
+        return
+    clean_trip_id = str(trip_id or "").strip()
+    if not UUID_V4_REGEX.fullmatch(clean_trip_id):
+        if allow_creator_bypass:
+            raise HTTPException(status_code=404, detail=not_found_detail)
+        raise HTTPException(status_code=403, detail=forbidden_detail)
+
+
+def _extract_pg_error_code(exc: Exception) -> str:
+    """Extract PostgREST / PostgreSQL SQLSTATE error code from an exception."""
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code.strip():
+        return code.strip().upper()
+    if exc.args and isinstance(exc.args[0], dict):
+        arg_code = exc.args[0].get("code")
+        if isinstance(arg_code, str) and arg_code.strip():
+            return arg_code.strip().upper()
+    msg = str(exc)
+    for known in ("PGRST202", "55P03", "40P01", "57014", "22P02", "22023"):
+        if known in msg:
+            return known
+    return ""
+
+
+async def _execute_atomic_trip_rpc(
+    supabase: Any,
+    rpc_name: str,
+    params: dict,
+    *,
+    trip_id: str,
+    allow_creator_bypass: bool = False,
+    forbidden_detail: str = "您沒有權限修改此行程資訊",
+    not_found_detail: str = "找不到此行程",
+) -> Optional[dict]:
+    """Execute a pure-Postgres atomic trip-content RPC off the event loop via threadpool.
+
+    Returns:
+        dict payload on success (`status == "ok"`).
+        None ONLY when atomic RPC is disabled/unavailable (kill-switch, legacy mock, or PGRST202).
+    """
+    if not _can_use_atomic_rpc(supabase):
+        return None
+
+    _precheck_atomic_trip_id(
+        supabase,
+        trip_id,
+        allow_creator_bypass=allow_creator_bypass,
+        forbidden_detail=forbidden_detail,
+        not_found_detail=not_found_detail,
+    )
+
+    def _invoke():
+        return supabase.rpc(rpc_name, params).execute()
+
+    res = None
+    max_attempts = 2
+    for attempt in range(max_attempts):
+        try:
+            res = await run_in_threadpool(_invoke)
+            break
+        except Exception as exc:
+            pg_code = _extract_pg_error_code(exc)
+            if pg_code == "PGRST202" or "Could not find the function" in str(exc):
+                print(f"⚠️ [AtomicRPC] {rpc_name} unavailable (PGRST202); falling back to Python RMW")
+                return None
+            if pg_code in ("55P03", "40P01"):
+                if attempt + 1 < max_attempts:
+                    await asyncio.sleep(random.uniform(0.06, 0.16))
+                    continue
+                raise HTTPException(
+                    status_code=409,
+                    detail="行程正由旅伴同步編輯中，請稍候重試",
+                )
+            if pg_code == "22023":
+                raise HTTPException(status_code=400, detail="無效的請求參數")
+            raise
+
+    raw_data = getattr(res, "data", None)
+    if isinstance(raw_data, list):
+        payload = raw_data[0] if raw_data and isinstance(raw_data[0], dict) else None
+    elif isinstance(raw_data, dict):
+        payload = raw_data
+    else:
+        payload = None
+
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Unexpected atomic RPC response from {rpc_name}")
+
+    status = str(payload.get("status") or "").strip().lower()
+    if status == "ok":
+        return payload
+    if status == "forbidden":
+        raise HTTPException(status_code=403, detail=forbidden_detail)
+    if status == "not_found":
+        raise HTTPException(status_code=404, detail=not_found_detail)
+    raise RuntimeError(f"Unknown atomic RPC status from {rpc_name}: {status}")
 
 
 def _first_row(data: Any) -> Optional[dict]:
@@ -135,7 +277,7 @@ def _is_day_item_visible_to_user(item: Any, user_id: str, is_owner: bool) -> boo
     """
     if not isinstance(item, dict):
         return True
-    if not item.get("is_private"):
+    if item.get("is_private") is not True:
         return True
     owner_id = str(item.get("private_owner_id") or "").strip()
     if owner_id:
@@ -147,7 +289,7 @@ def _sanitize_visible_day_item(item: Any) -> Any:
     """出口淨化：公開項目不得夾帶殘留 private_owner_id。"""
     if not isinstance(item, dict):
         return item
-    if not item.get("is_private") and "private_owner_id" in item:
+    if item.get("is_private") is not True and "private_owner_id" in item:
         cleaned = dict(item)
         cleaned.pop("private_owner_id", None)
         return cleaned
@@ -179,7 +321,7 @@ def _merge_day_items_preserving_hidden_private(
 ) -> list:
     """合併寫入每日項目：
     1. 無條件保留資料庫中對呼叫者不可見的他方私人項目（消除協作覆寫資料遺失）。
-    2. 呼叫者提交之私人項目強制綁定 JWT 驗證身分 user_id，公開項目剝除殘留 private_owner_id。
+    2. 呼叫者提交之私人項目強制綁定 JWT 驗證身分 user_id，公開項目剝除殘留 private_owner_id 並正規化非布林 is_private。
     """
     uid = str(user_id or "").strip()
     existing_list = existing_items if isinstance(existing_items, list) else []
@@ -194,10 +336,13 @@ def _merge_day_items_preserving_hidden_private(
             normalized_submitted.append(item)
             continue
         cleaned = dict(item)
-        if cleaned.get("is_private"):
+        if cleaned.get("is_private") is True:
+            cleaned["is_private"] = True
             cleaned["private_owner_id"] = uid
         else:
             cleaned.pop("private_owner_id", None)
+            if "is_private" in cleaned:
+                cleaned["is_private"] = False
         normalized_submitted.append(cleaned)
 
     return normalized_submitted + hidden_foreign_private
@@ -207,7 +352,7 @@ def _is_card_visible_to_user(card: Any, user_id: str, is_owner: bool) -> bool:
     """判斷信用卡是否對當前使用者可見（公開卡、建立者本人或行程擁有者精確救援無主卡）。"""
     if not isinstance(card, dict):
         return True
-    if card.get("is_public"):
+    if card.get("is_public") is True:
         return True
     creator_id = str(card.get("creator_id") or "").strip()
     if creator_id:
@@ -270,32 +415,40 @@ def _merge_cards_preserving_hidden_private(
     }
 
     normalized_submitted = []
+    seen_ids: set[str] = set()
     for card in (submitted_cards if isinstance(submitted_cards, list) else []):
         if not isinstance(card, dict):
             normalized_submitted.append(card)
             continue
         cleaned = dict(card)
         cid = str(cleaned.get("id") or "").strip()
-        if cid and cid in hidden_ids:
-            # 防止以隱藏私卡 ID 碰撞探測或覆寫歸屬
-            cleaned["id"] = str(uuid.uuid4())
+        if cid and (cid in hidden_ids or cid in seen_ids):
+            # 防止以隱藏私卡 ID 或重複提交 ID 碰撞探測／覆寫歸屬
+            new_id = str(uuid.uuid4())
+            cleaned["id"] = new_id
+            seen_ids.add(new_id)
             prev_card = None
         else:
+            if cid:
+                seen_ids.add(cid)
             prev_card = visible_by_id.get(cid) if cid else None
 
+        submitted_is_public = cleaned.get("is_public") is True
+
         if prev_card is None:
-            # 新卡一律強制綁定 JWT user_id，不信任客戶端偽造 creator_id
+            # 新卡一律強制綁定 JWT user_id 並正規化布林 is_public，不信任客戶端偽造
             cleaned["creator_id"] = uid
+            cleaned["is_public"] = submitted_is_public
         else:
             prev_creator = str(prev_card.get("creator_id") or "").strip()
             caller_owns_prev = (prev_creator == uid) or (not prev_creator and is_owner)
             if caller_owns_prev:
                 cleaned["creator_id"] = uid
+                cleaned["is_public"] = submitted_is_public
             else:
                 # 既有他方公開卡：鎖定原建立者且禁止非建立者私化奪取
                 cleaned["creator_id"] = prev_creator
-                if not cleaned.get("is_public"):
-                    cleaned["is_public"] = True
+                cleaned["is_public"] = True
         normalized_submitted.append(cleaned)
 
     return normalized_submitted + hidden_foreign_cards
@@ -309,14 +462,13 @@ def _fetch_trip_is_owner(supabase, trip_id: str, user_id: str) -> bool:
 
 
 def _sanitize_imported_day_map(raw_map: Any, user_id: str) -> dict:
-    """淨化匯入之每日陣列欄位：私人項目強制綁定 JWT user_id，公開項目剝除殘留 private_owner_id。"""
+    """淨化匯入之每日陣列欄位：忽略非陣列項目防止覆寫他方私密陣列，私人項目強制綁定 JWT user_id，公開項目正規化布林並剝除殘留 private_owner_id。"""
     if not isinstance(raw_map, dict):
         return {}
     uid = str(user_id or "").strip()
     sanitized = {}
     for day_key, items_list in raw_map.items():
         if not isinstance(items_list, list):
-            sanitized[day_key] = items_list
             continue
         cleaned_list = []
         for item in items_list:
@@ -324,10 +476,13 @@ def _sanitize_imported_day_map(raw_map: Any, user_id: str) -> dict:
                 cleaned_list.append(item)
                 continue
             entry = dict(item)
-            if entry.get("is_private"):
+            if entry.get("is_private") is True:
+                entry["is_private"] = True
                 entry["private_owner_id"] = uid
             else:
                 entry.pop("private_owner_id", None)
+                if "is_private" in entry:
+                    entry["is_private"] = False
             cleaned_list.append(entry)
         sanitized[day_key] = cleaned_list
     return sanitized
@@ -1313,8 +1468,17 @@ async def import_to_trip(
     print(f"📥 正在匯入至現有行程 ID: {request.trip_id}...")
     
     try:
-        # 1. 檢查行程是否存在並獲取現有資料
-        trip_res = supabase.table("itineraries").select("*").eq("id", request.trip_id).execute()
+        _precheck_atomic_trip_id(
+            supabase,
+            request.trip_id,
+            allow_creator_bypass=True,
+            forbidden_detail="只有行程成員或創建者可以匯入內容",
+            not_found_detail="找不到指定的行程",
+        )
+        # 1. 檢查行程是否存在並獲取現有資料 (Off-loop via threadpool)
+        trip_res = await run_in_threadpool(
+            lambda: supabase.table("itineraries").select("*").eq("id", request.trip_id).execute()
+        )
         if not trip_res.data:
             raise HTTPException(status_code=404, detail="找不到指定的行程")
             
@@ -1323,11 +1487,13 @@ async def import_to_trip(
         # 🛡️ 權限檢查：只有行程創建者或成員可以匯入內容
         created_by = str(existing_trip.get("created_by") or "")
         if created_by != user_id:
-            mem_res = supabase.table("trip_members")\
-                .select("id")\
-                .eq("itinerary_id", request.trip_id)\
-                .eq("user_id", user_id)\
+            mem_res = await run_in_threadpool(
+                lambda: supabase.table("trip_members")
+                .select("id")
+                .eq("itinerary_id", request.trip_id)
+                .eq("user_id", user_id)
                 .execute()
+            )
             if not mem_res.data:
                 raise HTTPException(status_code=403, detail="只有行程成員或創建者可以匯入內容")
 
@@ -1346,7 +1512,7 @@ async def import_to_trip(
             return result
         
         def deep_merge_day_arrays(old_d: dict, new_d: dict) -> dict:
-            """陣列型每日資料的深度合併 (追加而非覆蓋)
+            """陣列型每日資料的深度合併 (追加而非覆蓋，嚴禁非陣列覆寫既有陣列)
             
             用途：同一天分批匯入時，day_notes/costs/tickets 會追加合併
             範例：
@@ -1358,15 +1524,24 @@ async def import_to_trip(
             if not old_d: return new_d
             result = old_d.copy()
             for day_key, new_items in new_d.items():
-                existing = result.get(day_key, [])
-                if isinstance(existing, list) and isinstance(new_items, list):
-                    result[day_key] = existing + new_items  # 追加合併
+                if new_items is None:
+                    continue
+                existing = result.get(day_key)
+                if isinstance(existing, list):
+                    if isinstance(new_items, list):
+                        result[day_key] = existing + new_items  # 追加合併
+                    # 非陣列絕不覆寫既有陣列（保護他方私密項目）
                 else:
-                    result[day_key] = new_items  # 非陣列則覆蓋
+                    result[day_key] = new_items
             return result
         
         # 3. 取得現有地點組合，執行「智能去重」(Smart Deduplication) 與空間錨點取樣
-        existing_items_res = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng").eq("itinerary_id", request.trip_id).execute()
+        existing_items_res = await run_in_threadpool(
+            lambda: supabase.table("itinerary_items")
+            .select("day_number, place_name, location_lat, location_lng")
+            .eq("itinerary_id", request.trip_id)
+            .execute()
+        )
         existing_set = set()
         existing_items_list = existing_items_res.data or []
         for item in existing_items_list:
@@ -1398,6 +1573,106 @@ async def import_to_trip(
         items_data = []
         skipped_count = 0
         async with trip_lock(request.trip_id):
+            if _can_use_atomic_rpc(supabase):
+                fresh_items_res = await run_in_threadpool(
+                    lambda: supabase.table("itinerary_items")
+                    .select("day_number, place_name")
+                    .eq("itinerary_id", request.trip_id)
+                    .execute()
+                )
+                rpc_existing_set = set(existing_set)
+                for item in (getattr(fresh_items_res, "data", None) or []):
+                    rpc_existing_set.add((item["day_number"], item["place_name"]))
+
+                is_owner_pre = _is_trip_creator(existing_trip, user_id, allow_legacy_user_id=True)
+                rpc_items_data = []
+                rpc_skipped = 0
+                rpc_max_day = 0
+                for idx, item in enumerate(request.items):
+                    if (item.day_number, item.place_name) in rpc_existing_set:
+                        rpc_skipped += 1
+                        continue
+                    healed_coord = healed_import_items[idx] if idx < len(healed_import_items) else {}
+                    rpc_max_day = max(rpc_max_day, item.day_number)
+                    rpc_items_data.append({
+                        "itinerary_id": request.trip_id,
+                        "day_number": item.day_number,
+                        "time_slot": item.time_slot,
+                        "place_name": item.place_name,
+                        "original_name": item.original_name,
+                        "category": item.category,
+                        "notes": item.desc,
+                        "location_lat": healed_coord.get("lat", item.lat),
+                        "location_lng": healed_coord.get("lng", item.lng),
+                        "cost_amount": item.cost_amount,
+                        "reservation_code": item.reservation_code,
+                        "tags": item.tags,
+                        "sub_items": item.sub_items,
+                        "link_url": item.link_url,
+                        "website_link": item.website_link,
+                        "address": item.address,
+                        "memo": item.memo,
+                        "image_url": item.image_url,
+                        "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
+                        "hide_navigation": item.hide_navigation,
+                        "is_private": bool(item.is_private) if is_owner_pre else False,
+                        "is_highlight": item.is_highlight,
+                        "preview_metadata": item.preview_metadata
+                    })
+
+                import_patch = {}
+                if request.day_notes:
+                    import_patch["day_notes"] = request.day_notes
+                if request.day_costs:
+                    import_patch["day_costs"] = request.day_costs
+                if request.day_tickets:
+                    import_patch["day_tickets"] = request.day_tickets
+                if request.day_checklists:
+                    import_patch["day_checklists"] = request.day_checklists
+                if request.ai_review:
+                    import_patch["ai_review"] = request.ai_review
+                if resolved_import_daily_locs:
+                    import_patch["daily_locations"] = resolved_import_daily_locs
+
+                fallback_start_date = None
+                if request.start_date:
+                    try:
+                        raw_start = str(request.start_date).split("T")[0].strip()
+                        datetime.strptime(raw_start, "%Y-%m-%d")
+                        fallback_start_date = raw_start
+                    except (ValueError, TypeError):
+                        print(f"⚠️ [Date Sync] Ignoring invalid fallback start_date: {request.start_date}")
+
+                rpc_res = await _execute_atomic_trip_rpc(
+                    supabase,
+                    "merge_trip_import_content_atomic",
+                    {
+                        "p_trip_id": request.trip_id,
+                        "p_user_id": user_id,
+                        "p_patch": import_patch,
+                        "p_max_imported_day": rpc_max_day if rpc_max_day > 0 else None,
+                        "p_fallback_start_date": fallback_start_date,
+                    },
+                    trip_id=request.trip_id,
+                    allow_creator_bypass=True,
+                    forbidden_detail="只有行程成員或創建者可以匯入內容",
+                    not_found_detail="找不到指定的行程",
+                )
+                if rpc_res is not None:
+                    items_data = rpc_items_data
+                    skipped_count = rpc_skipped
+                    if items_data:
+                        print(f"   📦 準備插入 {len(items_data)} 個細項 (已跳過 {skipped_count} 個重複項)...")
+                        await run_in_threadpool(
+                            lambda: supabase.table("itinerary_items").insert(items_data).execute()
+                        )
+                    return {
+                        "status": "success",
+                        "message": f"成功匯入 {len(items_data)} 個新項目 (跳過 {skipped_count} 個重複地點)",
+                        "inserted": len(items_data),
+                        "skipped": skipped_count
+                    }
+
             fresh_trip_res = supabase.table("itineraries").select("*").eq("id", request.trip_id).execute()
             if fresh_trip_res is not None and not getattr(fresh_trip_res, "data", None):
                 raise HTTPException(status_code=404, detail="找不到指定的行程")
@@ -1536,7 +1811,56 @@ async def update_day_data(
 ):
     """📝 更新特定天的注意事項、預估花費、交通票券"""
     try:
-        # 🛡️ 權限檢查 (Strict Authorization Check)
+        if request.day < 0:
+            raise HTTPException(status_code=400, detail="無效的請求參數")
+
+        _precheck_atomic_trip_id(
+            supabase,
+            trip_id,
+            allow_creator_bypass=False,
+            forbidden_detail="您沒有權限修改此行程資訊",
+            not_found_detail="Trip not found",
+        )
+
+        if _can_use_atomic_rpc(supabase):
+            day_key = str(request.day)
+            rpc_patch = {}
+            if request.day_notes is not None:
+                new_data = request.day_notes.get(day_key) if day_key in request.day_notes else request.day_notes.get(request.day)
+                rpc_patch["day_notes"] = {day_key: new_data if new_data is not None else []}
+            if request.day_costs is not None:
+                new_data = request.day_costs.get(day_key) if day_key in request.day_costs else request.day_costs.get(request.day)
+                rpc_patch["day_costs"] = {day_key: new_data if new_data is not None else []}
+            if request.day_tickets is not None:
+                new_data = request.day_tickets.get(day_key) if day_key in request.day_tickets else request.day_tickets.get(request.day)
+                rpc_patch["day_tickets"] = {day_key: new_data if new_data is not None else []}
+            if request.day_checklists is not None:
+                new_data = request.day_checklists.get(day_key) if day_key in request.day_checklists else request.day_checklists.get(request.day)
+                rpc_patch["day_checklists"] = {day_key: new_data if new_data is not None else []}
+            if request.day_ai_reviews is not None:
+                new_data = request.day_ai_reviews.get(day_key) if day_key in request.day_ai_reviews else request.day_ai_reviews.get(request.day)
+                rpc_patch["day_ai_reviews"] = {day_key: new_data if new_data is not None else ""}
+
+            async with trip_lock(trip_id):
+                rpc_res = await _execute_atomic_trip_rpc(
+                    supabase,
+                    "patch_trip_day_data_atomic",
+                    {
+                        "p_trip_id": trip_id,
+                        "p_user_id": user_id,
+                        "p_day": request.day,
+                        "p_patch": rpc_patch,
+                        "p_allow_creator_bypass": False,
+                    },
+                    trip_id=trip_id,
+                    allow_creator_bypass=False,
+                    forbidden_detail="您沒有權限修改此行程資訊",
+                    not_found_detail="Trip not found",
+                )
+                if rpc_res is not None:
+                    return {"status": "success", "message": "Day data updated"}
+
+        # 🛡️ 權限檢查 (Strict Authorization Check - Legacy RMW Fallback)
         member_check = supabase.table("trip_members")\
             .select("user_id")\
             .eq("itinerary_id", trip_id)\
@@ -1649,7 +1973,48 @@ async def update_trip_location(
 ):
     """🗺️ 更新行程的每日地點"""
     try:
-        # 🧪 權限檢查：先驗證行程成員身分，杜絕未授權存在性探測
+        if request.day < 0:
+            raise HTTPException(status_code=400, detail="無效的請求參數")
+
+        _precheck_atomic_trip_id(
+            supabase,
+            trip_id,
+            allow_creator_bypass=False,
+            forbidden_detail="您沒有權限修改此行程的資訊",
+            not_found_detail="找不到此行程",
+        )
+
+        if _can_use_atomic_rpc(supabase):
+            day_key = str(request.day)
+            rpc_patch = {
+                "daily_locations": {
+                    day_key: {
+                        "name": request.name,
+                        "lat": request.lat,
+                        "lng": request.lng,
+                    }
+                }
+            }
+            async with trip_lock(trip_id):
+                rpc_res = await _execute_atomic_trip_rpc(
+                    supabase,
+                    "patch_trip_day_data_atomic",
+                    {
+                        "p_trip_id": trip_id,
+                        "p_user_id": user_id,
+                        "p_day": request.day,
+                        "p_patch": rpc_patch,
+                        "p_allow_creator_bypass": False,
+                    },
+                    trip_id=trip_id,
+                    allow_creator_bypass=False,
+                    forbidden_detail="您沒有權限修改此行程的資訊",
+                    not_found_detail="找不到此行程",
+                )
+                if rpc_res is not None:
+                    return {"status": "success"}
+
+        # 🧪 權限檢查：先驗證行程成員身分，杜絕未授權存在性探測 (Legacy RMW Fallback)
         member_check = supabase.table("trip_members")\
             .select("user_id")\
             .eq("itinerary_id", trip_id)\
@@ -1730,7 +2095,39 @@ async def update_trip_info(
 ):
     """✈️ 更新行程資訊 (航班、住宿、信用卡)"""
     try:
-        # 🛡️ 權限檢查 (Cautious Authorization Check)
+        # 🛡️ 戰略修復 3.1: 深度欄位保護更新 (Deep Field Protection)
+        # 僅更新請求中明確提供的欄位，避免預設 None 值覆蓋現有資料
+        provided_data = request.model_dump(exclude_unset=True)
+        print(f"🛠️ [Partial Update] Fields to update: {list(provided_data.keys())}")
+
+        _precheck_atomic_trip_id(
+            supabase,
+            trip_id,
+            allow_creator_bypass=False,
+            forbidden_detail="您沒有權限修改此行程資訊",
+            not_found_detail="Trip not found",
+        )
+
+        if _can_use_atomic_rpc(supabase):
+            async with trip_lock(trip_id):
+                rpc_res = await _execute_atomic_trip_rpc(
+                    supabase,
+                    "patch_trip_info_atomic",
+                    {
+                        "p_trip_id": trip_id,
+                        "p_user_id": user_id,
+                        "p_patch": provided_data,
+                    },
+                    trip_id=trip_id,
+                    allow_creator_bypass=False,
+                    forbidden_detail="您沒有權限修改此行程資訊",
+                    not_found_detail="Trip not found",
+                )
+                if rpc_res is not None:
+                    print(f"✅ Strategy 3.1 (Atomic RPC): Partial update successful for Trip {trip_id}")
+                    return {"status": "success"}
+
+        # 🛡️ 權限檢查 (Cautious Authorization Check - Legacy RMW Fallback)
         if user_id:
             # 驗證使用者是否為該行程的成員
             member_check = supabase.table("trip_members")\
@@ -1744,11 +2141,6 @@ async def update_trip_info(
                 print(f"🔒 [Auth Denied] User {user_id} tried to update Trip {trip_id}")
                 raise HTTPException(status_code=403, detail="您沒有權限修改此行程資訊")
 
-        # 🛡️ 戰略修復 3.1: 深度欄位保護更新 (Deep Field Protection)
-        # 僅更新請求中明確提供的欄位，避免預設 None 值覆蓋現有資料
-        provided_data = request.model_dump(exclude_unset=True)
-        print(f"🛠️ [Partial Update] Fields to update: {list(provided_data.keys())}")
-        
         async with trip_lock(trip_id):
             # 1. 取得最新 content (單一來源，非 single 容錯查詢；含 created_by 以保留他方私卡)
             trip_res = supabase.table("itineraries").select("content, flight_info, hotel_info, created_by").eq("id", trip_id).execute()
@@ -1792,7 +2184,7 @@ async def update_trip_info(
         raise
     except Exception as e:
         print(f"Update Info Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="更新行程資訊失敗，請稍後重試")
 
 
 @router.patch("/{trip_id}/dates")

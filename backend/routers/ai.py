@@ -30,6 +30,7 @@ from google.genai import types
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from utils.limiter import limiter
 
 from models.base import (
@@ -41,6 +42,11 @@ from models.base import (
 )
 from utils.concurrency import trip_lock
 from utils.deps import get_gemini_key, get_verified_user, get_supabase
+from routers.trips import (
+    _can_use_atomic_rpc,
+    _precheck_atomic_trip_id,
+    _execute_atomic_trip_rpc,
+)
 from services.model_manager import (
     call_extraction,
     call_with_fallback,
@@ -1282,16 +1288,30 @@ async def generate_day_review(
     supabase=Depends(get_supabase)
 ):
     """🕵️ AI 深度審核：讀取當天所有細節並提供分析 (BOLA + RMW Lock + Bilingual)"""
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
     try:
-        # 🛡️ BOLA 授權檢查：確認行程存在且呼叫者為創立者或成員
-        trip_auth_res = supabase.table("itineraries").select("created_by").eq("id", trip_id).execute()
+        if day < 0:
+            raise HTTPException(status_code=400, detail="無效的請求參數")
+
+        _precheck_atomic_trip_id(
+            supabase,
+            trip_id,
+            allow_creator_bypass=True,
+            forbidden_detail="無權限生成此行程的審核報告",
+            not_found_detail="找不到行程資料",
+        )
+
+        # 🛡️ BOLA 授權檢查：確認行程存在且呼叫者為創立者或成員 (Off-loop via threadpool)
+        trip_auth_res = await run_in_threadpool(
+            lambda: supabase.table("itineraries").select("created_by").eq("id", trip_id).execute()
+        )
         if not trip_auth_res.data:
             raise HTTPException(status_code=404, detail="找不到行程資料")
         trip_auth_row = trip_auth_res.data[0] if isinstance(trip_auth_res.data, list) else trip_auth_res.data
         created_by = str(trip_auth_row.get("created_by") or "")
         if created_by != user_id:
-            mem_res = (
-                supabase.table("trip_members")
+            mem_res = await run_in_threadpool(
+                lambda: supabase.table("trip_members")
                 .select("id")
                 .eq("itinerary_id", trip_id)
                 .eq("user_id", user_id)
@@ -1300,15 +1320,15 @@ async def generate_day_review(
             if not mem_res.data:
                 raise HTTPException(status_code=403, detail="無權限生成此行程的審核報告")
 
-        is_en = bool(locale and str(locale).strip().lower().startswith("en"))
-
-        # 1. 抓取當天所有行程細項 (High-Fidelity Context)
-        items_res = supabase.table("itinerary_items")\
-            .select("time_slot, place_name, notes, category")\
-            .eq("itinerary_id", trip_id)\
-            .eq("day_number", day)\
-            .order("time_slot")\
+        # 1. 抓取當天所有行程細項 (High-Fidelity Context, Off-loop via threadpool)
+        items_res = await run_in_threadpool(
+            lambda: supabase.table("itinerary_items")
+            .select("time_slot, place_name, notes, category")
+            .eq("itinerary_id", trip_id)
+            .eq("day_number", day)
+            .order("time_slot")
             .execute()
+        )
         
         activities = items_res.data or []
         if not activities:
@@ -1403,19 +1423,35 @@ async def generate_day_review(
                 ),
             )
 
-        # 4. 序列化原子化更新資料庫 (Per-Trip RMW Lock + Non-Single Safe Read)
+        # 4. 序列化原子化更新資料庫 (Atomic Postgres RPC + Legacy RMW Fallback; LLM 呼叫維持於鎖外)
         async with trip_lock(trip_id):
-            trip_res = supabase.table("itineraries").select("content").eq("id", trip_id).execute()
-            if not trip_res.data:
-                raise HTTPException(status_code=404, detail="找不到行程資料")
-            trip_row = trip_res.data[0] if isinstance(trip_res.data, list) else trip_res.data
-            content = dict(trip_row.get("content") or {})
-            day_reviews = dict(content.get("day_ai_reviews") or {})
-            day_reviews[str(day)] = review_text
-            content["day_ai_reviews"] = day_reviews
+            rpc_res = await _execute_atomic_trip_rpc(
+                supabase,
+                "patch_trip_day_data_atomic",
+                {
+                    "p_trip_id": trip_id,
+                    "p_user_id": user_id,
+                    "p_day": day,
+                    "p_patch": {"day_ai_reviews": {str(day): review_text}},
+                    "p_allow_creator_bypass": True,
+                },
+                trip_id=trip_id,
+                allow_creator_bypass=True,
+                forbidden_detail="無權限生成此行程的審核報告",
+                not_found_detail="找不到行程資料",
+            )
+            if rpc_res is None:
+                trip_res = supabase.table("itineraries").select("content").eq("id", trip_id).execute()
+                if not trip_res.data:
+                    raise HTTPException(status_code=404, detail="找不到行程資料")
+                trip_row = trip_res.data[0] if isinstance(trip_res.data, list) else trip_res.data
+                content = dict(trip_row.get("content") or {})
+                day_reviews = dict(content.get("day_ai_reviews") or {})
+                day_reviews[str(day)] = review_text
+                content["day_ai_reviews"] = day_reviews
 
-            # 寫回更新
-            supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute()
+                # 寫回更新
+                supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute()
         
         return {
             "status": "success", 
@@ -1444,6 +1480,37 @@ async def clear_day_review(
 ):
     """🗑️ 清除特定天數的 AI 審核報告"""
     try:
+        if day < 0:
+            raise HTTPException(status_code=400, detail="無效的請求參數")
+
+        _precheck_atomic_trip_id(
+            supabase,
+            trip_id,
+            allow_creator_bypass=True,
+            forbidden_detail="無權限清除此行程的審核報告",
+            not_found_detail="找不到行程資料",
+        )
+
+        if _can_use_atomic_rpc(supabase):
+            async with trip_lock(trip_id):
+                rpc_res = await _execute_atomic_trip_rpc(
+                    supabase,
+                    "patch_trip_day_data_atomic",
+                    {
+                        "p_trip_id": trip_id,
+                        "p_user_id": user_id,
+                        "p_day": day,
+                        "p_patch": {"delete_day_ai_review": True},
+                        "p_allow_creator_bypass": True,
+                    },
+                    trip_id=trip_id,
+                    allow_creator_bypass=True,
+                    forbidden_detail="無權限清除此行程的審核報告",
+                    not_found_detail="找不到行程資料",
+                )
+                if rpc_res is not None:
+                    return {"status": "success", "message": "Review cleared"}
+
         trip_res = supabase.table("itineraries").select("created_by, content").eq("id", trip_id).execute()
         if not trip_res.data:
             raise HTTPException(status_code=404, detail="找不到行程資料")

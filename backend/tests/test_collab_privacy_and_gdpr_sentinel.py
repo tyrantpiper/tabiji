@@ -20,7 +20,11 @@ if str(BACKEND_DIR) not in sys.path:
 
 from main import app
 from utils.deps import get_supabase, get_verified_user
-from routers.trips import mask_member_id
+from routers.trips import (
+    mask_member_id,
+    _merge_day_items_preserving_hidden_private,
+    _merge_cards_preserving_hidden_private,
+)
 
 OWNER_ID = "11111111-1111-4111-8111-111111111111"
 COLLAB_ID = "22222222-2222-4222-8222-222222222222"
@@ -118,9 +122,85 @@ class FakeQuery:
 class FakeSupabase:
     def __init__(self, store):
         self.store = store
+        self.rpc_calls = []
 
     def table(self, name):
         return FakeQuery(self.store, name)
+
+    def rpc(self, fn_name, params):
+        self.rpc_calls.append((fn_name, params))
+        store = self.store
+
+        class _RpcQuery:
+            def execute(self_inner):
+                trip_id = str(params.get("p_trip_id") or "").strip()
+                uid = str(params.get("p_user_id") or "").strip()
+                patch_obj = params.get("p_patch") or {}
+                members = store.get("trip_members", [])
+                is_member = any(
+                    m.get("itinerary_id") == trip_id and str(m.get("user_id") or "").strip() == uid
+                    for m in members
+                )
+                trip = next((t for t in store.get("itineraries", []) if t.get("id") == trip_id), None)
+
+                if fn_name == "patch_trip_day_data_atomic":
+                    allow_bypass = bool(params.get("p_allow_creator_bypass", False))
+                    if not allow_bypass:
+                        if not is_member:
+                            return MagicMock(data={"status": "forbidden"})
+                        if not trip:
+                            return MagicMock(data={"status": "not_found"})
+                    else:
+                        if not trip:
+                            return MagicMock(data={"status": "not_found"})
+                        if str(trip.get("created_by") or "").strip() != uid and not is_member:
+                            return MagicMock(data={"status": "forbidden"})
+                    is_owner = str(trip.get("created_by") or "").strip() == uid
+                    content = dict(trip.get("content") or {})
+                    day_key = str(params.get("p_day"))
+                    for field in ("day_costs", "day_tickets", "day_checklists"):
+                        if field in patch_obj:
+                            sub = dict(content.get(field) or {})
+                            sub[day_key] = _merge_day_items_preserving_hidden_private(
+                                sub.get(day_key, []),
+                                (patch_obj[field] or {}).get(day_key, []),
+                                uid,
+                                is_owner,
+                            )
+                            content[field] = sub
+                    if "day_notes" in patch_obj:
+                        sub = dict(content.get("day_notes") or {})
+                        sub[day_key] = (patch_obj["day_notes"] or {}).get(day_key, [])
+                        content["day_notes"] = sub
+                    trip["content"] = content
+                    return MagicMock(data={"status": "ok"})
+
+                if fn_name == "patch_trip_info_atomic":
+                    if not is_member:
+                        return MagicMock(data={"status": "forbidden"})
+                    if not trip:
+                        return MagicMock(data={"status": "not_found"})
+                    is_owner = str(trip.get("created_by") or "").strip() == uid
+                    content = dict(trip.get("content") or {})
+                    if "credit_cards" in patch_obj:
+                        content["credit_cards"] = _merge_cards_preserving_hidden_private(
+                            content.get("credit_cards", []),
+                            patch_obj["credit_cards"],
+                            uid,
+                            is_owner,
+                        )
+                    if "flight_info" in patch_obj:
+                        trip["flight_info"] = patch_obj["flight_info"]
+                        content["flight_info"] = patch_obj["flight_info"]
+                    if "hotel_info" in patch_obj:
+                        trip["hotel_info"] = patch_obj["hotel_info"]
+                        content["hotel_info"] = patch_obj["hotel_info"]
+                    trip["content"] = content
+                    return MagicMock(data={"status": "ok"})
+
+                return MagicMock(data={"status": "ok"})
+
+        return _RpcQuery()
 
 
 @pytest.fixture

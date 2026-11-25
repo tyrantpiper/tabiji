@@ -1,8 +1,10 @@
 import os
 import re
-from typing import Optional
+import threading
+from typing import Optional, Tuple
+import httpx
 from fastapi import Header, HTTPException, Request
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 
 
 async def get_gemini_key(
@@ -94,18 +96,90 @@ def build_supabase_rest_headers(supabase_key: str, extra: Optional[dict] = None)
     return headers
 
 
+_FALLBACK_SUPABASE_LOCK = threading.Lock()
+_fallback_supabase_client: Optional[Client] = None
+_fallback_supabase_http_client: Optional[httpx.Client] = None
+_fallback_supabase_signature: Optional[Tuple[str, str]] = None
+
+
+def create_threadsafe_supabase_client(supabase_url: str, supabase_key: str) -> Tuple[Client, httpx.Client]:
+    """Create a thread-safe Supabase client using an HTTP/1.1 httpx.Client pool.
+
+    Avoids httpcore 1.0.9 HTTP2Connection unlocked `_h2_state` multi-thread crashes
+    (`StreamIDTooLowError`) under Starlette `run_in_threadpool` concurrency, and
+    warms up lazy `.postgrest` on the initializing thread.
+    """
+    http_client = httpx.Client(
+        http2=False,
+        follow_redirects=True,
+        timeout=httpx.Timeout(120.0, connect=10.0),
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+    )
+    try:
+        client = create_client(
+            supabase_url,
+            supabase_key,
+            options=ClientOptions(httpx_client=http_client),
+        )
+        # Warm up lazy PostgREST client before concurrent worker threads access it
+        _ = client.postgrest
+        return client, http_client
+    except Exception:
+        try:
+            http_client.close()
+        except Exception:
+            pass
+        raise
+
+
+def close_fallback_supabase_client() -> None:
+    """Close and clear the cached fallback Supabase HTTP client (for shutdown / testing)."""
+    global _fallback_supabase_client, _fallback_supabase_http_client, _fallback_supabase_signature
+    with _FALLBACK_SUPABASE_LOCK:
+        old_http = _fallback_supabase_http_client
+        _fallback_supabase_client = None
+        _fallback_supabase_http_client = None
+        _fallback_supabase_signature = None
+    if old_http is not None:
+        try:
+            old_http.close()
+        except Exception:
+            pass
+
+
+def __reset_supabase_fallback_for_testing() -> None:
+    """Module singleton test reset hook."""
+    close_fallback_supabase_client()
+
+
 def get_supabase(request: Request = None) -> Client:
     """從 app.state 獲取全域 Supabase 客戶端 (使用 Service Role Key)"""
     if request is not None and hasattr(request, "app") and hasattr(request.app.state, "supabase"):
         return request.app.state.supabase
-    # 支援未傳遞 request 或 request.app.state 未掛載時之直接客戶端回落
+    # 支援未傳遞 request 或 request.app.state 未掛載時之執行緒安全 HTTP/1.1 回落
+    global _fallback_supabase_client, _fallback_supabase_http_client, _fallback_supabase_signature
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
     supabase_key = os.getenv("SUPABASE_KEY", "").strip()
     if supabase_url and supabase_key:
-        try:
-            return create_client(supabase_url, supabase_key)
-        except Exception:
-            pass
+        sig = (supabase_url, supabase_key)
+        old_http: Optional[httpx.Client] = None
+        with _FALLBACK_SUPABASE_LOCK:
+            if _fallback_supabase_client is not None and _fallback_supabase_signature == sig:
+                return _fallback_supabase_client
+            try:
+                new_client, new_http = create_threadsafe_supabase_client(supabase_url, supabase_key)
+                old_http = _fallback_supabase_http_client
+                _fallback_supabase_client = new_client
+                _fallback_supabase_http_client = new_http
+                _fallback_supabase_signature = sig
+            except Exception:
+                return None
+        if old_http is not None:
+            try:
+                old_http.close()
+            except Exception:
+                pass
+        return _fallback_supabase_client
     return None
 
 

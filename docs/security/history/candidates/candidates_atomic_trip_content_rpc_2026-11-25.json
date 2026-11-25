@@ -1,0 +1,92 @@
+[
+  {
+    "id": "supabase/migrations/20261125_atomic_trip_content_rpcs.sql:trigger_and_day_data_atomic_rpc",
+    "file_path": "supabase/migrations/20261125_atomic_trip_content_rpcs.sql",
+    "start_line": 1,
+    "end_line": 405,
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "bola_privilege_escalation_or_jsonb_corruption_or_deadlock",
+    "hypothesis": "Verify whether the migration drops public.update_trip_credit_cards(UUID, JSONB), adds an itineraries UPDATE cover_image-only no-op guard to webhook_cleanup_cloudinary(), and implements patch_trip_day_data_atomic with SECURITY DEFINER, pinned search_path, service_role-only GRANT, lock_timeout/statement_timeout, FOR NO KEY UPDATE, dual-track auth (403-before-404 vs creator bypass), day >= 0 guard, safe v_content || jsonb_build_object merging, delete_day_ai_review explicit key removal, hidden foreign private item preservation, and strict JSON boolean canonicalization of submitted is_private."
+  },
+  {
+    "id": "supabase/migrations/20261125_atomic_trip_content_rpcs.sql:info_and_import_atomic_rpcs",
+    "file_path": "supabase/migrations/20261125_atomic_trip_content_rpcs.sql",
+    "start_line": 406,
+    "end_line": 875,
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "credit_card_ownership_hijacking_or_date_shrinkage_or_dac_exposure",
+    "hypothesis": "Verify whether patch_trip_info_atomic enforces all 5 credit_card ownership invariants (hidden private card retention, hidden/duplicate ID collision UUID re-minting via v_seen_ids, JWT creator binding, mem_* restoration, anti-privatization, strict boolean is_public canonicalization), maps explicit JSON null on flight_info/hotel_info to SQL NULL, and whether merge_trip_import_content_atomic preserves existing daily_locations precedence (imported || existing), ignores non-array privacy-field payloads so hidden private items cannot be wiped, canonicalizes is_private, and extends end_date non-shrinkingly inside FOR NO KEY UPDATE with service_role-only DAC."
+  },
+  {
+    "id": "backend/utils/deps.py:threadsafe_http11_supabase_pool",
+    "file_path": "backend/utils/deps.py",
+    "start_line": 95,
+    "end_line": 185,
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "multithread_http2_race_or_connection_leak",
+    "hypothesis": "Verify whether create_threadsafe_supabase_client and get_supabase configure httpx.Client(http2=False) with ClientOptions, warm up lazy .postgrest on the creating thread, close http_client on failure/rotation/shutdown, and expose __reset_supabase_fallback_for_testing()."
+  },
+  {
+    "id": "backend/routers/trips.py:atomic_rpc_helper_and_import_wiring",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 55,
+    "end_line": 200,
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "uuid_22p02_oracle_or_fail_open_fallback_or_event_loop_block",
+    "hypothesis": "Verify whether _can_use_atomic_rpc, _precheck_atomic_trip_id, and _execute_atomic_trip_rpc enforce ENABLE_ATOMIC_TRIP_RPC kill-switch, NonCallableMock legacy test detection, UUID_V4_REGEX pre-check (404 when allow_creator_bypass else 403), run_in_threadpool off-loop execution, single jittered retry on 55P03/40P01 -> 409 Conflict, PGRST202-only fallback, and fail-closed re-raise on all other errors."
+  },
+  {
+    "id": "backend/routers/trips.py:day_data_location_info_rpc_and_500_sanitization",
+    "file_path": "backend/routers/trips.py",
+    "start_line": 1804,
+    "end_line": 2195,
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "error_information_disclosure_or_partial_clobber_or_bola",
+    "hypothesis": "Verify whether update_day_data, update_trip_location, and update_trip_info route through atomic RPCs under trip_lock with UUID pre-checks and negative-day validation, retain PGRST202/mock legacy RMW fallback, and sanitize unexpected exceptions in update_trip_info instead of returning detail=str(e)."
+  },
+  {
+    "id": "backend/routers/ai.py:day_review_atomic_rpc_and_creator_bypass",
+    "file_path": "backend/routers/ai.py",
+    "start_line": 1278,
+    "end_line": 1565,
+    "trust_boundary": "authenticated_to_internal",
+    "attack_vector": "bola_bypass_or_llm_inside_db_lock_or_stale_overwrite",
+    "hypothesis": "Verify whether generate_day_review keeps Gemini call_extraction outside trip_lock and DB locks while offloading pre-reads and RPC writes via run_in_threadpool to patch_trip_day_data_atomic(p_allow_creator_bypass=True), whether clear_day_review deletes via delete_day_ai_review=True with p_allow_creator_bypass=True, and whether both reject negative days and invalid UUIDs safely."
+  },
+  {
+    "id": "frontend/components/views/tools-view.tsx:credit_card_jwt_offline_and_rollback",
+    "file_path": "frontend/components/views/tools-view.tsx",
+    "start_line": 345,
+    "end_line": 370,
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "unauthenticated_mutation_silent_data_loss_or_stale_clobber",
+    "hypothesis": "Verify whether saveTripInfo calls tripsApi.updateInfo (authenticated offlineFetch), rethrows errors so callers can roll back and show error toasts instead of swallowing failures, and skips tripMutate() when res?.offline is true."
+  },
+  {
+    "id": "frontend/components/views/tools-view.tsx:credit_card_save_delete_rollback_and_local_persistence",
+    "file_path": "frontend/components/views/tools-view.tsx",
+    "start_line": 612,
+    "end_line": 730,
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "premature_localstorage_wipe_or_missing_no_trip_persistence",
+    "hypothesis": "Verify whether handleSaveCard persists private cards locally when !activeTripId, removes migrated localStorage entries ONLY after saveTripInfo succeeds/enqueues, and rolls back sharedCards/localCards and shows error toast on save/delete failure."
+  },
+  {
+    "id": "frontend/components/views/info-view.tsx:hotel_inner_edit_rollback_and_draft_preservation",
+    "file_path": "frontend/components/views/info-view.tsx",
+    "start_line": 100,
+    "end_line": 360,
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "optimistic_state_drift_or_draft_wipe_on_save_failure",
+    "hypothesis": "Verify whether handleSave returns Promise<boolean>, skips SWR revalidation/broadcast on offline queue, isolates post-commit revalidation errors, calls reloadTripDetail() on failure, and whether handleSaveInner awaits handleSave while keeping innerEditing active (with isSavingInnerRef double-click guard), restores prevHotels and innerEditing=true with tempHotel draft preserved on failure, scopes preserveInnerDraftRef by (activeTripId, currentHotelIdx) with trip-switch reset, and tracks lastSyncedTripRef so offline edits are never clobbered by stale activeTripData."
+  },
+  {
+    "id": "frontend/lib/sync-hooks.ts:offline_mutation_online_jwt_and_401_retry",
+    "file_path": "frontend/lib/sync-hooks.ts",
+    "start_line": 10,
+    "end_line": 65,
+    "trust_boundary": "browser_to_edge",
+    "attack_vector": "missing_jwt_header_or_unhandled_401_token_expiry",
+    "hypothesis": "Verify whether useOfflineMutation online branch injects Authorization Bearer token, performs a bounded single 401 session refresh retry, and guards /api/auth/ endpoints from circular auth loops."
+  }
+]

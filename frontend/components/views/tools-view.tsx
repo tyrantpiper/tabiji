@@ -33,9 +33,8 @@ import { useTargetExpenseId, useTripStore } from "@/lib/stores/tripStore"
 import { debugLog } from "@/lib/debug"
 import { ExpenseDialog } from "@/components/expense-dialog"
 import { broadcastTripEvent } from "@/lib/hooks/useTripRealtime"
-import { expensesApi, tripsApi, API_HOST } from "@/lib/api"
+import { expensesApi, tripsApi } from "@/lib/api"
 import { ActuaryDialogCard } from "@/components/ActuaryDialogCard"
-import { useOfflineMutation } from "@/lib/sync-hooks"
 import { SyncStatusBadge } from "@/components/ui/SyncStatusBadge"
 import { useSyncStatusStore } from "@/lib/stores/syncStatusStore"
 
@@ -141,7 +140,6 @@ export function ToolsView() {
     // 🔧 v7 FIX: 載入完整行程資料（含 members），解決成員列表為空的問題
     const { trip: tripDetail } = useTripDetail(activeTripId, userId, 0, handleTripNotFound)
     const tripMembers = tripDetail?.members || activeTrip?.members || []
-    const { mutate: offlineMutate } = useOfflineMutation() // 🆕 Resilience Hook
     const [activeSection, setActiveSection] = useState("expense")  // 🔧 FIX: Rename to activeSection
     const [expenses, setExpenses] = useState<Expense[]>([])  // 🔧 FIX: Add missing expenses state
 
@@ -348,30 +346,23 @@ export function ToolsView() {
     }, [activeTrip])
 
     const saveTripInfo = async (mergedSharedCards: CreditCard[]) => {
-        if (!activeTripId) return
-        try {
-            // 🧠 v4.1: Integrate with Offline Engine & Atomic RPC
-            const userId = localStorage.getItem("user_uuid") || ""
-            const url = `${API_HOST}/api/trips/${activeTripId}/info`
-            const payload = {
+        if (!activeTripId) return null
+        // 🧠 v4.6: Use tripsApi.updateInfo (JWT + 401 refresh + Idempotency-Key + offline/Lie-Fi queue)
+        const userId = localStorage.getItem("user_uuid") || ""
+        const res = await tripsApi.updateInfo(
+            activeTripId,
+            {
                 credit_cards: mergedSharedCards // 🕵️ Forensic Fix: Send ONLY cards to prevent clobbering
-            }
+            },
+            userId
+        )
 
-            // 🛡️ Drop-in replacement with offline queue support
-            await offlineMutate(url, {
-                method: "PATCH",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-User-ID": userId
-                },
-                body: JSON.stringify(payload)
-            })
-
-            // Re-fetch trip data using context mutate for proper SWR revalidation
-            await tripMutate()
-        } catch (e) {
-            console.error("Failed to sync shared cards:", e)
+        // Skip SWR revalidation when offline-queued so optimistic card state is not clobbered by stale cache;
+        // isolate post-commit refresh errors so a committed 200 OK save never triggers false rollback
+        if (!res?.offline) {
+            await tripMutate().catch(() => {})
         }
+        return res
     }
 
     // 🆕 Phase 9: Reset selectedDate when trip changes
@@ -629,6 +620,8 @@ export function ToolsView() {
         if (newCardIsPublic && !activeTripId) { toast.error(t('tv_card_need_trip')); return }
 
         setIsSavingCard(true)
+        const prevShared = [...sharedCards]
+        const prevLocal = [...localCards]
 
         try {
             const userId = localStorage.getItem("user_uuid")
@@ -649,16 +642,25 @@ export function ToolsView() {
             const purgedLocal = localCards.filter(c => c.id !== cardData.id)
             const purgedShared = sharedCards.filter(c => c.id !== cardData.id)
 
-            // 🧠 v4.5: Always Sync to Cloud for Cross-Device Support
-            // Regardless of public/private state, we store on server for user sync.
-            const updatedShared = [...purgedShared, cardData]
-            setSharedCards(updatedShared)
+            if (!activeTripId) {
+                // No active trip: persist private card locally so it survives reloads
+                const updatedLocal = [...purgedLocal, cardData]
+                setLocalCards(updatedLocal)
+                saveCardsToLocalStorage(updatedLocal)
+            } else {
+                // 🧠 v4.5: Always Sync to Cloud for Cross-Device Support
+                // Regardless of public/private state, we store on server for user sync.
+                const updatedShared = [...purgedShared, cardData]
+                setSharedCards(updatedShared)
 
-            // Clean up local storage for this card (migration)
-            setLocalCards(purgedLocal)
-            saveCardsToLocalStorage(purgedLocal)
+                await saveTripInfo(updatedShared)
 
-            await saveTripInfo(updatedShared)
+                // Clean up local storage for this card ONLY after remote save / offline enqueue succeeds
+                if (purgedLocal.length !== localCards.length) {
+                    setLocalCards(purgedLocal)
+                    saveCardsToLocalStorage(purgedLocal)
+                }
+            }
 
             toast.success(newCardIsPublic ? t('tv_card_saved_public') : t('tv_card_saved_private'))
             setCardDialogOpen(false)
@@ -666,6 +668,11 @@ export function ToolsView() {
             haptic.success()
         } catch (e) {
             console.error("Failed to save card:", e)
+            setSharedCards(prevShared)
+            setLocalCards(prevLocal)
+            if (activeTripId) {
+                tripMutate().catch(() => {})
+            }
             toast.error(t('tv_card_save_failed'))
             haptic.error()
         } finally {
@@ -709,6 +716,9 @@ export function ToolsView() {
             // Rollback on error
             setSharedCards(oldShared)
             setLocalCards(oldLocal)
+            if (activeTripId) {
+                tripMutate().catch(() => {})
+            }
             toast.error(t('tv_card_delete_failed'))
             haptic.error()
         } finally {

@@ -36,7 +36,27 @@ export function useOfflineMutation() {
             setIsQueued(true);
             return { ok: true, json: async () => ({ status: 'queued' }) };
         } else {
-            return fetch(url, options);
+            // 🛡️ Inject Bearer JWT & perform single 401 refresh retry for backward compatibility
+            const headers = new Headers(options.headers);
+            let activeToken = getCachedToken();
+            if (!activeToken && typeof window !== 'undefined' && !url.includes('/api/auth/')) {
+                activeToken = await ensureValidSession().catch(() => null);
+            }
+            if (activeToken && !headers.has('Authorization')) {
+                headers.set('Authorization', `Bearer ${activeToken}`);
+            }
+
+            let res = await fetch(url, { ...options, headers });
+
+            if (res.status === 401 && typeof window !== 'undefined' && !url.includes('/api/auth/')) {
+                const freshToken = await ensureValidSession(true).catch(() => null);
+                if (freshToken) {
+                    const retryHeaders = new Headers(headers);
+                    retryHeaders.set('Authorization', `Bearer ${freshToken}`);
+                    res = await fetch(url, { ...options, headers: retryHeaders });
+                }
+            }
+            return res;
         }
     }, []);
 

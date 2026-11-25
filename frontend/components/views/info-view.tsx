@@ -105,6 +105,9 @@ export function InfoView() {
     const [currentHotelIdx, setCurrentHotelIdx] = useState<number | null>(null)
     const [innerEditing, setInnerEditing] = useState(false)
     const [tempHotel, setTempHotel] = useState<Hotel | null>(null)
+    const preserveInnerDraftRef = useRef<{ tripId: string | null; hotelIdx: number | null } | null>(null)
+    const isSavingInnerRef = useRef(false)
+    const lastSyncedTripRef = useRef<{ tripId: string | null; data: unknown }>({ tripId: null, data: null })
 
     // 🔧 使用 ref 來追蹤當前索引，解決異步回調的閉包問題
     const currentHotelIdxRef = useRef<number | null>(null)
@@ -131,36 +134,78 @@ export function InfoView() {
     const [flightTab, setFlightTab] = useState<'outbound' | 'inbound'>('outbound')
     const [activeSection, setActiveSection] = useState("flights")
 
+    // Reset inner modal draft state cleanly whenever switching trips so drafts never leak across trips
+    useEffect(() => {
+        preserveInnerDraftRef.current = null
+        isSavingInnerRef.current = false
+        setInnerEditing(false)
+        setDetailOpen(false)
+        setTempHotel(null)
+    }, [activeTripId])
+
     useEffect(() => {
         if (detailOpen && currentHotelIdx !== null) {
+            const preserved = preserveInnerDraftRef.current
+            if (preserved && preserved.tripId === activeTripId && preserved.hotelIdx === currentHotelIdx) {
+                return
+            }
+            preserveInnerDraftRef.current = null
             setInnerEditing(false)
             setTempHotel(hotels[currentHotelIdx])
+        } else {
+            preserveInnerDraftRef.current = null
         }
-    }, [detailOpen, currentHotelIdx, hotels])
+    }, [detailOpen, currentHotelIdx, hotels, activeTripId])
 
-    const handleSaveInner = () => {
-        if (!activeTripId || currentHotelIdx === null || !tempHotel) return
-        haptic.success()
+    const handleSaveInner = async () => {
+        if (!activeTripId || currentHotelIdx === null || !tempHotel || isSavingInnerRef.current) return
+        isSavingInnerRef.current = true
+        const prevHotels = [...hotels]
+        const draftHotel = { ...tempHotel }
         const newHotels = [...hotels]
-        newHotels[currentHotelIdx] = tempHotel
+        newHotels[currentHotelIdx] = draftHotel
+        preserveInnerDraftRef.current = { tripId: activeTripId, hotelIdx: currentHotelIdx }
         setHotels(newHotels)
-        setInnerEditing(false)
-        handleSave(newHotels) // 👈 消除 React 非同步更新延遲
+        try {
+            const ok = await handleSave(newHotels) // 👈 消除 React 非同步更新延遲
+            if (ok) {
+                preserveInnerDraftRef.current = null
+                setInnerEditing(false)
+                haptic.success()
+            } else {
+                // Rollback optimistic hotels state and keep inner editing open with draft preserved
+                setHotels(prevHotels)
+                setTempHotel(draftHotel)
+                setInnerEditing(true)
+                haptic.error()
+            }
+        } finally {
+            isSavingInnerRef.current = false
+        }
     }
 
     // 🔄 Sync SWR Data to Local State (Hybrid Mode)
-    // Only update when switching trips or initial load, NOT while user is editing
+    // Only update when switching trips or when activeTripData actually changes, NOT while editing
+    // and NOT merely because isEditing/innerEditing returned to false after an offline-queued save!
     useEffect(() => {
         if (!activeTripId) {
+            lastSyncedTripRef.current = { tripId: null, data: null }
             setFlights(DEFAULT_FLIGHTS)
             setHotels([DEFAULT_HOTEL])
             return
         }
 
         // If we are editing, don't overwrite user's work with background revalidations
-        if (isEditing) return
+        if (isEditing || innerEditing) return
 
         if (activeTripData) {
+            if (
+                lastSyncedTripRef.current.tripId === activeTripId &&
+                lastSyncedTripRef.current.data === activeTripData
+            ) {
+                return
+            }
+            lastSyncedTripRef.current = { tripId: activeTripId, data: activeTripData }
             setFlights({
                 outbound: normalizeFlights(activeTripData.flight_info?.outbound, 'outbound'),
                 inbound: normalizeFlights(activeTripData.flight_info?.inbound, 'inbound')
@@ -170,7 +215,7 @@ export function InfoView() {
                 .map((h: Partial<Hotel>) => ({ ...DEFAULT_HOTEL, ...h }))
             setHotels(parsedHotels)
         }
-    }, [activeTripData, activeTripId, isEditing])
+    }, [activeTripData, activeTripId, isEditing, innerEditing])
 
     // ⚡ 監聽跨裝置航班/住宿協同廣播 (<10ms 鏡像感知與草稿保護)
     useEffect(() => {
@@ -257,15 +302,15 @@ export function InfoView() {
         }
     }
 
-    const handleSave = async (overrideHotels?: Hotel[], overrideFlights?: typeof DEFAULT_FLIGHTS) => {
-        if (!activeTripId) return
+    const handleSave = async (overrideHotels?: Hotel[], overrideFlights?: typeof DEFAULT_FLIGHTS): Promise<boolean> => {
+        if (!activeTripId) return false
         const targetHotels = overrideHotels || hotels
         const targetFlights = overrideFlights || flights
         try {
             const userId = localStorage.getItem("user_uuid") || ""
 
-            // 🧠 v4.5: Use standardized API with identity guard
-            await tripsApi.updateInfo(activeTripId, {
+            // 🧠 v4.5: Use standardized API with identity guard + offlineFetch
+            const res = await tripsApi.updateInfo(activeTripId, {
                 flight_info: targetFlights,
                 hotel_info: targetHotels
             }, userId)
@@ -273,8 +318,12 @@ export function InfoView() {
             toast.success("Done")
             setIsEditing(false)
             // 🧠 v4.5: Absolute Fidelity Protocol - Trigger detail revalidation before list mutate
-            await reloadTripDetail()
-            await tripMutate() // 🔄 Refresh global context
+            // Skip revalidation when offline-queued so optimistic edits are preserved;
+            // isolate post-commit SWR refresh errors so a committed 200 OK save never triggers false rollback
+            if (!res?.offline) {
+                await reloadTripDetail().catch(() => {})
+                await tripMutate().catch(() => {}) // 🔄 Refresh global context
+            }
 
             // 🛡️ L0 快照同步寫入
             if (activeTripData) {
@@ -286,13 +335,18 @@ export function InfoView() {
             }
 
             // ⚡ 跨端協同廣播 (<10ms)
-            await broadcastTripEvent(activeTripId, "info:update", {
-                flight_info: targetFlights,
-                hotel_info: targetHotels
-            }).catch(() => {})
+            if (!res?.offline) {
+                await broadcastTripEvent(activeTripId, "info:update", {
+                    flight_info: targetFlights,
+                    hotel_info: targetHotels
+                }).catch(() => {})
+            }
+            return true
         } catch (e) {
             console.error("Save failed:", e)
             toast.error("Save failed. Please check your connection or permissions.")
+            await reloadTripDetail().catch(() => {})
+            return false
         }
     }
 
@@ -1121,7 +1175,7 @@ export function InfoView() {
                                 <div className="absolute bottom-0 left-0 right-0 p-4 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 flex gap-3 z-20">
                                     {innerEditing ? (
                                         <>
-                                            <Button variant="ghost" className="flex-1 h-11 rounded-xl" onClick={() => { haptic.tap(); setInnerEditing(false); }}>Cancel</Button>
+                                            <Button variant="ghost" className="flex-1 h-11 rounded-xl" onClick={() => { haptic.tap(); preserveInnerDraftRef.current = null; setInnerEditing(false); if (currentHotelIdx !== null) setTempHotel(hotels[currentHotelIdx]); }}>Cancel</Button>
                                             <Button className="flex-1 h-11 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-lg" onClick={handleSaveInner}>Save Changes</Button>
                                         </>
                                     ) : (
