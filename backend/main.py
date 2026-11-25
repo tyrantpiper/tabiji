@@ -119,6 +119,9 @@ _URL_DETECT_RE = re.compile(
     r'https?://[^\s<>"。，、；：！？（）【】《》「」『』]+'
     r'|(?<![A-Za-z0-9_.-])www\.[^\s<>"。，、；：！？（）【】《》「」『』]+'
 )
+_STREAM_IDLE_CHUNK_TIMEOUT = 25.0
+_STREAM_ACTIVE_TOTAL_CAP = 95.0
+_STREAM_PRESERVE_PARTIAL_MIN_CHARS = 140
 _URL_UNAMBIGUOUS_TRAILING_PUNCT = '.,!?:;"\'<>。，、；：！？）】》」』'
 _URL_BALANCED_CLOSERS = {")": "(", "]": "[", "}": "{"}
 _URL_FILLER_RE = re.compile(
@@ -2041,9 +2044,12 @@ Live geographic coordinates have been verified above. When recommending nearby r
 
                 while True:
                     sanitizer = StreamLookaheadSanitizer(window_size=30)
-                    model_deadline = asyncio.get_running_loop().time() + stream_timeout
+                    stream_start_ts = asyncio.get_running_loop().time()
+                    first_output_deadline = stream_start_ts + stream_timeout
+                    active_total_cap = max(stream_timeout, _STREAM_ACTIVE_TOTAL_CAP)
+                    active_total_deadline = stream_start_ts + active_total_cap
                     try:
-                        rem_open = max(0.05, model_deadline - asyncio.get_running_loop().time())
+                        rem_open = max(0.05, first_output_deadline - asyncio.get_running_loop().time())
                         stream_obj = await asyncio.wait_for(
                             client.aio.models.generate_content_stream(
                                 model=candidate_model,
@@ -2055,15 +2061,28 @@ Live geographic coordinates have been verified above. When recommending nearby r
 
                         stream_iter = stream_obj.__aiter__()
                         while True:
-                            rem_chunk = model_deadline - asyncio.get_running_loop().time()
-                            if rem_chunk <= 0:
-                                raise asyncio.TimeoutError(
-                                    f"Stream deadline exceeded ({stream_timeout}s) for {candidate_model}"
-                                )
+                            now_ts = asyncio.get_running_loop().time()
+                            if emitted_any_output:
+                                rem_total = active_total_deadline - now_ts
+                                if rem_total <= 0:
+                                    raise asyncio.TimeoutError(
+                                        f"Active stream total cap exceeded ({active_total_cap}s) for {candidate_model}"
+                                    )
+                                rem_chunk = min(_STREAM_IDLE_CHUNK_TIMEOUT, rem_total)
+                                timeout_label = f"Stream idle/cap timeout ({rem_chunk:.1f}s) for {candidate_model}"
+                            else:
+                                rem_chunk = first_output_deadline - now_ts
+                                if rem_chunk <= 0:
+                                    raise asyncio.TimeoutError(
+                                        f"Stream first-output deadline exceeded ({stream_timeout}s) for {candidate_model}"
+                                    )
+                                timeout_label = f"Stream first-output timeout ({stream_timeout}s) for {candidate_model}"
                             try:
                                 chunk = await asyncio.wait_for(stream_iter.__anext__(), timeout=rem_chunk)
                             except StopAsyncIteration:
                                 break
+                            except asyncio.TimeoutError:
+                                raise asyncio.TimeoutError(timeout_label) from None
                             last_chunk = chunk  # 持續記錄最後 chunk（含 grounding_metadata）
 
                             # 心跳檢查
@@ -2197,7 +2216,11 @@ Live geographic coordinates have been verified above. When recommending nearby r
                 break  # 成功，跳出降級迴圈
                 
             except (*_MODEL_API_ERRORS, asyncio.TimeoutError, Exception) as gen_error:
-                print(f"⚠️ {candidate_model} 串流失敗: {gen_error}")
+                err_msg = str(gen_error).strip()
+                print(
+                    f"⚠️ {candidate_model} 串流失敗 ({type(gen_error).__name__})"
+                    + (f": {err_msg}" if err_msg else "")
+                )
                 # 🛡️ 2026 金鑰與壞請求安全防護：401/403 Auth 失敗與非 Config 400 Bad Request 立即中止並回傳明確代碼
                 if isinstance(gen_error, _MODEL_API_ERRORS):
                     err_kind = classify_api_error(gen_error)
@@ -2228,6 +2251,30 @@ Live geographic coordinates have been verified above. When recommending nearby r
                         await asyncio.sleep(0.15 + random.uniform(0.01, 0.05))
                 elif isinstance(gen_error, asyncio.TimeoutError):
                     record_model_error(candidate_model, api_key=api_key, is_rate_limit=False)
+
+                # 🛡️ 已輸出實質回覆內容 (>= _STREAM_PRESERVE_PARTIAL_MIN_CHARS) 時，
+                # 保留使用者已讀內容並回傳中斷錯誤，禁止送出 event: reset 抹除畫面重跑備援鏈
+                if emitted_any_output and len(full_text.strip()) >= _STREAM_PRESERVE_PARTIAL_MIN_CHARS:
+                    try:
+                        partial_tails, _ = sanitizer.flush()
+                        for txt in partial_tails:
+                            full_text += txt
+                            yield f'event: text\ndata: {json.dumps({"text": txt})}\n\n'
+                            await asyncio.sleep(0)
+                    except Exception:
+                        pass
+                    partial_code = (
+                        504
+                        if isinstance(gen_error, asyncio.TimeoutError)
+                        else (_get_api_error_code(gen_error) or 503)
+                    )
+                    partial_detail = (
+                        "Response stream was interrupted mid-way; partial answer preserved."
+                        if is_en_stream
+                        else "AI 回應串流中途連線逾時或中斷，已保留目前已顯示內容。"
+                    )
+                    yield f'event: error\ndata: {json.dumps({"message": err_msg or partial_detail, "code": partial_code, "detail": partial_detail, "partial_preserved": True})}\n\n'
+                    return
 
                 if emitted_any_output:
                     yield f'event: reset\ndata: {json.dumps({"reason": "fallback", "model": candidate_model})}\n\n'
