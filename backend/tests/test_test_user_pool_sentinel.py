@@ -1,26 +1,56 @@
 """
-In-Memory Security Sentinel Sandbox Test: Standardized Test User Pool
-Verifies role definitions, boundary defenses, stranger 403 access control, and zero live pollution.
+In-Memory Security Sentinel Sandbox Test: Standardized 6-Account Dual-Track Test User Pool
+Verifies role definitions, RFC 4122 v4 Edge Shield compatibility, cross-stack backend/frontend
+fixture alignment, boundary defenses, stranger 403 access control, and zero live pollution.
 """
-import pytest
+import hashlib
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
-from datetime import datetime, timezone, timedelta
 
-from main import app
-from utils.deps import get_supabase, get_verified_user
+# CI CWD Isolation: inject REPO_ROOT and BACKEND_DIR
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+for _p in (str(REPO_ROOT), str(BACKEND_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-# 5 Standardized Test Role Constants
-TEST_USER_OWNER_ID = "00000000-0000-0000-0000-000000000001"
-TEST_USER_EDITOR_ID = "00000000-0000-0000-0000-000000000002"
-TEST_USER_VIEWER_ID = "00000000-0000-0000-0000-000000000003"
-TEST_USER_CAPSULE_ID = "00000000-0000-0000-0000-000000000004"
-TEST_USER_STRANGER_ID = "00000000-0000-0000-0000-000000000005"
+from main import app  # noqa: E402
+from tests.fixtures.test_users import (  # noqa: E402
+    ALL_FIXED_TEST_USER_IDS,
+    LEGACY_PINNED_TEST_USER_IDS,
+    MODERN_UPGRADEABLE_TEST_USER_IDS,
+    RFC4122_UUID_V4_RE,
+    STATIC_ROLE_TEST_USER_IDS,
+    SYNTHETIC_RYAN_TEST_ID,
+    TEST_USERS,
+    TEST_USER_CAPSULE_ID,
+    TEST_USER_EDITOR_ID,
+    TEST_USER_OWNER_ID,
+    TEST_USER_RYAN_TEST_ID,
+    TEST_USER_STRANGER_ID,
+    TEST_USER_VIEWER_ID,
+    resolve_ryan_test_user_id,
+)
+from utils.deps import get_supabase, get_verified_user  # noqa: E402
 
 # Synthetic Core User Fixture Constants (Isolated Fixtures)
 FIXTURE_CORE_USER_1 = "11111111-2222-3333-4444-555555555551"
 FIXTURE_CORE_USER_2 = "11111111-2222-3333-4444-555555555552"
 FIXTURE_CORE_USER_3 = "11111111-2222-3333-4444-555555555553"
+
+# SHA-256 of production main user and personal QA account (never embed plaintext personal QA UUID)
+MAIN_USER_SHA256 = "1b9110f155d92fc3cee7dba9833489dd1e29c5ee57b54fafb7d7ed6b5e100d2d"
+PERSONAL_QA_SHA256 = "df53a6abe0fa38b52ecf55f21d794ac5d47e6d370af2c6ac7d6f6d3c829e0c29"
+
+
+def _sha256(val: str) -> str:
+    return hashlib.sha256(val.strip().lower().encode("utf-8")).hexdigest()
 
 
 def create_mock_supabase(trip_data: dict, capsule_entries: list):
@@ -74,22 +104,96 @@ def create_mock_supabase(trip_data: dict, capsule_entries: list):
 
 
 def test_sentinel_test_pool_constants_integrity():
-    """Verify all 5 test UUIDs are distinct, valid format, and don't collide with real users."""
-    test_ids = [
+    """Verify all 6 fixed test pool roles, dual-track metadata, RFC 4122 v4 compliance, and isolation."""
+    # 1. Exact 6 roles present and distinct
+    expected_roles = {"OWNER", "EDITOR", "VIEWER", "CAPSULE", "STRANGER", "RYAN_TEST"}
+    assert set(TEST_USERS.keys()) == expected_roles
+    assert len(STATIC_ROLE_TEST_USER_IDS) == 5
+    assert len(ALL_FIXED_TEST_USER_IDS) == 6
+    assert len(set(ALL_FIXED_TEST_USER_IDS)) == 6
+
+    # 2. All 5 static synthetic role UUIDs follow reserved prefix and stay separate from core fixtures
+    real_fixture_ids = {FIXTURE_CORE_USER_1, FIXTURE_CORE_USER_2, FIXTURE_CORE_USER_3}
+    for tid in STATIC_ROLE_TEST_USER_IDS:
+        assert tid not in real_fixture_ids
+        assert tid.startswith("00000000-0000-0000-0000-00000000000")
+        assert _sha256(tid) != MAIN_USER_SHA256
+
+    # 3. RYAN_TEST (both default synthetic and resolved) satisfies strict RFC 4122 UUID v4 (Edge Shield D1 POI)
+    assert SYNTHETIC_RYAN_TEST_ID == "00000000-0000-4000-8000-000000000006"
+    assert RFC4122_UUID_V4_RE.match(SYNTHETIC_RYAN_TEST_ID)
+    assert RFC4122_UUID_V4_RE.match(TEST_USER_RYAN_TEST_ID)
+    assert _sha256(TEST_USER_RYAN_TEST_ID) != MAIN_USER_SHA256
+    assert TEST_USER_RYAN_TEST_ID not in real_fixture_ids
+
+    # 4. Dual-track auth_mode contract: ONLY VIEWER is legacy; all other 5 are modern
+    legacy_roles = [role for role, meta in TEST_USERS.items() if meta["auth_mode"] == "legacy"]
+    modern_roles = [role for role, meta in TEST_USERS.items() if meta["auth_mode"] == "modern"]
+    assert legacy_roles == ["VIEWER"]
+    assert set(modern_roles) == {"OWNER", "EDITOR", "CAPSULE", "STRANGER", "RYAN_TEST"}
+    assert LEGACY_PINNED_TEST_USER_IDS == frozenset({TEST_USER_VIEWER_ID})
+    assert set(MODERN_UPGRADEABLE_TEST_USER_IDS) == {
         TEST_USER_OWNER_ID,
         TEST_USER_EDITOR_ID,
-        TEST_USER_VIEWER_ID,
         TEST_USER_CAPSULE_ID,
         TEST_USER_STRANGER_ID,
-    ]
-    # 1. All 5 are distinct
-    assert len(set(test_ids)) == 5
-    
-    # 2. Strict separation from core user fixtures
-    real_ids = {FIXTURE_CORE_USER_1, FIXTURE_CORE_USER_2, FIXTURE_CORE_USER_3}
-    for tid in test_ids:
-        assert tid not in real_ids
-        assert tid.startswith("00000000-0000-0000-0000-00000000000")
+    }
+
+    # 5. Edge Shield v4 compatibility flag matches exact UUID v4 reality
+    for role, meta in TEST_USERS.items():
+        if role == "RYAN_TEST":
+            assert meta["edge_shield_v4_compatible"] is True
+        else:
+            assert meta["edge_shield_v4_compatible"] is False
+
+
+def test_sentinel_ryan_test_env_injection_and_zero_plaintext_leak(monkeypatch):
+    """Verify RYAN_TEST supports RFC 4122 v4 env injection and public fixture source embeds zero personal QA UUID."""
+    monkeypatch.delenv("TEST_USER_RYAN_TEST_ID", raising=False)
+    monkeypatch.delenv("NEXT_PUBLIC_TEST_USER_RYAN_TEST_ID", raising=False)
+    assert resolve_ryan_test_user_id() == SYNTHETIC_RYAN_TEST_ID
+
+    # Invalid non-v4 env value falls back safely to synthetic v4
+    monkeypatch.setenv("TEST_USER_RYAN_TEST_ID", "00000000-0000-0000-0000-000000000099")
+    assert resolve_ryan_test_user_id() == SYNTHETIC_RYAN_TEST_ID
+
+    # Valid RFC 4122 v4 env value is accepted & lowercased
+    valid_v4 = "12345678-1234-4123-8123-123456789ABC"
+    monkeypatch.setenv("TEST_USER_RYAN_TEST_ID", valid_v4)
+    assert resolve_ryan_test_user_id() == valid_v4.lower()
+
+    # Whitespace-only primary env var falls through cleanly to NEXT_PUBLIC_TEST_USER_RYAN_TEST_ID
+    monkeypatch.setenv("TEST_USER_RYAN_TEST_ID", "   ")
+    monkeypatch.setenv("NEXT_PUBLIC_TEST_USER_RYAN_TEST_ID", valid_v4)
+    assert resolve_ryan_test_user_id() == valid_v4.lower()
+
+    # Cross-stack alignment & zero plaintext personal QA UUID in public backend/frontend source
+    backend_src = (REPO_ROOT / "backend" / "tests" / "fixtures" / "test_users.py").read_text(encoding="utf-8")
+    frontend_src = (REPO_ROOT / "frontend" / "lib" / "constants" / "test-fixtures.ts").read_text(encoding="utf-8")
+    frontend_test_src = (REPO_ROOT / "frontend" / "__tests__" / "test-fixtures.test.ts").read_text(encoding="utf-8")
+    script_src = (REPO_ROOT / "scripts" / "manage_test_accounts.py").read_text(encoding="utf-8")
+    script_test_src = (REPO_ROOT / "backend" / "tests" / "test_manage_test_accounts.py").read_text(encoding="utf-8")
+    memory_src = (REPO_ROOT / ".agents" / "domains" / "devops_security.md").read_text(encoding="utf-8")
+
+    uuid_re = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+    for label, src in (
+        ("backend/tests/fixtures/test_users.py", backend_src),
+        ("frontend/lib/constants/test-fixtures.ts", frontend_src),
+        ("frontend/__tests__/test-fixtures.test.ts", frontend_test_src),
+        ("scripts/manage_test_accounts.py", script_src),
+        ("backend/tests/test_manage_test_accounts.py", script_test_src),
+        (".agents/domains/devops_security.md", memory_src),
+    ):
+        for found_uuid in uuid_re.findall(src):
+            assert _sha256(found_uuid) != PERSONAL_QA_SHA256, (
+                f"Plaintext personal QA UUID leaked into public file {label}!"
+            )
+
+    for role in ("OWNER", "EDITOR", "VIEWER", "CAPSULE", "STRANGER", "RYAN_TEST"):
+        assert role in frontend_src
+    assert SYNTHETIC_RYAN_TEST_ID in frontend_src
+    assert "authMode: 'legacy'" in frontend_src
+    assert "edgeV4Compatible: true" in frontend_src
 
 
 def test_sentinel_stranger_cannot_access_private_capsule():

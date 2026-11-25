@@ -3,6 +3,8 @@
 > **所屬領域**: GitHub Actions, PowerShell 熔斷, Security Sentinel (runner.py), 台帳驗證 (validate_security_ledger.py)
 
 ## 🏛️ 架構決策 (Decisions)
+- **固定 6 帳雙軌測試池與零線上一次性帳號污染契約 (AD-249)**: 嚴禁於線上環境任意建立一次性 `Test` / `QA_Audit` / `SentinelTest` 測試帳號；凡需實測一律複用固定 6 帳雙軌測試池（D1 POI 與全棧手測走環境變數注入之 RFC 4122 v4 `RYAN_TEST`、協作/膠囊/BOLA 走 `00000000-0000-0000-0000-000000000001/00002/00004/00005` 現代 `tbj_rec_*`、Legacy 向下相容專測走永久維持純 UUID 之 `00003` `VIEWER`）。公開程式碼僅使用合成 v4 預設值 `00000000-0000-4000-8000-000000000006` 與 SHA-256 雜湊硬保護清單，嚴禁嵌入個人手測帳號明文 UUID；日常巡檢、核准清理與測試池升級一律透過 `scripts/manage_test_accounts.py`（預設 Dry-Run，強制分頁讀表、脫敏備份、行級 Trigger 25 列節流、`git check-ignore -q` 保護與 `PARTIAL_UPGRADE_DESYNC` 偵測），且 `POST /api/auth/session` 對已升級帳號一律強制伺服器簽發之 90 天內 Bearer JWT PoP（嚴禁僅憑 `expected_user_id == clean_uid` 免驗解密雲端保險庫）。
+
 - **Edge Shield Geocode 動態白名單 CORS、ArcGIS 隔離與五雲有序發布契約 (AD-248)**: cloudflare/edge-shield/worker.js 轉發 POST 前必刪 Content-Length 與 Content-Encoding；寫入 7 天快取必用純淨 Headers 並排除 source === 'arcgis' (Esri ToS)；快取鍵以 round(zoom) <= 10 (zb=macro) 隔離宏觀視口；快取 HIT 必依 GEOCODE_ALLOWED_ORIGINS 白名單動態反射 Access-Control-Allow-Origin、Access-Control-Allow-Credentials: true、Vary: Origin 與 X-Content-Type-Options: nosniff (嚴禁寫入共享快取)。因 Vercel (~1m) 快於 Cloud Run (3-5m)、Worker 無自動 CI 且 www /sw.js 具 4 小時快取，凡變更 Geocode 契約之發布必嚴守 Cloud Run 部署驗收 -> 手動 wrangler deploy 升版快取命名空間 -> Git Push 觸發 Vercel。
 
 - **五雲零停機密鑰輪換、Secret 版號鎖定與 MCP/CLI 權限邊界契約 (AD-243)**: GCP Secret Manager 寫入憑證必須為純 UTF-8 無尾端換行並於 Cloud Run 顯式鎖定版號 (如 :2 而非不支援熱重載之 :latest)；Supabase Edge Function 輪換密鑰透過授權 CLI --env-file 寫入後立即銷毀暫存檔，撤銷舊 Key 前必實測 cleanup-cloudinary 200 並 unset 殘留舊鍵。@mcp:vercel (8 工具) 與 @mcp:supabase (官方零明文架構) 不具改刪密鑰能力，必須走本機官方 CLI 授權或 Dashboard，嚴禁以 Chrome 自動化或讀取 MCP 設定檔方式處理生產密鑰。
