@@ -927,7 +927,7 @@ _CJK_ORTHO_MAP = str.maketrans({
     "鐵": "鉄", "铁": "鉄",
     "臺": "台",
     "廣": "広", "广": "広",
-    "驛": "駅", "驿": "駅",
+    "驛": "駅", "駅": "駅", "驿": "駅",
     "澀": "渋", "涩": "渋",
     "淺": "浅",
     "廳": "庁", "厅": "庁",
@@ -944,6 +944,83 @@ _CJK_ORTHO_MAP = str.maketrans({
     "龍": "竜", "龙": "竜",
     "櫻": "桜", "樱": "桜",
     "濱": "浜", "滨": "浜",
+    "東": "东",
+    "嵐": "岚",
+    "閣": "阁",
+    "銀": "银",
+    "築": "筑",
+    "關": "关",
+    "橫": "横",
+    "見": "见",
+    "沖": "冲",
+    "繩": "绳",
+    "鳥": "鸟",
+    "熱": "热",
+    "長": "长",
+    "華": "华",
+    "陽": "阳",
+    "雲": "云",
+    "門": "门",
+    "電": "电",
+    "車": "车",
+    "場": "场",
+    "區": "区",
+    "縣": "县",
+    "鎮": "镇",
+    "鄉": "乡",
+    "寶": "宝",
+    "聖": "圣",
+    "溫": "温",
+    "線": "线",
+    "學": "学",
+    "樂": "乐",
+    "藝": "艺",
+    "術": "术",
+    "歷": "历",
+    "觀": "观",
+    "紀": "纪",
+    "開": "开",
+    "運": "运",
+    "動": "动",
+    "樹": "树",
+    "風": "风",
+    "飛": "飞",
+    "機": "机",
+    "雙": "双",
+    "魚": "鱼",
+    "麵": "面",
+    "飯": "饭",
+    "燒": "烧",
+    "湯": "汤",
+    "藥": "药",
+    "妝": "妆",
+    "書": "书",
+    "紅": "红",
+    "藍": "蓝",
+    "綠": "绿",
+    "黃": "黄",
+    "黑": "黒",
+    "馬": "马",
+    "鶴": "鹤",
+    "貓": "猫",
+    "龜": "龟",
+    "蓮": "莲",
+    "蘭": "兰",
+    "葉": "叶",
+    "頭": "头",
+    "頂": "顶",
+    "嶺": "岭",
+    "峽": "峡",
+    "瀧": "滝",
+    "澤": "沢",
+    "邊": "边",
+    "護": "护",
+    "賀": "贺",
+    "鴨": "鸭",
+    "舊": "旧",
+    "點": "点",
+    "宮": "宫",
+    "莊": "庄",
 })
 
 _DINING_OR_SHOP_TYPES = frozenset({
@@ -956,6 +1033,13 @@ _ADMIN_AREA_RE = re.compile(
     r"(?:行政區|行政区|特別區|特别区|町丁|丁目|地名|地區|地区|街道|自治體|自治体|"
     r"(?:^|[\s、，,])(?:區|区|市|町|村|郡|縣|县|府|都|車站|駅)$|"
     r"\b(?:neighborhood|neighbourhood|district|ward|municipality|town|locality|suburb|prefecture|city in|place in|station|quarter|borough)\b)",
+    re.IGNORECASE,
+)
+
+_NON_PLACE_EVENT_RE = re.compile(
+    r"(?:放火事件|縱火事件|纵火事件|事件|火災|火灾|事故|大屠殺|大屠杀|戰役|战役|戰爭|战争|空難|空难|"
+    r"電影|电影|小說|小说|專輯|专辑|歌曲|單曲|单曲|電視劇|电视剧|動畫|动画|漫畫|漫画|"
+    r"\b(?:arson|incident|massacre|battle|disaster|film|movie|novel|album|song|anime|manga|tv series)\b)",
     re.IGNORECASE,
 )
 
@@ -1051,10 +1135,15 @@ def _score_wiki_candidate(
         score = (100.0 if qid_match else 0.0) + name_score
 
     norm_type = (poi_type or "").strip().lower()
+    desc_and_title = f"{cand_title or ''} {cand_description or ''}"
     if norm_type in _DINING_OR_SHOP_TYPES and not qid_match and name_sim < 0.85:
-        desc_and_title = f"{cand_title or ''} {cand_description or ''}"
         if _ADMIN_AREA_RE.search(desc_and_title):
             score -= 40.0
+
+    # Penalize historical events / arson / media articles (e.g. 金閣寺 -> 金閣寺放火事件)
+    # unless the user explicitly searched for an event/media title.
+    if not qid_match and not _NON_PLACE_EVENT_RE.search(query or "") and _NON_PLACE_EVENT_RE.search(desc_and_title):
+        score -= 45.0
 
     return score, name_sim, qid_match
 
@@ -1111,8 +1200,12 @@ async def get_wikipedia_summary(
 
     headers = {
         "User-Agent": TABIJI_USER_AGENT,
-        "Accept": "application/json"
+        "Accept": "application/json",
     }
+    if lang == "zh":
+        headers["Accept-Language"] = "zh-TW,zh-Hant;q=0.9,zh;q=0.8"
+
+    variant_q = "&variant=zh-tw" if lang == "zh" else ""
 
     try:
         # Direct Sitelink / Top-1 Fetch Mode (is_retry=True): bypass geosearch directly
@@ -1127,8 +1220,66 @@ async def get_wikipedia_summary(
 
         # Step 1: Direct Title Summary Lookup FIRST (with multi-signal distance/name/type validation)
         direct_data = await _fetch_wiki_page_summary(name, lang, headers, client=client)
+        if direct_data and direct_data.get("type") == "disambiguation" and lat is not None and lng is not None:
+            # Step 1.5: Resolve disambiguation page (e.g., 金閣寺 -> 鹿苑寺) via batched outgoing links + coordinates
+            links_url = (
+                f"https://{lang}.wikipedia.org/w/api.php"
+                f"?action=query&titles={quote(name.strip(), safe='')}&generator=links&gpllimit=50&gplnamespace=0"
+                f"&prop=coordinates|pageprops|description&redirects=1{variant_q}&format=json&formatversion=2"
+            )
+            if is_safe_url(links_url):
+                try:
+                    async with WIKI_SEMAPHORE:
+                        if client:
+                            links_resp = await client.get(links_url, headers=headers)
+                        else:
+                            async with httpx.AsyncClient(timeout=5.0) as temp_client:
+                                links_resp = await temp_client.get(links_url, headers=headers)
+                    if links_resp.status_code == 200:
+                        link_pages = (links_resp.json().get("query") or {}).get("pages") or []
+                        best_disambig_title: Optional[str] = None
+                        best_disambig_dist = 1.51  # strict 1.5km geographic disambiguation match
+                        norm_type = (poi_type or "").strip().lower()
+                        for lp in link_pages:
+                            if not isinstance(lp, dict) or lp.get("missing"):
+                                continue
+                            lt = str(lp.get("title") or "").strip()
+                            ld = str(lp.get("description") or "")
+                            coords_list = lp.get("coordinates") or []
+                            if not lt or not coords_list:
+                                continue
+                            fc = coords_list[0] if isinstance(coords_list, list) else {}
+                            c_lat, c_lng = fc.get("lat"), fc.get("lon")
+                            if c_lat is None or c_lng is None:
+                                continue
+                            if not _NON_PLACE_EVENT_RE.search(name) and _NON_PLACE_EVENT_RE.search(f"{lt} {ld}"):
+                                continue
+                            if norm_type in _DINING_OR_SHOP_TYPES and _ADMIN_AREA_RE.search(f"{lt} {ld}"):
+                                continue
+                            d_km = _poi_haversine_km(float(lat), float(lng), float(c_lat), float(c_lng))
+                            if d_km < best_disambig_dist:
+                                best_disambig_dist = d_km
+                                best_disambig_title = lt
+                        if best_disambig_title:
+                            print(f"📍 [Wiki Disambig] Resolved '{name}' -> '{best_disambig_title}' ({best_disambig_dist:.2f} km)")
+                            res_disambig = await get_wikipedia_summary(
+                                best_disambig_title,
+                                lang=lang,
+                                client=client,
+                                is_retry=True,
+                                lat=None,
+                                lng=None,
+                                wikidata_id=wikidata_id,
+                                poi_type=poi_type,
+                            )
+                            if res_disambig[0]:
+                                return res_disambig
+                except Exception as disambig_err:
+                    print(f"⚠️ [Wiki Disambig] Failed for '{name}': {disambig_err}")
+
         if direct_data and direct_data.get("type") != "disambiguation":
-            cand_title = direct_data.get("title") or name
+            raw_display = re.sub(r"<[^>]+>", "", str(direct_data.get("displaytitle") or "")).strip()
+            cand_title = raw_display or direct_data.get("title") or name
             cand_coords = direct_data.get("coordinates") or {}
             cand_lat = cand_coords.get("lat")
             cand_lng = cand_coords.get("lon")
@@ -1158,7 +1309,7 @@ async def get_wikipedia_summary(
             geo_url = (
                 f"https://{lang}.wikipedia.org/w/api.php"
                 f"?action=query&generator=geosearch&ggscoord={lat}|{lng}&ggsradius=1000&ggslimit=10"
-                f"&prop=coordinates|pageprops|description&format=json&formatversion=2"
+                f"&prop=coordinates|pageprops|description{variant_q}&format=json&formatversion=2"
             )
             if is_safe_url(geo_url):
                 try:
@@ -1219,8 +1370,8 @@ async def get_wikipedia_summary(
                 except Exception as e:
                     print(f"⚠️ [Wiki Geosearch] Batched Top-K lookup failed: {e}")
 
-        # Step 3: Strict OpenSearch Fallback (requires strong name similarity + distance/type verification)
-        search_url = f"https://{lang}.wikipedia.org/w/api.php?action=opensearch&search={quote(name, safe='')}&limit=3&format=json"
+        # Step 3: Strict OpenSearch Fallback (limit=6 so regional parentheticals like 嵐山 (京都市) are not truncated)
+        search_url = f"https://{lang}.wikipedia.org/w/api.php?action=opensearch&search={quote(name, safe='')}&limit=6{variant_q}&format=json"
         if is_safe_url(search_url):
             try:
                 async with WIKI_SEMAPHORE:
@@ -1233,16 +1384,17 @@ async def get_wikipedia_summary(
                 if search_resp.status_code == 200:
                     search_data = search_resp.json()
                     cand_titles = search_data[1] if len(search_data) > 1 and isinstance(search_data[1], list) else []
-                    for cand_title in cand_titles[:3]:
+                    for cand_title in cand_titles[:6]:
                         if _compute_name_similarity(name, cand_title) < 0.6:
                             continue
                         os_data = await _fetch_wiki_page_summary(cand_title, lang, headers, client=client)
                         if not os_data or os_data.get("type") == "disambiguation":
                             continue
                         os_coords = os_data.get("coordinates") or {}
+                        raw_os_disp = re.sub(r"<[^>]+>", "", str(os_data.get("displaytitle") or "")).strip()
                         score, name_sim, qid_match = _score_wiki_candidate(
                             name,
-                            os_data.get("title") or cand_title,
+                            raw_os_disp or os_data.get("title") or cand_title,
                             poi_lat=lat,
                             poi_lng=lng,
                             cand_lat=os_coords.get("lat"),

@@ -186,6 +186,83 @@ def test_wave2_poi_topk_disambiguation_and_no_coord_normalization():
     assert s_nocoord >= 55.0
     assert poi_service._is_wiki_candidate_admitted(s_nocoord, sim_nocoord, False) is True
 
+    # Case 6: Historical event/arson penalty rejects 金閣寺放火事件 for query 金閣寺,
+    # while benign control querying 金閣寺放火事件 directly is NOT penalized
+    s_arson, sim_arson, _ = poi_service._score_wiki_candidate(
+        "金閣寺",
+        "金阁寺放火事件",
+        poi_lat=35.0394,
+        poi_lng=135.7292,
+        cand_lat=35.0394,
+        cand_lng=135.7292,
+        poi_type="temple",
+    )
+    assert poi_service._is_wiki_candidate_admitted(s_arson, sim_arson, False) is False
+
+    s_event_benign, sim_event_benign, _ = poi_service._score_wiki_candidate(
+        "金閣寺放火事件",
+        "金阁寺放火事件",
+        poi_lat=35.0394,
+        poi_lng=135.7292,
+        cand_lat=35.0394,
+        cand_lng=135.7292,
+    )
+    assert poi_service._is_wiki_candidate_admitted(s_event_benign, sim_event_benign, False) is True
+
+    # Case 7: Traditional <-> Simplified CJK orthography equivalence (嵐山/岚山, 銀座/银座, 橫濱/横滨, 東京/东京)
+    assert poi_service._compute_name_similarity("嵐山", "岚山 (京都市)") == 1.0
+    assert poi_service._compute_name_similarity("銀座", "银座") == 1.0
+    assert poi_service._compute_name_similarity("橫濱", "横滨") == 1.0
+    assert poi_service._compute_name_similarity("東京", "东京") == 1.0
+
+    # Geocode service zero residual placeholder UAs
+    geo_src = (REPO_ROOT / "backend" / "services" / "geocode_service.py").read_text(encoding="utf-8")
+    assert "contact@ryantravel.app" not in geo_src
+    assert '"RyanTravelApp/' not in geo_src
+
+
+@pytest.mark.asyncio
+async def test_wave2_poi_disambiguation_page_resolves_to_nearby_canonical_article():
+    """Disambiguation page (e.g., 金閣寺 -> 鹿苑寺) must resolve via batched outgoing links + coordinates."""
+    disambig_summary = {"type": "disambiguation", "title": "金閣寺", "extract": "金閣寺可以指：..."}
+    links_payload = {
+        "query": {
+            "pages": [
+                {"title": "金閣寺 (五台山)", "coordinates": [{"lat": 38.99, "lon": 113.59}], "description": "山西寺院"},
+                {"title": "鹿苑寺", "coordinates": [{"lat": 35.0395, "lon": 135.7285}], "description": "日本京都的佛教禪宗寺院"},
+            ]
+        }
+    }
+    rokuonji_summary = {
+        "type": "standard",
+        "title": "鹿苑寺",
+        "extract": "鹿苑寺，又名金閣寺，位於京都府京都市北區。",
+        "thumbnail": {"source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Kinkakuji.jpg/330px-Kinkakuji.jpg"},
+    }
+
+    async def fake_fetch_summary(title, lang, headers, client=None):
+        if title == "金閣寺":
+            return disambig_summary
+        if title == "鹿苑寺":
+            return rokuonji_summary
+        return None
+
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.json.return_value = links_payload
+    fake_client = MagicMock()
+    fake_client.get = AsyncMock(return_value=fake_resp)
+
+    with patch.object(poi_service, "_fetch_wiki_page_summary", side_effect=fake_fetch_summary), \
+         patch.object(poi_service, "is_safe_url", return_value=True):
+        desc, img = await poi_service.get_wikipedia_summary(
+            "金閣寺", lang="zh", client=fake_client, lat=35.0394, lng=135.7292, poi_type="temple"
+        )
+
+    assert "鹿苑寺" in desc
+    assert "放火" not in desc
+    assert img.endswith("330px-Kinkakuji.jpg")
+
 
 # ---------------------------------------------------------------------------
 # Wave 2.2 — /api/poi/media-proxy 3-Host Whitelist & Safe Redirect Loop
@@ -342,21 +419,13 @@ async def test_wave3_route_straight_line_not_poisoning_long_cache():
 # Wave 3.2 — Zero Blocking Async Routes AST Gate & UUID / 22P02 / Sanitization
 # ---------------------------------------------------------------------------
 def test_wave3_zero_blocking_async_routes_ast_invariant():
+    """Verify NO async def handler OR awaited async helper in routers/main executes blocking sync .execute() on the event loop."""
     violations = []
-    for p in sorted((REPO_ROOT / "backend").rglob("*.py")):
-        if "tests" in p.parts:
-            continue
+    targets = sorted((REPO_ROOT / "backend" / "routers").glob("*.py")) + [REPO_ROOT / "backend" / "main.py"]
+    for p in targets:
         tree = ast.parse(p.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
+        for node in tree.body:
             if isinstance(node, ast.AsyncFunctionDef):
-                has_route = any(
-                    isinstance(d, ast.Call)
-                    and isinstance(d.func, ast.Attribute)
-                    and d.func.attr in ("get", "post", "put", "patch", "delete")
-                    for d in node.decorator_list
-                )
-                if not has_route:
-                    continue
                 sync_execs = []
 
                 def visit(n):
@@ -372,7 +441,7 @@ def test_wave3_zero_blocking_async_routes_ast_invariant():
                 if sync_execs:
                     violations.append(f"{p.name}:{node.lineno} {node.name} -> {sync_execs}")
 
-    assert violations == [], f"Found blocking sync .execute() inside async route handlers: {violations}"
+    assert violations == [], f"Found blocking sync .execute() inside async handlers/helpers: {violations}"
 
 
 def test_wave3_invalid_literal_trip_ids_and_ledger_uuid_guard():

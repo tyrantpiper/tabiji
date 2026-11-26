@@ -496,6 +496,9 @@ describe("Unified ChatComposer & ChatWidget Safety Net Tests", () => {
         let resolveStalePoll: ((res: Response) => void) | undefined
         global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input)
+            if (url.endsWith("/api/agents/research/stream")) {
+                return new Response(null, { status: 404 })
+            }
             if (url.endsWith("/api/agents/research")) {
                 return new Response(
                     JSON.stringify({ interaction_id: "res_stop_1", engine: "fallback" }),
@@ -695,6 +698,9 @@ describe("Unified ChatComposer & ChatWidget Safety Net Tests", () => {
         let cardCancelHits = 0
         global.fetch = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input)
+            if (url.endsWith("/api/agents/research/stream")) {
+                return new Response(null, { status: 404 })
+            }
             if (url.endsWith("/api/agents/research")) {
                 return new Response(
                     JSON.stringify({ interaction_id: "res_card_cancel_1", engine: "fallback" }),

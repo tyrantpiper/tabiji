@@ -25,14 +25,19 @@ function hasTemporalKeyword(query) {
 function decodeXmlEntities(str) {
   return String(str || "")
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
+      const code = parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
+    })
     .replace(/&#(\d+);/g, (_, num) => {
       const code = parseInt(num, 10);
-      return Number.isFinite(code) ? String.fromCharCode(code) : "";
+      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
     });
 }
 
@@ -281,16 +286,18 @@ async function fetchDDGLite(q, limit) {
 
     const html = await resp.text();
     const anchorRegex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
-    const snippetRegex = /<td[^>]+class=["'][^"']*result-snippet[^"']*["'][^>]*>([\s\S]*?)<\/td>/gi;
+    const singleSnippetRegex = /<td[^>]+class=["'][^"']*result-snippet[^"']*["'][^>]*>([\s\S]*?)<\/td>/i;
 
-    const links = [];
+    // Collect ALL result-link anchors (including ads) with positions so each link pairs
+    // strictly with the snippet in its own slice before the next result-link (prevents ad-row off-by-N shift).
+    const allAnchors = [];
     let match;
-    while ((match = anchorRegex.exec(html)) !== null && links.length < limit) {
+    while ((match = anchorRegex.exec(html)) !== null) {
       const attrs = match[1];
       if (!/class=["'][^"']*result-link[^"']*["']/i.test(attrs)) continue;
       const hrefMatch = attrs.match(/href=["']([^"']+)["']/i);
       if (!hrefMatch) continue;
-      let realUrl = hrefMatch[1].replace(/&amp;/g, "&");
+      let realUrl = decodeXmlEntities(hrefMatch[1]).trim();
       if (realUrl.startsWith("//")) realUrl = `https:${realUrl}`;
       if (realUrl.includes("uddg=")) {
         const m = realUrl.match(/uddg=([^&]+)/);
@@ -302,31 +309,33 @@ async function fetchDDGLite(q, limit) {
           }
         }
       }
-      if (!realUrl.startsWith("http")) continue;
-      // Skip DuckDuckGo sponsored ad redirects & ad help links
-      if (
+      const isAd =
+        !realUrl.startsWith("http") ||
         /^https?:\/\/(?:www\.)?duckduckgo\.com\/(?:y\.js|duckduckgo-help-pages)/i.test(realUrl) ||
-        realUrl.includes("ad_domain=")
-      ) {
-        continue;
-      }
-      links.push({
+        realUrl.includes("ad_domain=");
+      allAnchors.push({
+        start: match.index,
+        end: anchorRegex.lastIndex,
         url: realUrl,
-        title: match[2].replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim(),
+        title: decodeXmlEntities(match[2].replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim(),
+        isAd,
       });
     }
 
-    const snippets = [];
-    while ((match = snippetRegex.exec(html)) !== null && snippets.length < limit * 2) {
-      snippets.push(match[1].replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim());
-    }
-
     const list = [];
-    for (let i = 0; i < links.length; i++) {
+    for (let i = 0; i < allAnchors.length && list.length < limit; i++) {
+      const cur = allAnchors[i];
+      if (cur.isAd) continue;
+      const sliceEnd = i + 1 < allAnchors.length ? allAnchors[i + 1].start : html.length;
+      const segment = html.slice(cur.end, sliceEnd);
+      const snipMatch = segment.match(singleSnippetRegex);
+      const snippet = snipMatch
+        ? decodeXmlEntities(snipMatch[1].replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim()
+        : "";
       list.push({
-        title: links[i].title,
-        snippet: snippets[i] || "",
-        url: links[i].url,
+        title: cur.title,
+        snippet,
+        url: cur.url,
       });
     }
     return list;

@@ -355,6 +355,14 @@ export default {
           stops.every(
             (s) =>
               s &&
+              s.lat !== null &&
+              s.lat !== undefined &&
+              s.lat !== '' &&
+              typeof s.lat !== 'boolean' &&
+              s.lng !== null &&
+              s.lng !== undefined &&
+              s.lng !== '' &&
+              typeof s.lng !== 'boolean' &&
               Number.isFinite(Number(s.lat)) &&
               Number.isFinite(Number(s.lng))
           );

@@ -453,7 +453,7 @@ async def geocode_with_nominatim(place_name: str):
                 "limit": 1,
                 "accept-language": "zh-TW,zh,en"
             },
-            headers={"User-Agent": "RyanTravelApp/1.0"}
+            headers={"User-Agent": "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"}
         )
         data = orjson.loads(res.content)
         if data and len(data) > 0:
@@ -709,7 +709,7 @@ async def resolve_address_pipeline(address: str, user_gemini_key: str = None):
             return _NOMINATIM_CACHE[clean_addr]["data"]
 
         base_url = os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org/search").strip()
-        user_agent = os.getenv("APP_USER_AGENT", "RyanTravelApp/2.0 (contact@ryantravel.app)")
+        user_agent = os.getenv("APP_USER_AGENT", "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)")
         
         params = {
             "format": "geocodejson",
@@ -890,7 +890,7 @@ async def geocode_with_photon(
 
     safe_limit = max(1, min(50, int(limit or 25)))
     try:
-        user_agent = os.getenv("APP_USER_AGENT", "RyanTravelApp/3.0 (contact@ryantravel.app)")
+        user_agent = os.getenv("APP_USER_AGENT", "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)")
         async with httpx.AsyncClient(timeout=4.0, headers={"User-Agent": user_agent}) as client:
             params: Dict[str, Any] = {
                 "q": query_text,
@@ -1062,7 +1062,7 @@ async def search_overpass_by_name(
             res = await client.post(
                 "https://overpass-api.de/api/interpreter",
                 data={"data": query},
-                headers={"User-Agent": "RyanTravelApp/3.0"}
+                headers={"User-Agent": "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"}
             )
             op_status = getattr(res, "status_code", 200)
             if isinstance(op_status, int) and op_status != 200:
@@ -1110,7 +1110,7 @@ async def search_overpass_by_name(
 async def reverse_geocode_with_photon(lat: float, lng: float):
     """Photon 反向地理編碼（座標 → 地名）"""
     try:
-        user_agent = os.getenv("APP_USER_AGENT", "RyanTravelApp/3.0 (contact@ryantravel.app)")
+        user_agent = os.getenv("APP_USER_AGENT", "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)")
         res = await HTTPX_CLIENT.get(
             "https://photon.komoot.io/reverse",
             params={"lat": lat, "lon": lng},
@@ -2011,7 +2011,7 @@ async def _translate_via_wikipedia_langlinks(query: str, country_code: Optional[
         return []
     target_lang = get_country_primary_lang(cc)
     wanted_langs = [target_lang, "en"] if target_lang != "en" else ["en"]
-    headers = {"User-Agent": os.getenv("APP_USER_AGENT", "RyanTravelApp/3.0 (contact@ryantravel.app)")}
+    headers = {"User-Agent": os.getenv("APP_USER_AGENT", "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)")}
 
     async def _fetch_langlinks() -> List[str]:
         async with httpx.AsyncClient(timeout=1.1, headers=headers) as client:
@@ -5720,7 +5720,7 @@ async def smart_geocode_logic(
                             "https://nominatim.openstreetmap.org/search",
                             params=params,
                             headers={
-                                "User-Agent": os.getenv("APP_USER_AGENT", "RyanTravelApp/3.0 (contact@ryantravel.app)"),
+                                "User-Agent": os.getenv("APP_USER_AGENT", "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"),
                                 "Accept-Language": "zh-TW,zh,en",
                             },
                         )

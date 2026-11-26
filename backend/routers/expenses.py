@@ -51,9 +51,11 @@ async def sanitize_payer(
 
     pid = str(payer_id).strip()
     
-    # 1. 檢查是否存在於 public.users 表中
+    # 1. 檢查是否存在於 public.users 表中 (卸載至 threadpool 防止阻塞 asyncio Event Loop)
     try:
-        user_res = supabase.table("users").select("id, name").eq("id", pid).execute()
+        user_res = await run_in_threadpool(
+            lambda: supabase.table("users").select("id, name").eq("id", pid).execute()
+        )
         if user_res.data:
             u_name = user_res.data[0].get("name") or p_name
             return pid, u_name
@@ -64,10 +66,12 @@ async def sanitize_payer(
     target_name = p_name
     if itinerary_id:
         try:
-            mem_res = supabase.table("trip_members")\
-                .select("user_id, user_name, id")\
-                .eq("itinerary_id", itinerary_id)\
+            mem_res = await run_in_threadpool(
+                lambda: supabase.table("trip_members")
+                .select("user_id, user_name, id")
+                .eq("itinerary_id", itinerary_id)
                 .execute()
+            )
             if mem_res.data:
                 for m in mem_res.data:
                     if m.get("user_id") == pid or str(m.get("id")) == pid:

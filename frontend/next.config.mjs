@@ -44,12 +44,12 @@ const nextConfig = {
     async headers() {
         const cspReportOnly = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com",
             "worker-src 'self'",
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
             "font-src 'self' data: https://fonts.gstatic.com",
-            "img-src 'self' data: blob: https://res.cloudinary.com https://cloudinary-proxy.ryan880425.workers.dev https://*.tabijiapp.com https://upload.wikimedia.org https://thumb.wikimedia.org https://commons.wikimedia.org https://lh3.googleusercontent.com https://lh5.googleusercontent.com https://maps.googleapis.com https://images.unsplash.com https://plus.unsplash.com https://flagcdn.com https://server.arcgisonline.com https://tiles.openfreemap.org https://tiles.mapterhorn.com https://*.fbcdn.net https://*.mapillary.com https:",
-            "connect-src 'self' https://www.tabijiapp.com https://tabijiapp.com https://antigravity-backend-589255638719.us-central1.run.app https://oudnkmigfueuyvxqpqwn.supabase.co wss://oudnkmigfueuyvxqpqwn.supabase.co https://api.cloudinary.com https://res.cloudinary.com https://cloudinary-proxy.ryan880425.workers.dev https://api.open-meteo.com https://api.exchangerate-api.com https://open.er-api.com https://tiles.openfreemap.org https://server.arcgisonline.com https://tiles.mapterhorn.com https://graph.mapillary.com https://generativelanguage.googleapis.com",
+            "img-src 'self' data: blob: https://res.cloudinary.com https://cloudinary-proxy.ryanpig228.workers.dev https://*.tabijiapp.com https://upload.wikimedia.org https://thumb.wikimedia.org https://commons.wikimedia.org https://lh3.googleusercontent.com https://lh5.googleusercontent.com https://maps.googleapis.com https://images.unsplash.com https://plus.unsplash.com https://flagcdn.com https://tp.media https://server.arcgisonline.com https://tiles.openfreemap.org https://tiles.mapterhorn.com https://*.fbcdn.net https://*.mapillary.com https:",
+            "connect-src 'self' https://www.tabijiapp.com https://tabijiapp.com https://travel-pwa-five.vercel.app https://antigravity-backend-589255638719.us-central1.run.app https://oudnkmigfueuyvxqpqwn.supabase.co wss://oudnkmigfueuyvxqpqwn.supabase.co https://api.cloudinary.com https://res.cloudinary.com https://cloudinary-proxy.ryanpig228.workers.dev https://*.open-meteo.com https://api.exchangerate-api.com https://open.er-api.com https://cdn.jsdelivr.net https://tiles.openfreemap.org https://server.arcgisonline.com https://basemapstyles-api.arcgis.com https://location.arcgis.com https://tiles.mapterhorn.com https://graph.mapillary.com https://tiles.mapillary.com https://generativelanguage.googleapis.com https://cloudflareinsights.com",
             "frame-ancestors 'none'",
             "object-src 'none'",
             "base-uri 'self'",

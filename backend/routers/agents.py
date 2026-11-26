@@ -228,15 +228,17 @@ async def _fetch_live_pricing_context(origin: str, destination: str, locale: str
     """
     從 Travelpayouts 抓取即時票價數據以注入 Agent 上下文（支援城市名／中文行程標題轉 IATA 與快取）
     """
-    if not TP_TOKEN or not destination:
+    effective_token = (os.getenv("TP_API_TOKEN") or TP_TOKEN or "").strip()
+    if not effective_token or not destination:
         return ""
     try:
+        effective_marker = (os.getenv("NEXT_PUBLIC_TP_MARKER") or os.getenv("TP_MARKER") or TP_MARKER or "602410").strip()
         return await build_flight_price_context(
             origin=origin or "TPE",
             destination=destination,
             locale=locale,
-            token=TP_TOKEN,
-            marker=TP_MARKER,
+            token=effective_token,
+            marker=effective_marker,
             include_marker=True,
             timeout=2.5,
         )

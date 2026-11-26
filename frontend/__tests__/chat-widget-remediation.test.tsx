@@ -179,6 +179,9 @@ describe('ChatWidget & ActuaryDialogCard Remediation RTL Tests', () => {
         let pollHits = 0
         global.fetch = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input)
+            if (url.endsWith('/api/agents/research/stream')) {
+                return new Response(null, { status: 404 })
+            }
             if (url.endsWith('/api/agents/research')) {
                 return new Response(
                     JSON.stringify({ interaction_id: 'res_404_1', engine: 'fallback' }),
@@ -218,6 +221,9 @@ describe('ChatWidget & ActuaryDialogCard Remediation RTL Tests', () => {
         let startedCount = 0
         global.fetch = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input)
+            if (url.endsWith('/api/agents/research/stream')) {
+                return new Response(null, { status: 404 })
+            }
             if (url.endsWith('/api/agents/research')) {
                 startedCount += 1
                 return new Response(
@@ -250,6 +256,9 @@ describe('ChatWidget & ActuaryDialogCard Remediation RTL Tests', () => {
         let activeIntervalPollHits = 0
         global.fetch = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input)
+            if (url.endsWith('/api/agents/research/stream')) {
+                return new Response(null, { status: 404 })
+            }
             if (url.endsWith('/api/agents/research')) {
                 return new Response(
                     JSON.stringify({ interaction_id: 'res_unmount_active', engine: 'fallback' }),

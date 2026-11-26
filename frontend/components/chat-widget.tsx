@@ -20,7 +20,7 @@ import RemoveItemPreviewCard, { extractRemoveFunctionCall } from "@/components/c
 import ExpensePreviewCard, { extractExpenseFunctionCall } from "@/components/chat/ExpensePreviewCard"
 import DeepResearchCard, { type DeepResearchData } from "@/components/chat/DeepResearchCard"
 import ChatComposer from "@/components/chat/ChatComposer"
-import { streamChat } from "@/lib/sse-parser"
+import { streamChat, streamDeepResearch } from "@/lib/sse-parser"
 import { setSearchCache } from "@/lib/search-cache"
 import { toast } from "sonner"
 import { API_HOST } from "@/lib/api"
@@ -292,6 +292,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
     }
 
     const cancelResearchBackend = useCallback((interactionId: string) => {
+        if (!interactionId || interactionId.startsWith("stream_")) return
         try {
             const k = getSecureApiKey()
             if (!k) return
@@ -761,6 +762,116 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                         parts.push(`Schedule: ${daySummaries.join(" | ").slice(0, 600)}`)
                     }
                     researchBookingContext = parts.join(", ")
+                }
+
+                // Opt-in Two-Phase SSE 深度研究（保持 HTTP 活躍避開 Cloud Run cpu-throttling 凍結；遇 404/非串流自動退回 JSON 輪詢）
+                const streamId = `stream_${Date.now()}`
+                let streamCardInserted = false
+                const ensureStreamCard = (engineName = "gemini-flash-stream") => {
+                    if (streamCardInserted || !isMountedRef.current || currentController.signal.aborted) return
+                    streamCardInserted = true
+                    activeResearchIdRef.current = streamId
+                    setMessages(prev => [...prev, hydrateMessage({
+                        role: "model",
+                        displayContent: "",
+                        researchData: {
+                            id: streamId,
+                            status: "running",
+                            prompt: cleanPrompt,
+                            engine: engineName,
+                        }
+                    })])
+                }
+
+                const streamRes = await streamDeepResearch({
+                    apiUrl: API_HOST,
+                    apiKey,
+                    prompt: cleanPrompt,
+                    origin: iataOrigin || undefined,
+                    destination: iataDestination || activeTrip?.title || undefined,
+                    booking_context: researchBookingContext,
+                    locale: lang,
+                    signal: currentController.signal,
+                    onThinking: () => {
+                        ensureStreamCard()
+                    },
+                    onText: (chunkText) => {
+                        ensureStreamCard()
+                        if (!isMountedRef.current || currentController.signal.aborted) return
+                        setMessages(prev => prev.map(m =>
+                            m.researchData?.id === streamId
+                                ? {
+                                    ...m,
+                                    displayContent: (m.displayContent || "") + chunkText,
+                                    researchData: {
+                                        ...m.researchData,
+                                        outputText: (m.researchData.outputText || "") + chunkText,
+                                    }
+                                }
+                                : m
+                        ))
+                    },
+                })
+
+                if (streamRes.supported) {
+                    if (activeResearchIdRef.current === streamId) {
+                        activeResearchIdRef.current = null
+                    }
+                    if (!isMountedRef.current || currentController.signal.aborted) return
+                    if (streamRes.error) {
+                        if (streamCardInserted) {
+                            setMessages(prev => prev.map(m =>
+                                m.researchData?.id === streamId
+                                    ? {
+                                        ...m,
+                                        researchData: {
+                                            ...m.researchData,
+                                            status: "failed",
+                                            error: streamRes.error,
+                                        }
+                                    }
+                                    : m
+                            ))
+                        }
+                        toast.error(streamRes.error)
+                    } else {
+                        const finalOutput = streamRes.text || ""
+                        const finalEngine = streamRes.engine || "gemini-flash-stream"
+                        if (streamCardInserted) {
+                            setMessages(prev => prev.map(m =>
+                                m.researchData?.id === streamId
+                                    ? {
+                                        ...m,
+                                        displayContent: finalOutput,
+                                        researchData: {
+                                            ...m.researchData,
+                                            status: "completed",
+                                            outputText: finalOutput,
+                                            engine: finalEngine,
+                                        }
+                                    }
+                                    : m
+                            ))
+                        } else {
+                            setMessages(prev => [...prev, hydrateMessage({
+                                role: "model",
+                                displayContent: finalOutput,
+                                researchData: {
+                                    id: streamId,
+                                    status: "completed",
+                                    prompt: cleanPrompt,
+                                    outputText: finalOutput,
+                                    engine: finalEngine,
+                                }
+                            })])
+                        }
+                    }
+                    if (abortControllerRef.current === currentController) {
+                        setIsLoading(false)
+                    }
+                    isDeepResearchRef.current = false
+                    setIsDeepResearch(false)
+                    return
                 }
 
                 const res = await fetch(`${API_HOST}/api/agents/research`, {
@@ -1512,13 +1623,17 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                                                     : m
                                                             ))
                                                             try {
-                                                                const k = getSecureApiKey()
-                                                                if (k) {
-                                                                    await fetch(`${API_HOST}/api/agents/interactions/${id}/cancel`, {
-                                                                        method: "POST",
-                                                                        headers: { "X-Gemini-API-Key": k }
-                                                                    })
+                                                                if (id.startsWith("stream_")) {
                                                                     toast.info(zh ? "已取消深度研究任務" : "Research cancelled", { position: "top-center", duration: 2200 })
+                                                                } else {
+                                                                    const k = getSecureApiKey()
+                                                                    if (k) {
+                                                                        await fetch(`${API_HOST}/api/agents/interactions/${id}/cancel`, {
+                                                                            method: "POST",
+                                                                            headers: { "X-Gemini-API-Key": k }
+                                                                        })
+                                                                        toast.info(zh ? "已取消深度研究任務" : "Research cancelled", { position: "top-center", duration: 2200 })
+                                                                    }
                                                                 }
                                                             } catch (e) {
                                                                 console.error("Cancel failed:", e)
