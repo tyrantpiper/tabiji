@@ -19,7 +19,12 @@ from utils.url_safety import is_safe_url
 TABIJI_USER_AGENT = "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"
 
 _SAFE_RASTER_EXTS = (".jpg", ".jpeg", ".png", ".webp")
-_WIKI_THUMB_WIDTH_RE = re.compile(r"(/thumb/.+/(?:lossy-page\d+-|page\d+-)?)(\d+)px-([^/?#]+)$")
+_UNSAFE_RAW_MEDIA_EXTS = (".svg", ".svgz", ".tif", ".tiff", ".djvu", ".pdf", ".xcf", ".ogv", ".webm")
+_VECTOR_SCALABLE_EXTS = (".svg", ".svgz", ".pdf", ".djvu")
+_WIKIMEDIA_STD_WIDTHS = (20, 40, 60, 120, 250, 330, 500, 960, 1280, 1920, 3840)
+_WIKI_THUMB_WIDTH_RE = re.compile(
+    r"(/thumb/[^?#]+/(?:(?:lossy-|lossless-)?page\d+-|lang[A-Za-z0-9_-]{2,20}-|qlow-|mid-){0,3})(\d+)px-([^/?#]+)$"
+)
 
 
 def _pick_hd_wiki_image(data: Optional[Dict[str, Any]], target_width: int = 960) -> str:
@@ -28,24 +33,27 @@ def _pick_hd_wiki_image(data: Optional[Dict[str, Any]], target_width: int = 960)
     1. Only return `originalimage.source` directly when its extension is a safe raster
        (`.jpg`/`.jpeg`/`.png`/`.webp`) and `331 <= width <= target_width` (blocks SVG 415
        and TIFF/DjVu broken images).
-    2. Otherwise, if `thumbnail.source` exists (and is not raw `.svg`/`.svgz`), upgrade
-       `/<N>px-` to `/<target_width>px-` when `<N> < target_width`.
+    2. Otherwise, if `thumbnail.source` exists (and is a browser-renderable raster, blocking
+       raw `.svg`/`.svgz`/`.tif`/`.tiff`/`.djvu`/`.pdf`/`.xcf`), upgrade `/<prefix><N>px-`
+       (including `page<N>-`, `lossy-page<N>-`, `lang<bcp47>-`) up to `effective_target`:
+       - Vector originals (`.svg`/`.svgz`/`.pdf`/`.djvu`) or unknown width: `target_width` (960px).
+       - Raster originals with known width `< target_width`: cap at the largest Wikimedia
+         standard width `<= originalimage.width` to avoid Wikimedia HTTP 404 upscaling errors.
     """
     if not isinstance(data, dict):
         return ""
 
     orig = data.get("originalimage")
+    orig_w_num: Optional[int] = None
+    orig_is_vector = False
     if isinstance(orig, dict):
         orig_src = str(orig.get("source") or "").strip()
         orig_w = orig.get("width")
-        if (
-            orig_src
-            and isinstance(orig_w, (int, float))
-            and not isinstance(orig_w, bool)
-            and 331 <= orig_w <= target_width
-        ):
-            decoded_orig_path = unquote(unquote(urlparse(orig_src).path)).rstrip("/").lower()
-            if decoded_orig_path.endswith(_SAFE_RASTER_EXTS):
+        decoded_orig_path = unquote(unquote(urlparse(orig_src).path)).rstrip("/").lower() if orig_src else ""
+        orig_is_vector = decoded_orig_path.endswith(_VECTOR_SCALABLE_EXTS)
+        if isinstance(orig_w, (int, float)) and not isinstance(orig_w, bool) and orig_w > 0:
+            orig_w_num = int(orig_w)
+            if orig_src and 331 <= orig_w_num <= target_width and decoded_orig_path.endswith(_SAFE_RASTER_EXTS):
                 return orig_src
 
     thumb = data.get("thumbnail")
@@ -55,14 +63,19 @@ def _pick_hd_wiki_image(data: Optional[Dict[str, Any]], target_width: int = 960)
 
     parsed = urlparse(thumb_src)
     decoded_thumb_path = unquote(unquote(parsed.path)).rstrip("/").lower()
-    if decoded_thumb_path.endswith((".svg", ".svgz")):
+    if decoded_thumb_path.endswith(_UNSAFE_RAW_MEDIA_EXTS):
         return ""
 
+    effective_target = target_width
+    if orig_w_num is not None and not orig_is_vector and orig_w_num < target_width:
+        capped = [w for w in _WIKIMEDIA_STD_WIDTHS if w <= orig_w_num]
+        effective_target = capped[-1] if capped else 0
+
     m = _WIKI_THUMB_WIDTH_RE.search(parsed.path)
-    if m:
+    if m and effective_target > 0:
         cur_w = int(m.group(2))
-        if cur_w < target_width:
-            new_path = f"{parsed.path[:m.start()]}{m.group(1)}{target_width}px-{m.group(3)}"
+        if cur_w < effective_target:
+            new_path = f"{parsed.path[:m.start()]}{m.group(1)}{effective_target}px-{m.group(3)}"
             return urlunparse((parsed.scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment))
     return thumb_src
 

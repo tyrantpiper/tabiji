@@ -257,10 +257,13 @@ export default function FullscreenMapModal({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [query, selectedQuery, showSearch, tripTitle, initialViewState.latitude, initialViewState.longitude, localDataLoaded, localSearch])
 
-    // Esc 鍵退出
+    // Esc 鍵退出（若上層圖片 Lightbox 開啟或事件已被攔截，優先讓 Lightbox 關閉）
     useEffect(() => {
         const handleEsc = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
+                if (e.isComposing || e.defaultPrevented || document.querySelector('[data-testid="poi-image-lightbox"]')) {
+                    return
+                }
                 if (showSearch) {
                     setShowSearch(false)
                 } else {

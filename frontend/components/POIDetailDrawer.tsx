@@ -128,6 +128,7 @@ export default function POIDetailDrawer({
     const [imgError, setImgError] = useState(false)
     const [lightboxState, setLightboxState] = useState<{ poiKey: string; src: string } | null>(null)
     const reqSeqRef = useRef(0)
+    const lightboxCloseBtnRef = useRef<HTMLButtonElement | null>(null)
 
     const poiKey = `${poi?.name ?? ""}|${poi?.lat ?? ""}|${poi?.lng ?? ""}|${lang}`
     const displayImageSrc = poi
@@ -167,13 +168,16 @@ export default function POIDetailDrawer({
         setDetent("half")
     }, [poi?.name, poi?.lat, poi?.lng, suggestedTime, isOpen, lang])
 
-    // 🖼️ Lightbox ESC 鍵關閉監聽（高優先攔截，避免連帶誤關底層視窗）
+    // 🖼️ Lightbox ESC 鍵關閉監聽（高優先攔截，避免連帶誤關底層視窗）與開啟自動聚焦關閉鈕
     useEffect(() => {
         if (!isLightboxOpen) return
+        lightboxCloseBtnRef.current?.focus()
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.isComposing) return
             if (e.key === "Escape") {
                 e.preventDefault()
                 e.stopPropagation()
+                e.stopImmediatePropagation()
                 setLightboxState(null)
             }
         }
@@ -557,7 +561,7 @@ export default function POIDetailDrawer({
                                                 detent === "full"
                                                     ? "h-56 sm:h-72 md:h-80"
                                                     : "h-44 sm:h-52"
-                                            } rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60 transition-[height] duration-300 ease-out cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500`}
+                                            } rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60 transition-[height] duration-300 ease-out cursor-zoom-in touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500`}
                                         >
                                             {/* 底層極淡模糊同圖襯底，消除直式/寬圖兩側留白生硬感 */}
                                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -945,9 +949,10 @@ export default function POIDetailDrawer({
                                 haptic.tap()
                                 setLightboxState(null)
                             }}
-                            className="fixed inset-0 z-200 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 sm:p-6 cursor-zoom-out"
+                            className="fixed inset-0 z-200 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 sm:p-6 cursor-zoom-out overscroll-contain touch-none"
                         >
                             <button
+                                ref={lightboxCloseBtnRef}
                                 type="button"
                                 onClick={(e) => {
                                     e.stopPropagation()
@@ -955,7 +960,7 @@ export default function POIDetailDrawer({
                                     setLightboxState(null)
                                 }}
                                 aria-label={zh ? "關閉圖片預覽" : "Close photo preview"}
-                                className="absolute top-4 right-4 sm:top-6 sm:right-6 z-10 w-10 h-10 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center backdrop-blur-sm transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                                className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-[calc(env(safe-area-inset-right,0px)+1rem)] sm:top-6 sm:right-6 z-10 w-11 h-11 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center backdrop-blur-sm transition-colors cursor-pointer touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                             >
                                 <X className="w-5 h-5" />
                             </button>

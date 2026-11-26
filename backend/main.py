@@ -1817,7 +1817,9 @@ async def stream_chat_generator(
 
             # 執行搜尋策略 (優先使用提煉後之 search_query；限制總擴充搜尋時間預算 <= 7.5s 並在二次重搜前發送 SSE 心跳)
             raw_search_results = []
+            effective_search_query: Optional[str] = None
             if not skip_web_search:
+                effective_search_query = search_query
                 search_pipeline_ran = True
                 yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": search_query})}\n\n'
                 await asyncio.sleep(0)
@@ -1831,9 +1833,12 @@ async def stream_chat_generator(
                 except Exception:
                     raw_search_results = []
 
-                tried_queries = {(search_query or "").strip().lower()}
-                norm_local_q = (local_q or "").strip().lower()
-                norm_global_q = (global_q or "").strip().lower()
+                def _norm_q(val: Optional[str]) -> str:
+                    return " ".join((val or "").split()).lower()
+
+                tried_queries = {_norm_q(search_query)}
+                norm_local_q = _norm_q(local_q)
+                norm_global_q = _norm_q(global_q)
                 should_try_local = bool(norm_local_q and norm_local_q not in tried_queries)
                 should_try_global = bool(norm_global_q and norm_global_q not in tried_queries)
 
@@ -1849,7 +1854,7 @@ async def stream_chat_generator(
                             try:
                                 local_results = await asyncio.wait_for(
                                     execute_web_search(local_q, region=local_reg, max_results=3),
-                                    timeout=min(2.8, max(0.4, search_deadline - time.monotonic())),
+                                    timeout=min(3.2, max(0.4, search_deadline - time.monotonic())),
                                 )
                             except Exception:
                                 local_results = []
@@ -1863,6 +1868,10 @@ async def stream_chat_generator(
                                 )
                             except Exception:
                                 global_results = []
+                        if local_results:
+                            effective_search_query = local_q
+                        elif global_results:
+                            effective_search_query = global_q
                         raw_search_results = local_results + global_results
 
             # 🛡️ AC-2: 雜訊黑名單過濾 (剔除政治/警察/研討會/電玩雜訊) 與網域分類
@@ -1870,7 +1879,7 @@ async def stream_chat_generator(
                 raw_search_results,
                 eval_message,
                 dest_code=dest_code,
-                search_query=search_query if not skip_web_search else None,
+                search_query=effective_search_query if not skip_web_search else None,
             )
             candidate_sources = cleaned_search_data[:5]
             search_raw_count = len(raw_search_results)

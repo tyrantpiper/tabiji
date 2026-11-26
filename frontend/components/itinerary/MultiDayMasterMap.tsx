@@ -372,7 +372,7 @@ function MultiDayMasterMapComponent({ trip, selectedDay, onSelectDay, onScrollTo
             for (const dayPlan of trip.days) {
                 const acts: Activity[] = dayPlan.activities || (dayPlan as { items?: Activity[] }).items || []
                 const sig = acts
-                    .filter((a: Activity) => a.category !== 'header' && !isNaN(Number(a.lat)) && !isNaN(Number(a.lng)) && Number(a.lat) !== 0)
+                    .filter((a: Activity) => a.category !== 'header' && !isNaN(Number(a.lat)) && !isNaN(Number(a.lng)) && Number(a.lat) !== 0 && Number(a.lng) !== 0)
                     .map((a: Activity) => `${Number(a.lng).toFixed(4)},${Number(a.lat).toFixed(4)}`)
                     .join(';')
                 if (sig && modeCache[sig]) {
@@ -456,7 +456,7 @@ function MultiDayMasterMapComponent({ trip, selectedDay, onSelectDay, onScrollTo
             .map((dayPlan) => {
                 const acts: Activity[] = dayPlan.activities || (dayPlan as { items?: Activity[] }).items || []
                 const validDayStops = acts
-                    .filter((a: Activity) => a.category !== 'header' && !isNaN(Number(a.lat)) && !isNaN(Number(a.lng)) && Number(a.lat) !== 0)
+                    .filter((a: Activity) => a.category !== 'header' && !isNaN(Number(a.lat)) && !isNaN(Number(a.lng)) && Number(a.lat) !== 0 && Number(a.lng) !== 0)
                     .map((a: Activity) => ({
                         lat: Number(a.lat),
                         lng: Number(a.lng),
@@ -479,9 +479,14 @@ function MultiDayMasterMapComponent({ trip, selectedDay, onSelectDay, onScrollTo
         [dayRouteSpecs]
     )
     const dayRouteSpecsRef = useRef(dayRouteSpecs)
-    dayRouteSpecsRef.current = dayRouteSpecs
+    useEffect(() => {
+        dayRouteSpecsRef.current = dayRouteSpecs
+    }, [dayRouteSpecs])
+
     const priorityDayRef = useRef<number>(activeDay !== 0 ? activeDay : (selectedDay ?? 0))
-    priorityDayRef.current = activeDay !== 0 ? activeDay : (selectedDay ?? 0)
+    useEffect(() => {
+        priorityDayRef.current = activeDay !== 0 ? activeDay : (selectedDay ?? 0)
+    }, [activeDay, selectedDay])
 
     // 5. 兩階段漸進式路網請求 (快取優先 + 穩定指紋依賴 + 選中天數置頂優先 + 併發上限 2 防 OSRM 429 洪峰)
     useEffect(() => {

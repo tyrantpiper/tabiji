@@ -20,7 +20,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from models.base import RouteStop, RouteRequest
-from utils.limiter import limiter
+from utils.limiter import limiter, get_public_ip_rate_limit_key
 
 router = APIRouter(prefix="/api", tags=["route"])
 
@@ -450,7 +450,7 @@ async def _compute_route_chain(stops: List[RouteStop], mode: str, cache_key: str
 
 
 @router.post("/route")
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=get_public_ip_rate_limit_key)
 async def calculate_route(request: Request, body: RouteRequest):
     """🛣️ 路線運算端點 (FOSSGIS OSRM ➔ FOSSGIS Valhalla ➔ ORS ➔ Haversine 15s 短防抖 + Singleflight)"""
     if len(body.stops) < 2:

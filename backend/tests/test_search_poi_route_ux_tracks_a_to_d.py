@@ -136,6 +136,70 @@ async def test_track_a_main_does_not_repeat_identical_local_q_and_runs_global_q(
 
 
 @pytest.mark.asyncio
+async def test_track_a_global_q_english_wiki_survives_filter_and_whitespace_local_q_deduped():
+    """English Wikipedia result from global_q must be validated against global_q (not Chinese search_query),
+    and whitespace-variant identical local_q must not re-run."""
+    called_queries = []
+
+    async def fake_web_search(query, site_filter=None, max_results=3, region=None):
+        called_queries.append(query)
+        if "Tokyo Tower" in query:
+            return [
+                {
+                    "title": "Tokyo Tower (Wikipedia)",
+                    "url": "https://en.wikipedia.org/wiki/Tokyo_Tower",
+                    "snippet": "Tokyo Tower is a communications and observation tower in Shiba-koen, Tokyo.",
+                }
+            ]
+        return []
+
+    chunk = MagicMock(spec=["text", "thought", "candidates"])
+    chunk.text = "東京鐵塔位於芝公園 [1]，是東京代表性地標。"
+    chunk.thought = None
+    chunk.candidates = []
+
+    mock_client = MagicMock()
+    mock_client.aio.models.generate_content_stream = AsyncMock(return_value=_MockAsyncStream([chunk]))
+
+    lite_result = {
+        "should_search": True,
+        "destination": "東京",
+        "local_query": "東京鐵塔   介紹",  # extra internal whitespace only — same as search_query
+        "global_query": "Tokyo Tower travel guide",
+        "search_query": "東京鐵塔 介紹",
+        "metadata": {
+            "destination_code": "JP",
+            "matched_destination": "東京",
+            "local_region": "jp-jp",
+            "global_region": "us-en",
+            "clean_query": "東京鐵塔 介紹",
+        },
+        "source": "gemini-3.5-flash-lite",
+    }
+
+    with patch("main.genai.Client", return_value=mock_client), \
+         patch("main.classify_chat_intent_with_meta", AsyncMock(return_value=("SEARCH", ["tool"], {"needs_query_rewrite": True}))), \
+         patch("main.extract_search_queries_with_lite", AsyncMock(return_value=lite_result)), \
+         patch("main.execute_web_search", side_effect=fake_web_search):
+        events = [
+            ev async for ev in backend_main.stream_chat_generator(
+                api_key=DUMMY_KEY,
+                history=[],
+                message="東京鐵塔 介紹",
+                raw_user_message="東京鐵塔 介紹",
+                locale="zh",
+            )
+        ]
+
+    assert called_queries == ["東京鐵塔 介紹", "Tokyo Tower travel guide"]
+    done_events = [e for e in events if "event: done" in e]
+    assert done_events
+    done_payload = json.loads(done_events[-1].split("data: ", 1)[1].strip())
+    assert len(done_payload["sources"]) == 1
+    assert done_payload["sources"][0]["uri"] == "https://en.wikipedia.org/wiki/Tokyo_Tower"
+
+
+@pytest.mark.asyncio
 async def test_track_a_query_rewrite_preserves_routing_order_and_5s_budget_rescues_second_model():
     """User Quote 1: QUERY_REWRITE_ROUTING order stays intact; 5.0s total budget gives model 2 time after model 1 times out."""
     assert ai_config.QUERY_REWRITE_ROUTING[0] == "gemini-3.1-flash-lite"
@@ -256,7 +320,19 @@ def test_track_b_pick_hd_wiki_image_raster_guard_and_960px_upgrade():
         },
     }) == "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Emblem.svg/960px-Emblem.svg.png"
 
-    # 4. TIFF / DjVu originalimage MUST be rejected -> safe JPEG thumbnail upgraded to 960px
+    # 4. High-res TIFF originalimage (>960) MUST be rejected -> safe JPEG thumbnail upgraded to 960px
+    assert poi_service._pick_hd_wiki_image({
+        "originalimage": {
+            "source": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Old_Map.tif",
+            "width": 2400,
+        },
+        "thumbnail": {
+            "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Old_Map.tif/lossy-page1-330px-Old_Map.tif.jpg",
+            "width": 330,
+        },
+    }) == "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Old_Map.tif/lossy-page1-960px-Old_Map.tif.jpg"
+
+    # 4b. Medium TIFF originalimage (width=720 < 960) MUST NOT upscale past 720 (prevents Wikimedia 404 -> raw TIFF)
     assert poi_service._pick_hd_wiki_image({
         "originalimage": {
             "source": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Old_Map.tif",
@@ -266,15 +342,59 @@ def test_track_b_pick_hd_wiki_image_raster_guard_and_960px_upgrade():
             "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Old_Map.tif/lossy-page1-330px-Old_Map.tif.jpg",
             "width": 330,
         },
-    }) == "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Old_Map.tif/lossy-page1-960px-Old_Map.tif.jpg"
+    }) == "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Old_Map.tif/lossy-page1-500px-Old_Map.tif.jpg"
 
-    # 5. Encoded SVG thumbnail MUST be blocked completely
+    # 4c. Localized SVG PNG thumbnail (langzh-tw-330px-) with orig_w > 960 MUST upgrade to langzh-tw-960px-
+    assert poi_service._pick_hd_wiki_image({
+        "originalimage": {
+            "source": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Tokyo_Tower_logo.svg",
+            "width": 1200,
+        },
+        "thumbnail": {
+            "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Tokyo_Tower_logo.svg/langzh-tw-330px-Tokyo_Tower_logo.svg.png",
+            "width": 330,
+        },
+    }) == "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Tokyo_Tower_logo.svg/langzh-tw-960px-Tokyo_Tower_logo.svg.png"
+
+    # 4d. Small raster original (width=280 <= 330) MUST NOT upscale thumbnail to 960px (avoids guaranteed 404)
+    assert poi_service._pick_hd_wiki_image({
+        "originalimage": {
+            "source": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Small_Sign.jpg",
+            "width": 280,
+        },
+        "thumbnail": {
+            "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Small_Sign.jpg/280px-Small_Sign.jpg",
+            "width": 280,
+        },
+    }) == "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Small_Sign.jpg/280px-Small_Sign.jpg"
+
+    # 5. Encoded SVG or raw TIFF thumbnail MUST be blocked completely
     assert poi_service._pick_hd_wiki_image({
         "thumbnail": {
             "source": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Icon.%73vg",
             "width": 330,
         }
     }) == ""
+    assert poi_service._pick_hd_wiki_image({
+        "thumbnail": {
+            "source": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Raw_Scan.tif",
+            "width": 330,
+        }
+    }) == ""
+
+    # 5b. media-proxy helpers: align prefixed thumbs (lang*/lossy-page*), block raw TIFF original fallback & image/tiff MIME
+    assert poi_router._align_wikimedia_thumb_width(
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Map.svg/langzh-tw-300px-Map.svg.png"
+    ).endswith("/langzh-tw-330px-Map.svg.png")
+    assert poi_router._align_wikimedia_thumb_width(
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Old_Map.tif/lossy-page1-400px-Old_Map.tif.jpg"
+    ).endswith("/lossy-page1-500px-Old_Map.tif.jpg")
+    assert poi_router._derive_original_wikimedia_url(
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Old_Map.tif/lossy-page1-960px-Old_Map.tif.jpg"
+    ) is None
+    assert poi_router._derive_original_wikimedia_url(
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Shiba_Park.jpg/960px-Shiba_Park.jpg"
+    ) == "https://upload.wikimedia.org/wikipedia/commons/a/a1/Shiba_Park.jpg"
 
     # 6. Already >= 960px thumbnail is NOT downgraded
     assert poi_service._pick_hd_wiki_image({
@@ -490,3 +610,92 @@ def test_track_d_public_proxy_endpoints_enforce_60_per_minute_rate_limit():
         ]
     assert statuses_nearby[:60] == [200] * 60
     assert statuses_nearby[60] == 429
+
+
+def test_track_d_public_rate_limit_blocks_fake_gemini_key_bypass_and_isolates_gfe_xff():
+    """Public /api/route, /api/poi/enrich, /api/poi/nearby must:
+    1) Reject X-Gemini-API-Key header rotation bypass (keyed strictly by trusted client IP).
+    2) Isolate distinct rightmost GFE X-Forwarded-For IPs so Cloud Run users don't share one bucket.
+    3) Reject leftmost X-Forwarded-For spoofing (CWE-290).
+    """
+    client = TestClient(backend_main.app)
+
+    # 1. Exploit PoC: rotating fake X-Gemini-API-Key + spoofed leftmost XFF MUST NOT bypass 60/min
+    limiter._storage.reset()
+    with patch("routers.poi.search_poi_combined", AsyncMock(return_value=[])):
+        attacker_statuses = [
+            client.get(
+                "/api/poi/nearby",
+                params={"lat": 35.6586, "lng": 139.7454, "category": "restaurant"},
+                headers={
+                    "X-Gemini-API-Key": f"fake-bypass-key-{i}",
+                    "X-Forwarded-For": f"198.51.100.{i % 250 + 1}, 203.0.113.10",
+                },
+            ).status_code
+            for i in range(61)
+        ]
+    assert attacker_statuses[:60] == [200] * 60
+    assert attacker_statuses[60] == 429
+
+    # 2. Benign control: a different real client IP behind GFE (rightmost XFF = 203.0.113.20) is NOT blocked
+    with patch("routers.poi.search_poi_combined", AsyncMock(return_value=[])):
+        other_user = client.get(
+            "/api/poi/nearby",
+            params={"lat": 35.6586, "lng": 139.7454, "category": "restaurant"},
+            headers={"X-Forwarded-For": "203.0.113.20"},
+        )
+    assert other_user.status_code == 200
+
+    # 3. Same anti-bypass verification on /api/route and /api/poi/enrich
+    limiter._storage.reset()
+    with patch.object(route_router, "_compute_route_chain", AsyncMock(return_value=route_router.create_straight_fallback(
+        [route_router.RouteStop(lat=35.6586, lng=139.7454), route_router.RouteStop(lat=35.6620, lng=139.7500)], "walk"
+    ))):
+        route_statuses = [
+            client.post(
+                "/api/route",
+                json={"stops": [{"lat": 35.6586, "lng": 139.7454}, {"lat": 35.6620, "lng": 139.7500}], "mode": "walk"},
+                headers={"X-Gemini-API-Key": f"fake-route-key-{i}", "X-Forwarded-For": "203.0.113.30"},
+            ).status_code
+            for i in range(61)
+        ]
+    assert route_statuses[:60] == [200] * 60
+    assert route_statuses[60] == 429
+
+    limiter._storage.reset()
+    with patch("routers.poi.enrich_poi_complete", AsyncMock(return_value={"name": "Tokyo Tower", "status": "SUCCESS"})):
+        enrich_statuses = [
+            client.post(
+                "/api/poi/enrich",
+                json={"name": "Tokyo Tower", "lat": 35.6586, "lng": 139.7454},
+                headers={"X-Gemini-API-Key": f"fake-enrich-key-{i}", "X-Forwarded-For": "203.0.113.40"},
+            ).status_code
+            for i in range(61)
+        ]
+    assert enrich_statuses[:60] == [200] * 60
+    assert enrich_statuses[60] == 429
+
+
+def test_track_b_media_proxy_rejects_upstream_image_tiff():
+    """media-proxy must reject unrenderable upstream image/tiff with HTTP 415."""
+    client = TestClient(backend_main.app)
+
+    class _FakeTiffResp:
+        status_code = 200
+        headers = httpx.Headers({"content-type": "image/tiff", "content-length": "16"})
+
+        async def aclose(self):
+            return None
+
+    fake_client = MagicMock()
+    fake_client.build_request = lambda m, u, **kw: httpx.Request(m, u)
+    fake_client.send = AsyncMock(return_value=_FakeTiffResp())
+    fake_client.aclose = AsyncMock()
+
+    with patch("routers.poi.create_safe_client", return_value=fake_client), \
+         patch("routers.poi.is_safe_url_async", AsyncMock(return_value=True)):
+        resp = client.get(
+            "/api/poi/media-proxy",
+            params={"url": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Old_Map.tif"},
+        )
+    assert resp.status_code == 415

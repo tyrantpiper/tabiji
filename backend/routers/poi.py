@@ -26,7 +26,7 @@ from google.genai import types
 
 from models.base import POIAIEnrichRequest, POIEnrichRequest, POIRecommendRequest, SmartSearchRequest
 from utils.deps import get_gemini_key, get_supabase
-from utils.limiter import limiter
+from utils.limiter import limiter, get_public_ip_rate_limit_key
 from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
 from services.link_resolver import (
     resolve_google_maps_link,
@@ -379,7 +379,7 @@ Output in this EXACT JSON format ({lang_label}):
 
 
 @router.post("/poi/enrich")
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=get_public_ip_rate_limit_key)
 async def enrich_poi(request: Request, body: POIEnrichRequest):
     """
     📚 三源整合 POI 端點 - Wikipedia + WikiVoyage + Wikidata
@@ -426,7 +426,7 @@ async def enrich_poi(request: Request, body: POIEnrichRequest):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/poi/nearby")
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=get_public_ip_rate_limit_key)
 async def search_nearby_poi(
     request: Request,
     lat: float,
@@ -677,8 +677,11 @@ _MEDIA_PROXY_ALLOWED_HOSTS = frozenset({
 })
 _WIKIMEDIA_STD_WIDTHS = (20, 40, 60, 120, 250, 330, 500, 960, 1280, 1920, 3840)
 _MEDIA_PROXY_UA = "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"
-_THUMB_PX_RE = re.compile(r"(/thumb/.+/)(\d+)px-([^/?#]+)$")
+_THUMB_PX_RE = re.compile(
+    r"(/thumb/[^?#]+/(?:(?:lossy-|lossless-)?page\d+-|lang[A-Za-z0-9_-]{2,20}-|qlow-|mid-){0,3})(\d+)px-([^/?#]+)$"
+)
 _THUMB_ORIG_RE = re.compile(r"^(/wikipedia/[^/]+)/thumb/([^/]+/[^/]+/[^/]+)/[^/]+$")
+_UNSAFE_ORIG_MEDIA_EXTS = (".svg", ".svgz", ".tif", ".tiff", ".djvu", ".pdf", ".xcf", ".ogv", ".webm")
 
 
 def _snap_wikimedia_width(width: int) -> int:
@@ -730,7 +733,7 @@ def _derive_original_wikimedia_url(thumb_url: str) -> Optional[str]:
         return None
     orig_path = f"{m.group(1)}/{m.group(2)}"
     decoded_orig = unquote(unquote(orig_path)).rstrip("/").lower()
-    if decoded_orig.endswith((".svg", ".svgz")):
+    if decoded_orig.endswith(_UNSAFE_ORIG_MEDIA_EXTS):
         return None
     return urlunparse(("https", "upload.wikimedia.org", orig_path, "", "", ""))
 
@@ -830,7 +833,7 @@ async def media_proxy(request: Request, url: str):
 
         raw_ct = upstream_resp.headers.get("Content-Type", "")
         media_type = raw_ct.split(";", 1)[0].strip().lower()
-        if not media_type.startswith("image/") or "svg" in media_type or "xml" in media_type:
+        if not media_type.startswith("image/") or "svg" in media_type or "xml" in media_type or "tiff" in media_type:
             raise HTTPException(status_code=415, detail="Unsupported upstream media type")
 
         raw_cl = upstream_resp.headers.get("Content-Length")

@@ -111,17 +111,90 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         expect(jsonRss.results[0].title).toContain("東京車站必逛伴手禮")
         expect(seenRssUrls[0]).toContain("hl=zh-TW")
 
-        // Case 3: Genuine Japanese kana-dominant query still uses hl=ja&gl=JP
-        seenRssUrls.length = 0
-        await searchWorkerMod.default.fetch(
-            new Request("https://search-proxy.local/search?q=" + encodeURIComponent("渋谷駅 ラーメン おすすめ") + "&limit=2", {
+        // Case 3: Genuine Japanese kana-dominant queries (including Joyo Kanji shared with zh-TW like 旅館/美術館/買い物) still use hl=ja&gl=JP
+        for (const jpQuery of ["渋谷駅 ラーメン おすすめ", "浅草の旅館 おすすめ", "東京のおすすめ美術館", "新宿で買い物 おすすめ"]) {
+            seenRssUrls.length = 0
+            await searchWorkerMod.default.fetch(
+                new Request("https://search-proxy.local/search?q=" + encodeURIComponent(jpQuery) + "&limit=2", {
+                    headers: { "x-tabidachi-key": "secret-track-a" },
+                }),
+                { PROXY_SECRET: "secret-track-a" },
+                {}
+            )
+            expect(seenRssUrls[0]).toContain("hl=ja")
+            expect(seenRssUrls[0]).toContain("gl=JP")
+        }
+
+        // Case 4: Multi-temporal query ("淺草寺 2026 營業時間 門票") must strip ALL temporal tokens globally (not just the first!)
+        const sensoRssXml = `
+          <rss><channel>
+            <item>
+              <title>淺草寺參拜人潮創新高 雷門周邊必訪亮點 - 旅遊新聞</title>
+              <link>https://news.example.tw/sensoji-2026</link>
+              <pubDate>Thu, 26 Nov 2026 08:00:00 GMT</pubDate>
+              <source>旅遊新聞</source>
+            </item>
+          </channel></rss>
+        `
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+            const u = String(input)
+            if (u.includes("news.google.com")) {
+                return new Response(sensoRssXml, { status: 200 })
+            }
+            if (u.includes("lite.duckduckgo.com")) {
+                return new Response("<html>CAPTCHA</html>", { status: 202 })
+            }
+            return new Response("{}", { status: 404 })
+        })
+        const respMultiTemporal = await searchWorkerMod.default.fetch(
+            new Request("https://search-proxy.local/search?q=" + encodeURIComponent("淺草寺 2026 營業時間 門票") + "&limit=3", {
                 headers: { "x-tabidachi-key": "secret-track-a" },
             }),
             { PROXY_SECRET: "secret-track-a" },
             {}
         )
-        expect(seenRssUrls[0]).toContain("hl=ja")
-        expect(seenRssUrls[0]).toContain("gl=JP")
+        const jsonMultiTemporal = await respMultiTemporal.json()
+        expect(jsonMultiTemporal.source).toBe("google_news_rss")
+        expect(jsonMultiTemporal.results).toHaveLength(1)
+        expect(jsonMultiTemporal.results[0].title).toContain("淺草寺")
+
+        // Case 5: Zero head-of-line blocking — fast DDG result MUST return immediately & abort stalled RSS (never wait 2800ms)
+        let rssAborted = false
+        vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+            const u = String(input)
+            if (u.includes("lite.duckduckgo.com")) {
+                return Promise.resolve(new Response(ddgOkHtml, { status: 200 }))
+            }
+            if (u.includes("news.google.com")) {
+                return new Promise<Response>((_, reject) => {
+                    const sig = init?.signal
+                    if (sig?.aborted) {
+                        rssAborted = true
+                        reject(new DOMException("Aborted", "AbortError"))
+                        return
+                    }
+                    sig?.addEventListener("abort", () => {
+                        rssAborted = true
+                        reject(new DOMException("Aborted", "AbortError"))
+                    })
+                })
+            }
+            return Promise.resolve(new Response("{}", { status: 404 }))
+        })
+        const t0 = performance.now()
+        const respFastDdg = await searchWorkerMod.default.fetch(
+            new Request("https://search-proxy.local/search?q=" + encodeURIComponent("Tokyo Station 2026 guide") + "&limit=3", {
+                headers: { "x-tabidachi-key": "secret-track-a" },
+            }),
+            { PROXY_SECRET: "secret-track-a" },
+            {}
+        )
+        const elapsedMs = performance.now() - t0
+        const jsonFastDdg = await respFastDdg.json()
+        expect(jsonFastDdg.source).toBe("ddg")
+        expect(jsonFastDdg.results).toHaveLength(1)
+        expect(rssAborted).toBe(true)
+        expect(elapsedMs).toBeLessThan(500)
     })
 
     // -------------------------------------------------------------------------
@@ -170,15 +243,36 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         expect(trigger.className).toContain("sm:h-72")
         expect(trigger.className).toContain("md:h-80")
 
-        // 3. Click thumbnail -> opens fullscreen Lightbox portaled to document.body
-        fireEvent.click(trigger)
-        const lightbox = screen.getByTestId("poi-image-lightbox")
-        expect(lightbox.getAttribute("role")).toBe("dialog")
-        expect(lightbox.parentElement).toBe(document.body)
+        // 3. Click thumbnail -> opens fullscreen Lightbox portaled to document.body, focuses 44x44 safe-area close button
+        const parentModalClose = vi.fn()
+        const parentEscListener = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                if (e.isComposing || e.defaultPrevented || document.querySelector('[data-testid="poi-image-lightbox"]')) {
+                    return
+                }
+                parentModalClose()
+            }
+        }
+        window.addEventListener("keydown", parentEscListener)
+        try {
+            fireEvent.click(trigger)
+            const lightbox = screen.getByTestId("poi-image-lightbox")
+            expect(lightbox.getAttribute("role")).toBe("dialog")
+            expect(lightbox.parentElement).toBe(document.body)
 
-        // 4. Close Lightbox via ESC key
-        fireEvent.keyDown(window, { key: "Escape" })
-        expect(screen.queryByTestId("poi-image-lightbox")).toBeNull()
+            const closeBtn = screen.getByRole("button", { name: "關閉圖片預覽" })
+            expect(document.activeElement).toBe(closeBtn)
+            expect(closeBtn.className).toContain("w-11")
+            expect(closeBtn.className).toContain("h-11")
+            expect(closeBtn.className).toContain("env(safe-area-inset-top")
+
+            // 4. Close Lightbox via ESC key -> Lightbox closes, parent modal stays open
+            fireEvent.keyDown(window, { key: "Escape" })
+            expect(screen.queryByTestId("poi-image-lightbox")).toBeNull()
+            expect(parentModalClose).not.toHaveBeenCalled()
+        } finally {
+            window.removeEventListener("keydown", parentEscListener)
+        }
 
         // 5. Reopen & close via backdrop click
         fireEvent.click(trigger)
@@ -254,13 +348,21 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         expect(prioritizeDayRouteSpecs(specs, 0).map((s) => s.dayNum)).toEqual([2, 3, 7, 8])
         expect(prioritizeDayRouteSpecs(specs, 99).map((s) => s.dayNum)).toEqual([2, 3, 7, 8])
 
-        // 6. Verify MultiDayMasterMap source enforces 15000ms timeout and cross-region filter
+        // 6. Verify MultiDayMasterMap source enforces 15000ms timeout, cross-region filter, lng !== 0 guard, and FullscreenMapModal Lightbox ESC yield
         const mapSrc = fs.readFileSync(
             path.resolve(__dirname, "..", "components", "itinerary", "MultiDayMasterMap.tsx"),
             "utf-8"
         )
         expect(mapSrc).toContain("!isCrossRegionDayStops(spec.validDayStops)")
+        expect(mapSrc).toContain("Number(a.lng) !== 0")
         expect(mapSrc).toContain("prioritizeDayRouteSpecs(")
         expect(mapSrc).toContain("15000")
+
+        const fullscreenSrc = fs.readFileSync(
+            path.resolve(__dirname, "..", "components", "FullscreenMapModal.tsx"),
+            "utf-8"
+        )
+        expect(fullscreenSrc).toContain('poi-image-lightbox')
+        expect(fullscreenSrc).toContain("e.defaultPrevented")
     })
 })
