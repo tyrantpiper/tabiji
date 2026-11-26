@@ -333,6 +333,7 @@ class CreateItemRequest(BaseModel):
     hide_navigation: bool = False
     is_private: bool = False
     is_highlight: bool = False
+    preserve_coords: bool = False
 
 
 class ReorderItemRequest(BaseModel):

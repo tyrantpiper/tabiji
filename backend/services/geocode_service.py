@@ -4236,6 +4236,205 @@ def _resolve_segment_region_name(
     return default_region, default_country
 
 
+_JP_KANA_NON_NO_RE = re.compile(r"[\u3040-\u306D\u306F-\u309F\u30A0-\u30FF]")
+_KR_HANGUL_RE = re.compile(r"[\uAC00-\uD7AF]")
+_TH_SCRIPT_RE = re.compile(r"[\u0E00-\u0E7F]")
+_AMBIGUOUS_FOREIGN_CLUE_KEYWORDS = frozenset({
+    "101", "nice", "central", "東北", "樂天", "lotte", "故宮", "海洋公園", "自由女神",
+})
+_DISH_FOLLOW_CHARS = frozenset({"燒", "烧", "麵", "面"})
+_NAME_CLEAN_SEP_RE = re.compile(r"[\s\-—–_・·/(),（）【】\[\]]+")
+_CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+_LATIN_TOKEN_RE = re.compile(r"[a-z0-9]{2,}")
+
+
+def _has_non_dish_cjk(combined_norm: str, term: str) -> bool:
+    term_norm = normalize_cjk_chars(term)
+    if not term_norm:
+        return False
+    idx = combined_norm.find(term_norm)
+    while idx != -1:
+        after_idx = idx + len(term_norm)
+        if after_idx >= len(combined_norm) or combined_norm[after_idx] not in _DISH_FOLLOW_CHARS:
+            return True
+        idx = combined_norm.find(term_norm, after_idx)
+    return False
+
+
+def _infer_countries_from_text(combined: str) -> set[str]:
+    if not combined:
+        return set()
+    inferred: set[str] = set()
+    # 排除華語店家常見之單獨裝飾字「の」（如「茶の魔手」），僅其他日文假名直接推論為 JP
+    if _JP_KANA_NON_NO_RE.search(combined):
+        inferred.add("JP")
+    if _KR_HANGUL_RE.search(combined):
+        inferred.add("KR")
+    if _TH_SCRIPT_RE.search(combined):
+        inferred.add("TH")
+
+    combined_low = combined.lower()
+    combined_norm = normalize_cjk_chars(combined)
+
+    for k, info in GLOBAL_CITY_ANCHORS.items():
+        cc = str(info.get("country") or "").upper()
+        if not cc or cc in inferred:
+            continue
+        if k.isascii():
+            if len(k) >= 4 and re.search(rf"\b{re.escape(k.lower())}\b", combined_low):
+                inferred.add(cc)
+        elif len(k) >= 2 and _has_non_dish_cjk(combined_norm, k):
+            inferred.add(cc)
+
+    for cc, kws in LOCATION_KEYWORDS.items():
+        if cc in inferred:
+            continue
+        for kw in kws:
+            kw_low = kw.lower()
+            if kw_low in _AMBIGUOUS_FOREIGN_CLUE_KEYWORDS:
+                continue
+            if kw.isascii():
+                if len(kw_low) >= 4 and re.search(rf"\b{re.escape(kw_low)}\b", combined_low):
+                    inferred.add(cc)
+                    break
+            elif len(kw) >= 2 and _has_non_dish_cjk(combined_norm, kw):
+                inferred.add(cc)
+                break
+
+    for cc, b in COUNTRY_BOUNDS.items():
+        if cc in inferred:
+            continue
+        cname = str(b.get("name") or "").strip()
+        if len(cname) >= 2 and _has_non_dish_cjk(combined_norm, cname):
+            inferred.add(cc)
+
+    return inferred
+
+
+def _infer_city_anchors_from_text(combined: str) -> List[Dict[str, Any]]:
+    if not combined:
+        return []
+    combined_low = combined.lower()
+    combined_norm = normalize_cjk_chars(combined)
+    matched: List[Dict[str, Any]] = []
+    seen_coords: set[tuple[float, float]] = set()
+    for k, info in GLOBAL_CITY_ANCHORS.items():
+        if info.get("lat") is None or info.get("lng") is None:
+            continue
+        hit = False
+        if k.isascii():
+            if len(k) >= 4 and re.search(rf"\b{re.escape(k.lower())}\b", combined_low):
+                hit = True
+        elif len(k) >= 2 and _has_non_dish_cjk(combined_norm, k):
+            hit = True
+        if hit:
+            key = (round(float(info["lat"]), 3), round(float(info["lng"]), 3))
+            if key not in seen_coords:
+                seen_coords.add(key)
+                matched.append(info)
+    return matched
+
+
+def _item_text_by_fields(item: Dict[str, Any], fields: tuple[str, ...]) -> str:
+    if not isinstance(item, dict):
+        return ""
+    parts = [str(item.get(field) or "").strip() for field in fields]
+    return " ".join(p for p in parts if p)
+
+
+def infer_explicit_countries_from_item(item: Dict[str, Any]) -> set[str]:
+    """從單筆項目的名稱、原文名、地址與備註推論明確提及的國家代碼（含語系線索與非料理城市關鍵字）。"""
+    combined = _item_text_by_fields(item, ("place_name", "original_name", "address", "notes", "desc"))
+    return _infer_countries_from_text(combined)
+
+
+def is_self_consistent_foreign_place(
+    item: Dict[str, Any],
+    lat: float,
+    lng: float,
+    allowed_countries: Optional[set[str]] = None,
+) -> bool:
+    """驗證項目文字中明確推論之國家與傳入座標是否自洽（同時攔截文字與當地國家/主地址矛盾之幻覺）。"""
+    all_countries = infer_explicit_countries_from_item(item)
+    if not all_countries:
+        return False
+
+    def _in_bounds(cc: str) -> bool:
+        bounds = COUNTRY_BOUNDS.get(cc)
+        return bool(
+            bounds
+            and (bounds["lat_min"] <= lat <= bounds["lat_max"])
+            and (bounds["lng_min"] <= lng <= bounds["lng_max"])
+        )
+
+    # 1. 若項目文字本身已明確提及母體行程所在國家（如台北分店/地址），但座標落在該國境外 -> 視為幻覺矛盾，拒絕放行
+    if allowed_countries and (all_countries & allowed_countries):
+        if not any(_in_bounds(cc) for cc in allowed_countries):
+            return False
+
+    # 2. 若主要定位欄位（店名/原文名/地址）已明確指向特定國家，座標必須落於其中（避免『台北龍山寺』備註提首爾卻放行首爾座標）
+    primary_text = _item_text_by_fields(item, ("place_name", "original_name", "address"))
+    primary_countries = _infer_countries_from_text(primary_text)
+    if primary_countries and not any(_in_bounds(cc) for cc in primary_countries):
+        return False
+
+    return any(_in_bounds(cc) for cc in all_countries)
+
+
+def is_self_consistent_explicit_city_place(
+    item: Dict[str, Any],
+    lat: float,
+    lng: float,
+    anchor_lat: Optional[float] = None,
+    anchor_lng: Optional[float] = None,
+) -> bool:
+    """同國跨城自洽驗證（如東京行程加入備註明寫『大阪』且座標落於大阪 80km 內之餐廳），同時攔截與當日城市矛盾之幻覺。"""
+    all_text = _item_text_by_fields(item, ("place_name", "original_name", "address", "notes", "desc"))
+    all_cities = _infer_city_anchors_from_text(all_text)
+    if not all_cities:
+        return False
+
+    # 若文字同時明確提及當日錨點城市（如東京分店備註提大阪風味），座標遠離當日錨點屬矛盾幻覺
+    if anchor_lat is not None and anchor_lng is not None:
+        if any(haversine_km(anchor_lat, anchor_lng, c["lat"], c["lng"]) <= 80.0 for c in all_cities):
+            return False
+
+    primary_text = _item_text_by_fields(item, ("place_name", "original_name", "address"))
+    primary_cities = _infer_city_anchors_from_text(primary_text)
+    if primary_cities and not any(haversine_km(c["lat"], c["lng"], lat, lng) <= 80.0 for c in primary_cities):
+        return False
+
+    return any(haversine_km(c["lat"], c["lng"], lat, lng) <= 80.0 for c in all_cities)
+
+
+def _is_weak_out_of_country_match(place_name: str, match_name: str) -> bool:
+    """防止跨國自癒時因極短子字串誤撞（如『北海』vs『北海 -HOKKAI- お初天神店』）而覆蓋有效原座標。"""
+    q_norm = normalize_cjk_chars(place_name or "")
+    m_norm = normalize_cjk_chars(match_name or "")
+    q_clean = _NAME_CLEAN_SEP_RE.sub("", q_norm)
+    m_clean = _NAME_CLEAN_SEP_RE.sub("", m_norm)
+    if not q_clean or not m_clean:
+        return False
+    if q_clean in m_clean:
+        return False
+
+    q_cjk = set(_CJK_CHAR_RE.findall(q_clean))
+    m_cjk = set(_CJK_CHAR_RE.findall(m_clean))
+    # 必須在剝除空白與分隔符號前切分拉丁詞彙，避免多詞英文地名被黏合成單一 token 誤殺有效匹配
+    q_lat = set(_LATIN_TOKEN_RE.findall(q_norm))
+    m_lat = set(_LATIN_TOKEN_RE.findall(m_norm))
+
+    if q_cjk and m_cjk:
+        q_units = len(q_cjk) + len(q_lat)
+        shared_units = len(q_cjk & m_cjk) + len(q_lat & m_lat)
+        return (shared_units / max(1, q_units)) < 0.45
+
+    if not q_cjk and not m_cjk and q_lat and m_lat:
+        return (len(q_lat & m_lat) / max(1, len(q_lat))) < 0.45
+
+    return False
+
+
 async def verify_and_heal_itinerary_coords(
     items: List[Dict[str, Any]],
     trip_meta: Optional[Dict[str, Any]] = None,
@@ -4626,17 +4825,27 @@ async def verify_and_heal_itinerary_coords(
                 _set_coords(None, None)
             return item
 
-        is_homonym_place = any(hk in place_name for hk in HOMONYM_GUARD_KEYS)
+        place_name_low = place_name.lower()
+        is_homonym_place = any(hk.lower() in place_name_low for hk in HOMONYM_GUARD_KEYS)
         reason = None
         if ilat is None or ilng is None:
             reason = "missing"
         elif not _in_country(ilat, ilng):
-            # 允許邊境城市當日跨境順遊 (如日內瓦->霞慕尼 64km、新加坡->新山 18km)，但嚴格攔截 >80km 跨國幻覺與撞名地標
-            if (
-                not is_homonym_place
-                and d_anc.get("lat") is not None
-                and d_anc.get("lng") is not None
-                and haversine_km(d_anc["lat"], d_anc["lng"], ilat, ilng) <= 80.0
+            # 允許邊境城市當日跨境順遊 (如日內瓦->霞慕尼 64km、新加坡->新山 18km)，
+            # 以及文字與外國座標自洽的非撞名跨區景點（如大阪日文店名 + 日本邊界座標），
+            # 同時嚴格攔截跨國幻覺與撞名地標（如台北行程中的首爾龍山寺、或文字提及台北但帶日本座標之矛盾點）
+            if not is_homonym_place and (
+                (
+                    d_anc.get("lat") is not None
+                    and d_anc.get("lng") is not None
+                    and haversine_km(d_anc["lat"], d_anc["lng"], ilat, ilng) <= 80.0
+                )
+                or is_self_consistent_foreign_place(
+                    item,
+                    ilat,
+                    ilng,
+                    allowed_countries=allowed_countries,
+                )
             ):
                 reason = None
             else:
@@ -4658,7 +4867,16 @@ async def verify_and_heal_itinerary_coords(
             )
             if is_homonym_place and dist_day > 50.0:
                 reason = "homonym_drift"
-            elif min_dist_city > 180.0:
+            elif min_dist_city > 180.0 and not (
+                not is_homonym_place
+                and is_self_consistent_explicit_city_place(
+                    item,
+                    ilat,
+                    ilng,
+                    anchor_lat=d_anc.get("lat"),
+                    anchor_lng=d_anc.get("lng"),
+                )
+            ):
                 reason = "spatial_outlier"
 
         if reason is None:
@@ -4666,6 +4884,7 @@ async def verify_and_heal_itinerary_coords(
             return item
 
         healed_lat, healed_lng = None, None
+        rejected_weak_match = False
         async with sem:
             try:
                 geo_res = await asyncio.wait_for(
@@ -4684,13 +4903,27 @@ async def verify_and_heal_itinerary_coords(
                 )
                 if geo_res and geo_res.get("results"):
                     first_match = geo_res["results"][0]
-                    healed_lat = first_match.get("lat")
-                    healed_lng = first_match.get("lng")
+                    match_name = str(first_match.get("name") or first_match.get("display_name") or "").strip()
+                    if (
+                        reason == "out_of_country"
+                        and not is_homonym_place
+                        and ilat is not None
+                        and ilng is not None
+                        and match_name
+                        and _is_weak_out_of_country_match(place_name, match_name)
+                    ):
+                        rejected_weak_match = True
+                    else:
+                        healed_lat = first_match.get("lat")
+                        healed_lng = first_match.get("lng")
             except Exception as e:
                 print(f"⚠️ [Spatial Healer] Geocode fallback for '{place_name}' ({reason}): {e}")
 
         if healed_lat is not None and healed_lng is not None:
             _set_coords(healed_lat, healed_lng)
+        elif rejected_weak_match and ilat is not None and ilng is not None:
+            # 防止模糊子字串誤撞（如「北海」誤撞大阪店名）覆寫原有效座標
+            _set_coords(ilat, ilng)
         elif (
             reason in ("out_of_country", "homonym_drift", "spatial_outlier")
             or (reason == "missing" and is_transit_item)

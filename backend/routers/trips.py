@@ -12,6 +12,7 @@ Note: This is a large router containing 17 endpoints.
 
 import os
 import re
+import math
 import uuid
 import random
 import string
@@ -21,6 +22,7 @@ import asyncio
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Any
+from urllib.parse import urlparse
 from unittest.mock import NonCallableMock
 from fastapi import APIRouter, Depends, HTTPException, Header
 from starlette.concurrency import run_in_threadpool
@@ -53,6 +55,185 @@ from utils.idempotency import get_idempotent_response, store_idempotent_response
 from utils.constants import DAY_MAP_FIELDS, CLONEABLE_FIELDS
 
 router = APIRouter(prefix="/api/trips", tags=["trips"])
+
+_GOOGLE_MAPS_HOST_RE = re.compile(r"^maps\.google\.(?:com|co\.[a-z]{2}|com\.[a-z]{2}|[a-z]{2,3})$")
+_GOOGLE_WEB_HOST_RE = re.compile(r"^(?:www\.|m\.)?google\.(?:com|co\.[a-z]{2}|com\.[a-z]{2}|[a-z]{2,3})$")
+_EXACT_MAP_HOSTS = frozenset({
+    "maps.app.goo.gl",
+    "maps.apple.com",
+    "beta.maps.apple.com",
+    "openstreetmap.org",
+    "www.openstreetmap.org",
+    "osm.org",
+    "www.osm.org",
+    "map.naver.com",
+    "m.map.naver.com",
+    "naver.me",
+    "map.kakao.com",
+    "m.map.kakao.com",
+    "kko.to",
+    "map.yahoo.co.jp",
+    "maps.loco.yahoo.co.jp",
+    "amap.com",
+    "www.amap.com",
+    "ditu.amap.com",
+    "surl.amap.com",
+    "uri.amap.com",
+    "map.baidu.com",
+    "j.map.baidu.com",
+    "api.map.baidu.com",
+    "waze.com",
+    "www.waze.com",
+    "ul.waze.com",
+})
+_BING_HOSTS = frozenset({"bing.com", "www.bing.com", "cn.bing.com"})
+
+
+def _is_safe_http_url(url: Optional[str]) -> bool:
+    """驗證是否為合法 http(s) URL（拒絕 javascript:/data:/含反斜線或帳密權威混淆字元）。"""
+    if not url or not isinstance(url, str):
+        return False
+    raw = url.strip()
+    if not raw or any(ch in raw for ch in ("\\", "\r", "\n", "\t")):
+        return False
+    try:
+        parsed = urlparse(raw)
+        if parsed.scheme.lower() not in ("http", "https"):
+            return False
+        if not parsed.hostname or parsed.username or parsed.password:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def is_map_navigation_url(url: Optional[str]) -> bool:
+    """檢查網址是否屬於合法地圖導航網域白名單（Google / Apple / OSM / Naver / Kakao / Yahoo JP / Bing / Amap / Baidu / Waze）。"""
+    if not _is_safe_http_url(url):
+        return False
+    try:
+        parsed = urlparse(str(url).strip())
+        host = (parsed.hostname or "").lower().rstrip(".")
+        path = (parsed.path or "").lower()
+    except Exception:
+        return False
+
+    if not host:
+        return False
+    if host in _EXACT_MAP_HOSTS:
+        return True
+    if _GOOGLE_MAPS_HOST_RE.match(host):
+        return True
+    if _GOOGLE_WEB_HOST_RE.match(host) and (path == "/maps" or path.startswith("/maps/")):
+        return True
+    if host == "goo.gl" and (path == "/maps" or path.startswith("/maps/")):
+        return True
+    if host in _BING_HOSTS and (path == "/maps" or path.startswith("/maps/")):
+        return True
+    return False
+
+
+def _normalize_url_for_dedupe(url: str) -> str:
+    """保留路徑大小寫（如 IG Reel ID），僅將 scheme/netloc 小寫化並移除尾斜線以供去重比對。"""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlparse(raw)
+        scheme = parsed.scheme.lower()
+        netloc = parsed.netloc.lower()
+        path = parsed.path.rstrip("/")
+        query = f"?{parsed.query}" if parsed.query else ""
+        return f"{scheme}://{netloc}{path}{query}"
+    except Exception:
+        return raw.rstrip("/")
+
+
+def _label_for_reference_url(url: str) -> str:
+    """依非地圖網址之網域產生清楚的此地備忘錄連結名稱。"""
+    try:
+        host = (urlparse(url.strip()).hostname or "").lower().rstrip(".")
+    except Exception:
+        host = ""
+    if host.startswith("www."):
+        host = host[4:]
+    elif host.startswith("m."):
+        host = host[2:]
+
+    if host in ("instagram.com", "instagr.am") or host.endswith(".instagram.com"):
+        return "Instagram 參考連結"
+    if host in ("threads.net", "threads.com") or host.endswith(".threads.net") or host.endswith(".threads.com"):
+        return "Threads 參考連結"
+    if host == "tiktok.com" or host.endswith(".tiktok.com"):
+        return "TikTok 參考連結"
+    if host in ("youtube.com", "youtu.be") or host.endswith(".youtube.com"):
+        return "YouTube 參考連結"
+    if host in ("facebook.com", "fb.com", "fb.watch") or host.endswith(".facebook.com"):
+        return "Facebook 參考連結"
+    if host in ("x.com", "twitter.com") or host.endswith(".x.com") or host.endswith(".twitter.com"):
+        return "X / Twitter 參考連結"
+    if host in ("xiaohongshu.com", "xhslink.com") or host.endswith(".xiaohongshu.com"):
+        return "小紅書參考連結"
+    if host == "tabelog.com" or host.endswith(".tabelog.com"):
+        return "Tabelog 食評連結"
+    if host.startswith("tripadvisor.") or ".tripadvisor." in host:
+        return "TripAdvisor 參考連結"
+    if host == "klook.com" or host.endswith(".klook.com"):
+        return "Klook 預訂連結"
+    if host == "kkday.com" or host.endswith(".kkday.com"):
+        return "KKday 預訂連結"
+    if (
+        host in ("booking.com", "agoda.com")
+        or host.endswith(".booking.com")
+        or host.endswith(".agoda.com")
+        or host.startswith("airbnb.")
+        or ".airbnb." in host
+    ):
+        return "訂房參考連結"
+    return "官方網站 / 參考連結"
+
+
+def _sanitize_item_links(
+    link_url: Optional[str],
+    website_link: Optional[str],
+    sub_items: Optional[List[dict]],
+) -> tuple[Optional[str], Optional[str], List[dict]]:
+    """後端最後防線：導航網址 (link_url) 僅允許地圖網域，非地圖網址自動分流至 sub_items（此地備忘錄）與 website_link（去重）。"""
+    clean_sub_items: List[dict] = [dict(s) for s in (sub_items or []) if isinstance(s, dict)]
+    seen_links: set[str] = set()
+    for s in clean_sub_items:
+        existing_link = s.get("link")
+        if isinstance(existing_link, str) and existing_link.strip():
+            seen_links.add(_normalize_url_for_dedupe(existing_link))
+
+    raw_link = link_url.strip() if isinstance(link_url, str) else ""
+    raw_web = website_link.strip() if isinstance(website_link, str) else ""
+
+    clean_link_url: Optional[str] = None
+    clean_website_link: Optional[str] = raw_web if _is_safe_http_url(raw_web) else None
+    memo_candidates: List[str] = []
+
+    if raw_link:
+        if is_map_navigation_url(raw_link):
+            clean_link_url = raw_link
+        elif _is_safe_http_url(raw_link):
+            memo_candidates.append(raw_link)
+            if not clean_website_link:
+                clean_website_link = raw_link
+
+    if clean_website_link and not is_map_navigation_url(clean_website_link):
+        memo_candidates.append(clean_website_link)
+
+    for candidate in memo_candidates:
+        norm = _normalize_url_for_dedupe(candidate)
+        if norm and norm not in seen_links:
+            seen_links.add(norm)
+            clean_sub_items.append({
+                "name": _label_for_reference_url(candidate),
+                "link": candidate,
+            })
+
+    return clean_link_url, clean_website_link, clean_sub_items
 
 
 def _is_atomic_rpc_enabled() -> bool:
@@ -1349,6 +1530,8 @@ async def save_itinerary(
                 "day_number": item.day_number,
                 "place_name": item.place_name,
                 "original_name": item.original_name,
+                "notes": item.desc,
+                "address": item.address,
                 "lat": item.lat,
                 "lng": item.lng,
             }
@@ -1414,6 +1597,11 @@ async def save_itinerary(
         items_data = []
         for idx, item in enumerate(request.items):
             healed_coord = healed_save_items[idx] if idx < len(healed_save_items) else {}
+            clean_link_url, clean_website_link, clean_sub_items = _sanitize_item_links(
+                item.link_url,
+                item.website_link,
+                item.sub_items,
+            )
             items_data.append({
                 "itinerary_id": trip_id,
                 "day_number": item.day_number,
@@ -1427,9 +1615,9 @@ async def save_itinerary(
                 "cost_amount": item.cost_amount,
                 "reservation_code": item.reservation_code,
                 "tags": item.tags,
-                "sub_items": item.sub_items,
-                "link_url": item.link_url,
-                "website_link": item.website_link,
+                "sub_items": clean_sub_items,
+                "link_url": clean_link_url,
+                "website_link": clean_website_link,
                 "address": item.address,
                 "memo": item.memo,
                 "image_url": item.image_url,
@@ -1575,6 +1763,8 @@ async def import_to_trip(
                 "day_number": item.day_number,
                 "place_name": item.place_name,
                 "original_name": item.original_name,
+                "notes": item.desc,
+                "address": item.address,
                 "lat": item.lat,
                 "lng": item.lng,
             }
@@ -1614,6 +1804,11 @@ async def import_to_trip(
                         rpc_skipped += 1
                         continue
                     healed_coord = healed_import_items[idx] if idx < len(healed_import_items) else {}
+                    clean_link_url, clean_website_link, clean_sub_items = _sanitize_item_links(
+                        item.link_url,
+                        item.website_link,
+                        item.sub_items,
+                    )
                     rpc_max_day = max(rpc_max_day, item.day_number)
                     rpc_items_data.append({
                         "itinerary_id": request.trip_id,
@@ -1628,9 +1823,9 @@ async def import_to_trip(
                         "cost_amount": item.cost_amount,
                         "reservation_code": item.reservation_code,
                         "tags": item.tags,
-                        "sub_items": item.sub_items,
-                        "link_url": item.link_url,
-                        "website_link": item.website_link,
+                        "sub_items": clean_sub_items,
+                        "link_url": clean_link_url,
+                        "website_link": clean_website_link,
                         "address": item.address,
                         "memo": item.memo,
                         "image_url": item.image_url,
@@ -1748,6 +1943,11 @@ async def import_to_trip(
                     continue
 
                 healed_coord = healed_import_items[idx] if idx < len(healed_import_items) else {}
+                clean_link_url, clean_website_link, clean_sub_items = _sanitize_item_links(
+                    item.link_url,
+                    item.website_link,
+                    item.sub_items,
+                )
                 max_imported_day = max(max_imported_day, item.day_number)
                 items_data.append({
                     "itinerary_id": request.trip_id,
@@ -1762,9 +1962,9 @@ async def import_to_trip(
                     "cost_amount": item.cost_amount,
                     "reservation_code": item.reservation_code,
                     "tags": item.tags,
-                    "sub_items": item.sub_items,
-                    "link_url": item.link_url,
-                    "website_link": item.website_link,
+                    "sub_items": clean_sub_items,
+                    "link_url": clean_link_url,
+                    "website_link": clean_website_link,
                     "address": item.address,
                     "memo": item.memo,
                     "image_url": item.image_url,
@@ -2360,40 +2560,73 @@ async def create_item(
         if request.is_private and not _fetch_trip_is_owner(supabase, request.itinerary_id, user_id):
             raise HTTPException(status_code=403, detail="僅行程建立者可建立私密行程項目")
 
-        lat_val = request.lat if request.lat != 0.0 else None
-        lng_val = request.lng if request.lng != 0.0 else None
-        
+        lat_val = request.lat if (
+            request.lat is not None
+            and request.lng is not None
+            and math.isfinite(request.lat)
+            and math.isfinite(request.lng)
+            and -90.0 <= request.lat <= 90.0
+            and -180.0 <= request.lng <= 180.0
+            and not (request.lat == 0.0 and request.lng == 0.0)
+        ) else None
+        lng_val = request.lng if lat_val is not None else None
+
+        should_preserve_coords = False
+        if request.preserve_coords and lat_val is not None and lng_val is not None:
+            from services.geocode_service import HOMONYM_GUARD_KEYS, is_self_consistent_foreign_place
+            pname_low = (request.place_name or "").strip().lower()
+            is_homonym_create = any(hk.lower() in pname_low for hk in HOMONYM_GUARD_KEYS)
+            if not is_homonym_create or is_self_consistent_foreign_place(
+                {
+                    "place_name": request.place_name,
+                    "notes": request.notes,
+                    "address": request.address,
+                },
+                lat_val,
+                lng_val,
+            ):
+                should_preserve_coords = True
+
         # 🟢 自動地理編碼與空間錨點防呆 (結合 4 層動態空間錨點，同時攔截空座標與跨國/撞名異常座標)
-        try:
-            from services.geocode_service import verify_and_heal_itinerary_coords
-            trip_meta = None
-            existing_items_data = []
+        if not should_preserve_coords:
             try:
-                t_res = supabase.table("itineraries").select("id, title, content").eq("id", request.itinerary_id).execute()
-                if t_res and t_res.data:
-                    trip_meta = t_res.data[0]
-                it_res = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng").eq("itinerary_id", request.itinerary_id).execute()
-                if it_res and isinstance(it_res.data, list):
-                    existing_items_data = it_res.data
-            except Exception:
-                pass
-            healed_single, _ = await verify_and_heal_itinerary_coords(
-                [
-                    {
-                        "day_number": request.day_number,
-                        "place_name": request.place_name,
-                        "lat": lat_val,
-                        "lng": lng_val,
-                    }
-                ],
-                trip_meta=trip_meta,
-                existing_items=existing_items_data,
-            )
-            if healed_single:
-                lat_val = healed_single[0].get("lat")
-                lng_val = healed_single[0].get("lng")
-        except Exception as geo_err:
-            print(f"⚠️ [AutoGeocode] Non-critical geocoding fallback failed: {geo_err}")
+                from services.geocode_service import verify_and_heal_itinerary_coords
+                trip_meta = None
+                existing_items_data = []
+                try:
+                    t_res = supabase.table("itineraries").select("id, title, content").eq("id", request.itinerary_id).execute()
+                    if t_res and t_res.data:
+                        trip_meta = t_res.data[0]
+                    it_res = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng").eq("itinerary_id", request.itinerary_id).execute()
+                    if it_res and isinstance(it_res.data, list):
+                        existing_items_data = it_res.data
+                except Exception:
+                    pass
+                healed_single, _ = await verify_and_heal_itinerary_coords(
+                    [
+                        {
+                            "day_number": request.day_number,
+                            "place_name": request.place_name,
+                            "notes": request.notes,
+                            "address": request.address,
+                            "lat": lat_val,
+                            "lng": lng_val,
+                        }
+                    ],
+                    trip_meta=trip_meta,
+                    existing_items=existing_items_data,
+                )
+                if healed_single:
+                    lat_val = healed_single[0].get("lat")
+                    lng_val = healed_single[0].get("lng")
+            except Exception as geo_err:
+                print(f"⚠️ [AutoGeocode] Non-critical geocoding fallback failed: {geo_err}")
+
+        clean_link_url, clean_website_link, clean_sub_items = _sanitize_item_links(
+            request.link_url,
+            request.website_link,
+            request.sub_items,
+        )
 
         data = {
             "itinerary_id": request.itinerary_id,
@@ -2408,9 +2641,9 @@ async def create_item(
             "image_urls": request.image_urls or ([request.image_url] if request.image_url else []),
             "tags": request.tags,
             "memo": request.memo,
-            "sub_items": request.sub_items,
-            "link_url": request.link_url,
-            "website_link": request.website_link,
+            "sub_items": clean_sub_items,
+            "link_url": clean_link_url,
+            "website_link": clean_website_link,
             "address": request.address,
             "reservation_code": request.reservation_code,
             "cost_amount": request.cost_amount,
@@ -2500,7 +2733,7 @@ async def update_item(
     print(f"📝 嘗試更新細項 {item_id}, user={user_id}")
     try:
         # 🛡️ 權限檢查與資料快照 (非 single 查詢：缺失項目先回 404，防止 PGRST116 轉為 500)
-        item_check = supabase.table("itinerary_items").select("itinerary_id, link_url, location_lat, location_lng, image_url, image_urls, place_name, is_private").eq("id", item_id).execute()
+        item_check = supabase.table("itinerary_items").select("itinerary_id, link_url, website_link, sub_items, location_lat, location_lng, image_url, image_urls, place_name, is_private").eq("id", item_id).execute()
         item_row = _first_row(item_check.data)
         if not item_row:
             raise HTTPException(status_code=404, detail="找不到此行程項目")
@@ -2525,11 +2758,59 @@ async def update_item(
         if request.lat is not None: data["location_lat"] = request.lat
         if request.lng is not None: data["location_lng"] = request.lng
 
+        # 🛡️ 導航網址分流防線：導航網址 (link_url) 僅允許地圖網域，非地圖網址改入 sub_items（此地備忘錄）與 website_link
+        sanitized_link_url: Optional[str] = None
+        sanitized_website_link: Optional[str] = None
+        should_write_website = False
+        sanitized_sub_items: Optional[List[dict]] = None
+        if request.link_url is not None or request.website_link is not None:
+            existing_sub_items = item_row.get("sub_items") if isinstance(item_row.get("sub_items"), list) else []
+            existing_website = item_row.get("website_link")
+            base_sub_items = request.sub_items if request.sub_items is not None else existing_sub_items
+
+            raw_req_link = request.link_url.strip() if isinstance(request.link_url, str) else ""
+            raw_req_web = request.website_link.strip() if isinstance(request.website_link, str) else ""
+            existing_web_str = existing_website.strip() if isinstance(existing_website, str) else ""
+
+            link_was_non_map = bool(raw_req_link) and not is_map_navigation_url(raw_req_link)
+            website_actively_changed = (
+                request.website_link is not None
+                and bool(raw_req_web)
+                and _normalize_url_for_dedupe(raw_req_web) != _normalize_url_for_dedupe(existing_web_str)
+            )
+
+            if link_was_non_map or website_actively_changed:
+                new_web_for_sanitize = raw_req_web if website_actively_changed else None
+                clean_link, clean_web, clean_subs = _sanitize_item_links(
+                    raw_req_link if request.link_url is not None else item_row.get("link_url"),
+                    new_web_for_sanitize,
+                    base_sub_items,
+                )
+                sanitized_link_url = clean_link
+                if website_actively_changed:
+                    sanitized_website_link = clean_web
+                    should_write_website = True
+                elif clean_web:
+                    sanitized_website_link = (
+                        existing_web_str if _is_safe_http_url(existing_web_str) else clean_web
+                    )
+                    should_write_website = True
+                elif request.website_link is not None:
+                    sanitized_website_link = raw_req_web if _is_safe_http_url(raw_req_web) else None
+                    should_write_website = True
+                sanitized_sub_items = clean_subs
+            else:
+                if request.link_url is not None:
+                    sanitized_link_url = raw_req_link if is_map_navigation_url(raw_req_link) else None
+                if request.website_link is not None:
+                    sanitized_website_link = raw_req_web if _is_safe_http_url(raw_req_web) else None
+                    should_write_website = True
+
         # 🕵️ JIT Resolution logic (Sub-Atomic Guard)
-        # 如果收到潛在的同步信號（lat 為 None）且網址異動
-        if request.link_url is not None and request.lat is None and item_row:
+        # 如果收到潛在的同步信號（lat 為 None）且合法地圖網址異動
+        if request.link_url is not None and sanitized_link_url and request.lat is None and item_row:
             current_url = item_row.get("link_url", "") or ""
-            new_url = request.link_url or ""
+            new_url = sanitized_link_url
             
             # Normalize for comparison
             if new_url.rstrip("/") != current_url.rstrip("/"):
@@ -2581,7 +2862,7 @@ async def update_item(
                         # 🛡️ v35.24: Conditional Cleanse (Anti-Sticky-Pin)
                         # Only invalidate if URL actually changed
                         current_db_url = item_row.get("link_url") or ""
-                        if request.link_url and request.link_url.rstrip("/") != current_db_url.rstrip("/"):
+                        if sanitized_link_url and sanitized_link_url.rstrip("/") != current_db_url.rstrip("/"):
                             data["location_lat"] = None
                             data["location_lng"] = None
                             print("🧹 Sticky Pin Prevention: Cleansed stale coords due to URL change")
@@ -2593,7 +2874,7 @@ async def update_item(
                     print(f"⚠️ JIT Resolution Failed: {ex}")
                     # 🛡️ v35.24: Same conditional cleanse for exception path
                     current_db_url = item_row.get("link_url") or ""
-                    if request.link_url and request.link_url.rstrip("/") != current_db_url.rstrip("/"):
+                    if sanitized_link_url and sanitized_link_url.rstrip("/") != current_db_url.rstrip("/"):
                         data["location_lat"] = None
                         data["location_lng"] = None
                     else:
@@ -2602,12 +2883,15 @@ async def update_item(
         # 👇 新增：處理備忘錄
         if request.memo is not None: data["memo"] = request.memo
         # 🆕 新增：處理預約資訊
-        if request.link_url is not None: data["link_url"] = request.link_url
-        if request.website_link is not None: data["website_link"] = request.website_link
+        if request.link_url is not None: data["link_url"] = sanitized_link_url
+        if should_write_website: data["website_link"] = sanitized_website_link
         if request.address is not None: data["address"] = request.address
         if request.reservation_code is not None: data["reservation_code"] = request.reservation_code
         # 👇 新增：處理 sub_items (連結列表)
-        if request.sub_items is not None: data["sub_items"] = request.sub_items
+        if sanitized_sub_items is not None:
+            data["sub_items"] = sanitized_sub_items
+        elif request.sub_items is not None:
+            data["sub_items"] = request.sub_items
         # 👇 新增：處理分類與標籤
         if request.category is not None: data["category"] = request.category
         if request.tags is not None: data["tags"] = request.tags

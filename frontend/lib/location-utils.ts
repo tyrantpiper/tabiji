@@ -2,6 +2,7 @@
  * Location Utilities (2026 Heuristic Engine)
  * Handles coordinate extraction and URL processing
  */
+import type { SubItem } from "./itinerary-types"
 
 // Pattern A: @lat,lng
 const RE_COORD_A = /@(-?\d+\.\d+),(-?\d+\.\d+)/;
@@ -60,6 +61,214 @@ export function isGoogleMapsUrl(url: string | null | undefined): boolean {
 
 export function isGoogleMapsShortlink(url: string): boolean {
     return /goo\.gl|maps\.app\.goo\.gl/.test(url);
+}
+
+const GOOGLE_MAPS_HOST_RE = /^maps\.google\.(?:com|co\.[a-z]{2}|com\.[a-z]{2}|[a-z]{2,3})$/
+const GOOGLE_WEB_HOST_RE = /^(?:www\.|m\.)?google\.(?:com|co\.[a-z]{2}|com\.[a-z]{2}|[a-z]{2,3})$/
+const EXACT_MAP_HOSTS = new Set([
+    "maps.app.goo.gl",
+    "maps.apple.com",
+    "beta.maps.apple.com",
+    "openstreetmap.org",
+    "www.openstreetmap.org",
+    "osm.org",
+    "www.osm.org",
+    "map.naver.com",
+    "m.map.naver.com",
+    "naver.me",
+    "map.kakao.com",
+    "m.map.kakao.com",
+    "kko.to",
+    "map.yahoo.co.jp",
+    "maps.loco.yahoo.co.jp",
+    "amap.com",
+    "www.amap.com",
+    "ditu.amap.com",
+    "surl.amap.com",
+    "uri.amap.com",
+    "map.baidu.com",
+    "j.map.baidu.com",
+    "api.map.baidu.com",
+    "waze.com",
+    "www.waze.com",
+    "ul.waze.com",
+])
+const BING_HOSTS = new Set(["bing.com", "www.bing.com", "cn.bing.com"])
+
+/**
+ * 驗證是否為合法 http(s) URL（防範 javascript:/data:/控制字元與帳密權威混淆）
+ */
+export function isSafeHttpUrl(url: string | null | undefined): boolean {
+    if (!url || typeof url !== "string") return false
+    const raw = url.trim()
+    if (!raw || /[\\\r\n\t]/.test(raw)) return false
+    try {
+        const parsed = new URL(raw)
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false
+        if (!parsed.hostname || parsed.username || parsed.password) return false
+        return true
+    } catch {
+        return false
+    }
+}
+
+/**
+ * 檢查網址是否屬於合法地圖導航網域白名單（嚴格 URL 解析，杜絕 IG／官網／偽造子網域混入導航網址）
+ */
+export function isMapNavigationUrl(url: string | null | undefined): boolean {
+    if (!isSafeHttpUrl(url)) return false
+    try {
+        const parsed = new URL(url!.trim())
+        const host = parsed.hostname.toLowerCase().replace(/\.$/, "")
+        const pathname = parsed.pathname.toLowerCase()
+        if (!host) return false
+        if (EXACT_MAP_HOSTS.has(host)) return true
+        if (GOOGLE_MAPS_HOST_RE.test(host)) return true
+        if (GOOGLE_WEB_HOST_RE.test(host) && (pathname === "/maps" || pathname.startsWith("/maps/"))) return true
+        if (host === "goo.gl" && (pathname === "/maps" || pathname.startsWith("/maps/"))) return true
+        if (BING_HOSTS.has(host) && (pathname === "/maps" || pathname.startsWith("/maps/"))) return true
+        return false
+    } catch {
+        return false
+    }
+}
+
+function normalizeUrlForDedupe(url: string): string {
+    const raw = (url || "").trim()
+    if (!raw) return ""
+    try {
+        const parsed = new URL(raw)
+        const path = parsed.pathname.replace(/\/+$/, "")
+        return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}${path}${parsed.search}`
+    } catch {
+        return raw.replace(/\/+$/, "")
+    }
+}
+
+export function getReferenceLinkLabel(url: string, zh = true): string {
+    let host = ""
+    try {
+        host = new URL(url.trim()).hostname.toLowerCase().replace(/\.$/, "")
+    } catch {
+        host = ""
+    }
+    if (host.startsWith("www.")) host = host.slice(4)
+    else if (host.startsWith("m.")) host = host.slice(2)
+
+    if (host === "instagram.com" || host === "instagr.am" || host.endsWith(".instagram.com")) {
+        return zh ? "Instagram 參考連結" : "Instagram Link"
+    }
+    if (host === "threads.net" || host === "threads.com" || host.endsWith(".threads.net") || host.endsWith(".threads.com")) {
+        return zh ? "Threads 參考連結" : "Threads Link"
+    }
+    if (host === "tiktok.com" || host.endsWith(".tiktok.com")) {
+        return zh ? "TikTok 參考連結" : "TikTok Link"
+    }
+    if (host === "youtube.com" || host === "youtu.be" || host.endsWith(".youtube.com")) {
+        return zh ? "YouTube 參考連結" : "YouTube Link"
+    }
+    if (host === "facebook.com" || host === "fb.com" || host === "fb.watch" || host.endsWith(".facebook.com")) {
+        return zh ? "Facebook 參考連結" : "Facebook Link"
+    }
+    if (host === "x.com" || host === "twitter.com" || host.endsWith(".x.com") || host.endsWith(".twitter.com")) {
+        return zh ? "X / Twitter 參考連結" : "X / Twitter Link"
+    }
+    if (host === "xiaohongshu.com" || host === "xhslink.com" || host.endsWith(".xiaohongshu.com")) {
+        return zh ? "小紅書參考連結" : "Xiaohongshu Link"
+    }
+    if (host === "tabelog.com" || host.endsWith(".tabelog.com")) {
+        return zh ? "Tabelog 食評連結" : "Tabelog Link"
+    }
+    if (host.startsWith("tripadvisor.") || host.includes(".tripadvisor.")) {
+        return zh ? "TripAdvisor 參考連結" : "TripAdvisor Link"
+    }
+    if (host === "klook.com" || host.endsWith(".klook.com")) {
+        return zh ? "Klook 預訂連結" : "Klook Link"
+    }
+    if (host === "kkday.com" || host.endsWith(".kkday.com")) {
+        return zh ? "KKday 預訂連結" : "KKday Link"
+    }
+    if (
+        host === "booking.com" ||
+        host === "agoda.com" ||
+        host.endsWith(".booking.com") ||
+        host.endsWith(".agoda.com") ||
+        host.startsWith("airbnb.") ||
+        host.includes(".airbnb.")
+    ) {
+        return zh ? "訂房參考連結" : "Booking Link"
+    }
+    return zh ? "官方網站 / 參考連結" : "Official Site / Reference"
+}
+
+export interface SplitLinksResult {
+    link_url?: string
+    website_link?: string
+    sub_items: SubItem[]
+}
+
+/**
+ * 將導航網址 (link_url) 與參考網址 (website_link / 非地圖連結) 嚴格分流：
+ * - link_url 僅保留合法地圖導航網址
+ * - 非地圖連結（IG / Threads / 官網等）自動歸入 sub_items（此地備忘錄 → 相關連結，去重）與 website_link
+ */
+export function splitNavigationAndMemoLinks(
+    linkUrl?: string | null,
+    websiteLink?: string | null,
+    subItems?: SubItem[] | null,
+    zh = true
+): SplitLinksResult {
+    const cleanSubItems: SubItem[] = Array.isArray(subItems)
+        ? subItems
+            .filter((item): item is SubItem => Boolean(item && typeof item === "object"))
+            .map((item) => ({ ...item }))
+        : []
+
+    const seenLinks = new Set<string>()
+    for (const item of cleanSubItems) {
+        if (typeof item.link === "string" && item.link.trim()) {
+            seenLinks.add(normalizeUrlForDedupe(item.link))
+        }
+    }
+
+    const rawLink = typeof linkUrl === "string" ? linkUrl.trim() : ""
+    const rawWeb = typeof websiteLink === "string" ? websiteLink.trim() : ""
+
+    let cleanLinkUrl: string | undefined = undefined
+    let cleanWebsiteLink: string | undefined = isSafeHttpUrl(rawWeb) ? rawWeb : undefined
+    const memoCandidates: string[] = []
+
+    if (rawLink) {
+        if (isMapNavigationUrl(rawLink)) {
+            cleanLinkUrl = rawLink
+        } else if (isSafeHttpUrl(rawLink)) {
+            memoCandidates.push(rawLink)
+            if (!cleanWebsiteLink) {
+                cleanWebsiteLink = rawLink
+            }
+        }
+    }
+
+    if (cleanWebsiteLink && !isMapNavigationUrl(cleanWebsiteLink)) {
+        memoCandidates.push(cleanWebsiteLink)
+    }
+
+    for (const candidate of memoCandidates) {
+        const norm = normalizeUrlForDedupe(candidate)
+        if (norm && !seenLinks.has(norm)) {
+            seenLinks.add(norm)
+            cleanSubItems.push({
+                name: getReferenceLinkLabel(candidate, zh),
+                link: candidate,
+            })
+        }
+    }
+
+    return {
+        link_url: cleanLinkUrl,
+        website_link: cleanWebsiteLink,
+        sub_items: cleanSubItems,
+    }
 }
 
 /**

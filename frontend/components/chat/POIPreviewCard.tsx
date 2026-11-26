@@ -13,6 +13,12 @@ import { useLanguage } from "@/lib/LanguageContext"
 import { getSecureApiKey } from "@/lib/security"
 import { useSWRConfig } from "swr"
 import { SingleDateCalendarPopover, ClockTimePickerPopover } from "./DateTimePickers"
+import {
+    getReferenceLinkLabel,
+    isMapNavigationUrl,
+    isSafeHttpUrl,
+    splitNavigationAndMemoLinks,
+} from "@/lib/location-utils"
 
 // 三源整合資料結構
 export interface EnrichedPOI {
@@ -42,7 +48,8 @@ export interface POIData {
     duration?: string  // 預估停留時間
     day_number?: number
     time_slot?: string
-    link_url?: string  // 官網或相關連結
+    link_url?: string  // 地圖導航連結（Google Maps 等）
+    website_link?: string  // 官方網站、IG 或參考連結
     sub_items?: { name: string; desc?: string; link?: string }[]  // 子項目（推薦菜品、必看展品等）
 }
 
@@ -77,7 +84,15 @@ export default function POIPreviewCard({
     const [selectedTime, setSelectedTime] = useState(poiData.time_slot || "12:00")
 
     // 🛡️ 防空虛島：檢查是否具有非 (0,0) 的有效經緯度坐標
-    const hasValidCoords = Boolean(poiData.lat && poiData.lng && !(poiData.lat === 0 && poiData.lng === 0))
+    const hasValidCoords = Boolean(
+        typeof poiData.lat === "number" &&
+        typeof poiData.lng === "number" &&
+        Number.isFinite(poiData.lat) &&
+        Number.isFinite(poiData.lng) &&
+        Math.abs(poiData.lat) <= 90 &&
+        Math.abs(poiData.lng) <= 180 &&
+        !(poiData.lat === 0 && poiData.lng === 0)
+    )
 
     // 🆕 v3.7: 自動獲取三源整合資料
     useEffect(() => {
@@ -161,6 +176,12 @@ export default function POIPreviewCard({
         setIsAdding(true)
 
         try {
+            const { link_url, website_link, sub_items } = splitNavigationAndMemoLinks(
+                poiData.link_url,
+                poiData.website_link || enriched?.official_url,
+                poiData.sub_items,
+                zh
+            )
             // 🛡️ v5: Standardized Item Creation with Auth
             await itemsApi.create({
                 trip_id: activeTripId,
@@ -171,8 +192,10 @@ export default function POIPreviewCard({
                 desc: poiData.desc || "",
                 lat: poiData.lat,
                 lng: poiData.lng,
-                link_url: poiData.link_url,
-                sub_items: poiData.sub_items,
+                preserve_coords: hasValidCoords,
+                link_url,
+                website_link,
+                sub_items: sub_items.length > 0 ? sub_items : undefined,
                 user_id: userId || undefined
             })
 
@@ -350,18 +373,25 @@ export default function POIPreviewCard({
                     </p>
                 )}
 
-                {/* 官網連結 */}
-                {(poiData.link_url || enriched?.official_url) && (
-                    <a
-                        href={poiData.link_url || enriched?.official_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[10px] text-tabiji-forest dark:text-emerald-400 hover:underline inline-flex items-center gap-1 font-medium bg-tabiji-forest/5 dark:bg-white/5 px-1.5 py-0.5 rounded w-fit"
-                    >
-                        <ExternalLink className="w-3 h-3" />
-                        {zh ? '官方網站' : 'Official Site'}
-                    </a>
-                )}
+                {/* 官網／參考連結（嚴格過濾非 http(s) 協定，避免 XSS） */}
+                {(() => {
+                    const referenceUrl =
+                        poiData.website_link ||
+                        (poiData.link_url && !isMapNavigationUrl(poiData.link_url) ? poiData.link_url : undefined) ||
+                        enriched?.official_url
+                    if (!referenceUrl || !isSafeHttpUrl(referenceUrl)) return null
+                    return (
+                        <a
+                            href={referenceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-tabiji-forest dark:text-emerald-400 hover:underline inline-flex items-center gap-1 font-medium bg-tabiji-forest/5 dark:bg-white/5 px-1.5 py-0.5 rounded w-fit"
+                        >
+                            <ExternalLink className="w-3 h-3" />
+                            {getReferenceLinkLabel(referenceUrl, zh)}
+                        </a>
+                    )
+                })()}
 
                 {/* 🆕 景點子項目/必看推薦 (sub_items) */}
                 {poiData.sub_items && poiData.sub_items.length > 0 && (
@@ -500,6 +530,7 @@ export function parseRawPoiArgs(args: Record<string, unknown>): POIData {
         day_number: typeof dayVal === "number" ? dayVal : parseInt(String(dayVal)) || 1,
         time_slot: String(args.time_slot || args.timeSlot || "12:00"),
         link_url: args.link_url ? String(args.link_url) : undefined,
+        website_link: args.website_link ? String(args.website_link) : undefined,
         sub_items: Array.isArray(args.sub_items) ? (args.sub_items as unknown[]).map((item) => {
             const sub = item as { name?: unknown; desc?: unknown; link?: unknown } | null | undefined
             return {

@@ -31,6 +31,7 @@ import { toast } from "sonner"
 import { useLanguage } from "@/lib/LanguageContext"
 import { SyncStatusBadge } from "@/components/ui/SyncStatusBadge"
 import { useSyncStatusStore } from "@/lib/stores/syncStatusStore"
+import { isMapNavigationUrl } from "@/lib/location-utils"
 
 interface TimelineCardProps {
     activity: Activity
@@ -132,14 +133,29 @@ export const TimelineCard = memo(function TimelineCard({
     const hideMapBtn =
         activity.hide_navigation ||
         ["家中", "家裡", "機上", "飛機上", "等待登機", "home", "on plane", "boarding"].some(k => (activity.place || "").toLowerCase().includes(k)) ||
-        (activity.category === 'transport' && !activity.link_url && !activity.lat) ||
+        (activity.category === 'transport' && !isMapNavigationUrl(activity.link_url) && !activity.lat) ||
         isHeader;
 
     const openGoogleMap = (e: React.MouseEvent) => {
         e.stopPropagation()
-        const url = activity.link_url?.startsWith('http')
-            ? activity.link_url
-            : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activity.link_url || activity.place || "")}`;
+        if (isMapNavigationUrl(activity.link_url)) {
+            openExternalLink(activity.link_url!)
+            return
+        }
+        const latNum = typeof activity.lat === 'string' ? parseFloat(activity.lat) : activity.lat
+        const lngNum = typeof activity.lng === 'string' ? parseFloat(activity.lng) : activity.lng
+        const hasValidNavCoords =
+            typeof latNum === 'number' &&
+            typeof lngNum === 'number' &&
+            Number.isFinite(latNum) &&
+            Number.isFinite(lngNum) &&
+            Math.abs(latNum) <= 90 &&
+            Math.abs(lngNum) <= 180 &&
+            !(latNum === 0 && lngNum === 0)
+        const query = hasValidNavCoords
+            ? `${latNum},${lngNum}`
+            : (activity.place || activity.place_name || "")
+        const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
         openExternalLink(url)
     }
 

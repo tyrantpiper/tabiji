@@ -13,6 +13,19 @@ import { useSWRConfig } from "swr"
 import { useHaptic } from "@/lib/hooks"
 import { SingleDateCalendarPopover, ClockTimePickerPopover } from "./DateTimePickers"
 import { POIData } from "./POIPreviewCard"
+import { splitNavigationAndMemoLinks } from "@/lib/location-utils"
+
+function hasValidPoiCoords(lat?: number, lng?: number): boolean {
+    return (
+        typeof lat === "number" &&
+        typeof lng === "number" &&
+        Number.isFinite(lat) &&
+        Number.isFinite(lng) &&
+        Math.abs(lat) <= 90 &&
+        Math.abs(lng) <= 180 &&
+        !(lat === 0 && lng === 0)
+    )
+}
 
 interface BatchPOIPreviewCardProps {
     items: POIData[]
@@ -67,6 +80,12 @@ export default function BatchPOIPreviewCard({
 
         haptic.tap()
         try {
+            const { link_url, website_link, sub_items } = splitNavigationAndMemoLinks(
+                target.link_url,
+                target.website_link,
+                target.sub_items,
+                zh
+            )
             await itemsApi.create({
                 trip_id: activeTripId,
                 day: target.day_number,
@@ -76,8 +95,10 @@ export default function BatchPOIPreviewCard({
                 desc: target.desc || "",
                 lat: target.lat,
                 lng: target.lng,
-                link_url: target.link_url,
-                sub_items: target.sub_items,
+                preserve_coords: hasValidPoiCoords(target.lat, target.lng),
+                link_url,
+                website_link,
+                sub_items: sub_items.length > 0 ? sub_items : undefined,
                 user_id: userId || undefined,
             })
 
@@ -114,6 +135,12 @@ export default function BatchPOIPreviewCard({
             setAddingProgress(i + 1)
 
             try {
+                const { link_url, website_link, sub_items } = splitNavigationAndMemoLinks(
+                    item.link_url,
+                    item.website_link,
+                    item.sub_items,
+                    zh
+                )
                 await itemsApi.create({
                     trip_id: activeTripId,
                     day: item.day_number,
@@ -123,8 +150,10 @@ export default function BatchPOIPreviewCard({
                     desc: item.desc || "",
                     lat: item.lat,
                     lng: item.lng,
-                    link_url: item.link_url,
-                    sub_items: item.sub_items,
+                    preserve_coords: hasValidPoiCoords(item.lat, item.lng),
+                    link_url,
+                    website_link,
+                    sub_items: sub_items.length > 0 ? sub_items : undefined,
                     user_id: userId || undefined,
                 })
 

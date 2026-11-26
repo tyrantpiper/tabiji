@@ -1343,8 +1343,21 @@ export function ItineraryView() {
                     toast.error(t('iv_missing_params'))
                     return
                 }
-                // 🔒 Fix: Pass user_id for auth header
-                await itemsApi.create({ ...activityData, trip_id: currentTrip.id, user_id: userId || "" })
+                const hasManualValidCoords = Boolean(
+                    editItem.isManualCoords &&
+                    typeof activityData.lat === "number" &&
+                    typeof activityData.lng === "number" &&
+                    Number.isFinite(activityData.lat) &&
+                    Number.isFinite(activityData.lng) &&
+                    !(activityData.lat === 0 && activityData.lng === 0)
+                )
+                // 🔒 Fix: Pass user_id for auth header & preserve_coords for manual coordinates
+                await itemsApi.create({
+                    ...activityData,
+                    trip_id: currentTrip.id,
+                    user_id: userId || "",
+                    preserve_coords: hasManualValidCoords,
+                })
             } else {
                 if (!editItem || !editItem.id) {
                     console.error("❌ Edit failed: Missing ID", editItem)

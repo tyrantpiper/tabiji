@@ -113,7 +113,11 @@ SAMPLE_ITEMS: list[dict] = [
         "notes": "館藏 70 萬件文物，必看翠玉白菜、肉形石。建議預留 2-3 小時。",
         "location_lat": 25.1024,
         "location_lng": 121.5485,
-        "link_url": "https://www.npm.gov.tw/",
+        "link_url": "https://www.google.com/maps/search/?api=1&query=國立故宮博物院",
+        "website_link": "https://www.npm.gov.tw/",
+        "sub_items": [
+            {"name": "官方網站 / 參考連結", "link": "https://www.npm.gov.tw/"},
+        ],
         "tags": ["博物館", "文化"],
     },
     {

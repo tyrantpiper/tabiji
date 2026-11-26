@@ -19,6 +19,8 @@ import { Switch } from "@/components/ui/switch"
 import {
     extractCoordsFromUrl,
     isGoogleMapsUrl,
+    isMapNavigationUrl,
+    splitNavigationAndMemoLinks,
     extractCleanPlaceQuery,
     extractPlaceParentheticalNote,
     dedupeGeocodeResults,
@@ -206,6 +208,14 @@ export function ActivityEditModal({
 
         // ⚡ Tier 1: Client-side Regex (Only for Map coordinates)
         if (type === "map") {
+            if (!isMapNavigationUrl(url)) {
+                toast.info(
+                    zh
+                        ? "導航網址僅支援地圖連結（Google Maps 等）；IG／官網請貼至「此地備忘錄 → 相關連結」"
+                        : "Navigation URL only accepts map links (Google Maps, etc.). Put IG/websites in Memo → Links."
+                )
+                return
+            }
             const extracted = extractCoordsFromUrl(url)
             if (extracted.lat && extracted.lng) {
                 updateCoords(extracted.lat, extracted.lng)
@@ -213,12 +223,13 @@ export function ActivityEditModal({
                 toast.success(zh ? "已從連結自動提取座標" : "Coords extracted from link")
                 // 🚀 Decoupling: Continue to backend to fetch metadata (images) if possible
             }
-        }
-
-        // 🌐 Tier 2: Backend Neural Engine (Scraper + Geocoder)
-        if (type === "map" && !isGoogleMapsUrl(url)) {
-            toast.info(zh ? "此連結不包含可識別座標，請使用搜尋功能" : "This link has no coordinates, use search instead")
-            return
+            // 🌐 Tier 2: Backend Neural Engine (Scraper + Geocoder)
+            if (!isGoogleMapsUrl(url)) {
+                if (!extracted.lat || !extracted.lng) {
+                    toast.info(zh ? "此地圖連結不包含可識別座標，請使用搜尋功能" : "This map link has no extractable coords; use place search instead")
+                }
+                return
+            }
         }
 
         setIsResolvingLink(true)
@@ -343,6 +354,8 @@ export function ActivityEditModal({
         if (!latest) return
         const parenNote = extractPlaceParentheticalNote(latest.place || "") || pendingParenNoteRef.current
         const preservedDesc = !latest.desc?.trim() && parenNote ? parenNote : latest.desc
+        const { link_url: existingNavLink, website_link: preservedWebsite, sub_items: preservedSubItems } =
+            splitNavigationAndMemoLinks(latest.link_url, latest.website_link, latest.sub_items, zh)
         setEditItem({
             ...latest,
             place: loc.name,
@@ -351,7 +364,9 @@ export function ActivityEditModal({
             lat: loc.lat,
             lng: loc.lng,
             isManualCoords: true, // 🚩 手動選擇地點視同人工座標
-            link_url: latest.link_url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.name)}`
+            link_url: existingNavLink || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.name)}`,
+            website_link: preservedWebsite,
+            sub_items: preservedSubItems,
         })
         pendingParenNoteRef.current = ""
         setPlaceSearchResults([])
@@ -610,13 +625,22 @@ export function ActivityEditModal({
                                                 centerLat={Number(editItem.lat) || dailyLoc?.lat || 35.6895}
                                                 centerLng={Number(editItem.lng) || dailyLoc?.lng || 139.6917}
                                                 onSelectPOI={(poi) => {
+                                                    const { link_url: existingNavLink, website_link: nextWebsite, sub_items: nextSubItems } =
+                                                        splitNavigationAndMemoLinks(
+                                                            editItem.link_url,
+                                                            poi.website || editItem.website_link,
+                                                            editItem.sub_items,
+                                                            zh
+                                                        )
                                                     setEditItem({
                                                         ...editItem,
                                                         place: poi.name,
                                                         lat: poi.lat,
                                                         lng: poi.lng,
                                                         isManualCoords: true,
-                                                        link_url: editItem.link_url || poi.website || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(poi.name)}`,
+                                                        link_url: existingNavLink || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(poi.name)}`,
+                                                        website_link: nextWebsite,
+                                                        sub_items: nextSubItems,
                                                         desc: poi.opening_hours ? `${zh ? '營業' : 'Hours'}: ${poi.opening_hours}` : (editItem.desc || "")
                                                     })
                                                     toast.success(zh ? `已選擇: ${poi.name}` : `Selected: ${poi.name}`)
@@ -817,11 +841,25 @@ export function ActivityEditModal({
                                         size="sm"
                                         disabled={isResolvingLink || !editItem.link_url?.trim()}
                                         onClick={() => handleResolveLink("map")}
+                                        title={zh ? "僅支援解析地圖網址（Google Maps 等）" : "Resolves map navigation URLs only"}
                                         className="h-10 px-3 bg-amber-100 hover:bg-amber-200 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 font-semibold"
                                     >
                                         {isResolvingLink ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (zh ? "解析" : "Resolve")}
                                     </Button>
                                 </div>
+                                {editItem.link_url?.trim() && !isMapNavigationUrl(editItem.link_url) ? (
+                                    <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-snug">
+                                        {zh
+                                            ? "⚠️ 導航網址僅限地圖連結（Google / Apple / Naver 等）；儲存時此連結將自動移至「此地備忘錄 → 相關連結」。"
+                                            : "⚠️ Map links only (Google / Apple / Naver, etc.). Non-map links will automatically move to Local Memo → Links on save."}
+                                    </p>
+                                ) : (
+                                    <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-snug">
+                                        {zh
+                                            ? "僅接受地圖連結（Google / Apple / Naver / Kakao Maps 等）；IG 或官網請貼至「此地備忘錄 → 相關連結」。"
+                                            : "Map navigation URLs only (Google / Apple / Naver / Kakao Maps). Put IG or websites in Local Memo → Links."}
+                                    </p>
+                                )}
                             </div>
 
                             {/* Progressive Disclosure: Manual Coordinates */}

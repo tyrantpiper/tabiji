@@ -189,6 +189,7 @@ export interface CreateItemParams {
     is_private?: boolean       // 🆕 新增
     is_highlight?: boolean     // 🆕 新增
     preview_metadata?: PreviewMetadata     // 🆕 新增
+    preserve_coords?: boolean  // 🛡️ 已確認座標不覆蓋旗標
 }
 
 export interface UpdateItemParams {
@@ -1141,6 +1142,7 @@ export const itemsApi = {
             preview_metadata: params.preview_metadata
         }
         if (params.address !== undefined) backendPayload.address = params.address
+        if (params.preserve_coords !== undefined) backendPayload.preserve_coords = params.preserve_coords
         
         const headers: Record<string, string> = { "Content-Type": "application/json" }
 

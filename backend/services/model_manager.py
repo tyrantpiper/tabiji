@@ -225,7 +225,14 @@ ADD_ITINERARY_DECL = types.FunctionDeclaration(
             "duration": types.Schema(type=types.Type.STRING, description="Estimated visit duration (e.g., '1-2 hours', '30 min')"),
             "rating": types.Schema(type=types.Type.NUMBER, description="Place rating from 0.0 to 5.0 if known"),
             "estimated_cost": types.Schema(type=types.Type.INTEGER, description="Estimated cost in local currency"),
-            "link_url": types.Schema(type=types.Type.STRING, description="Official website URL or relevant link for the place (e.g., 'https://www.senso-ji.jp/')"),
+            "link_url": types.Schema(
+                type=types.Type.STRING,
+                description="Map navigation URL ONLY (e.g., Google Maps 'https://maps.app.goo.gl/...' or 'https://www.google.com/maps/...', Apple Maps, Naver/Kakao Maps). NEVER put Instagram, Threads, TikTok, blogs, or official website URLs here.",
+            ),
+            "website_link": types.Schema(
+                type=types.Type.STRING,
+                description="Official website, Instagram, Threads, TikTok, blog, or reference source URL (e.g., 'https://www.instagram.com/reel/...' or 'https://www.senso-ji.jp/')",
+            ),
             "sub_items": types.Schema(
                 type=types.Type.ARRAY,
                 description="List of notable sub-items: recommended dishes for restaurants, must-see exhibits for museums, key shops for malls, etc.",
@@ -255,7 +262,14 @@ ADD_ITINERARY_DECL = types.FunctionDeclaration(
                         "duration": types.Schema(type=types.Type.STRING),
                         "rating": types.Schema(type=types.Type.NUMBER),
                         "estimated_cost": types.Schema(type=types.Type.INTEGER),
-                        "link_url": types.Schema(type=types.Type.STRING),
+                        "link_url": types.Schema(
+                            type=types.Type.STRING,
+                            description="Map navigation URL ONLY (Google Maps, Apple Maps, etc.). Never put Instagram or official websites here.",
+                        ),
+                        "website_link": types.Schema(
+                            type=types.Type.STRING,
+                            description="Official website, Instagram, social post, or reference source URL",
+                        ),
                     },
                     required=["place_name"]
                 )
@@ -329,7 +343,14 @@ ADD_ITINERARY_FLAT_DECL = types.FunctionDeclaration(
             "lat": types.Schema(type=types.Type.NUMBER, description="Latitude coordinate"),
             "lng": types.Schema(type=types.Type.NUMBER, description="Longitude coordinate"),
             "duration": types.Schema(type=types.Type.STRING, description="Estimated duration, e.g. '1-2 hours'"),
-            "link_url": types.Schema(type=types.Type.STRING, description="Official website or reference URL"),
+            "link_url": types.Schema(
+                type=types.Type.STRING,
+                description="Map navigation URL ONLY (Google Maps, Apple Maps, etc.). Never put Instagram or official websites here.",
+            ),
+            "website_link": types.Schema(
+                type=types.Type.STRING,
+                description="Official website, Instagram, social post, or reference source URL",
+            ),
         },
         required=["place_name", "category"]
     )
@@ -841,7 +862,14 @@ def build_json_schema_for_intent(intent_type: str) -> Optional[Dict[str, Any]]:
                             "tags": {"type": "array", "items": {"type": "string"}},
                             "lat": {"type": "number"},
                             "lng": {"type": "number"},
-                            "link_url": {"type": "string"},
+                            "link_url": {
+                                "type": "string",
+                                "description": "Map navigation URL ONLY (e.g., Google Maps). Never put Instagram or official website URLs here.",
+                            },
+                            "website_link": {
+                                "type": "string",
+                                "description": "Official website, Instagram, social post, or reference source URL",
+                            },
                             "is_highlight": {"type": "boolean"},
                             "sub_items": {
                                 "type": "array",
@@ -988,7 +1016,14 @@ def build_json_schema_for_intent(intent_type: str) -> Optional[Dict[str, Any]]:
                                                 "required": ["name"]
                                             }
                                         },
-                                        "link_url": {"type": "string"}
+                                        "link_url": {
+                                            "type": "string",
+                                            "description": "Map navigation URL ONLY (e.g., Google Maps). Never put Instagram or official website URLs here.",
+                                        },
+                                        "website_link": {
+                                            "type": "string",
+                                            "description": "Official website, Instagram, social post, or reference source URL",
+                                        },
                                     },
                                     "required": ["time", "place_name", "category"],
                                 }

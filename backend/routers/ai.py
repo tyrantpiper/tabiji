@@ -46,6 +46,7 @@ from routers.trips import (
     _can_use_atomic_rpc,
     _precheck_atomic_trip_id,
     _execute_atomic_trip_rpc,
+    _sanitize_item_links,
 )
 from services.model_manager import (
     call_extraction,
@@ -659,6 +660,14 @@ async def parse_markdown(
             for item in data["items"]:
                 if not item.get("currency"):
                     item["currency"] = inferred_currency
+                clean_link, clean_web, clean_subs = _sanitize_item_links(
+                    item.get("link_url"),
+                    item.get("website_link"),
+                    item.get("sub_items"),
+                )
+                item["link_url"] = clean_link
+                item["website_link"] = clean_web
+                item["sub_items"] = clean_subs
 
         return data
 
@@ -953,6 +962,14 @@ async def generate_trip_core(
     for item in data.get("items", []):
         if not item.get("currency"):
             item["currency"] = inferred_currency
+        clean_link, clean_web, clean_subs = _sanitize_item_links(
+            item.get("link_url"),
+            item.get("website_link"),
+            item.get("sub_items"),
+        )
+        item["link_url"] = clean_link
+        item["website_link"] = clean_web
+        item["sub_items"] = clean_subs
     
     # 🆕 自動根據 items 天數精準推算 start_date 與 end_date
     from datetime import datetime, timedelta
