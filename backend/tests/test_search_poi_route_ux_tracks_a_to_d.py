@@ -276,6 +276,33 @@ async def test_track_a_tier2_observability_log_and_prod_skips_tier3_ddg(monkeypa
     assert "[SearchEngine] Tier2 status=200 source=none count=0 elapsed_ms=" in out
 
 
+@pytest.mark.asyncio
+async def test_track_a_tier2_logs_cancellation_and_reraises(monkeypatch, capsys):
+    """CancelledError from outer asyncio.wait_for must log Tier2 status=cancelled and re-raise (never swallow)."""
+    monkeypatch.setenv("CF_WORKER_SEARCH_URL", "https://search-proxy.example.com")
+    monkeypatch.setenv("CF_PROXY_SECRET", "unit-test-secret")
+
+    captured_timeout = {}
+
+    async def slow_get(*args, **kwargs):
+        captured_timeout["value"] = kwargs.get("timeout")
+        await asyncio.sleep(5.0)
+
+    fake_client = MagicMock()
+    fake_client.get = slow_get
+
+    with patch.object(web_search_engine, "get_search_client", return_value=fake_client):
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                web_search_engine._search_cloudflare_edge("東京車站 2026", max_results=3),
+                timeout=0.05,
+            )
+
+    assert captured_timeout["value"] == 4.5
+    out = capsys.readouterr().out
+    assert "[SearchEngine] Tier2 status=cancelled source=timeout_budget count=0 elapsed_ms=" in out
+
+
 # ============================================================================
 # Track B: 960px Safe Raster Image Picker & Bounded POI_ENRICH_CACHE
 # ============================================================================
@@ -424,6 +451,27 @@ async def test_track_b_wikidata_fallback_uses_960px_width():
 
     assert enriched["image_url"].endswith("?width=960")
     assert "?width=500" not in enriched["image_url"]
+
+    # Unsafe non-raster Wikidata P18 filenames (SVG/TIFF/PDF/video/traversal) must NOT emit 415 Special:FilePath URLs
+    for unsafe_name in [
+        "JR East logo.svg",
+        "Tokyo_Map.svgz",
+        "Old_Edo_Map.tif",
+        "Historical_Plan.TIFF",
+        "Guide_Book.pdf",
+        "Scan.djvu",
+        "Clip.webm",
+        "../Evil.jpg",
+    ]:
+        with patch.object(poi_service, "get_wikidata_labels", AsyncMock(return_value={
+            "labels": {"zh-TW": "測試地點"},
+            "sitelinks": {},
+            "wikidata_image": unsafe_name,
+        })), \
+             patch.object(poi_service, "get_wikipedia_summary", AsyncMock(return_value=("", ""))), \
+             patch.object(poi_service, "search_wikivoyage", AsyncMock(return_value=None)):
+            bad_enriched = await poi_service.enrich_poi_complete({"name": "測試地點", "wikidata_id": "Q1"}, lang="zh")
+        assert not bad_enriched.get("image_url"), f"Unsafe Wikidata P18 {unsafe_name!r} must be rejected, got {bad_enriched.get('image_url')!r}"
 
 
 def test_track_b_poi_enrich_cache_is_bounded_lru_500():

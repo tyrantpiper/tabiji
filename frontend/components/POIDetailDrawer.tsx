@@ -128,7 +128,9 @@ export default function POIDetailDrawer({
     const [imgError, setImgError] = useState(false)
     const [lightboxState, setLightboxState] = useState<{ poiKey: string; src: string } | null>(null)
     const reqSeqRef = useRef(0)
+    const lightboxTriggerRef = useRef<HTMLButtonElement | null>(null)
     const lightboxCloseBtnRef = useRef<HTMLButtonElement | null>(null)
+    const wasLightboxOpenRef = useRef(false)
 
     const poiKey = `${poi?.name ?? ""}|${poi?.lat ?? ""}|${poi?.lng ?? ""}|${lang}`
     const displayImageSrc = poi
@@ -168,9 +170,18 @@ export default function POIDetailDrawer({
         setDetent("half")
     }, [poi?.name, poi?.lat, poi?.lng, suggestedTime, isOpen, lang])
 
-    // 🖼️ Lightbox ESC 鍵關閉監聽（高優先攔截，避免連帶誤關底層視窗）與開啟自動聚焦關閉鈕
+    // 🖼️ Lightbox ESC 鍵關閉監聽（高優先攔截，避免連帶誤關底層視窗）、開啟自動聚焦關閉鈕、關閉後還原焦點至觸發鈕
     useEffect(() => {
-        if (!isLightboxOpen) return
+        if (!isLightboxOpen) {
+            if (wasLightboxOpenRef.current) {
+                wasLightboxOpenRef.current = false
+                if (isOpen && !imgError) {
+                    lightboxTriggerRef.current?.focus()
+                }
+            }
+            return
+        }
+        wasLightboxOpenRef.current = true
         lightboxCloseBtnRef.current?.focus()
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.isComposing) return
@@ -183,7 +194,7 @@ export default function POIDetailDrawer({
         }
         window.addEventListener("keydown", handleKeyDown, true)
         return () => window.removeEventListener("keydown", handleKeyDown, true)
-    }, [isLightboxOpen])
+    }, [isLightboxOpen, isOpen, imgError])
 
     // 🖐️ iOS 智慧手勢吸附判定
     const handleDragEnd = useCallback(
@@ -550,6 +561,7 @@ export default function POIDetailDrawer({
                                 {displayImageSrc && !imgError && (
                                     <div className="w-full max-w-2xl mx-auto">
                                         <button
+                                            ref={lightboxTriggerRef}
                                             type="button"
                                             data-testid="poi-image-trigger"
                                             onClick={() => {
@@ -960,7 +972,7 @@ export default function POIDetailDrawer({
                                     setLightboxState(null)
                                 }}
                                 aria-label={zh ? "關閉圖片預覽" : "Close photo preview"}
-                                className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-[calc(env(safe-area-inset-right,0px)+1rem)] sm:top-6 sm:right-6 z-10 w-11 h-11 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center backdrop-blur-sm transition-colors cursor-pointer touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                                className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-[calc(env(safe-area-inset-right,0px)+1rem)] sm:top-[calc(env(safe-area-inset-top,0px)+1.5rem)] sm:right-[calc(env(safe-area-inset-right,0px)+1.5rem)] z-10 w-11 h-11 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center backdrop-blur-sm transition-colors cursor-pointer touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                             >
                                 <X className="w-5 h-5" />
                             </button>

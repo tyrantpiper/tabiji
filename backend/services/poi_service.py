@@ -1762,10 +1762,18 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None, lang:
             wikivoyage_result = res2
         
         if wikidata_result:
-            # 🆕 Phase 5.1.3: Wikidata Image Fallback (URL-encode filename to protect #/& characters; 960px Wikimedia standard)
+            # 🆕 Phase 5.1.3: Wikidata Image Fallback (URL-encode filename to protect #/& characters; 960px Wikimedia standard + safe raster gate)
             if not poi.get("image_url") and wikidata_result.get("wikidata_image"):
-                img_name = wikidata_result["wikidata_image"].replace(" ", "_")
-                poi["image_url"] = f"https://commons.wikimedia.org/wiki/Special:FilePath/{quote(img_name, safe='')}?width=960"
+                raw_img_name = str(wikidata_result["wikidata_image"] or "").strip()
+                img_name = raw_img_name.replace(" ", "_")
+                decoded_img_name = unquote(unquote(img_name)).rstrip("/").lower()
+                if (
+                    img_name
+                    and "/" not in decoded_img_name
+                    and "\\" not in decoded_img_name
+                    and decoded_img_name.endswith(_SAFE_RASTER_EXTS + (".gif",))
+                ):
+                    poi["image_url"] = f"https://commons.wikimedia.org/wiki/Special:FilePath/{quote(img_name, safe='')}?width=960"
 
             labels = wikidata_result.get("labels", {})
             ja_name = labels.get("ja-JP", "")

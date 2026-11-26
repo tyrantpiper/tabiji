@@ -491,7 +491,10 @@ function MultiDayMasterMapComponent({ trip, selectedDay, onSelectDay, onScrollTo
     // 5. 兩階段漸進式路網請求 (快取優先 + 穩定指紋依賴 + 選中天數置頂優先 + 併發上限 2 防 OSRM 429 洪峰)
     useEffect(() => {
         const specs = dayRouteSpecsRef.current
-        if (!routeCoordsFingerprint || specs.length === 0) return
+        if (!routeCoordsFingerprint || specs.length === 0) {
+            setRoadRoutesByDay((prev) => (Object.keys(prev).length === 0 ? prev : {}))
+            return
+        }
 
         let isMounted = true
         const globalController = new AbortController()
@@ -512,12 +515,8 @@ function MultiDayMasterMapComponent({ trip, selectedDay, onSelectDay, onScrollTo
             }
         }
 
-        if (Object.keys(cachedHydration).length > 0) {
-            setRoadRoutesByDay((prev) => ({
-                ...prev,
-                ...cachedHydration,
-            }))
-        }
+        // 以當前有效快取快照取代舊映射，防止跨區/刪改/切行程後殘留舊天數路網折線
+        setRoadRoutesByDay(cachedHydration)
 
         const pendingSpecs = prioritizeDayRouteSpecs(rawPendingSpecs, priorityDayRef.current)
 
@@ -647,6 +646,7 @@ function MultiDayMasterMapComponent({ trip, selectedDay, onSelectDay, onScrollTo
 
     // 7. 切換天數篩選
     const handleSelectDayFilter = (dayNum: number) => {
+        priorityDayRef.current = dayNum !== 0 ? dayNum : (selectedDay ?? 0)
         setActiveDay(dayNum)
         const targetMap = mapRef.current
         if (!targetMap) return

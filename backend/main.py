@@ -1815,7 +1815,7 @@ async def stream_chat_generator(
                     time_data = query_world_time(target_loc, locale=locale)
                     executed_world_time[target_loc] = time_data
 
-            # 執行搜尋策略 (優先使用提煉後之 search_query；限制總擴充搜尋時間預算 <= 7.5s 並在二次重搜前發送 SSE 心跳)
+            # 執行搜尋策略 (優先使用提煉後之 search_query；限制總擴充搜尋時間預算 <= 8.0s，primary 4.8s 嚴格包覆 CF 4.5s，並在二次重搜前發送 SSE 心跳)
             raw_search_results = []
             effective_search_query: Optional[str] = None
             if not skip_web_search:
@@ -1823,8 +1823,8 @@ async def stream_chat_generator(
                 search_pipeline_ran = True
                 yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": search_query})}\n\n'
                 await asyncio.sleep(0)
-                search_deadline = time.monotonic() + 7.5
-                primary_budget = min(4.5, max(0.5, search_deadline - time.monotonic()))
+                search_deadline = time.monotonic() + 8.0
+                primary_budget = min(4.8, max(0.5, search_deadline - time.monotonic()))
                 try:
                     raw_search_results = await asyncio.wait_for(
                         execute_web_search(search_query, region=local_reg),

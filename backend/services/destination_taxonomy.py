@@ -463,7 +463,7 @@ async def extract_search_queries_with_lite(
 ) -> Dict[str, Any]:
     """
     使用 gemini-3.1-flash-lite (thinking=minimal + JSON Schema) 結合對話上文與行程目的地提煉精準搜尋關鍵字。
-    任何無 Key / 逾時 (3.2s) / Mock / API 異常皆零錯誤平滑回退至 generate_dual_queries()，且絕不污染熔斷器。
+    任何無 Key / 逾時 (總限時 5.0s，單模型 2.5s) / Mock / API 異常皆零錯誤平滑回退至 generate_dual_queries()，且絕不污染熔斷器。
     """
     local_q, global_q, dest_meta = generate_dual_queries(
         user_msg,

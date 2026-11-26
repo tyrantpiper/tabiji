@@ -185,7 +185,7 @@ async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict
             f"{cf_url.rstrip('/')}/search",
             params={"q": query, "limit": max_results},
             headers=headers,
-            timeout=4.8
+            timeout=4.5
         )
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         if resp.status_code == 200:
@@ -212,6 +212,10 @@ async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict
                 f"🔎 [SearchEngine] Tier2 status={resp.status_code} "
                 f"source=http_error count=0 elapsed_ms={elapsed_ms}"
             )
+    except asyncio.CancelledError:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        print(f"⚠️ [SearchEngine] Tier2 status=cancelled source=timeout_budget count=0 elapsed_ms={elapsed_ms}")
+        raise
     except Exception as e:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         print(f"⚠️ [SearchEngine] Tier2 status=error source=exception count=0 elapsed_ms={elapsed_ms} err={type(e).__name__}: {e}")

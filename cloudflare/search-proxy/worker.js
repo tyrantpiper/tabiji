@@ -9,23 +9,30 @@ const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 const TEMPORAL_KEYWORD_RE =
-  /(?:營業時間|開放時間|休館|公休|票價|門票|價錢|價格|費用|預約|訂位|購票|最新|今天|明天|今年|公告|停駛|暫停|活動|祭典|櫻花|楓葉|天氣|匯率|\b(?:ticket|tickets|price|prices|hours|opening|open|close|closed|reservation|booking|schedule|status|news|event|forecast|2025|2026|2027|2028)\b)/i;
+  /(?:營業時間|開放時間|休館|公休|票價|門票|價錢|價格|費用|預約|訂位|購票|最新|今天|明天|今年|公告|停駛|暫停|活動|祭典|櫻花|楓葉|天氣|匯率|営業時間|開館時間|定休日|休業|入場料|料金|予約|チケット|最新情報|天気|為替|開催|\b(?:ticket|tickets|price|prices|hours|opening|open|close|closed|reservation|booking|schedule|status|news|event|forecast|2025|2026|2027|2028)\b)/i;
 const TEMPORAL_KEYWORD_STRIP_RE = new RegExp(TEMPORAL_KEYWORD_RE.source, "gi");
 
-// 中文口語與檢索模板停用詞（避免無害問句詞如「推薦」「附近」「最熱門」「食べログ」把正常新聞過濾為 0）
+// 中文／日文／韓文口語與檢索模板停用詞（避免無害問句詞或模板詞如「推薦」「附近」「食べログ」「맛집」「おすすめ」「アクセス」把正常新聞過濾為 0）
 const CJK_CONVERSATIONAL_STOPWORD_RE =
-  /(?:食べログ|最熱門|這附近|有沒有|哪裡有|請問|幫我|推薦|附近|熱門|哪裡|哪家|這裡|這家|這個|這些|那些|一下|什麼|怎麼|可以|介紹|資訊|情報|攻略|心得|評價|行程|必吃|必去|值得|好吃|好玩|這)/g;
+  /(?:食べログ|맛집|おすすめ|オススメ|ランキング|アクセス|行き方|口コミ|まとめ|人気|観光|グルメ|最熱門|這附近|有沒有|哪裡有|請問|幫我|推薦|附近|熱門|哪裡|哪家|這裡|這家|這個|這些|那些|一下|什麼|怎麼|可以|介紹|資訊|情報|攻略|心得|評價|行程|必吃|必去|值得|好吃|好玩|這)/g;
 
-// 嚴格僅收錄繁體中文特有字／舊字體（排除日文常用漢字如 車/業/旅/飯/館/線/買/開/機/資，避免純日文查詢誤判為 zh-TW）
+// 嚴格僅收錄繁體中文特有字／舊字體（排除日文常用漢字如 個/車/業/旅/飯/館/線/買/開/機/資，避免純日文查詢誤判為 zh-TW）
 const ZH_TW_LOCALE_SIGNAL_RE =
-  /[這哪麼裡個嗎呢吧站營鐵廣劃臺灣體賣關廳點麵訊價樂圓轉樓區號實處邊學國淺澀櫻獨繪氣經驗歡總覽藝藥覺證條專]/;
-const ZH_TW_PHRASE_SIGNAL_RE = /(?:推薦|附近|最熱門|必吃|必去|伴手禮|美食|景點|行程|攻略)/;
+  /[這哪麼裡嗎呢吧站營鐵廣劃臺灣體賣關廳點麵訊價樂圓轉樓區號實處邊學國淺澀櫻獨繪氣經驗歡總覽藝藥覺證條專齋燒壽圖萬與對會濱澤驛]/;
+const ZH_TW_PHRASE_SIGNAL_RE =
+  /(?:推薦|附近|最熱門|必吃|必去|伴手禮|美食|景點|行程|攻略|自由行|好吃|好玩|營業時間|門票|票價|訂位)/;
+// 日文新字體特有字（繁體中文不用此字形，輔助識別含「の」等少假名日文查詢）
+const JP_SHINJITAI_RE = /[駅浅渋桜図広転売営鉄払読両団県区発変沢楽歳辺観権実焼麺斎寿浜]/;
 
 const LATIN_STOPWORDS = new Set([
   "the", "for", "and", "in", "of", "to", "a", "an", "is", "are", "at", "on", "with",
   "how", "what", "when", "where", "who", "why", "from", "by", "about", "info", "guide",
   "ticket", "tickets", "price", "prices", "hours", "opening", "open", "close", "closed",
   "2024", "2025", "2026", "2027", "2028",
+  // 後端雙軌模板注入之論壇／泛用旅遊詞（不可作為新聞主題核心詞，避免離題業配憑 ptt/dcard 繞過相關性過濾）
+  "ptt", "dcard", "pantip", "openrice", "eater", "reddit",
+  "travel", "local", "tips", "recommendations", "recommendation", "hidden", "gems", "street", "food",
+  "japantravel", "koreatravel", "thailandtourism", "singaporetravel", "vietnamtravel", "traveleurope", "hongkongtravel",
 ]);
 
 function hasTemporalKeyword(query) {
@@ -37,12 +44,16 @@ function resolveNewsLocale(query) {
   // 剝除後端繁中在地模板注入的「食べログ」再計算假名比例，避免單一外來詞誤導語系
   const qForLocale = q.replace(/食べログ/g, " ");
   const kanaCount = (qForLocale.match(/[\u3040-\u30ff]/g) || []).length;
+  const nonNoKanaCount = (qForLocale.replace(/の/g, "").match(/[\u3040-\u30ff]/g) || []).length;
   const hanCount = (qForLocale.match(/[\u4e00-\u9fff]/g) || []).length;
   const hasZhTwSignal = ZH_TW_LOCALE_SIGNAL_RE.test(qForLocale) || ZH_TW_PHRASE_SIGNAL_RE.test(qForLocale);
+  const hasJpShinjitai = JP_SHINJITAI_RE.test(qForLocale);
   const isPredominantlyJapanese =
-    kanaCount > 0 &&
     !hasZhTwSignal &&
-    (hanCount === 0 || kanaCount / (kanaCount + hanCount) >= 0.45);
+    (
+      nonNoKanaCount > 0 ||
+      (kanaCount > 0 && (hanCount === 0 || hasJpShinjitai || kanaCount / (kanaCount + hanCount) >= 0.25))
+    );
 
   if (isPredominantlyJapanese) {
     return { hl: "ja", gl: "JP", ceid: "JP:ja" };
@@ -389,7 +400,7 @@ async function fetchConditionalWiki(q, limit) {
         "User-Agent": OUTBOUND_USER_AGENT,
         Accept: "application/json",
       },
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(1200),
     });
     if (resp.status !== 200) return [];
     const data = await resp.json();
