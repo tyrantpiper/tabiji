@@ -34,13 +34,47 @@ import { POIItem } from "@/lib/poi-types"
 
 interface MultiDayMasterMapProps {
     trip?: Trip
+    selectedDay?: number
     onSelectDay?: (day: number) => void
     onScrollToDay?: (day: number) => void
     onAddPOI?: (poi: POIBasicData, time: string, notes?: string, targetDay?: number) => void
     pinnedPois?: POIItem[]
 }
 
-function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI, pinnedPois }: MultiDayMasterMapProps) {
+/**
+ * 🛡️ 跨海／跨區守衛（比照 day-map.tsx）：
+ * 單日停靠點緯度或經度跨距 > 5°（例如台北⇄東京搭機日）直接略過陸路路網 API，
+ * 避免白跑 OSRM 400 -> Valhalla 400 浪費 2.5–3 秒。
+ */
+export function isCrossRegionDayStops(stops: Array<{ lat: number; lng: number }>): boolean {
+    if (stops.length < 2) return false
+    let minLat = Infinity
+    let maxLat = -Infinity
+    let minLng = Infinity
+    let maxLng = -Infinity
+    for (const s of stops) {
+        if (s.lat < minLat) minLat = s.lat
+        if (s.lat > maxLat) maxLat = s.lat
+        if (s.lng < minLng) minLng = s.lng
+        if (s.lng > maxLng) maxLng = s.lng
+    }
+    return (maxLat - minLat) > 5 || (maxLng - minLng) > 5
+}
+
+/**
+ * 🚀 將目前選中天數置頂於路網排程佇列（其餘維持原順序）
+ */
+export function prioritizeDayRouteSpecs<T extends { dayNum: number }>(
+    specs: T[],
+    priorityDay: number
+): T[] {
+    if (!priorityDay || priorityDay <= 0 || specs.length <= 1) return specs
+    const idx = specs.findIndex((s) => s.dayNum === priorityDay)
+    if (idx <= 0) return specs
+    return [specs[idx], ...specs.slice(0, idx), ...specs.slice(idx + 1)]
+}
+
+function MultiDayMasterMapComponent({ trip, selectedDay, onSelectDay, onScrollToDay, onAddPOI, pinnedPois }: MultiDayMasterMapProps) {
     const { lang } = useLanguage()
     const zh = lang === 'zh'
 
@@ -415,7 +449,7 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
         return days.length > 0 ? days : [1]
     }, [dayTabs])
 
-    // 4.5 穩定座標指紋（避免 SWR 背景重抓相同行程時觸發無謂路線請求風暴）
+    // 4.5 穩定座標指紋（避免 SWR 背景重抓相同行程時觸發無謂路線請求風暴；跨海/跨區日自動略過路網 API）
     const dayRouteSpecs = useMemo(() => {
         if (!trip || !trip.days || trip.days.length === 0) return []
         return trip.days
@@ -437,7 +471,7 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
                     coordSignature,
                 }
             })
-            .filter((spec) => spec.validDayStops.length >= 2)
+            .filter((spec) => spec.validDayStops.length >= 2 && !isCrossRegionDayStops(spec.validDayStops))
     }, [trip])
 
     const routeCoordsFingerprint = useMemo(
@@ -446,8 +480,10 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
     )
     const dayRouteSpecsRef = useRef(dayRouteSpecs)
     dayRouteSpecsRef.current = dayRouteSpecs
+    const priorityDayRef = useRef<number>(activeDay !== 0 ? activeDay : (selectedDay ?? 0))
+    priorityDayRef.current = activeDay !== 0 ? activeDay : (selectedDay ?? 0)
 
-    // 5. 兩階段漸進式路網請求 (快取優先 + 穩定指紋依賴 + 併發上限 2 防 OSRM 429 洪峰)
+    // 5. 兩階段漸進式路網請求 (快取優先 + 穩定指紋依賴 + 選中天數置頂優先 + 併發上限 2 防 OSRM 429 洪峰)
     useEffect(() => {
         const specs = dayRouteSpecsRef.current
         if (!routeCoordsFingerprint || specs.length === 0) return
@@ -460,14 +496,14 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
         const modeCache = modeCacheRef.current[mode]
 
         const cachedHydration: Record<number, [number, number][]> = {}
-        const pendingSpecs: typeof specs = []
+        const rawPendingSpecs: typeof specs = []
 
         for (const spec of specs) {
             const cachedCoords = modeCache[spec.coordSignature]
             if (cachedCoords && cachedCoords.length >= 2) {
                 cachedHydration[spec.dayNum] = cachedCoords
             } else {
-                pendingSpecs.push(spec)
+                rawPendingSpecs.push(spec)
             }
         }
 
@@ -477,6 +513,8 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
                 ...cachedHydration,
             }))
         }
+
+        const pendingSpecs = prioritizeDayRouteSpecs(rawPendingSpecs, priorityDayRef.current)
 
         if (pendingSpecs.length === 0) {
             return () => {
@@ -489,7 +527,7 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
             if (!isMounted || globalController.signal.aborted) return
 
             const dayController = new AbortController()
-            const timeoutId = setTimeout(() => dayController.abort(), 10000)
+            const timeoutId = setTimeout(() => dayController.abort(), 15000)
             const onGlobalAbort = () => dayController.abort()
             globalController.signal.addEventListener('abort', onGlobalAbort, { once: true })
 
@@ -532,12 +570,24 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
             }
         }
 
-        // 限制併發上限為 2，根除 10+ 併發請求觸發 OSRM 429 與 10s Abort 超時
+        // 限制併發上限為 2，並動態優先拉取目前選中天數，根除 10+ 併發觸發 OSRM 429 與 15s Abort 超時
         const MAX_CONCURRENCY = 2
-        let cursor = 0
+        const remainingQueue = [...pendingSpecs]
+        const dequeueNextSpec = () => {
+            if (remainingQueue.length === 0) return undefined
+            const wantedDay = priorityDayRef.current
+            if (wantedDay > 0) {
+                const priIdx = remainingQueue.findIndex((s) => s.dayNum === wantedDay)
+                if (priIdx !== -1) {
+                    return remainingQueue.splice(priIdx, 1)[0]
+                }
+            }
+            return remainingQueue.shift()
+        }
         const runWorker = async () => {
-            while (isMounted && !globalController.signal.aborted && cursor < pendingSpecs.length) {
-                const nextSpec = pendingSpecs[cursor++]
+            while (isMounted && !globalController.signal.aborted && remainingQueue.length > 0) {
+                const nextSpec = dequeueNextSpec()
+                if (!nextSpec) break
                 await fetchSingleDayRoute(nextSpec)
             }
         }

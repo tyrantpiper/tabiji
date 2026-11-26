@@ -1731,6 +1731,9 @@ async def stream_chat_generator(
         # 🌐 2026: 雙軌在地與全球搜尋 Grounding 預檢索 (在模型降級迴圈外執行一次，避免降級重複爬蟲與遺失檢索資料)
         executed_geo_results = []
         executed_geo_anchor = ""
+        search_raw_count = 0
+        search_cleaned_count = 0
+        search_pipeline_ran = False
         allow_search_when_url_failed = (not cleaned_urls) or _has_searchable_text_beyond_urls(eval_message, detected_urls)
         if detected_intent == "SEARCH" and active_tools and not succeeded_urls and allow_search_when_url_failed:
             executed_world_time: Dict[str, Any] = {}
@@ -1764,6 +1767,11 @@ async def stream_chat_generator(
                     print(
                         f"🔎 [QueryRewrite] {lite_res.get('source')} -> "
                         f"should_search={lite_res.get('should_search')} local={lite_res.get('local_query')!r}"
+                    )
+                else:
+                    print(
+                        f"🔎 [QueryRewrite] deterministic_fallback -> "
+                        f"local={lite_res.get('local_query')!r} global={lite_res.get('global_query')!r}"
                     )
                 if lite_res.get("should_search") is False and lite_res.get("source") != "deterministic_fallback":
                     skip_web_search = True
@@ -1807,13 +1815,14 @@ async def stream_chat_generator(
                     time_data = query_world_time(target_loc, locale=locale)
                     executed_world_time[target_loc] = time_data
 
-            # 執行搜尋策略 (優先使用提煉後之 search_query；限制總擴充搜尋時間預算 <= 6.0s 並在二次重搜前發送 SSE 心跳)
+            # 執行搜尋策略 (優先使用提煉後之 search_query；限制總擴充搜尋時間預算 <= 7.5s 並在二次重搜前發送 SSE 心跳)
             raw_search_results = []
             if not skip_web_search:
+                search_pipeline_ran = True
                 yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": search_query})}\n\n'
                 await asyncio.sleep(0)
-                search_deadline = time.monotonic() + 6.0
-                primary_budget = min(4.8, max(0.5, search_deadline - time.monotonic()))
+                search_deadline = time.monotonic() + 7.5
+                primary_budget = min(4.5, max(0.5, search_deadline - time.monotonic()))
                 try:
                     raw_search_results = await asyncio.wait_for(
                         execute_web_search(search_query, region=local_reg),
@@ -1822,22 +1831,31 @@ async def stream_chat_generator(
                 except Exception:
                     raw_search_results = []
 
-                if not raw_search_results and (local_q != search_query or global_q != search_query):
+                tried_queries = {(search_query or "").strip().lower()}
+                norm_local_q = (local_q or "").strip().lower()
+                norm_global_q = (global_q or "").strip().lower()
+                should_try_local = bool(norm_local_q and norm_local_q not in tried_queries)
+                should_try_global = bool(norm_global_q and norm_global_q not in tried_queries)
+
+                if not raw_search_results and (should_try_local or should_try_global):
                     remaining_budget = search_deadline - time.monotonic()
                     if remaining_budget > 0.6:
                         yield ": heartbeat\n\n"
                         await asyncio.sleep(0)
                         local_results = []
                         global_results = []
-                        try:
-                            local_results = await asyncio.wait_for(
-                                execute_web_search(local_q, region=local_reg, max_results=3),
-                                timeout=min(2.5, max(0.4, search_deadline - time.monotonic())),
-                            )
-                        except Exception:
-                            local_results = []
+                        if should_try_local:
+                            tried_queries.add(norm_local_q)
+                            try:
+                                local_results = await asyncio.wait_for(
+                                    execute_web_search(local_q, region=local_reg, max_results=3),
+                                    timeout=min(2.8, max(0.4, search_deadline - time.monotonic())),
+                                )
+                            except Exception:
+                                local_results = []
                         remaining_after_local = search_deadline - time.monotonic()
-                        if not local_results and remaining_after_local > 0.6:
+                        if not local_results and norm_global_q and norm_global_q not in tried_queries and remaining_after_local > 0.6:
+                            tried_queries.add(norm_global_q)
                             try:
                                 global_results = await asyncio.wait_for(
                                     execute_web_search(global_q, region=global_reg, max_results=3),
@@ -1855,6 +1873,13 @@ async def stream_chat_generator(
                 search_query=search_query if not skip_web_search else None,
             )
             candidate_sources = cleaned_search_data[:5]
+            search_raw_count = len(raw_search_results)
+            search_cleaned_count = len(cleaned_search_data)
+            if search_pipeline_ran:
+                print(
+                    f"📊 [Citations] pre-stream raw={search_raw_count} "
+                    f"cleaned={search_cleaned_count} candidates={len(candidate_sources)}"
+                )
 
             for idx, s_item in enumerate(candidate_sources, 1):
                 s_item["citation_index"] = idx
@@ -2346,6 +2371,12 @@ Live geographic coordinates have been verified above. When recommending nearby r
                     **({"category": s.get("category")} if s.get("category") else {}),
                     **({"badge": s.get("badge")} if s.get("badge") else {})
                 })
+
+        if search_pipeline_ran or search_raw_count > 0 or final_sources:
+            print(
+                f"📊 [Citations] raw={search_raw_count} "
+                f"cleaned={search_cleaned_count} final={len(final_sources)}"
+            )
 
         done_data = {
             "model_used": model_name,

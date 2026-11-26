@@ -630,7 +630,7 @@ async def extract_search_queries_with_lite(
                     continue
             return None
 
-        lite_res = await asyncio.wait_for(_run_rewrite(), timeout=3.2)
+        lite_res = await asyncio.wait_for(_run_rewrite(), timeout=5.0)
         if lite_res:
             return lite_res
     except Exception:

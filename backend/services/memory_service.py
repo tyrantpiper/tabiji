@@ -14,6 +14,7 @@ import json
 import asyncio
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from services.model_manager import call_extraction
 from utils.ai_config import DAILY_ROUTING
@@ -91,14 +92,17 @@ class MemoryService:
             if not prefs:
                 return
 
-            for pref in prefs:
-                # Upsert to Supabase
+            def _upsert_pref(p: Dict[str, Any]) -> None:
                 supabase.table("user_preferences").upsert({
                     "user_id": user_id,
-                    "category": pref["category"],
-                    "preference": pref["preference"],
+                    "category": p["category"],
+                    "preference": p["preference"],
                     "updated_at": "now()"
                 }, on_conflict="user_id, category, preference").execute()
+
+            for pref in prefs:
+                # Upsert to Supabase (offloaded to threadpool to avoid blocking event loop)
+                await run_in_threadpool(_upsert_pref, pref)
                 
             print(f"🧠 [Memory] Extracted {len(prefs)} preferences for user {user_id}")
         except Exception as e:
@@ -113,7 +117,9 @@ class MemoryService:
             return ""
 
         try:
-            res = supabase.table("user_preferences").select("*").eq("user_id", user_id).execute()
+            res = await run_in_threadpool(
+                lambda: supabase.table("user_preferences").select("*").eq("user_id", user_id).execute()
+            )
             if not res.data:
                 return ""
 

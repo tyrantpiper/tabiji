@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import { createPortal } from "react-dom"
 import { motion, AnimatePresence, type PanInfo } from "framer-motion"
 
 const WIKIMEDIA_PROXY_HOSTS = new Set([
@@ -37,7 +38,7 @@ import {
     X, MapPin, Phone, Globe, Clock,
     Navigation, Share2, Plus, Sparkles,
     ExternalLink, Image as ImageIcon, Loader2,
-    BookOpen, Tent, AlertCircle, Plane
+    BookOpen, Tent, AlertCircle, Plane, Maximize2
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useHaptic } from "@/lib/hooks"
@@ -125,7 +126,21 @@ export default function POIDetailDrawer({
     const [isSharing, setIsSharing] = useState(false)
     const [detent, setDetent] = useState<POIDrawerDetent>("half")
     const [imgError, setImgError] = useState(false)
+    const [lightboxState, setLightboxState] = useState<{ poiKey: string; src: string } | null>(null)
     const reqSeqRef = useRef(0)
+
+    const poiKey = `${poi?.name ?? ""}|${poi?.lat ?? ""}|${poi?.lng ?? ""}|${lang}`
+    const displayImageSrc = poi
+        ? resolveSafePoiImageSrc(aiData?.image_url || poi.photo_url || poi.image_url)
+        : null
+    const isLightboxOpen = Boolean(
+        isOpen &&
+        displayImageSrc &&
+        !imgError &&
+        lightboxState &&
+        lightboxState.poiKey === poiKey &&
+        lightboxState.src === displayImageSrc
+    )
 
     // 🚀 Phase 3 Logic Guards (Unified Flow)
     const isLegacy = aiData && !('status' in aiData)
@@ -140,16 +155,31 @@ export default function POIDetailDrawer({
     const showWikipediaHint = effectiveStatus === "PARTIAL_SUCCESS" && !hasCulturalDesc
     const isFailed = effectiveStatus === "FAILED"
 
-    // 🛡️ 狀態重置：當 POI、語系變更或關閉時遞增序列鎖作廢舊請求，清除舊資料與破圖態並回歸半屏預設
+    // 🛡️ 狀態重置：當 POI、語系變更或關閉時遞增序列鎖作廢舊請求，清除舊資料、破圖態與大圖預覽並回歸半屏預設
     useEffect(() => {
         reqSeqRef.current += 1
         setAiData(null)
         setAiError(null)
         setAiLoading(false)
         setImgError(false)
+        setLightboxState(null)
         setSelectedTime(suggestedTime)
         setDetent("half")
     }, [poi?.name, poi?.lat, poi?.lng, suggestedTime, isOpen, lang])
+
+    // 🖼️ Lightbox ESC 鍵關閉監聽（高優先攔截，避免連帶誤關底層視窗）
+    useEffect(() => {
+        if (!isLightboxOpen) return
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                e.preventDefault()
+                e.stopPropagation()
+                setLightboxState(null)
+            }
+        }
+        window.addEventListener("keydown", handleKeyDown, true)
+        return () => window.removeEventListener("keydown", handleKeyDown, true)
+    }, [isLightboxOpen])
 
     // 🖐️ iOS 智慧手勢吸附判定
     const handleDragEnd = useCallback(
@@ -315,8 +345,6 @@ export default function POIDetailDrawer({
             }
         }
     }
-
-    const displayImageSrc = resolveSafePoiImageSrc(aiData?.image_url || poi.photo_url || poi.image_url)
 
     return (
         <AnimatePresence>
@@ -514,18 +542,51 @@ export default function POIDetailDrawer({
                                     </div>
                                 </div>
 
-                                {/* 景點縮圖 (Wikimedia 經 /api/poi/media-proxy 安全代理，失敗靜默隱藏零破圖) */}
+                                {/* 景點縮圖 (方案 A: 桌面收斂 max-w-2xl + 檔位自適應高度 + 模糊襯底 + object-contain 零裁切 + 點擊開啟全螢幕 Lightbox) */}
                                 {displayImageSrc && !imgError && (
-                                    <div className="relative w-full h-40 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60">
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        <img
-                                            src={displayImageSrc}
-                                            alt={poi.name}
-                                            loading="lazy"
-                                            referrerPolicy="no-referrer"
-                                            onError={() => setImgError(true)}
-                                            className="w-full h-full object-cover"
-                                        />
+                                    <div className="w-full max-w-2xl mx-auto">
+                                        <button
+                                            type="button"
+                                            data-testid="poi-image-trigger"
+                                            onClick={() => {
+                                                haptic.tap()
+                                                setLightboxState({ poiKey, src: displayImageSrc })
+                                            }}
+                                            aria-label={zh ? `檢視 ${poi.name} 完整大圖` : `View full image of ${poi.name}`}
+                                            className={`group relative block w-full ${
+                                                detent === "full"
+                                                    ? "h-56 sm:h-72 md:h-80"
+                                                    : "h-44 sm:h-52"
+                                            } rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60 transition-[height] duration-300 ease-out cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500`}
+                                        >
+                                            {/* 底層極淡模糊同圖襯底，消除直式/寬圖兩側留白生硬感 */}
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img
+                                                src={displayImageSrc}
+                                                alt=""
+                                                aria-hidden="true"
+                                                loading="lazy"
+                                                referrerPolicy="no-referrer"
+                                                className="absolute inset-0 w-full h-full object-cover scale-110 blur-xl opacity-35 dark:opacity-30 pointer-events-none select-none"
+                                            />
+                                            {/* 前景完整構圖，橫圖與直式地標皆 100% 零裁切 */}
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img
+                                                src={displayImageSrc}
+                                                alt={poi.name}
+                                                loading="lazy"
+                                                referrerPolicy="no-referrer"
+                                                onError={() => setImgError(true)}
+                                                className="relative z-10 w-full h-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                                            />
+                                            <span
+                                                aria-hidden="true"
+                                                className="absolute bottom-2.5 right-2.5 z-20 inline-flex items-center gap-1 px-2 py-1 rounded-full bg-black/55 backdrop-blur-sm text-[11px] font-medium text-white/95 opacity-90 group-hover:opacity-100 transition-opacity pointer-events-none"
+                                            >
+                                                <Maximize2 className="w-3 h-3" />
+                                                <span>{zh ? "點擊放大" : "Zoom"}</span>
+                                            </span>
+                                        </button>
                                     </div>
                                 )}
 
@@ -872,6 +933,54 @@ export default function POIDetailDrawer({
                             </div>
                         )}
                     </motion.div>
+
+                    {/* 🖼️ 全螢幕圖片 Lightbox（Portal 掛載至 document.body，免受 isInternal 地圖容器 overflow/transform 裁切） */}
+                    {isLightboxOpen && displayImageSrc && typeof document !== "undefined" && createPortal(
+                        <div
+                            role="dialog"
+                            aria-modal="true"
+                            aria-label={zh ? `${poi.name} 原圖預覽` : `Full photo preview of ${poi.name}`}
+                            data-testid="poi-image-lightbox"
+                            onClick={() => {
+                                haptic.tap()
+                                setLightboxState(null)
+                            }}
+                            className="fixed inset-0 z-200 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 sm:p-6 cursor-zoom-out"
+                        >
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    haptic.tap()
+                                    setLightboxState(null)
+                                }}
+                                aria-label={zh ? "關閉圖片預覽" : "Close photo preview"}
+                                className="absolute top-4 right-4 sm:top-6 sm:right-6 z-10 w-10 h-10 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center backdrop-blur-sm transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                            <div
+                                onClick={(e) => e.stopPropagation()}
+                                className="relative flex flex-col items-center max-w-[95vw] max-h-[90vh] cursor-default"
+                            >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                    src={displayImageSrc}
+                                    alt={poi.name}
+                                    referrerPolicy="no-referrer"
+                                    onError={() => {
+                                        setLightboxState(null)
+                                        setImgError(true)
+                                    }}
+                                    className="max-w-[95vw] max-h-[82vh] w-auto h-auto object-contain rounded-xl shadow-2xl select-none"
+                                />
+                                <p className="mt-3 text-xs sm:text-sm font-medium text-white/90 text-center max-w-xl px-3">
+                                    {poi.name}
+                                </p>
+                            </div>
+                        </div>,
+                        document.body
+                    )}
                 </>
             )}
         </AnimatePresence>

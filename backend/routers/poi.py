@@ -11,6 +11,7 @@ Handles Point of Interest related endpoints including:
 import json
 import re
 import asyncio
+from collections import OrderedDict
 from urllib.parse import urlparse, urljoin, urlunparse, unquote, parse_qsl, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, Query
@@ -54,8 +55,36 @@ from utils.poi_utils import generate_v2_cache_key
 
 router = APIRouter(prefix="/api", tags=["poi"])
 
-# 🆕 Phase 2 Cache (Process-level with v2 versioning)
-POI_ENRICH_CACHE: Dict[str, Dict] = {}
+# 🆕 Phase 2 Bounded LRU Cache (Process-level with v2 versioning, capped at 500 entries)
+_POI_ENRICH_CACHE_MAX_SIZE = 500
+POI_ENRICH_CACHE: "OrderedDict[str, Dict]" = OrderedDict()
+
+_SAFE_PLACELIST_ERROR_MESSAGES: Dict[str, str] = {
+    "UNSAFE_URL": "目標網址不允許存取，請提供有效的 Google 地圖清單連結",
+    "CANNOT_EXTRACT_LIST_ID": "無法辨識該 Google 地圖清單網址，請確認連結完整有效",
+    "PRIVATE_OR_INVALID_LIST": "無法讀取該清單，請確認清單已設為公開或具備分享權限",
+    "NO_DATA": "此清單目前沒有可提取的地點資料",
+}
+_DEFAULT_PLACELIST_ERROR_MESSAGE = "無法從該清單提取地點，請確認清單設為公開或有分享權限"
+
+
+def _poi_enrich_cache_get(cache_key: str) -> Optional[Dict]:
+    if cache_key not in POI_ENRICH_CACHE:
+        return None
+    if isinstance(POI_ENRICH_CACHE, OrderedDict):
+        POI_ENRICH_CACHE.move_to_end(cache_key)
+    return POI_ENRICH_CACHE[cache_key]
+
+
+def _poi_enrich_cache_set(cache_key: str, payload: Dict) -> None:
+    POI_ENRICH_CACHE[cache_key] = payload
+    if isinstance(POI_ENRICH_CACHE, OrderedDict):
+        POI_ENRICH_CACHE.move_to_end(cache_key)
+        while len(POI_ENRICH_CACHE) > _POI_ENRICH_CACHE_MAX_SIZE:
+            POI_ENRICH_CACHE.popitem(last=False)
+    else:
+        while len(POI_ENRICH_CACHE) > _POI_ENRICH_CACHE_MAX_SIZE:
+            POI_ENRICH_CACHE.pop(next(iter(POI_ENRICH_CACHE)), None)
 
 
 def __resetPoiEnrichCacheForTesting() -> None:
@@ -112,7 +141,12 @@ async def poi_resolve_link(request: Request, body: PoiResolveLinkRequest):
     if is_placelist:
         res = await resolve_google_maps_placelist(clean_url)
         if not res.get("success") or not res.get("items"):
-            error_detail = res.get("error") or "無法從該清單提取地點，請確認清單設為公開或有分享權限"
+            raw_err_code = str(res.get("error") or "").strip()
+            if raw_err_code and raw_err_code not in _SAFE_PLACELIST_ERROR_MESSAGES:
+                print(f"[poi_resolve_link] Placelist resolve failed: {raw_err_code[:120]}")
+            error_detail = _SAFE_PLACELIST_ERROR_MESSAGES.get(
+                raw_err_code, _DEFAULT_PLACELIST_ERROR_MESSAGE
+            )
             raise HTTPException(status_code=422, detail=error_detail)
         return {
             "success": True,
@@ -176,9 +210,10 @@ async def ai_enrich_poi(fastapi_req: Request, request: POIAIEnrichRequest):
             locale=locale,
         )
         
-        if cache_key in POI_ENRICH_CACHE:
+        cached_payload = _poi_enrich_cache_get(cache_key)
+        if cached_payload is not None:
             print(f"⚡ [Cache Hit] {cache_key}")
-            return POI_ENRICH_CACHE[cache_key]
+            return cached_payload
 
         api_key = (request.api_key or "").strip()
         has_api_key = bool(api_key)
@@ -322,9 +357,9 @@ Output in this EXACT JSON format ({lang_label}):
             "ai_key_missing": not has_api_key,
         }
 
-        # 🆕 Step 3: 快取存儲 (僅在完全成功 SUCCESS 且有 Key 時存儲，不快取缺 Key 或 PARTIAL 狀態)
+        # 🆕 Step 3: 快取存儲 (僅在完全成功 SUCCESS 且有 Key 時存儲，不快取缺 Key 或 PARTIAL 狀態；LRU 有界上限 500)
         if final_status == "SUCCESS" and has_api_key:
-            POI_ENRICH_CACHE[cache_key] = result_payload
+            _poi_enrich_cache_set(cache_key, result_payload)
             
         print(f"✅ [POI Enrich] 完成: {request.name} (Status: {final_status})")
         return result_payload
@@ -344,7 +379,8 @@ Output in this EXACT JSON format ({lang_label}):
 
 
 @router.post("/poi/enrich")
-async def enrich_poi(fastapi_req: Request, body: POIEnrichRequest):
+@limiter.limit("60/minute")
+async def enrich_poi(request: Request, body: POIEnrichRequest):
     """
     📚 三源整合 POI 端點 - Wikipedia + WikiVoyage + Wikidata
     
@@ -367,7 +403,7 @@ async def enrich_poi(fastapi_req: Request, body: POIEnrichRequest):
         
         enriched = await enrich_poi_complete(
             poi,
-            getattr(fastapi_req.app.state, "client", None),
+            getattr(request.app.state, "client", None),
             lang="en" if str(body.locale or "zh").strip().lower().startswith("en") else "zh",
         )
         formatted = format_enriched_poi_for_ai(enriched, locale=body.locale or "zh")
@@ -390,7 +426,9 @@ async def enrich_poi(fastapi_req: Request, body: POIEnrichRequest):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/poi/nearby")
+@limiter.limit("60/minute")
 async def search_nearby_poi(
+    request: Request,
     lat: float,
     lng: float,
     category: str = "restaurant",

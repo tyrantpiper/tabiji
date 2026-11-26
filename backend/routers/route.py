@@ -17,9 +17,10 @@ from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from models.base import RouteStop, RouteRequest
+from utils.limiter import limiter
 
 router = APIRouter(prefix="/api", tags=["route"])
 
@@ -87,11 +88,11 @@ _STRAIGHT_DEBOUNCE_CACHE = RouteLRUCache(maxsize=256, ttl_sec=_STRAIGHT_DEBOUNCE
 # 429 60 秒引擎熔斷表
 _ENGINE_CIRCUIT_OPEN_UNTIL: Dict[str, float] = {}
 
-# Event-Loop 分桶 Singleflight 與 1 req/s 節流鎖 (FP-113 防跨迴圈崩潰)
+# Event-Loop 分桶 Singleflight 與 per-engine 1 req/s 獨立節流鎖 (FP-113 防跨迴圈崩潰；OSRM 與 Valhalla 互不阻塞)
 _INFLIGHT_BY_LOOP: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, asyncio.Future]]" = (
     weakref.WeakKeyDictionary()
 )
-_THROTTLE_BY_LOOP: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Tuple[asyncio.Lock, List[float]]]" = (
+_THROTTLE_BY_LOOP: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, Tuple[asyncio.Lock, List[float]]]]" = (
     weakref.WeakKeyDictionary()
 )
 
@@ -104,6 +105,8 @@ def __reset_route_state_for_testing() -> None:
     for bucket in list(_INFLIGHT_BY_LOOP.values()):
         bucket.clear()
     _INFLIGHT_BY_LOOP.clear()
+    for engine_bucket in list(_THROTTLE_BY_LOOP.values()):
+        engine_bucket.clear()
     _THROTTLE_BY_LOOP.clear()
 
 
@@ -121,13 +124,17 @@ def _trip_engine_circuit(engine: str, duration_sec: float = _CIRCUIT_BREAKER_SEC
     _ENGINE_CIRCUIT_OPEN_UNTIL[engine] = time.monotonic() + duration_sec
 
 
-async def _pace_upstream_request() -> None:
-    """1 req/s per-event-loop upstream pacing guard for FOSSGIS compliance."""
+async def _pace_upstream_request(engine: str = "default") -> None:
+    """1 req/s per-event-loop, per-engine upstream pacing guard for FOSSGIS compliance."""
     loop = asyncio.get_running_loop()
-    state = _THROTTLE_BY_LOOP.get(loop)
+    engine_map = _THROTTLE_BY_LOOP.get(loop)
+    if engine_map is None:
+        engine_map = {}
+        _THROTTLE_BY_LOOP[loop] = engine_map
+    state = engine_map.get(engine)
     if state is None:
         state = (asyncio.Lock(), [0.0])
-        _THROTTLE_BY_LOOP[loop] = state
+        engine_map[engine] = state
     lock, last_ts_box = state
     async with lock:
         now = time.monotonic()
@@ -258,7 +265,7 @@ async def route_with_osrm(stops: List[RouteStop], mode: str) -> dict:
 
     url = f"{server}/route/v1/{profile}/{coords}"
     client = get_route_client()
-    await _pace_upstream_request()
+    await _pace_upstream_request("osrm-fossgis")
 
     res = await client.get(
         url,
@@ -313,7 +320,7 @@ async def route_with_valhalla(stops: List[RouteStop], mode: str) -> dict:
         "directions_options": {"narrative": False},
     }
     client = get_route_client()
-    await _pace_upstream_request()
+    await _pace_upstream_request("valhalla-fossgis")
 
     res = await client.post(
         "https://valhalla1.openstreetmap.de/route",
@@ -443,18 +450,19 @@ async def _compute_route_chain(stops: List[RouteStop], mode: str, cache_key: str
 
 
 @router.post("/route")
-async def calculate_route(request: RouteRequest):
+@limiter.limit("60/minute")
+async def calculate_route(request: Request, body: RouteRequest):
     """🛣️ 路線運算端點 (FOSSGIS OSRM ➔ FOSSGIS Valhalla ➔ ORS ➔ Haversine 15s 短防抖 + Singleflight)"""
-    if len(request.stops) < 2:
+    if len(body.stops) < 2:
         raise HTTPException(status_code=400, detail="至少需要 2 個停靠點")
 
     # 座標 4 位量化 (~11m) 對齊 Edge Shield 邊緣快取鍵
-    cache_key = f"{request.mode}:{';'.join(f'{s.lng:.4f},{s.lat:.4f}' for s in request.stops)}"
+    cache_key = f"{body.mode}:{';'.join(f'{s.lng:.4f},{s.lat:.4f}' for s in body.stops)}"
 
     # Layer 1: 真實路網 600s 快取命中 (0ms 直出)
     cached = _ROUTE_CACHE.get(cache_key)
     if cached:
-        print(f"   ⚡ [Route Cache] Hit: {len(request.stops)} stops, mode={request.mode}")
+        print(f"   ⚡ [Route Cache] Hit: {len(body.stops)} stops, mode={body.mode}")
         return cached
 
     # Layer 1.5: 直線 15s 短防抖命中 (防全引擎暫斷期間短時雪崩，15s 後自動恢復重探)
@@ -476,7 +484,7 @@ async def calculate_route(request: RouteRequest):
     fut: asyncio.Future = loop.create_future()
     inflight_map[cache_key] = fut
     try:
-        result = await _compute_route_chain(request.stops, request.mode, cache_key)
+        result = await _compute_route_chain(body.stops, body.mode, cache_key)
         if not fut.done():
             fut.set_result(result)
         return result

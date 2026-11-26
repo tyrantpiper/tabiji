@@ -261,7 +261,7 @@ async def test_wave2_poi_disambiguation_page_resolves_to_nearby_canonical_articl
 
     assert "鹿苑寺" in desc
     assert "放火" not in desc
-    assert img.endswith("330px-Kinkakuji.jpg")
+    assert img.endswith("960px-Kinkakuji.jpg")
 
 
 # ---------------------------------------------------------------------------
@@ -385,8 +385,20 @@ def test_wave3_valhalla_polyline6_and_circuit_breaker():
 @pytest.mark.asyncio
 async def test_wave3_route_straight_line_not_poisoning_long_cache():
     route_router.__reset_route_state_for_testing()
+    from starlette.requests import Request as StarletteRequest
     from models.base import RouteRequest
 
+    fake_http_req = StarletteRequest(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/route",
+            "headers": [],
+            "client": ("127.0.0.1", 12345),
+            "scheme": "http",
+            "server": ("testserver", 80),
+        }
+    )
     req = RouteRequest(
         stops=[{"lat": 35.6586, "lng": 139.7454}, {"lat": 35.6620, "lng": 139.7500}],
         mode="walk",
@@ -394,7 +406,7 @@ async def test_wave3_route_straight_line_not_poisoning_long_cache():
     with patch.object(route_router, "route_with_osrm", AsyncMock(return_value=None)), \
          patch.object(route_router, "route_with_valhalla", AsyncMock(return_value=None)), \
          patch.object(route_router, "route_with_ors", AsyncMock(return_value=None)):
-        res = await route_router.calculate_route(req)
+        res = await route_router.calculate_route(fake_http_req, req)
     assert res["source"] == "straight-line"
     assert len(route_router._ROUTE_CACHE._cache) == 0, "straight-line fallback must NEVER write to 600s _ROUTE_CACHE"
     assert len(route_router._STRAIGHT_DEBOUNCE_CACHE._cache) == 1
@@ -409,7 +421,7 @@ async def test_wave3_route_straight_line_not_poisoning_long_cache():
     )
     with patch.object(route_router, "route_with_osrm", AsyncMock(side_effect=RuntimeError("429"))), \
          patch.object(route_router, "route_with_valhalla", AsyncMock(return_value=valhalla_ok)):
-        res_ok = await route_router.calculate_route(req)
+        res_ok = await route_router.calculate_route(fake_http_req, req)
     assert res_ok["source"] == "valhalla-fossgis"
     assert len(res_ok["route"]["geometry"]["coordinates"]) == 3
     assert len(route_router._ROUTE_CACHE._cache) == 1

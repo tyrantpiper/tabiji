@@ -11,6 +11,13 @@ const BROWSER_USER_AGENT =
 const TEMPORAL_KEYWORD_RE =
   /(?:營業時間|開放時間|休館|公休|票價|門票|價錢|價格|費用|預約|訂位|購票|最新|今天|明天|今年|公告|停駛|暫停|活動|祭典|櫻花|楓葉|天氣|匯率|\b(?:ticket|tickets|price|prices|hours|opening|open|close|closed|reservation|booking|schedule|status|news|event|forecast|2025|2026|2027|2028)\b)/i;
 
+// 中文口語與檢索模板停用詞（避免無害問句詞如「推薦」「附近」「最熱門」「食べログ」把正常新聞過濾為 0）
+const CJK_CONVERSATIONAL_STOPWORD_RE =
+  /(?:食べログ|最熱門|這附近|有沒有|哪裡有|請問|幫我|推薦|附近|熱門|哪裡|哪家|這裡|這家|這個|這些|那些|一下|什麼|怎麼|可以|介紹|資訊|情報|攻略|心得|評價|行程|必吃|必去|值得|好吃|好玩|這)/g;
+
+const ZH_TW_LOCALE_SIGNAL_RE =
+  /[車站薦營業這哪麼資訊旅遊飯廳點館鐵廣機劃線臺灣體買賣開關預訂]/;
+
 const LATIN_STOPWORDS = new Set([
   "the", "for", "and", "in", "of", "to", "a", "an", "is", "are", "at", "on", "with",
   "how", "what", "when", "where", "who", "why", "from", "by", "about", "info", "guide",
@@ -20,6 +27,24 @@ const LATIN_STOPWORDS = new Set([
 
 function hasTemporalKeyword(query) {
   return TEMPORAL_KEYWORD_RE.test(String(query || ""));
+}
+
+function resolveNewsLocale(query) {
+  const q = String(query || "");
+  const kanaCount = (q.match(/[\u3040-\u30ff]/g) || []).length;
+  const hanCount = (q.match(/[\u4e00-\u9fff]/g) || []).length;
+  const isPredominantlyJapanese =
+    kanaCount > 0 &&
+    !ZH_TW_LOCALE_SIGNAL_RE.test(q) &&
+    (hanCount === 0 || kanaCount / (kanaCount + hanCount) >= 0.45);
+
+  if (isPredominantlyJapanese) {
+    return { hl: "ja", gl: "JP", ceid: "JP:ja" };
+  }
+  if (hanCount > 0 || kanaCount > 0) {
+    return { hl: "zh-TW", gl: "TW", ceid: "TW:zh-Hant" };
+  }
+  return { hl: "en-US", gl: "US", ceid: "US:en" };
 }
 
 function decodeXmlEntities(str) {
@@ -45,6 +70,7 @@ function extractCoreTokens(query) {
   const cleaned = String(query || "")
     .replace(/site:\S+/gi, " ")
     .replace(TEMPORAL_KEYWORD_RE, " ")
+    .replace(CJK_CONVERSATIONAL_STOPWORD_RE, " ")
     .toLowerCase();
 
   const tokens = new Set();
@@ -144,7 +170,7 @@ async function fetchTavily(q, limit, apiKey) {
         max_results: limit,
         search_depth: "basic",
       }),
-      signal: AbortSignal.timeout(1800),
+      signal: AbortSignal.timeout(2800),
     });
     if (resp.status === 402 || resp.status === 429 || resp.status >= 500 || !resp.ok) {
       return [];
@@ -179,7 +205,7 @@ async function fetchFirecrawl(q, limit, apiKey) {
         query: q,
         limit,
       }),
-      signal: AbortSignal.timeout(1800),
+      signal: AbortSignal.timeout(2800),
     });
     if (resp.status === 402 || resp.status === 429 || resp.status >= 500 || !resp.ok) {
       return [];
@@ -199,22 +225,9 @@ async function fetchFirecrawl(q, limit, apiKey) {
   }
 }
 
-async function fetchGoogleNewsRSS(q, limit) {
+async function fetchGoogleNewsRSS(q, limit, timeoutMs = 2800) {
   try {
-    const hasJapaneseKana = /[\u3040-\u30ff]/.test(q);
-    const hasCjk = /[\u4e00-\u9fff]/.test(q);
-    let hl = "en-US";
-    let gl = "US";
-    let ceid = "US:en";
-    if (hasJapaneseKana) {
-      hl = "ja";
-      gl = "JP";
-      ceid = "JP:ja";
-    } else if (hasCjk) {
-      hl = "zh-TW";
-      gl = "TW";
-      ceid = "TW:zh-Hant";
-    }
+    const { hl, gl, ceid } = resolveNewsLocale(q);
 
     const rssUrl =
       `https://news.google.com/rss/search?q=${encodeURIComponent(q)}` +
@@ -225,7 +238,7 @@ async function fetchGoogleNewsRSS(q, limit) {
         "User-Agent": OUTBOUND_USER_AGENT,
         Accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
       },
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (resp.status !== 200) return [];
 
@@ -268,7 +281,7 @@ async function fetchGoogleNewsRSS(q, limit) {
   }
 }
 
-async function fetchDDGLite(q, limit) {
+async function fetchDDGLite(q, limit, timeoutMs = 2800) {
   try {
     const resp = await fetch("https://lite.duckduckgo.com/lite/", {
       method: "POST",
@@ -279,7 +292,7 @@ async function fetchDDGLite(q, limit) {
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
       body: new URLSearchParams({ q }).toString(),
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     // Strictly require HTTP 200 (reject HTTP 202 anti-bot CAPTCHA pages)
     if (resp.status !== 200) return [];
@@ -419,16 +432,17 @@ export default {
         return jsonResponse({ results: firecrawlResults, source: "firecrawl" });
       }
 
-      // 優先鏈 2: 免 Key 實測可用備援 Google News RSS
-      const newsResults = await fetchGoogleNewsRSS(q, limit);
-      if (newsResults.length > 0) {
-        return jsonResponse({ results: newsResults, source: "google_news_rss" });
-      }
-
-      // 優先鏈 3: DDG Lite (嚴格 200-only，拒絕 202 CAPTCHA)
-      const ddgResults = await fetchDDGLite(q, limit);
+      // 優先鏈 2: 免 Key 並行競速 (DDG Lite 200-only || Google News RSS, 2800ms)
+      // 品質優先序：同時有結果時優先採用品質更高的 DDG 網頁結果，次採 Google News RSS
+      const [ddgResults, newsResults] = await Promise.all([
+        fetchDDGLite(q, limit, 2800),
+        fetchGoogleNewsRSS(q, limit, 2800),
+      ]);
       if (ddgResults.length > 0) {
         return jsonResponse({ results: ddgResults, source: "ddg" });
+      }
+      if (newsResults.length > 0) {
+        return jsonResponse({ results: newsResults, source: "google_news_rss" });
       }
 
       // 優先鏈 4: 條件維基 (含時效詞禁走 + 嚴格標題相關性門檻；未達標回空)

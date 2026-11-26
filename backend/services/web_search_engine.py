@@ -179,15 +179,18 @@ async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict
         return []
     client = get_search_client()
     headers = {"x-tabidachi-key": cf_secret} if cf_secret else {}
+    t0 = time.monotonic()
     try:
         resp = await client.get(
             f"{cf_url.rstrip('/')}/search",
             params={"q": query, "limit": max_results},
             headers=headers,
-            timeout=4.5
+            timeout=4.8
         )
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
         if resp.status_code == 200:
             data = resp.json()
+            source = str(data.get("source") or "unknown")
             raw_list = data.get("results", [])
             results = []
             for r in raw_list:
@@ -198,10 +201,20 @@ async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict
                         "snippet": r.get("snippet", ""),
                         "url": u
                     })
+            print(
+                f"🔎 [SearchEngine] Tier2 status={resp.status_code} "
+                f"source={source} count={len(results)} elapsed_ms={elapsed_ms}"
+            )
             if results:
                 return results
+        else:
+            print(
+                f"🔎 [SearchEngine] Tier2 status={resp.status_code} "
+                f"source=http_error count=0 elapsed_ms={elapsed_ms}"
+            )
     except Exception as e:
-        print(f"⚠️ [SearchEngine] Tier 2 Cloudflare 邊緣檢索異常: {e}")
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        print(f"⚠️ [SearchEngine] Tier2 status=error source=exception count=0 elapsed_ms={elapsed_ms} err={type(e).__name__}: {e}")
     return []
 
 
@@ -395,11 +408,12 @@ async def execute_web_search(
             _web_search_cache_set(cache_key, cf_results)
             return cf_results
 
-    # 4. [Tier 3] 靜態 Lite / HTML 端點
-    html_results = await _search_ddg_html_fallback(final_query, max_results=max_results)
-    if html_results:
-        _web_search_cache_set(cache_key, html_results)
-        return html_results
+    # 4. [Tier 3] 靜態 Lite / HTML 端點（生產環境已於 Cloudflare 邊緣執行 DDG，跳過機房 IP 必吃 202 之重複嘗試）
+    if not (prefer_cf_edge and is_prod_env):
+        html_results = await _search_ddg_html_fallback(final_query, max_results=max_results)
+        if html_results:
+            _web_search_cache_set(cache_key, html_results)
+            return html_results
 
     # 5. [Tier 4] Wikipedia 官方開放 API 兜底 (含時效詞禁走與標題相關性門檻)
     if not _has_temporal_search_keyword(trimmed):

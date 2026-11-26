@@ -4,6 +4,7 @@ import threading
 from typing import Optional, Tuple
 import httpx
 from fastapi import Header, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 from supabase import create_client, Client, ClientOptions
 
 
@@ -113,7 +114,7 @@ def create_threadsafe_supabase_client(supabase_url: str, supabase_key: str) -> T
         http2=False,
         follow_redirects=True,
         timeout=httpx.Timeout(120.0, connect=10.0),
-        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=40),
     )
     try:
         client = create_client(
@@ -257,7 +258,7 @@ async def get_verified_user(
     try:
         supabase: Optional[Client] = get_supabase(request)
         if supabase:
-            user_res = supabase.auth.get_user(token)
+            user_res = await run_in_threadpool(supabase.auth.get_user, token)
             if user_res and user_res.user and UUID_V4_REGEX.match(str(user_res.user.id)):
                 return str(user_res.user.id)
     except Exception:

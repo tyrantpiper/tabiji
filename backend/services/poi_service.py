@@ -10,13 +10,61 @@ import re
 import unicodedata
 from typing import List, Dict, Optional, Any, Tuple
 from math import radians, cos, sin, sqrt, atan2
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, urlunparse, unquote
 from datetime import datetime
 import time
 import logging
 from utils.url_safety import is_safe_url
 
 TABIJI_USER_AGENT = "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"
+
+_SAFE_RASTER_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+_WIKI_THUMB_WIDTH_RE = re.compile(r"(/thumb/.+/(?:lossy-page\d+-|page\d+-)?)(\d+)px-([^/?#]+)$")
+
+
+def _pick_hd_wiki_image(data: Optional[Dict[str, Any]], target_width: int = 960) -> str:
+    """Select a high-res Wikimedia raster image up to `target_width` (960px standard).
+
+    1. Only return `originalimage.source` directly when its extension is a safe raster
+       (`.jpg`/`.jpeg`/`.png`/`.webp`) and `331 <= width <= target_width` (blocks SVG 415
+       and TIFF/DjVu broken images).
+    2. Otherwise, if `thumbnail.source` exists (and is not raw `.svg`/`.svgz`), upgrade
+       `/<N>px-` to `/<target_width>px-` when `<N> < target_width`.
+    """
+    if not isinstance(data, dict):
+        return ""
+
+    orig = data.get("originalimage")
+    if isinstance(orig, dict):
+        orig_src = str(orig.get("source") or "").strip()
+        orig_w = orig.get("width")
+        if (
+            orig_src
+            and isinstance(orig_w, (int, float))
+            and not isinstance(orig_w, bool)
+            and 331 <= orig_w <= target_width
+        ):
+            decoded_orig_path = unquote(unquote(urlparse(orig_src).path)).rstrip("/").lower()
+            if decoded_orig_path.endswith(_SAFE_RASTER_EXTS):
+                return orig_src
+
+    thumb = data.get("thumbnail")
+    thumb_src = str(thumb.get("source") or "").strip() if isinstance(thumb, dict) else ""
+    if not thumb_src:
+        return ""
+
+    parsed = urlparse(thumb_src)
+    decoded_thumb_path = unquote(unquote(parsed.path)).rstrip("/").lower()
+    if decoded_thumb_path.endswith((".svg", ".svgz")):
+        return ""
+
+    m = _WIKI_THUMB_WIDTH_RE.search(parsed.path)
+    if m:
+        cur_w = int(m.group(2))
+        if cur_w < target_width:
+            new_path = f"{parsed.path[:m.start()]}{m.group(1)}{target_width}px-{m.group(3)}"
+            return urlunparse((parsed.scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment))
+    return thumb_src
 
 logger = logging.getLogger("poi-service")
 
@@ -1213,7 +1261,7 @@ async def get_wikipedia_summary(
             data = await _fetch_wiki_page_summary(name, lang, headers, client=client)
             if data and data.get("type") != "disambiguation":
                 extract = data.get("extract", "") or ""
-                image_url = (data.get("thumbnail") or {}).get("source", "") or ""
+                image_url = _pick_hd_wiki_image(data)
                 if extract:
                     return (extract[:200] if len(extract) > 200 else extract), image_url
             return "", ""
@@ -1299,7 +1347,7 @@ async def get_wikipedia_summary(
             )
             if _is_wiki_candidate_admitted(score, name_sim, qid_match):
                 extract = direct_data.get("extract", "") or ""
-                image_url = (direct_data.get("thumbnail") or {}).get("source", "") or ""
+                image_url = _pick_hd_wiki_image(direct_data)
                 if extract:
                     return (extract[:200] if len(extract) > 200 else extract), image_url
 
@@ -1406,7 +1454,7 @@ async def get_wikipedia_summary(
                         )
                         if _is_wiki_candidate_admitted(score, name_sim, qid_match):
                             extract = os_data.get("extract", "") or ""
-                            image_url = (os_data.get("thumbnail") or {}).get("source", "") or ""
+                            image_url = _pick_hd_wiki_image(os_data)
                             if extract:
                                 return (extract[:200] if len(extract) > 200 else extract), image_url
             except Exception as search_err:
@@ -1701,10 +1749,10 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None, lang:
             wikivoyage_result = res2
         
         if wikidata_result:
-            # 🆕 Phase 5.1.3: Wikidata Image Fallback (URL-encode filename to protect #/& characters)
+            # 🆕 Phase 5.1.3: Wikidata Image Fallback (URL-encode filename to protect #/& characters; 960px Wikimedia standard)
             if not poi.get("image_url") and wikidata_result.get("wikidata_image"):
                 img_name = wikidata_result["wikidata_image"].replace(" ", "_")
-                poi["image_url"] = f"https://commons.wikimedia.org/wiki/Special:FilePath/{quote(img_name, safe='')}?width=500"
+                poi["image_url"] = f"https://commons.wikimedia.org/wiki/Special:FilePath/{quote(img_name, safe='')}?width=960"
 
             labels = wikidata_result.get("labels", {})
             ja_name = labels.get("ja-JP", "")
