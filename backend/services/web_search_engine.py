@@ -32,7 +32,7 @@ BROWSER_USER_AGENT = (
 )
 
 # 合規識別 User-Agent (一般外部網站直連，避免 Wikipedia 403 並支援 Markdown for Agents)
-DIRECT_FETCH_USER_AGENT = "TabidachiTravelPWA/1.0 (+https://tabidachi.app)"
+DIRECT_FETCH_USER_AGENT = "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"
 
 # SSRF 私有 IP 阻擋清單
 PRIVATE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
@@ -98,8 +98,74 @@ def is_safe_external_url(url: str) -> bool:
 
 
 # Cloudflare 邊緣檢索執行器配置 (Tier 2)
-CF_WORKER_SEARCH_URL = os.environ.get("CF_WORKER_SEARCH_URL", "https://tabidachi-search-proxy.ryanpig228.workers.dev")
-CF_PROXY_SECRET = os.environ.get("CF_PROXY_SECRET", "")
+CF_WORKER_SEARCH_URL = os.environ.get("CF_WORKER_SEARCH_URL", "https://tabidachi-search-proxy.ryanpig228.workers.dev").strip()
+CF_PROXY_SECRET = os.environ.get("CF_PROXY_SECRET", "").strip()
+
+# 6 小時記憶體 LRU 搜尋結果快取 (128 筆，不依賴 *.workers.dev 無效之 caches.default)
+_WEB_SEARCH_CACHE_MAX_SIZE = 128
+_WEB_SEARCH_CACHE_TTL_SEC = 6 * 3600.0
+_WEB_SEARCH_CACHE: "OrderedDict[str, Tuple[float, List[Dict[str, str]]]]" = OrderedDict()
+
+# 時效性查詢詞正則（命中時禁止降級為靜態維基百科，杜絕以過期/無關條目毒化上下文）
+_TEMPORAL_SEARCH_RE = re.compile(
+    r"(?:營業時間|開放時間|休館|公休|票價|門票|價錢|價格|費用|預約|訂位|購票|最新|今天|明天|今年|公告|停駛|暫停|活動|祭典|櫻花|楓葉|天氣|匯率|"
+    r"\b(?:ticket|tickets|price|prices|hours|opening|open|close|closed|reservation|booking|schedule|status|news|event|forecast|2025|2026|2027|2028)\b)",
+    re.IGNORECASE,
+)
+_WIKI_LATIN_STOPWORDS = frozenset({
+    "the", "for", "and", "in", "of", "to", "a", "an", "is", "are", "at", "on", "with",
+    "how", "what", "when", "where", "who", "why", "from", "by", "about", "info", "guide",
+})
+
+
+def _has_temporal_search_keyword(query: str) -> bool:
+    return bool(_TEMPORAL_SEARCH_RE.search(query or ""))
+
+
+def _is_relevant_wiki_title(query: str, title: str) -> bool:
+    q_norm = re.sub(r"site:\S+", "", query or "", flags=re.IGNORECASE).strip().lower()
+    t_norm = re.sub(r"\s*\([^)]*\)\s*", "", title or "").strip().lower()
+    if not q_norm or not t_norm:
+        return False
+    if len(t_norm) >= 2 and (q_norm in t_norm or t_norm in q_norm):
+        return True
+
+    q_clean = _TEMPORAL_SEARCH_RE.sub(" ", q_norm)
+    tokens = set()
+    for w in re.findall(r"[a-z0-9]{2,}", q_clean):
+        if w not in _WIKI_LATIN_STOPWORDS:
+            tokens.add(w)
+    for run in re.findall(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]+", q_clean):
+        if len(run) <= 2:
+            tokens.add(run)
+        else:
+            for i in range(len(run) - 1):
+                tokens.add(run[i : i + 2])
+    if not tokens:
+        return False
+    hits = sum(1 for tok in tokens if tok in t_norm)
+    return (hits / len(tokens)) >= 0.5
+
+
+def _web_search_cache_get(cache_key: str) -> Optional[List[Dict[str, str]]]:
+    entry = _WEB_SEARCH_CACHE.get(cache_key)
+    if entry is None:
+        return None
+    expires_at, payload = entry
+    if time.monotonic() >= expires_at:
+        _WEB_SEARCH_CACHE.pop(cache_key, None)
+        return None
+    _WEB_SEARCH_CACHE.move_to_end(cache_key)
+    return [dict(item) for item in payload]
+
+
+def _web_search_cache_set(cache_key: str, results: List[Dict[str, str]]) -> None:
+    if not results:
+        return
+    _WEB_SEARCH_CACHE[cache_key] = (time.monotonic() + _WEB_SEARCH_CACHE_TTL_SEC, [dict(item) for item in results])
+    _WEB_SEARCH_CACHE.move_to_end(cache_key)
+    while len(_WEB_SEARCH_CACHE) > _WEB_SEARCH_CACHE_MAX_SIZE:
+        _WEB_SEARCH_CACHE.popitem(last=False)
 
 
 async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict[str, str]]:
@@ -107,16 +173,18 @@ async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict
     第 2 層保險：Cloudflare 邊緣檢索器 (Anycast IP 洗白)
     由全球 300+ 邊緣節點直接抓取並回傳結構化 JSON，零機房 IP 封鎖風險。
     """
-    if not CF_WORKER_SEARCH_URL or "REDACTED" in CF_WORKER_SEARCH_URL:
+    cf_url = (os.environ.get("CF_WORKER_SEARCH_URL") or CF_WORKER_SEARCH_URL or "").strip()
+    cf_secret = (os.environ.get("CF_PROXY_SECRET") or CF_PROXY_SECRET or "").strip()
+    if not cf_url or "REDACTED" in cf_url:
         return []
     client = get_search_client()
-    headers = {"x-tabidachi-key": CF_PROXY_SECRET} if CF_PROXY_SECRET else {}
+    headers = {"x-tabidachi-key": cf_secret} if cf_secret else {}
     try:
         resp = await client.get(
-            f"{CF_WORKER_SEARCH_URL.rstrip('/')}/search",
+            f"{cf_url.rstrip('/')}/search",
             params={"q": query, "limit": max_results},
             headers=headers,
-            timeout=3.2
+            timeout=4.5
         )
         if resp.status_code == 200:
             data = resp.json()
@@ -140,7 +208,10 @@ async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict
 async def _search_wikipedia_fallback(query: str, max_results: int = 3) -> List[Dict[str, str]]:
     """
     第 4 層保險：Wikipedia 官方 OpenSearch API 兜底 (零 IP 封鎖、免 Key)
+    僅允許非時效性查詢且必須通過標題相關性門檻，嚴防雜訊毒化上下文。
     """
+    if _has_temporal_search_keyword(query):
+        return []
     client = get_search_client()
     wiki_url = "https://zh.wikipedia.org/w/api.php"
     params = {
@@ -151,7 +222,7 @@ async def _search_wikipedia_fallback(query: str, max_results: int = 3) -> List[D
         "format": "json"
     }
     headers = {
-        "User-Agent": "TabidachiTravelPWA/1.0 (https://tabidachi.app; dev@tabidachi.app)",
+        "User-Agent": DIRECT_FETCH_USER_AGENT,
         "Accept": "application/json"
     }
     try:
@@ -163,6 +234,8 @@ async def _search_wikipedia_fallback(query: str, max_results: int = 3) -> List[D
             urls = data[3] if len(data) > 3 else []
             results = []
             for t, s, u in zip(titles, snippets, urls):
+                if not t or not _is_relevant_wiki_title(query, t):
+                    continue
                 if u and await is_safe_url_async(u):
                     results.append({
                         "title": f"{t} (維基百科)",
@@ -284,32 +357,57 @@ async def execute_web_search(
     else:
         resolved_region = region
 
-    # 1. [Tier 1] 本地 Dux 多引擎 (非同步線程，限時 5.2 秒覆蓋正常多引擎開銷)
-    try:
-        results = await asyncio.wait_for(
-            asyncio.to_thread(_sync_ddgs_call, final_query, resolved_region, max_results),
-            timeout=5.2
-        )
-        if results:
-            return results
-    except Exception as e:
-        print(f"⚠️ [SearchEngine] Tier 1 本地查詢未命中 ({e})，切換至 Tier 2 Cloudflare 邊緣...")
+    # 0. [Cache] 6 小時記憶體 LRU 快取 (128 筆)
+    cache_key = f"{final_query.lower()}|{resolved_region}|{max_results}"
+    cached = _web_search_cache_get(cache_key)
+    if cached is not None:
+        return cached
 
-    # 2. [Tier 2] Cloudflare 邊緣檢索執行器 (Anycast IP 洗白)
-    cf_results = await _search_cloudflare_edge(final_query, max_results=max_results)
-    if cf_results:
-        return cf_results
+    cf_url = (os.environ.get("CF_WORKER_SEARCH_URL") or CF_WORKER_SEARCH_URL or "").strip()
+    cf_secret = (os.environ.get("CF_PROXY_SECRET") or CF_PROXY_SECRET or "").strip()
+    prefer_cf_edge = bool(cf_url and "REDACTED" not in cf_url and cf_secret)
 
-    # 3. [Tier 3] 靜態 Lite / HTML 端點
+    # 1. 當已配置 CF_WORKER_SEARCH_URL 與 CF_PROXY_SECRET 時，優先直走 Cloudflare Edge (避免在 Cloud Run 先燒 5.2s + 8 執行緒)
+    if prefer_cf_edge:
+        cf_results = await _search_cloudflare_edge(final_query, max_results=max_results)
+        if cf_results:
+            _web_search_cache_set(cache_key, cf_results)
+            return cf_results
+
+    # 2. [Tier 1] 本地 Dux 多引擎 (非同步線程；生產直連 CF 模式未命中時不再空耗 5.2s)
+    is_prod_env = os.environ.get("ENV") == "production" or os.environ.get("NODE_ENV") == "production"
+    if not (prefer_cf_edge and is_prod_env):
+        try:
+            results = await asyncio.wait_for(
+                asyncio.to_thread(_sync_ddgs_call, final_query, resolved_region, max_results),
+                timeout=3.5 if prefer_cf_edge else 5.2
+            )
+            if results:
+                _web_search_cache_set(cache_key, results)
+                return results
+        except Exception as e:
+            print(f"⚠️ [SearchEngine] Tier 1 本地查詢未命中 ({e})，切換至備援檢索...")
+
+    # 3. [Tier 2] Cloudflare 邊緣檢索執行器 (未於優先直走階段觸發時)
+    if not prefer_cf_edge:
+        cf_results = await _search_cloudflare_edge(final_query, max_results=max_results)
+        if cf_results:
+            _web_search_cache_set(cache_key, cf_results)
+            return cf_results
+
+    # 4. [Tier 3] 靜態 Lite / HTML 端點
     html_results = await _search_ddg_html_fallback(final_query, max_results=max_results)
     if html_results:
+        _web_search_cache_set(cache_key, html_results)
         return html_results
 
-    # 4. [Tier 4] Wikipedia 官方開放 API 硬事實兜底
-    print("⚠️ [SearchEngine] 搜尋引擎全面受阻，啟用 Tier 4 Wikipedia 官方 API 兜底...")
-    wiki_results = await _search_wikipedia_fallback(trimmed, max_results=max_results)
-    if wiki_results:
-        return wiki_results
+    # 5. [Tier 4] Wikipedia 官方開放 API 兜底 (含時效詞禁走與標題相關性門檻)
+    if not _has_temporal_search_keyword(trimmed):
+        print("⚠️ [SearchEngine] 搜尋引擎受阻，啟用 Tier 4 Wikipedia 官方 API 條件兜底...")
+        wiki_results = await _search_wikipedia_fallback(trimmed, max_results=max_results)
+        if wiki_results:
+            _web_search_cache_set(cache_key, wiki_results)
+            return wiki_results
 
     return []
 
@@ -382,8 +480,9 @@ _IG_SHARE_PATH_RE = re.compile(
 
 
 def __reset_web_search_cache_for_testing() -> None:
-    """顯式重置 Tier 0 快取與 Singleflight 狀態，供 pytest 徹底隔離跨測試狀態。"""
+    """顯式重置 Tier 0 URL 快取、6h 搜尋快取與 Singleflight 狀態，供 pytest 徹底隔離跨測試狀態。"""
     _URL_READER_CACHE.clear()
+    _WEB_SEARCH_CACHE.clear()
     for bucket in list(_URL_INFLIGHT_BY_LOOP.values()):
         for entry in list(bucket.values()):
             task = entry[0] if entry else None

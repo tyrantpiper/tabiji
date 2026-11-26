@@ -62,21 +62,21 @@ def get_session_secret() -> str:
     """
     獲取 JWT 簽章密鑰：
     1. 優先取用 SESSION_SECRET_KEY
-    2. 回落自 SUPABASE_KEY 鹽值衍生雜湊
-    3. 生產環境若完全缺失直接 Fail-Closed 中斷啟動
+    2. 生產環境若缺失直接 Fail-Closed 中斷啟動（嚴禁回落 SUPABASE_KEY）
+    3. 非生產環境回落自 SUPABASE_KEY 鹽值衍生雜湊或開發預設鹽值
     """
     secret = os.getenv("SESSION_SECRET_KEY")
     if secret and len(secret) >= 16:
         return secret
 
-    supabase_key = os.getenv("SUPABASE_KEY", "")
-    if supabase_key:
-        return hashlib.sha256(f"tabiji-session-salt-{supabase_key}".encode()).hexdigest()
-
-    # 🛡️ 生產環境 Fail-Closed 防衛：嚴禁使用脆弱預設密鑰
+    # 🛡️ 生產環境 Fail-Closed 防衛：嚴禁回落 SUPABASE_KEY 或脆弱預設密鑰
     is_prod = os.getenv("ENV") == "production" or os.getenv("NODE_ENV") == "production" or os.getenv("PROD") == "1"
     if is_prod:
         raise RuntimeError("🚨 [CRITICAL SECURITY] SESSION_SECRET_KEY is required in production environment!")
+
+    supabase_key = os.getenv("SUPABASE_KEY", "")
+    if supabase_key:
+        return hashlib.sha256(f"tabiji-session-salt-{supabase_key}".encode()).hexdigest()
 
     return hashlib.sha256(b"tabiji-dev-deterministic-salt-2026").hexdigest()
 

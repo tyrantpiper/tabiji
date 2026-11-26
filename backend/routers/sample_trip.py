@@ -190,7 +190,7 @@ SAMPLE_ITEMS: list[dict] = [
 
 
 @router.post("/trips/seed-sample")
-async def seed_sample_trip(
+def seed_sample_trip(
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase),
 ):
@@ -259,4 +259,4 @@ async def seed_sample_trip(
     except Exception as e:
         print(f"🔥 [Sample Trip] Seed Error: {e}")
         # Non-critical: don't crash the app if sample trip fails
-        return {"status": "error", "reason": str(e)}
+        return {"status": "error", "reason": "建立範例行程失敗，請稍後重試"}

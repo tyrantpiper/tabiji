@@ -197,7 +197,21 @@ describe('Supabase Edge Functions Secret Keys Support', () => {
                 return createEmptySupabaseStub()
             },
         )
-        const countdownRes = await countdownHandler(new Request('https://edge.local/notify-countdown', { method: 'POST' }))
+        // Unauthenticated requests must be rejected with 401; GET rejected with 405
+        const countdownUnauth = await countdownHandler(new Request('https://edge.local/notify-countdown', { method: 'POST' }))
+        expect(countdownUnauth.status).toBe(401)
+        const countdownGet = await countdownHandler(new Request('https://edge.local/notify-countdown', { method: 'GET' }))
+        expect(countdownGet.status).toBe(405)
+        const countdownPub = await countdownHandler(new Request('https://edge.local/notify-countdown', {
+            method: 'POST',
+            headers: { apikey: 'sb_publishable_must_be_ignored' },
+        }))
+        expect(countdownPub.status).toBe(401)
+
+        const countdownRes = await countdownHandler(new Request('https://edge.local/notify-countdown', {
+            method: 'POST',
+            headers: { apikey: 'sb_secret_countdown_secondary' },
+        }))
         expect(countdownRes.status).toBe(200)
         expect(countdownKeysSeen).toEqual(['sb_secret_countdown_secondary'])
 
@@ -214,9 +228,19 @@ describe('Supabase Edge Functions Secret Keys Support', () => {
                 return createEmptySupabaseStub()
             },
         )
-        const eventRes = await eventHandler(new Request('https://edge.local/notify-event', {
+        const eventUnauth = await eventHandler(new Request('https://edge.local/notify-event', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            body: '{invalid json should still 401 before parse',
+        }))
+        expect(eventUnauth.status).toBe(401)
+
+        const eventRes = await eventHandler(new Request('https://edge.local/notify-event', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: 'Bearer sb_secret_event_singular',
+            },
             body: JSON.stringify({
                 type: 'INSERT',
                 table: 'trip_members',
@@ -350,7 +374,10 @@ describe('Supabase Edge Functions Secret Keys Support', () => {
             )
             const evRes = await eventBroadcastHandler(new Request('https://edge.local/notify-event', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    apikey: 'sb_secret_event_broadcast_check',
+                },
                 body: JSON.stringify({
                     type: 'INSERT',
                     table: 'trip_members',
@@ -361,6 +388,85 @@ describe('Supabase Edge Functions Secret Keys Support', () => {
             expect(recordedBroadcastCalls.length).toBe(1)
             expect((recordedBroadcastCalls[0].body as { messages: Array<{ topic: string; event: string }> }).messages[0].topic).toBe('user-notif:u-target-1')
             expect((recordedBroadcastCalls[0].body as { messages: Array<{ topic: string; event: string }> }).messages[0].event).toBe('notif:refresh')
+
+            // Verify Vault HMAC-SHA256 RPC auth path for notify-event and notify-countdown
+            const nowTs = String(Math.floor(Date.now() / 1000))
+            const validSigHex = 'a'.repeat(64)
+            const invalidSigHex = 'b'.repeat(64)
+            const hmacRpcCalls: Array<{ url: string; headers: Record<string, string>; body: Record<string, unknown> }> = []
+            globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+                const urlStr = String(url)
+                if (urlStr.includes('/rest/v1/rpc/verify_notify_webhook_signature')) {
+                    const parsed = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+                    hmacRpcCalls.push({
+                        url: urlStr,
+                        headers: (init?.headers || {}) as Record<string, string>,
+                        body: parsed,
+                    })
+                    return new Response(JSON.stringify(parsed.p_signature === validSigHex), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    })
+                }
+                return new Response(JSON.stringify({ ok: true }), { status: 202 })
+            }) as typeof fetch
+
+            const hmacEventHandler = loadEdgeServeHandler(
+                'supabase/functions/notify-event/index.ts',
+                {
+                    SUPABASE_URL: 'https://example.supabase.co',
+                    SUPABASE_SECRET_KEY: 'sb_secret_hmac_rpc_check',
+                },
+                () => createEmptySupabaseStub(),
+            )
+            const hmacEventOk = await hmacEventHandler(new Request('https://edge.local/notify-event', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-webhook-timestamp': nowTs,
+                    'x-webhook-signature': validSigHex,
+                },
+                body: JSON.stringify({ type: 'UPDATE', table: 'expenses', record: {} }),
+            }))
+            expect(hmacEventOk.status).toBe(200)
+            expect(hmacRpcCalls.length).toBe(1)
+            expect(hmacRpcCalls[0].headers.apikey).toBe('sb_secret_hmac_rpc_check')
+            expect(hmacRpcCalls[0].headers.Authorization).toBeUndefined()
+
+            const hmacEventBad = await hmacEventHandler(new Request('https://edge.local/notify-event', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-webhook-timestamp': nowTs,
+                    'x-webhook-signature': invalidSigHex,
+                },
+                body: JSON.stringify({ type: 'INSERT', table: 'expenses', record: {} }),
+            }))
+            expect(hmacEventBad.status).toBe(401)
+
+            // Verify 500 desensitization on internal error
+            const crashingEventHandler = loadEdgeServeHandler(
+                'supabase/functions/notify-event/index.ts',
+                {
+                    SUPABASE_URL: 'https://example.supabase.co',
+                    SUPABASE_SECRET_KEY: 'sb_secret_crash_check',
+                },
+                () => {
+                    throw new Error('SECRET_INTERNAL_PG_DSN_LEAK')
+                },
+            )
+            const crashRes = await crashingEventHandler(new Request('https://edge.local/notify-event', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    apikey: 'sb_secret_crash_check',
+                },
+                body: JSON.stringify({ type: 'INSERT', table: 'trip_members', record: {} }),
+            }))
+            expect(crashRes.status).toBe(500)
+            const crashText = await crashRes.text()
+            expect(crashText).not.toContain('SECRET_INTERNAL_PG_DSN_LEAK')
+            expect(crashText).toContain('Internal server error')
         } finally {
             globalThis.fetch = origFetch
         }

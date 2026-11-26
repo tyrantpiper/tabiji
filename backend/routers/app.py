@@ -17,7 +17,7 @@ MAX_DONATION_PERCENTAGE = 120.0
 
 
 @router.get("/donation-progress")
-async def get_donation_progress(supabase=Depends(get_supabase)):
+def get_donation_progress(supabase=Depends(get_supabase)):
     """
     💰 獲取捐贈進度（隱私最小揭露 + Fail-Closed）
 

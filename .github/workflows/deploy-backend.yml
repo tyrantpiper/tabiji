@@ -35,7 +35,6 @@ jobs:
             --source ./backend \
             --platform managed \
             --region us-central1 \
-            --allow-unauthenticated \
             --memory 1Gi \
             --cpu 1 \
             --concurrency 40 \

@@ -38,7 +38,9 @@ async def ensure_user_exists(supabase, user_id: str, name: str = None):
     if not user_id or user_id.lower() in ["null", "undefined"]:
         return
 
-    try:
+    from starlette.concurrency import run_in_threadpool
+
+    def _sync_ensure():
         # 1. 檢查是否存在 (用 select 比直接 upsert 安全，可避免觸發 sync trigger)
         res = supabase.table("users").select("id, name").eq("id", user_id).execute()
         
@@ -53,7 +55,9 @@ async def ensure_user_exists(supabase, user_id: str, name: str = None):
         elif name and (not res.data[0].get("name") or res.data[0].get("name") == "Traveler"):
             # 3. 存在但名字是預設值，且現在有提供名字，則更新它
             supabase.table("users").update({"name": name}).eq("id", user_id).execute()
-            
+
+    try:
+        await run_in_threadpool(_sync_ensure)
     except Exception as e:
         # 僅記錄錯誤而不拋出，以免主流程中斷 (容錯設計)
         print(f"⚠️ Auto-Activation failed for {user_id}: {e}")

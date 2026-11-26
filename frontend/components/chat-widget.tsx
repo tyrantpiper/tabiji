@@ -179,12 +179,17 @@ export default function ChatWidget() {
             )
         }
 
-        // Return null ONLY if we truly have no items after flattening
-        if (!items || items.length === 0) return null
+        // 即使為 0 景點新行程，只要有 title 或 flight_info 亦回傳骨架供即時票價上下文使用
+        const safeItems = Array.isArray(items) ? items : []
+        const tripFlightInfo = tripDetail.flight_info || (activeTrip as { flight_info?: LeanItinerary["flight_info"] }).flight_info
+        if (safeItems.length === 0 && !activeTrip.title?.trim() && !tripFlightInfo) return null
 
         const lean = getLeanItinerary(
-            activeTrip,
-            items,
+            {
+                ...activeTrip,
+                flight_info: tripFlightInfo,
+            },
+            safeItems,
             tripDetail.day_notes,   // 🆕 每日注意事項
             tripDetail.day_costs,   // 🆕 每日預估花費
             tripDetail.day_checklists, // 🆕 2026 Checklist
@@ -712,6 +717,52 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
             setSearchStatus({ phase: "thinking" })
             const cleanPrompt = userMsg.replace(/^\/research\s*/, "").trim()
             try {
+                // 優先自 tripDetail.flight_info 提取合法 IATA，並計算真實 days[].activities 總數與精簡每日行程摘要
+                const outboundLeg = Array.isArray(tripDetail?.flight_info?.outbound)
+                    ? tripDetail.flight_info.outbound[0]
+                    : undefined
+                const iataOrigin = typeof outboundLeg?.dep_airport === "string" && /^[A-Za-z]{3}$/.test(outboundLeg.dep_airport.trim())
+                    ? outboundLeg.dep_airport.trim().toUpperCase()
+                    : undefined
+                const iataDestination = typeof outboundLeg?.arr_airport === "string" && /^[A-Za-z]{3}$/.test(outboundLeg.arr_airport.trim())
+                    ? outboundLeg.arr_airport.trim().toUpperCase()
+                    : undefined
+
+                let researchBookingContext: string | undefined
+                if (tripDetail) {
+                    const daysArr = Array.isArray(tripDetail.days)
+                        ? (tripDetail.days as Array<{ day: number; activities?: Array<{ place?: string; place_name?: string; time?: string }> }>)
+                        : []
+                    const totalActivities = daysArr.length > 0
+                        ? daysArr.reduce((acc, d) => acc + (Array.isArray(d.activities) ? d.activities.length : 0), 0)
+                        : (Array.isArray(tripDetail.items) ? tripDetail.items.length : 0)
+                    const daySummaries = daysArr
+                        .filter((d) => Array.isArray(d.activities) && d.activities.length > 0)
+                        .slice(0, 10)
+                        .map((d) => {
+                            const places = (d.activities || [])
+                                .slice(0, 6)
+                                .map((a) => a.place || a.place_name || "")
+                                .filter(Boolean)
+                                .join(" -> ")
+                            return `Day ${d.day}: ${places}`
+                        })
+                    const parts = [
+                        `Trip: ${tripDetail.title || activeTrip?.title || ""}`,
+                        `Activities: ${totalActivities}`,
+                    ]
+                    if (tripDetail.start_date || tripDetail.end_date) {
+                        parts.push(`Dates: ${tripDetail.start_date || "?"} ~ ${tripDetail.end_date || "?"}`)
+                    }
+                    if (iataOrigin && iataDestination) {
+                        parts.push(`Flight: ${iataOrigin} -> ${iataDestination}`)
+                    }
+                    if (daySummaries.length > 0) {
+                        parts.push(`Schedule: ${daySummaries.join(" | ").slice(0, 600)}`)
+                    }
+                    researchBookingContext = parts.join(", ")
+                }
+
                 const res = await fetch(`${API_HOST}/api/agents/research`, {
                     method: "POST",
                     headers: {
@@ -721,8 +772,9 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                     signal: currentController.signal,
                     body: JSON.stringify({
                         prompt: cleanPrompt,
-                        destination: activeTrip?.title || undefined,
-                        booking_context: tripDetail ? `Trip: ${tripDetail.title}, Items: ${tripDetail.items?.length || 0}` : undefined,
+                        origin: iataOrigin || undefined,
+                        destination: iataDestination || activeTrip?.title || undefined,
+                        booking_context: researchBookingContext,
                         locale: lang
                     })
                 })

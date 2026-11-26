@@ -40,6 +40,35 @@ const nextConfig = {
         buildActivity: true,
         buildActivityPosition: 'bottom-right',
     },
+    // 🛡️ Wave 3.3: 全站安全回應標頭（排除 /api/* 與 /sw.js 以保留各自專屬策略與快取規則）
+    async headers() {
+        const cspReportOnly = [
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+            "worker-src 'self'",
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+            "font-src 'self' data: https://fonts.gstatic.com",
+            "img-src 'self' data: blob: https://res.cloudinary.com https://cloudinary-proxy.ryan880425.workers.dev https://*.tabijiapp.com https://upload.wikimedia.org https://thumb.wikimedia.org https://commons.wikimedia.org https://lh3.googleusercontent.com https://lh5.googleusercontent.com https://maps.googleapis.com https://images.unsplash.com https://plus.unsplash.com https://flagcdn.com https://server.arcgisonline.com https://tiles.openfreemap.org https://tiles.mapterhorn.com https://*.fbcdn.net https://*.mapillary.com https:",
+            "connect-src 'self' https://www.tabijiapp.com https://tabijiapp.com https://antigravity-backend-589255638719.us-central1.run.app https://oudnkmigfueuyvxqpqwn.supabase.co wss://oudnkmigfueuyvxqpqwn.supabase.co https://api.cloudinary.com https://res.cloudinary.com https://cloudinary-proxy.ryan880425.workers.dev https://api.open-meteo.com https://api.exchangerate-api.com https://open.er-api.com https://tiles.openfreemap.org https://server.arcgisonline.com https://tiles.mapterhorn.com https://graph.mapillary.com https://generativelanguage.googleapis.com",
+            "frame-ancestors 'none'",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+        ].join('; ');
+
+        return [
+            {
+                source: '/((?!api(?:/|$)|sw\\.js$).*)',
+                headers: [
+                    { key: 'X-Frame-Options', value: 'DENY' },
+                    { key: 'X-Content-Type-Options', value: 'nosniff' },
+                    { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+                    { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=(self), interest-cohort=()' },
+                    { key: 'Content-Security-Policy-Report-Only', value: cspReportOnly },
+                ],
+            },
+        ];
+    },
     // 🚀 本機開發與邊緣反向代理 (Local Development & Edge Reverse Proxy)
     // 使用 fallback rewrites，確保本地 App Router 優先處理，其餘路由（含 /api/sign-cloudinary）統一轉發至後端
     async rewrites() {

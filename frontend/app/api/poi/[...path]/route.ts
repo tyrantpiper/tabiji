@@ -72,7 +72,7 @@ async function proxyRequest(
     } catch (err) {
         console.error(`[POI Proxy] Failed to reach ${isPool ? "Cloudflare D1" : "Backend"}:`, err);
         return NextResponse.json(
-            { error: "POI_SERVICE_UNREACHABLE", detail: String(err) },
+            { error: "POI_SERVICE_UNREACHABLE", detail: "Upstream POI service temporarily unavailable" },
             { status: 502 }
         );
     }

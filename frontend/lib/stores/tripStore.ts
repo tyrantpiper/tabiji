@@ -22,17 +22,22 @@ interface TripState {
     initializeFromStorage: () => void
 }
 
+const INVALID_ID_LITERALS = new Set(['null', 'undefined', 'nan', 'none'])
+
+export const sanitizeStoredId = (raw: string | null | undefined): string | null => {
+    if (typeof raw !== 'string') return null
+    const trimmed = raw.trim()
+    if (!trimmed || INVALID_ID_LITERALS.has(trimmed.toLowerCase())) return null
+    return trimmed
+}
+
 /**
  * 🔧 FIX: Sync initialize userId from localStorage without generating unregistered orphan UUIDs
  * Unauthenticated visitors stay null until explicit login/recovery in LandingPage.
  */
 const getInitialUserId = (): string | null => {
     if (typeof window !== 'undefined') {
-        const raw = localStorage.getItem('user_uuid')
-        if (!raw) return null
-        const trimmed = raw.trim()
-        if (!trimmed || trimmed === 'null' || trimmed === 'undefined') return null
-        return trimmed
+        return sanitizeStoredId(localStorage.getItem('user_uuid'))
     }
     return null
 }
@@ -48,8 +53,8 @@ export const useTripStore = create<TripState>()(
             targetExpenseId: null,
 
             // Actions
-            setActiveTripId: (id) => set({ activeTripId: id }),
-            setUserId: (id) => set({ userId: id }),
+            setActiveTripId: (id) => set({ activeTripId: sanitizeStoredId(id) }),
+            setUserId: (id) => set({ userId: sanitizeStoredId(id) }),
             setActiveTripTitle: (title) => set({ activeTripTitle: title }),
             setFocusedDay: (day) => set({ focusedDay: day }),
             setTargetExpenseId: (id) => set({ targetExpenseId: id }),
@@ -58,7 +63,7 @@ export const useTripStore = create<TripState>()(
             initializeFromStorage: () => {
                 if (typeof window !== 'undefined') {
                     // 🛡️ Identity Calibration: Ensure the primary user_uuid is used as the SSO
-                    const legacyId = localStorage.getItem('user_uuid')
+                    const legacyId = sanitizeStoredId(localStorage.getItem('user_uuid'))
                     const { userId } = useTripStore.getState()
 
                     if (legacyId && userId !== legacyId) {
@@ -66,7 +71,7 @@ export const useTripStore = create<TripState>()(
                         set({ userId: legacyId })
                     }
 
-                    const activeTripId = localStorage.getItem('active_trip_id')
+                    const activeTripId = sanitizeStoredId(localStorage.getItem('active_trip_id'))
                     const activeTripTitle = localStorage.getItem('active_trip_title')
 
                     set({
@@ -84,14 +89,17 @@ export const useTripStore = create<TripState>()(
                 activeTripTitle: state.activeTripTitle,
                 userId: state.userId  // 🔧 FIX: Now also persist userId
             }),
-            // 🔧 FIX: Custom merge to prevent sync-initialized userId from being overwritten
+            // 🔧 FIX: Custom merge to prevent sync-initialized userId from being overwritten and sanitize invalid literals
             merge: (persistedState, currentState) => {
                 const persisted = persistedState as Partial<TripState>
+                const cleanPersistedUserId = sanitizeStoredId(persisted?.userId)
+                const cleanPersistedTripId = sanitizeStoredId(persisted?.activeTripId)
                 return {
                     ...currentState,
                     ...persisted,
-                    // If persisted userId is empty, use sync-initialized value
-                    userId: persisted?.userId || currentState.userId
+                    activeTripId: cleanPersistedTripId,
+                    // If persisted userId is empty/invalid, use sync-initialized value
+                    userId: cleanPersistedUserId || currentState.userId
                 }
             }
         }

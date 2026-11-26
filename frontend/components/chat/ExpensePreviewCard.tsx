@@ -83,7 +83,7 @@ export default function ExpensePreviewCard({ expenseData, onDismiss }: ExpensePr
             toast.success(zh ? `💰 記帳成功：${expenseData.title}` : `💰 Expense saved: ${expenseData.title}`)
 
             // 🟢 即時 invalidate 費用清單 SWR 快取，消除快取空洞
-            if (userId) {
+            if (userId && activeTripId && activeTripId !== "undefined" && activeTripId !== "null") {
                 globalMutate([`/api/trips/${activeTripId}/expenses`, userId])
             }
         } catch (error) {

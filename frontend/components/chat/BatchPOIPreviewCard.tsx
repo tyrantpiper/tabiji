@@ -109,7 +109,7 @@ export default function BatchPOIPreviewCard({
             void broadcastTripEvent(activeTripId, "item:mutate", { action: "create" })
 
             mutate()
-            if (userId) {
+            if (userId && activeTripId && activeTripId !== "undefined" && activeTripId !== "null") {
                 globalMutate([`/api/trips/${activeTripId}`, userId])
             }
         } catch (err) {
@@ -173,7 +173,7 @@ export default function BatchPOIPreviewCard({
             toast.success(zh ? `🎉 成功加入 ${successCount} 個行程項目！` : `Added ${successCount} places!`)
             void broadcastTripEvent(activeTripId, "item:mutate", { action: "create" })
             mutate()
-            if (userId) {
+            if (userId && activeTripId && activeTripId !== "undefined" && activeTripId !== "null") {
                 globalMutate([`/api/trips/${activeTripId}`, userId])
             }
             if (onAllAdded) onAllAdded()

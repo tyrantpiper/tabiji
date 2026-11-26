@@ -10,6 +10,7 @@ Interactions API with automated Gemini 3.7 Flash fallback defense.
 import copy
 import hashlib
 import hmac
+import json
 import os
 import re
 import time
@@ -19,9 +20,11 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 import httpx
+from services.flight_pricing_service import build_flight_price_context
 
 os.environ.setdefault("GOOGLE_GENAI_API_VERSION", "v1beta")
 
@@ -223,49 +226,20 @@ class AgentResearchRequest(BaseModel):
 
 async def _fetch_live_pricing_context(origin: str, destination: str, locale: str = "zh") -> str:
     """
-    從 Travelpayouts 抓取即時票價數據以注入 Agent 上下文
+    從 Travelpayouts 抓取即時票價數據以注入 Agent 上下文（支援城市名／中文行程標題轉 IATA 與快取）
     """
     if not TP_TOKEN or not destination:
         return ""
     try:
-        is_en = bool(locale and str(locale).strip().lower().startswith("en"))
-        dest_clean = destination.strip().upper()[:3]
-        orig_clean = origin.strip().upper()[:3]
-        if not re.fullmatch(r"[A-Z]{3}", dest_clean) or not re.fullmatch(r"[A-Z]{3}", orig_clean):
-            return ""
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            resp = await client.get(
-                f"{TP_BASE}/aviasales/v3/prices_for_dates",
-                params={
-                    "origin": orig_clean,
-                    "destination": dest_clean,
-                    "currency": "TWD",
-                    "sorting": "price",
-                    "limit": 3,
-                    "unique": "false",
-                },
-                headers={"X-Access-Token": TP_TOKEN},
-            )
-            if resp.status_code == 200:
-                data = resp.json().get("data", [])
-                if data:
-                    if is_en:
-                        lines = [f"[Travelpayouts Live Flight Fare Reference ({orig_clean} -> {dest_clean})]:"]
-                        for p in data[:3]:
-                            price = p.get("price")
-                            airline = p.get("airline", "Airline")
-                            dep = p.get("departure_at", "")
-                            lines.append(f"- {airline} Departure: {dep} Lowest est. price ~ NT${price:,}")
-                        lines.append(f"(Affiliate tracking marker: {TP_MARKER})")
-                    else:
-                        lines = [f"【Travelpayouts 即時票價參考 ({orig_clean} ➔ {dest_clean})】:"]
-                        for p in data[:3]:
-                            price = p.get("price")
-                            airline = p.get("airline", "航空")
-                            dep = p.get("departure_at", "")
-                            lines.append(f"- {airline} 出發日:{dep} 最低票價約 NT${price:,}")
-                        lines.append(f"（分潤標記追蹤碼: {TP_MARKER}）")
-                    return "\n".join(lines)
+        return await build_flight_price_context(
+            origin=origin or "TPE",
+            destination=destination,
+            locale=locale,
+            token=TP_TOKEN,
+            marker=TP_MARKER,
+            include_marker=True,
+            timeout=2.5,
+        )
     except Exception as e:
         logger.warning(f"[Agents] Travelpayouts live pricing fetch skipped: {e}")
     return ""
@@ -438,7 +412,7 @@ async def _execute_flash_fallback_task(
             task_id,
             status="failed",
             key_hash=key_hash,
-            error_message=str(last_error or "All fallback models failed"),
+            error_message="All fallback models failed. Please try again later.",
             code=503,
         )
     except Exception as e:
@@ -449,7 +423,7 @@ async def _execute_flash_fallback_task(
             task_id,
             status="failed",
             key_hash=key_hash,
-            error_message=str(e),
+            error_message="Deep research execution failed. Please try again later.",
             code=500,
         )
 
@@ -498,16 +472,17 @@ async def start_deep_research(
         + termination_anchor
     )
 
-    # 2. 嘗試調用 Antigravity Interactions API
+    # 2. 嘗試調用 Antigravity Interactions API (run_in_threadpool 避免阻塞 Event Loop)
     try:
         client = _get_agents_genai_client(api_key)
         # 🛡️ 遵循 NotebookLM 規範：嚴禁傳遞 temperature 等取樣參數以免 400 錯誤
-        interaction = client.interactions.create(
+        interaction = await run_in_threadpool(
+            client.interactions.create,
             agent=ANTIGRAVITY_AGENT_ID,
             input=enhanced_prompt,
             environment=body.environment,
             background=True,
-            store=True
+            store=True,
         )
         return {
             "status": "started",
@@ -560,6 +535,180 @@ async def start_deep_research(
     }
 
 
+@router.post("/research/stream")
+async def stream_deep_research(
+    body: AgentResearchRequest,
+    request: Request = None,
+    api_key: str = Depends(get_gemini_key),
+):
+    """
+    Opt-in Two-Phase SSE 深度研究串流端點：
+    - 保持請求活躍（避開 Cloud Run cpu-throttling 背景任務凍結）
+    - 每 15 秒送出 `: heartbeat\\n\\n` 保活
+    - BYOK Gemini API Key 全程只駐記憶體、零落盤
+    """
+    is_en = bool(body.locale and str(body.locale).strip().lower().startswith("en"))
+    locale_val = body.locale or "zh"
+
+    async def _research_sse_generator():
+        yield "event: start\ndata: {}\n\n"
+        await asyncio.sleep(0)
+
+        try:
+            yield f'event: thinking\ndata: {json.dumps({"status": "researching"})}\n\n'
+            await asyncio.sleep(0)
+
+            live_pricing = ""
+            if body.destination:
+                try:
+                    live_pricing = await asyncio.wait_for(
+                        _fetch_live_pricing_context(body.origin or "TPE", body.destination, locale=locale_val),
+                        timeout=1.5,
+                    )
+                except Exception:
+                    live_pricing = ""
+
+            context_blocks = []
+            if body.booking_context:
+                ctx_header = "[Confirmed User Booking / Stay Info]" if is_en else "【用戶已確認訂單/住宿資料】"
+                context_blocks.append(f"{ctx_header}:\n{body.booking_context}")
+            if live_pricing:
+                context_blocks.append(live_pricing)
+
+            req_header = "[Research Task Requirement]" if is_en else "【研究任務需求】"
+            enhanced_prompt = (
+                ("\n\n".join(context_blocks) + "\n\n" if context_blocks else "")
+                + f"{req_header}：\n{body.prompt}"
+            )
+
+            sys_inst = (
+                "You are a highly rigorous AI Deep Travel Researcher. "
+                "Conduct deep algorithmic analysis and factual research for the traveler's complex itinerary, budget optimization, and transit routes. "
+                "When mentioning flights or lodging, include estimated prices and reputable booking platforms. "
+                "Format clearly in Markdown (with tables and concise breakdowns), and conclude immediately once done."
+                if is_en
+                else "你是一位極致嚴謹的 AI 深度旅遊研究副官 (Deep Travel Researcher)。"
+                "請針對使用者的複雜行程、預算精算、交通動線進行深度演算與真實性研究。"
+                "如果提及機票或住宿，請標記即時預估價格與推薦預訂平台。"
+                "請以 Markdown 結構化輸出（包含表格與分析），生成完畢後立即結束，嚴禁贅述。"
+            )
+
+            client = _get_agents_genai_client(api_key)
+            base_config = types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                system_instruction=sys_inst,
+                max_output_tokens=8192,
+                thinking_config=types.ThinkingConfig(thinking_level="low", include_thoughts=False),
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            )
+            preferred_routing = ["gemini-4-hydrogen", "gemini-3.8-flash"] + [
+                m for m in DAILY_ROUTING if m not in ("gemini-4-hydrogen", "gemini-3.8-flash")
+            ]
+            effective_routing = build_effective_routing("SEARCH", preferred_routing, api_key=api_key)
+
+            final_text = ""
+            used_engine = ""
+
+            for candidate_model in effective_routing:
+                safe_config = sanitize_config_for_model(
+                    base_config,
+                    candidate_model,
+                    intent_type="SEARCH",
+                    explicit_grounding=True,
+                )
+                timeout_sec = _get_call_timeout("DIAGNOSIS", model_name=candidate_model)
+
+                async def _run_model(cfg):
+                    return await _execute_with_transient_retry(
+                        lambda c: client.aio.models.generate_content(
+                            model=candidate_model,
+                            contents=enhanced_prompt,
+                            config=c,
+                        ),
+                        model_name=candidate_model,
+                        config=cfg,
+                        timeout_sec=timeout_sec,
+                        tag="AgentStream",
+                    )
+
+                task = asyncio.create_task(_run_model(safe_config))
+                try:
+                    while not task.done():
+                        done_set, _ = await asyncio.wait({task}, timeout=15.0)
+                        if not done_set:
+                            yield ": heartbeat\n\n"
+                            await asyncio.sleep(0)
+                    response = task.result()
+                    clean_text = extract_clean_response_text(response)
+                    if clean_text and clean_text.strip():
+                        final_text = clean_text
+                        used_engine = candidate_model
+                        break
+                    record_model_error(candidate_model, api_key=api_key, is_rate_limit=False)
+                except _INTERACTION_API_ERRORS as e:
+                    kind = classify_api_error(e)
+                    if kind == "auth_fail":
+                        err_msg = "Invalid or revoked Gemini API Key." if is_en else "API Key 無效或已失效，請更新 Gemini API Key。"
+                        yield f'event: error\ndata: {json.dumps({"message": err_msg, "code": 401})}\n\n'
+                        return
+                    err_code = _get_api_error_status(e)
+                    has_grounding = any(
+                        getattr(t, "google_search", None) is not None
+                        for t in (getattr(safe_config, "tools", None) or [])
+                    )
+                    if err_code == 429 and has_grounding:
+                        try:
+                            ungrounded_cfg = copy.deepcopy(safe_config)
+                            ungrounded_cfg.tools = None
+                            retry_task = asyncio.create_task(_run_model(ungrounded_cfg))
+                            while not retry_task.done():
+                                done_set, _ = await asyncio.wait({retry_task}, timeout=15.0)
+                                if not done_set:
+                                    yield ": heartbeat\n\n"
+                                    await asyncio.sleep(0)
+                            retry_resp = retry_task.result()
+                            ungrounded_text = extract_clean_response_text(retry_resp)
+                            if ungrounded_text and ungrounded_text.strip():
+                                final_text = ungrounded_text
+                                used_engine = candidate_model
+                                break
+                        except Exception:
+                            pass
+                    if kind not in ("bad_request", "config_unsupported") and not (err_code == 429 and has_grounding):
+                        record_model_error(candidate_model, api_key=api_key, is_rate_limit=(err_code == 429))
+                    continue
+                except asyncio.CancelledError:
+                    if not task.done():
+                        task.cancel()
+                    raise
+                except Exception as e:
+                    logger.warning(f"[Agents Stream] Candidate {candidate_model} error: {e}")
+                    continue
+
+            if final_text:
+                yield f'event: text\ndata: {json.dumps({"text": final_text})}\n\n'
+                yield f'event: done\ndata: {json.dumps({"model_used": used_engine, "engine": used_engine, "raw_parts": [{"text": final_text}], "sources": []})}\n\n'
+            else:
+                err_msg = "Deep research models are temporarily unavailable." if is_en else "深度研究引擎暫時忙碌，請稍後再試。"
+                yield f'event: error\ndata: {json.dumps({"message": err_msg, "code": 503})}\n\n'
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"[Agents Stream] Unexpected error: {e}")
+            err_msg = "Deep research stream failed." if is_en else "深度研究串流發生錯誤，請稍後再試。"
+            yield f'event: error\ndata: {json.dumps({"message": err_msg, "code": 500})}\n\n'
+
+    return StreamingResponse(
+        _research_sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/interactions/{interaction_id}")
 async def get_interaction_status(
     interaction_id: str,
@@ -589,10 +738,10 @@ async def get_interaction_status(
             "engine": task.get("engine", "gemini-3.7-flash-fallback")
         }
 
-    # 正常 Antigravity 查詢
+    # 正常 Antigravity 查詢 (run_in_threadpool 避免阻塞 Event Loop)
     try:
         client = _get_agents_genai_client(api_key)
-        interaction = client.interactions.get(id=interaction_id)
+        interaction = await run_in_threadpool(client.interactions.get, id=interaction_id)
         raw_status = str(getattr(interaction, "status", getattr(interaction, "state", "completed"))).lower()
         if "progress" in raw_status or "running" in raw_status:
             normalized_status = "running"
@@ -643,7 +792,7 @@ async def get_interaction_status(
         raise
     except Exception as e:
         logger.error(f"[Agents] Failed to get interaction {interaction_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"獲取任務狀態失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail="獲取任務狀態失敗，請稍後重試")
 
 
 @router.post("/interactions/{interaction_id}/cancel")
@@ -685,7 +834,7 @@ async def cancel_interaction(
 
     try:
         client = _get_agents_genai_client(api_key)
-        client.interactions.cancel(id=interaction_id)
+        await run_in_threadpool(client.interactions.cancel, id=interaction_id)
         return {"status": "cancelled", "id": interaction_id}
     except _INTERACTION_API_ERRORS as e:
         status = _get_api_error_status(e)
@@ -702,4 +851,4 @@ async def cancel_interaction(
         raise
     except Exception as e:
         logger.error(f"[Agents] Failed to cancel interaction {interaction_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"取消任務失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail="取消任務失敗，請稍後重試")

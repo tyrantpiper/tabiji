@@ -263,14 +263,17 @@ export default function RemoveItemPreviewCard({
             )
 
             // 🛡️ 雙重全域 SWR 閉環刷新
-            if (userId) {
+            const hasValidTripId = Boolean(activeTripId && activeTripId !== "undefined" && activeTripId !== "null")
+            if (userId && hasValidTripId) {
                 await globalMutate([`/api/trips/${activeTripId}`, userId])
             }
-            await globalMutate((key) => {
-                if (typeof key === "string" && key.includes(activeTripId)) return true
-                if (Array.isArray(key) && typeof key[0] === "string" && key[0].includes(activeTripId)) return true
-                return false
-            })
+            if (hasValidTripId) {
+                await globalMutate((key) => {
+                    if (typeof key === "string" && key.includes(activeTripId)) return true
+                    if (Array.isArray(key) && typeof key[0] === "string" && key[0].includes(activeTripId)) return true
+                    return false
+                })
+            }
             await tripContextMutate()
 
             // 廣播自訂事件，通知地圖與其他未連動 SWR 的視圖

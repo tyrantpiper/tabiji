@@ -13,6 +13,7 @@ if sys.stdout and hasattr(sys.stdout, 'buffer') and 'pytest' not in sys.modules:
 
 import os
 import time
+import hmac
 import base64
 import binascii
 import json
@@ -228,7 +229,7 @@ async def lifespan(app: FastAPI):
     app.state.client = httpx.AsyncClient(
         timeout=httpx.Timeout(10.0, connect=5.0),
         limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
-        headers={"User-Agent": "RyanTravelApp-POI-Wiki/1.2"}
+        headers={"User-Agent": "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"}
     )
     print(f"[HTTPX] ✅ Global shared client ready")
 
@@ -263,17 +264,32 @@ async def lifespan(app: FastAPI):
             await app.state.client.aclose()
             print("[HTTPX] ✅ Shared client closed")
         
-        # 兼容性關閉舊的 HTTPX_CLIENT (Geocode Service)
+        # 兼容性關閉舊的 HTTPX_CLIENT (Geocode Service) 與共用的機票報價連線池
         await HTTPX_CLIENT.aclose()
-        print("[HTTPX] ✅ Legacy geocode pool closed")
+        from services.flight_pricing_service import close_flight_pricing_client
+        await close_flight_pricing_client()
+        print("[HTTPX] ✅ Legacy geocode & flight pricing pools closed")
     except Exception as e:
         print(f"⚠️ [Shutdown] Error releasing HTTPX resources: {e}")
 
 
+def _is_production_env() -> bool:
+    return (
+        os.getenv("ENV") == "production"
+        or os.getenv("NODE_ENV") == "production"
+        or os.getenv("PROD") == "1"
+    )
+
+
+_IS_PROD_STARTUP = _is_production_env()
+
 # 0. Initialize App
 app = FastAPI(
     title="Ryan's AI Travel Tool (BYOK Edition)",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url=None if _IS_PROD_STARTUP else "/docs",
+    redoc_url=None if _IS_PROD_STARTUP else "/redoc",
+    openapi_url=None if _IS_PROD_STARTUP else "/openapi.json",
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -381,6 +397,8 @@ app.add_middleware(
 
 @app.middleware("http")
 async def add_security_headers(request, call_next):
+    if _is_production_env() and request.url.path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -539,7 +557,8 @@ async def health_check_deep(request: Request):
             _deep_health_cache["payload"] = err_payload
             return JSONResponse(status_code=504, content={**err_payload, "cached": False})
         except Exception as e:
-            err_payload = {"status": "error", "detail": str(e)[:100]}
+            logger.error(f"Deep health check failed: {e}")
+            err_payload = {"status": "error", "detail": "Supabase health check failed"}
             _deep_health_cache["last_checked"] = time.time() - 30.0
             _deep_health_cache["status_code"] = 500
             _deep_health_cache["payload"] = err_payload
@@ -561,10 +580,22 @@ else:
 
 # --- 嚴謹的依賴注入 (Dependency Injection已移至頂層及 utils.deps) ---
 
-# [METRICS] Prometheus Metrics Endpoint (2026 Phase 1)
+# [METRICS] Prometheus Metrics Endpoint (2026 Phase 1 + Production Fail-Closed Secret Gate)
 @app.get("/metrics")
-async def metrics():
-    """📊 Prometheus Metrics Endpoint (Lazy Load)"""
+async def metrics(request: Request):
+    """📊 Prometheus Metrics Endpoint (Lazy Load + Fail-Closed in Production)"""
+    metrics_secret = (os.getenv("METRICS_SECRET") or "").strip()
+    is_prod = _is_production_env()
+    if is_prod or metrics_secret:
+        if not metrics_secret:
+            return Response("Not Found", status_code=404)
+        provided = (request.headers.get("x-metrics-secret") or "").strip()
+        if not provided:
+            auth_h = (request.headers.get("authorization") or "").strip()
+            if auth_h.lower().startswith("bearer "):
+                provided = auth_h[7:].strip()
+        if not provided or not hmac.compare_digest(provided, metrics_secret):
+            return Response("Unauthorized", status_code=401)
     try:
         from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -938,74 +969,17 @@ Employ constructive critical thinking to highlight pacing risks and actionable o
 
 async def _build_price_context(itinerary: dict, locale: str = "zh") -> str:
     """
-    [Phase 2B] Build real-time price context for AI chat.
-    Queries Travelpayouts for flight prices based on trip's flight info.
+    [Phase 2B + Wave 2.3] Build real-time price context for AI chat using shared
+    flight_pricing_service (shared AsyncClient + TTL cache + places2 IATA resolution).
     """
     try:
-        import httpx
-        import os
-        is_en = bool(locale and str(locale).strip().lower().startswith("en"))
-        flight_info = itinerary.get("flight_info", {})
-        outbound = flight_info.get("outbound", [])
-        if not outbound:
-            return ""
-        
-        first_leg = outbound[0] if isinstance(outbound, list) and len(outbound) > 0 else {}
-        origin = first_leg.get("dep_airport", "")
-        destination = first_leg.get("arr_airport", "")
-        
-        if not origin or not destination:
-            return ""
-        
-        tp_token = os.getenv("TP_API_TOKEN", "").strip()
-        if not tp_token:
-            return ""
-        
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                "https://api.travelpayouts.com/aviasales/v3/prices_for_dates",
-                params={
-                    "origin": origin.upper(),
-                    "destination": destination.upper(),
-                    "currency": "twd",
-                    "sorting": "price",
-                    "limit": 3,
-                },
-                headers={"X-Access-Token": tp_token},
-            )
-            if resp.status_code != 200:
-                return ""
-            
-            data = resp.json()
-            prices = data.get("data", [])
-            if not prices:
-                return ""
-            
-            if is_en:
-                lines = [f"\n\n💰 **Live Flight Fare Reference ({origin}->{destination}, TWD):**"]
-                for p in prices[:3]:
-                    transfers = p.get('transfers', 0)
-                    transfer_str = "Direct" if transfers == 0 else f"{transfers} stop(s)"
-                    lines.append(
-                        f"- {p.get('departure_at', '?')[:10]} | "
-                        f"{p.get('airline', '?')} | "
-                        f"TWD {p.get('price', '?'):,} | {transfer_str}"
-                    )
-                lines.append("(Live data via Travelpayouts, for reference only)")
-                return "\n".join(lines)
-
-            lines = [f"\n\n💰 **即時機票參考價格 ({origin}→{destination}, TWD):**"]
-            for p in prices[:3]:
-                transfers = p.get('transfers', 0)
-                transfer_str = "直飛" if transfers == 0 else f"{transfers}轉"
-                lines.append(
-                    f"- {p.get('departure_at', '?')[:10]} | "
-                    f"{p.get('airline', '?')} | "
-                    f"TWD {p.get('price', '?'):,} | {transfer_str}"
-                )
-            lines.append("（以上為 Travelpayouts 即時數據，僅供參考）")
-            return "\n".join(lines)
-    
+        from services.flight_pricing_service import build_flight_price_context
+        return await build_flight_price_context(
+            itinerary=itinerary,
+            locale=locale,
+            include_marker=False,
+            timeout=1.5,
+        )
     except Exception as e:
         print(f"⚠️ [Price Context] Failed: {e}")
         return ""
@@ -1367,7 +1341,10 @@ Please answer the user's question based on the live data above."""
         print(f"🔥 Chat Error: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="An internal error occurred. Please try again later." if is_en else "AI 對話服務發生內部錯誤，請稍後重試",
+        )
 
 
 def extract_search_query(user_msg: str, history: Optional[List[dict]] = None) -> str:
@@ -1540,6 +1517,7 @@ async def stream_chat_generator(
     system_instruction: Optional[str] = None,
     locale: str = "zh",
     trip_context_hint: Optional[str] = None,
+    itinerary_for_pricing: Optional[dict] = None,
 ):
     """
     SSE Generator for streaming AI responses
@@ -1565,6 +1543,18 @@ async def stream_chat_generator(
         return
     
     try:
+        # [Wave 2.3] 在 event: start 送出後限時 <= 1.5s 注入即時機票票價上下文 (0 TTFB 衝擊)
+        if isinstance(itinerary_for_pricing, dict) and itinerary_for_pricing:
+            try:
+                live_price_ctx = await asyncio.wait_for(
+                    _build_price_context(itinerary_for_pricing, locale=locale),
+                    timeout=1.5,
+                )
+                if live_price_ctx:
+                    message = f"{message}{live_price_ctx}"
+            except Exception:
+                pass
+
         # 初始化 Client (支援單元測試 mock main.genai.Client，正式環境共用連線池)
         client = _get_main_genai_client(api_key)
         
@@ -1817,36 +1807,45 @@ async def stream_chat_generator(
                     time_data = query_world_time(target_loc, locale=locale)
                     executed_world_time[target_loc] = time_data
 
-            # 執行搜尋策略 (優先使用提煉後之 search_query；若 3.1-flash-lite 明確判定無須搜網則跳過)
+            # 執行搜尋策略 (優先使用提煉後之 search_query；限制總擴充搜尋時間預算 <= 6.0s 並在二次重搜前發送 SSE 心跳)
             raw_search_results = []
             if not skip_web_search:
                 yield f'event: thinking\ndata: {json.dumps({"status": "searching", "query": search_query})}\n\n'
                 await asyncio.sleep(0)
+                search_deadline = time.monotonic() + 6.0
+                primary_budget = min(4.8, max(0.5, search_deadline - time.monotonic()))
                 try:
                     raw_search_results = await asyncio.wait_for(
                         execute_web_search(search_query, region=local_reg),
-                        timeout=8.0,
+                        timeout=primary_budget,
                     )
                 except Exception:
                     raw_search_results = []
 
                 if not raw_search_results and (local_q != search_query or global_q != search_query):
-                    try:
-                        local_results = await asyncio.wait_for(
-                            execute_web_search(local_q, region=local_reg, max_results=3),
-                            timeout=8.0,
-                        )
-                    except Exception:
+                    remaining_budget = search_deadline - time.monotonic()
+                    if remaining_budget > 0.6:
+                        yield ": heartbeat\n\n"
+                        await asyncio.sleep(0)
                         local_results = []
-                    await asyncio.sleep(0.15)
-                    try:
-                        global_results = await asyncio.wait_for(
-                            execute_web_search(global_q, region=global_reg, max_results=3),
-                            timeout=8.0,
-                        )
-                    except Exception:
                         global_results = []
-                    raw_search_results = local_results + global_results
+                        try:
+                            local_results = await asyncio.wait_for(
+                                execute_web_search(local_q, region=local_reg, max_results=3),
+                                timeout=min(2.5, max(0.4, search_deadline - time.monotonic())),
+                            )
+                        except Exception:
+                            local_results = []
+                        remaining_after_local = search_deadline - time.monotonic()
+                        if not local_results and remaining_after_local > 0.6:
+                            try:
+                                global_results = await asyncio.wait_for(
+                                    execute_web_search(global_q, region=global_reg, max_results=3),
+                                    timeout=max(0.4, remaining_after_local),
+                                )
+                            except Exception:
+                                global_results = []
+                        raw_search_results = local_results + global_results
 
             # 🛡️ AC-2: 雜訊黑名單過濾 (剔除政治/警察/研討會/電玩雜訊) 與網域分類
             cleaned_search_data = classify_and_filter_results(
@@ -2358,7 +2357,8 @@ Live geographic coordinates have been verified above. When recommending nearby r
         
     except Exception as e:
         print(f"🔥 Stream Error: {e}")
-        yield f'event: error\ndata: {json.dumps({"message": str(e), "code": 500})}\n\n'
+        safe_stream_err = "A temporary streaming error occurred. Please try again." if is_en_stream else "串流處理發生暫時性錯誤，請稍後重試"
+        yield f'event: error\ndata: {json.dumps({"message": safe_stream_err, "code": 500})}\n\n'
 
 
 
@@ -2424,7 +2424,7 @@ Output the summary directly without titles or extra formatting:"""
         print(f"🔥 摘要失敗：{e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Summarization failed: {str(e)}" if is_en else f"摘要失敗: {str(e)}",
+            detail="Summarization failed. Please try again later." if is_en else "摘要處理失敗，請稍後重試",
         )
 
 
@@ -2494,7 +2494,8 @@ async def test_gemini_api_key(request: Request, api_key: str = Depends(get_gemin
             raise HTTPException(status_code=503, detail=f"Gemini 服務暫時忙碌 ({err_code or 503})，請稍後重試")
         raise HTTPException(status_code=400, detail=f"API 測試失敗: {err_msg}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"金鑰測試伺服器錯誤: {str(e)}")
+        print(f"🔥 API Key test server error: {e}")
+        raise HTTPException(status_code=500, detail="金鑰測試發生伺服器內部錯誤，請稍後重試")
 
 @app.post("/api/chat/stream")
 @limiter.limit("20/minute")
@@ -2719,6 +2720,7 @@ Answer the user's question based on the reference material above while maintaini
             system_instruction=system_instruction_payload,
             locale=locale_val,
             trip_context_hint=trip_context_hint,
+            itinerary_for_pricing=body.current_itinerary,
         ),
         media_type="text/event-stream",
         headers={

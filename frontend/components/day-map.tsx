@@ -101,7 +101,15 @@ function useSearchHistory() {
     return { history, addToHistory, clearHistory }
 }
 
-// 路線規劃 Hook (使用後端 /api/route 代理)
+// 路線規劃模組級記憶體快取 (拒存 straight-line，避免切頁重掛載重複打 /api/route)
+const DAY_ROUTE_MEMORY_CACHE = new globalThis.Map<string, { route: GeoJSON.Feature; routeInfo: { distance: string; duration: string; source?: string } }>()
+const DAY_ROUTE_CACHE_MAX = 64
+
+export function __resetDayRouteCacheForTesting() {
+    DAY_ROUTE_MEMORY_CACHE.clear()
+}
+
+// 路線規劃 Hook (使用後端 /api/route 代理，內建 AbortController 與記憶體快取)
 function useRoute(markersKey: string, markers: MarkerData[], mode: string, optimize: boolean = false) {
     const { t } = useLanguage()
     const [route, setRoute] = useState<GeoJSON.Feature | null>(null)
@@ -115,61 +123,72 @@ function useRoute(markersKey: string, markers: MarkerData[], mode: string, optim
             return
         }
 
+        // 取得有效 markers
+        const stopsPayload = markers.map(m => ({ lat: m.lat, lng: m.lng, name: m.place }))
+        const validStops = stopsPayload.filter(s =>
+            s.lat && s.lng &&
+            typeof s.lat === 'number' && typeof s.lng === 'number' &&
+            s.lat !== 0 && s.lng !== 0
+        )
+
+        if (validStops.length < 2) {
+            debugWarn("⚠️ [Route Debug] 少於 2 個有效座標，跳過路線計算")
+            setRoute(null)
+            setRouteInfo(null)
+            setLoading(false)
+            return
+        }
+
+        // 檢測跨區域路線 (跨國/跨海) - 緯度差超過 5 度視為跨區域
+        const lats = validStops.map(s => s.lat)
+        const latSpan = Math.max(...lats) - Math.min(...lats)
+
+        if (latSpan > 5) {
+            debugWarn("⚠️ [Route Debug] 跨區域路線 (緯度差:", latSpan.toFixed(2), "度)，使用直線連接")
+            const straightLineRoute: GeoJSON.Feature = {
+                type: "Feature",
+                properties: {},
+                geometry: {
+                    type: "LineString",
+                    coordinates: validStops.map(s => [s.lng, s.lat])
+                }
+            }
+            setRoute(straightLineRoute)
+            setRouteInfo({
+                distance: t('map_cross_region'),
+                duration: t('map_includes_flight'),
+                source: "straight-line"
+            })
+            setLoading(false)
+            return
+        }
+
+        const coordSig = validStops.map(s => `${s.lng.toFixed(4)},${s.lat.toFixed(4)}`).join(';')
+        const cacheKey = `${mode}:${optimize ? '1' : '0'}:${coordSig}`
+        const cached = DAY_ROUTE_MEMORY_CACHE.get(cacheKey)
+        if (cached) {
+            setRoute(cached.route)
+            setRouteInfo(cached.routeInfo)
+            setLoading(false)
+            return
+        }
+
+        let isActive = true
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000)
+
         const fetchRoute = async () => {
             setLoading(true)
-
-            // 取得有效 markers
-            const stopsPayload = markers.map(m => ({ lat: m.lat, lng: m.lng, name: m.place }))
-
-            // 驗證座標有效性
-            const validStops = stopsPayload.filter(s =>
-                s.lat && s.lng &&
-                typeof s.lat === 'number' && typeof s.lng === 'number' &&
-                s.lat !== 0 && s.lng !== 0
-            )
-
-            if (validStops.length < 2) {
-                debugWarn("⚠️ [Route Debug] 少於 2 個有效座標，跳過路線計算")
-                setRoute(null)
-                setRouteInfo(null)
-                setLoading(false)
-                return
-            }
-
-            // 🆕 檢測跨區域路線 (跨國/跨海) - 緯度差超過 5 度視為跨區域
-            const lats = validStops.map(s => s.lat)
-            const latSpan = Math.max(...lats) - Math.min(...lats)
-
-            if (latSpan > 5) {
-                debugWarn("⚠️ [Route Debug] 跨區域路線 (緯度差:", latSpan.toFixed(2), "度)，使用直線連接")
-                // 🆕 繪製直線連接所有點 (虛線表示非步行路線)
-                const straightLineRoute: GeoJSON.Feature = {
-                    type: "Feature",
-                    properties: {},
-                    geometry: {
-                        type: "LineString",
-                        coordinates: validStops.map(s => [s.lng, s.lat])
-                    }
-                }
-                setRoute(straightLineRoute)
-                setRouteInfo({
-                    distance: t('map_cross_region'),
-                    duration: t('map_includes_flight'),
-                    source: "straight-line"
-                })
-                setLoading(false)
-                return
-            }
-
             try {
                 const res = await fetch(API.ROUTE, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        stops: validStops,  // 只傳送有效座標
+                        stops: validStops,
                         mode,
                         optimize
-                    })
+                    }),
+                    signal: controller.signal
                 })
 
                 if (!res.ok) {
@@ -179,26 +198,41 @@ function useRoute(markersKey: string, markers: MarkerData[], mode: string, optim
                 }
 
                 const data = await res.json()
+                if (!isActive || controller.signal.aborted) return
 
                 if (data.route) {
-                    setRoute(data.route)
-                    setRouteInfo({
+                    const info = {
                         distance: data.distance,
                         duration: data.duration,
                         source: data.source
-                    })
+                    }
+                    if (String(data.source || '').toLowerCase() !== 'straight-line') {
+                        DAY_ROUTE_MEMORY_CACHE.set(cacheKey, { route: data.route, routeInfo: info })
+                        if (DAY_ROUTE_MEMORY_CACHE.size > DAY_ROUTE_CACHE_MAX) {
+                            const oldestKey = DAY_ROUTE_MEMORY_CACHE.keys().next().value
+                            if (oldestKey !== undefined) DAY_ROUTE_MEMORY_CACHE.delete(oldestKey)
+                        }
+                    }
+                    setRoute(data.route)
+                    setRouteInfo(info)
                 }
             } catch (e) {
+                if (!isActive || (e as Error)?.name === 'AbortError') return
                 console.error("❌ [Route Debug] Fetch error:", e)
-                // 故障安全：清除路線但不崩潰
                 setRoute(null)
                 setRouteInfo(null)
             } finally {
-                setLoading(false)
+                clearTimeout(timeoutId)
+                if (isActive) setLoading(false)
             }
         }
 
         fetchRoute()
+        return () => {
+            isActive = false
+            clearTimeout(timeoutId)
+            controller.abort()
+        }
         // Note: Only use markersKey (stable string) as dependency, NOT markers array (recreated every render)
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [markersKey, mode, optimize])

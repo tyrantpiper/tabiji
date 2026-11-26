@@ -11,7 +11,7 @@ Handles Point of Interest related endpoints including:
 import json
 import re
 import asyncio
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, urljoin, urlunparse, unquote, parse_qsl, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Header, Query
 from fastapi.responses import StreamingResponse
@@ -213,6 +213,7 @@ Output in this EXACT JSON format ({lang_label}):
 
         wiki_task = enrich_poi_complete({
             "name": request.name,
+            "type": request.type or "",
             "wikidata_id": request.wikidata_id or "",
             "lat": request.lat,
             "lng": request.lng
@@ -358,6 +359,7 @@ async def enrich_poi(fastapi_req: Request, body: POIEnrichRequest):
     try:
         poi = {
             "name": body.name,
+            "type": body.type or "",
             "wikidata_id": body.wikidata_id or "",
             "lat": body.lat,
             "lng": body.lng
@@ -376,9 +378,11 @@ async def enrich_poi(fastapi_req: Request, body: POIEnrichRequest):
             "formatted": formatted
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 POI 整合失敗：{e}")
-        raise HTTPException(status_code=500, detail=f"POI 整合失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail="POI 整合失敗，請稍後重試")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -419,9 +423,11 @@ async def search_nearby_poi(
             "category": category,
             "pois": pois
         }
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 POI Search Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Nearby POI search temporarily unavailable")
 
 
 @router.post("/poi/recommend")
@@ -490,7 +496,10 @@ async def ai_recommend_poi(request: POIRecommendRequest):
         raise HTTPException(status_code=status_code, detail=detail)
     except Exception as e:
         print(f"🔥 POI Recommend Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="AI recommendation temporarily unavailable" if is_en else "AI 推薦暫時無法使用，請稍後重試",
+        )
 
 
 @router.get("/poi/categories")
@@ -615,35 +624,91 @@ async def ai_smart_search(request: SmartSearchRequest):
         raise HTTPException(status_code=status_code, detail=detail)
     except Exception as e:
         print(f"🔥 Smart Search Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Smart search failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Smart search temporarily unavailable")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Media Proxy (Phase 5.4)
+# Media Proxy (Phase 5.4 + Wave 2.2 Hardened Redirect & 11-Tier Width Alignment)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _MEDIA_PROXY_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 _MEDIA_PROXY_CSP = "script-src 'none'; frame-src 'none'; sandbox;"
+_MEDIA_PROXY_ALLOWED_HOSTS = frozenset({
+    "upload.wikimedia.org",
+    "thumb.wikimedia.org",
+    "commons.wikimedia.org",
+})
+_WIKIMEDIA_STD_WIDTHS = (20, 40, 60, 120, 250, 330, 500, 960, 1280, 1920, 3840)
+_MEDIA_PROXY_UA = "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"
+_THUMB_PX_RE = re.compile(r"(/thumb/.+/)(\d+)px-([^/?#]+)$")
+_THUMB_ORIG_RE = re.compile(r"^(/wikipedia/[^/]+)/thumb/([^/]+/[^/]+/[^/]+)/[^/]+$")
 
 
-@router.get("/poi/media-proxy")
-@limiter.limit("30/minute")
-async def media_proxy(request: Request, url: str):
-    """
-    🖼️ 媒體代理端點 - 解決維基百科圖片的 CORS 與 Referrer 限制
-    防禦：嚴格 upload.wikimedia.org 主機白名單、阻斷 SVG/SVGZ 與非圖片 MIME、
-    10 MB Content-Length 預檢與串流上限、Vercel Next.js 級別 sandbox CSP。
-    """
-    raw_url = (url or "").strip()
-    if not raw_url or any(ord(ch) < 32 or ord(ch) == 127 for ch in raw_url):
+def _snap_wikimedia_width(width: int) -> int:
+    for std_w in _WIKIMEDIA_STD_WIDTHS:
+        if width <= std_w:
+            return std_w
+    return _WIKIMEDIA_STD_WIDTHS[-1]
+
+
+def _align_wikimedia_thumb_width(raw_url: str) -> str:
+    parsed = urlparse(raw_url)
+    new_path = parsed.path
+    new_query = parsed.query
+
+    m = _THUMB_PX_RE.search(parsed.path)
+    if m:
+        orig_w = int(m.group(2))
+        snapped = _snap_wikimedia_width(orig_w)
+        if snapped != orig_w:
+            new_path = f"{parsed.path[:m.start()]}{m.group(1)}{snapped}px-{m.group(3)}"
+
+    if (parsed.hostname or "").lower() == "commons.wikimedia.org" and parsed.query:
+        q_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        updated_pairs = []
+        changed = False
+        for k, v in q_pairs:
+            if k.lower() == "width" and v.isdigit():
+                snapped = str(_snap_wikimedia_width(int(v)))
+                if snapped != v:
+                    changed = True
+                updated_pairs.append((k, snapped))
+            else:
+                updated_pairs.append((k, v))
+        if changed:
+            new_query = urlencode(updated_pairs)
+
+    if new_path != parsed.path or new_query != parsed.query:
+        return urlunparse((parsed.scheme, parsed.netloc, new_path, parsed.params, new_query, ""))
+    return raw_url
+
+
+def _derive_original_wikimedia_url(thumb_url: str) -> Optional[str]:
+    parsed = urlparse(thumb_url)
+    host = (parsed.hostname or "").lower()
+    if host not in ("upload.wikimedia.org", "thumb.wikimedia.org"):
+        return None
+    m = _THUMB_ORIG_RE.match(parsed.path)
+    if not m:
+        return None
+    orig_path = f"{m.group(1)}/{m.group(2)}"
+    decoded_orig = unquote(unquote(orig_path)).rstrip("/").lower()
+    if decoded_orig.endswith((".svg", ".svgz")):
+        return None
+    return urlunparse(("https", "upload.wikimedia.org", orig_path, "", "", ""))
+
+
+def _validate_media_proxy_url(candidate: str) -> str:
+    clean = (candidate or "").strip()
+    if not clean or any(ord(ch) < 32 or ord(ch) == 127 for ch in clean):
         raise HTTPException(status_code=400, detail="Invalid media source")
     try:
-        parsed = urlparse(raw_url)
+        parsed = urlparse(clean)
         port = parsed.port
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid media source")
     if (
         parsed.scheme.lower() != "https"
-        or (parsed.hostname or "").lower() != "upload.wikimedia.org"
+        or (parsed.hostname or "").lower() not in _MEDIA_PROXY_ALLOWED_HOSTS
         or parsed.username is not None
         or parsed.password is not None
         or port not in (None, 443)
@@ -656,13 +721,30 @@ async def media_proxy(request: Request, url: str):
     if decoded_path.endswith((".svg", ".svgz")):
         raise HTTPException(status_code=415, detail="Unsupported media type: SVG is not allowed")
 
+    return clean
+
+
+@router.get("/poi/media-proxy")
+@limiter.limit("30/minute")
+async def media_proxy(request: Request, url: str):
+    """
+    🖼️ 媒體代理端點 - 解決維基百科圖片的 CORS 與 Referrer 限制
+    防禦：嚴格 3 主機白名單 (upload/thumb/commons.wikimedia.org)、手動 2 跳 SSRF 安全轉址、
+    Wikimedia 11 階標準縮圖寬度對齊與 404 原檔單次回退、阻斷 SVG/SVGZ 與非圖片 MIME、
+    10 MB Content-Length 預檢與串流上限、Vercel Next.js 級別 sandbox CSP。
+    """
+    validated_initial = _validate_media_proxy_url(url)
+    cur_url = _align_wikimedia_thumb_width(validated_initial)
+    cur_url = _validate_media_proxy_url(cur_url)
+
     headers = {
-        "User-Agent": "RyanTravelApp/1.2 (https://www.tabijiapp.com)",
+        "User-Agent": _MEDIA_PROXY_UA,
         "Referer": "https://www.wikipedia.org/",
     }
     timeout = httpx.Timeout(10.0, connect=5.0, read=15.0, write=5.0, pool=5.0)
     client = create_safe_client(follow_redirects=False, timeout=timeout)
     upstream_resp: Optional[httpx.Response] = None
+
     async def _cleanup_upstream() -> None:
         try:
             if upstream_resp is not None:
@@ -671,8 +753,39 @@ async def media_proxy(request: Request, url: str):
             await client.aclose()
 
     try:
-        req = client.build_request("GET", raw_url, headers=headers)
-        upstream_resp = await client.send(req, stream=True)
+        tried_original_fallback = False
+        redirect_hops = 0
+        max_redirect_hops = 2
+
+        while True:
+            if not await is_safe_url_async(cur_url):
+                raise HTTPException(status_code=400, detail="Invalid media source")
+
+            req = client.build_request("GET", cur_url, headers=headers)
+            upstream_resp = await client.send(req, stream=True)
+
+            if upstream_resp.status_code in (301, 302, 303, 307, 308):
+                loc = (upstream_resp.headers.get("location") or upstream_resp.headers.get("Location") or "").strip()
+                await upstream_resp.aclose()
+                upstream_resp = None
+                if not loc or redirect_hops >= max_redirect_hops:
+                    raise HTTPException(status_code=502, detail="Upstream media unavailable")
+                next_url = urljoin(cur_url, loc)
+                cur_url = _validate_media_proxy_url(next_url)
+                cur_url = _validate_media_proxy_url(_align_wikimedia_thumb_width(cur_url))
+                redirect_hops += 1
+                continue
+
+            if upstream_resp.status_code == 404 and not tried_original_fallback:
+                orig_url = _derive_original_wikimedia_url(cur_url)
+                if orig_url and orig_url != cur_url:
+                    await upstream_resp.aclose()
+                    upstream_resp = None
+                    tried_original_fallback = True
+                    cur_url = _validate_media_proxy_url(orig_url)
+                    continue
+
+            break
 
         if upstream_resp.status_code != 200:
             raise HTTPException(status_code=502, detail="Upstream media unavailable")
@@ -729,6 +842,7 @@ async def media_proxy(request: Request, url: str):
         stream_image(),
         media_type=media_type,
         headers={
+            "Cache-Control": "public, max-age=86400, s-maxage=604800",
             "Content-Security-Policy": _MEDIA_PROXY_CSP,
             "X-Content-Type-Options": "nosniff",
         },

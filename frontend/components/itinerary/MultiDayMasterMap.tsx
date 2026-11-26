@@ -82,8 +82,8 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
     const [roadRoutesByDay, setRoadRoutesByDay] = useState<Record<number, [number, number][]>>({})
     // 交通模式狀態 (預設 'walk')
     const [mode, setMode] = useState<'walk' | 'drive' | 'transit'>('walk')
-    // 模式二級快取引用 (杜絕跨模式軌跡混雜與重複請求)
-    const modeCacheRef = useRef<Record<string, Record<number, [number, number][]>>>({
+    // 模式二級快取引用 (以座標簽章為鍵，杜絕跨模式軌跡混雜與重複請求，並拒絕寫入 straight-line)
+    const modeCacheRef = useRef<Record<string, Record<string, [number, number][]>>>({
         walk: {},
         drive: {},
         transit: {}
@@ -327,18 +327,27 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
     const [mapillaryViewerOpen, setMapillaryViewerOpen] = useState(false)
     const [mapillaryTarget, setMapillaryTarget] = useState<{ lat: number; lng: number } | null>(null)
 
-    // 切換交通模式 (帶相機鎖釋放與二級快取極速載入)
+    // 切換交通模式 (帶相機鎖釋放與座標簽章二級快取極速載入)
     const handleModeChange = useCallback((newMode: 'walk' | 'drive' | 'transit') => {
         if (mode === newMode) return
         if (isTouring || isFlying) cancelFlight()
         setMode(newMode)
-        const cached = modeCacheRef.current[newMode]
-        if (cached && Object.keys(cached).length > 0) {
-            setRoadRoutesByDay(cached)
-        } else {
-            setRoadRoutesByDay({})
+        const modeCache = modeCacheRef.current[newMode] || {}
+        const hydrated: Record<number, [number, number][]> = {}
+        if (trip?.days) {
+            for (const dayPlan of trip.days) {
+                const acts: Activity[] = dayPlan.activities || (dayPlan as { items?: Activity[] }).items || []
+                const sig = acts
+                    .filter((a: Activity) => a.category !== 'header' && !isNaN(Number(a.lat)) && !isNaN(Number(a.lng)) && Number(a.lat) !== 0)
+                    .map((a: Activity) => `${Number(a.lng).toFixed(4)},${Number(a.lat).toFixed(4)}`)
+                    .join(';')
+                if (sig && modeCache[sig]) {
+                    hydrated[dayPlan.day] = modeCache[sig]
+                }
+            }
         }
-    }, [mode, isTouring, isFlying, cancelFlight])
+        setRoadRoutesByDay(hydrated)
+    }, [mode, trip, isTouring, isFlying, cancelFlight])
 
     // GPS 定位到我 (帶相機鎖釋放、高精度防禦與平滑 flyTo)
     const handleLocateMe = useCallback(() => {
@@ -406,30 +415,81 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
         return days.length > 0 ? days : [1]
     }, [dayTabs])
 
-    // 5. 兩階段漸進式路網請求 (獨立並行非同步載入 + 抵達即刻渲染)
+    // 4.5 穩定座標指紋（避免 SWR 背景重抓相同行程時觸發無謂路線請求風暴）
+    const dayRouteSpecs = useMemo(() => {
+        if (!trip || !trip.days || trip.days.length === 0) return []
+        return trip.days
+            .map((dayPlan) => {
+                const acts: Activity[] = dayPlan.activities || (dayPlan as { items?: Activity[] }).items || []
+                const validDayStops = acts
+                    .filter((a: Activity) => a.category !== 'header' && !isNaN(Number(a.lat)) && !isNaN(Number(a.lng)) && Number(a.lat) !== 0)
+                    .map((a: Activity) => ({
+                        lat: Number(a.lat),
+                        lng: Number(a.lng),
+                        name: a.place || a.place_name || undefined
+                    }))
+                const coordSignature = validDayStops
+                    .map((s) => `${s.lng.toFixed(4)},${s.lat.toFixed(4)}`)
+                    .join(';')
+                return {
+                    dayNum: dayPlan.day,
+                    validDayStops,
+                    coordSignature,
+                }
+            })
+            .filter((spec) => spec.validDayStops.length >= 2)
+    }, [trip])
+
+    const routeCoordsFingerprint = useMemo(
+        () => dayRouteSpecs.map((spec) => `${spec.dayNum}:${spec.coordSignature}`).join('|'),
+        [dayRouteSpecs]
+    )
+    const dayRouteSpecsRef = useRef(dayRouteSpecs)
+    dayRouteSpecsRef.current = dayRouteSpecs
+
+    // 5. 兩階段漸進式路網請求 (快取優先 + 穩定指紋依賴 + 併發上限 2 防 OSRM 429 洪峰)
     useEffect(() => {
-        if (!trip || !trip.days || trip.days.length === 0) return
+        const specs = dayRouteSpecsRef.current
+        if (!routeCoordsFingerprint || specs.length === 0) return
 
         let isMounted = true
         const globalController = new AbortController()
+        if (!modeCacheRef.current[mode]) {
+            modeCacheRef.current[mode] = {}
+        }
+        const modeCache = modeCacheRef.current[mode]
 
-        const fetchSingleDayRoute = async (dayPlan: (typeof trip.days)[0]) => {
-            const dayNum = dayPlan.day
-            const acts: Activity[] = dayPlan.activities || (dayPlan as { items?: Activity[] }).items || []
-            const validDayStops = acts
-                .filter((a: Activity) => a.category !== 'header' && !isNaN(Number(a.lat)) && !isNaN(Number(a.lng)) && Number(a.lat) !== 0)
-                .map((a: Activity) => ({
-                    lat: Number(a.lat),
-                    lng: Number(a.lng),
-                    name: a.place || a.place_name || undefined
-                }))
+        const cachedHydration: Record<number, [number, number][]> = {}
+        const pendingSpecs: typeof specs = []
 
-            if (validDayStops.length < 2) return
+        for (const spec of specs) {
+            const cachedCoords = modeCache[spec.coordSignature]
+            if (cachedCoords && cachedCoords.length >= 2) {
+                cachedHydration[spec.dayNum] = cachedCoords
+            } else {
+                pendingSpecs.push(spec)
+            }
+        }
+
+        if (Object.keys(cachedHydration).length > 0) {
+            setRoadRoutesByDay((prev) => ({
+                ...prev,
+                ...cachedHydration,
+            }))
+        }
+
+        if (pendingSpecs.length === 0) {
+            return () => {
+                isMounted = false
+                globalController.abort()
+            }
+        }
+
+        const fetchSingleDayRoute = async (spec: (typeof specs)[number]) => {
+            if (!isMounted || globalController.signal.aborted) return
 
             const dayController = new AbortController()
             const timeoutId = setTimeout(() => dayController.abort(), 10000)
-
-            // 綁定組件卸載全域訊號
             const onGlobalAbort = () => dayController.abort()
             globalController.signal.addEventListener('abort', onGlobalAbort, { once: true })
 
@@ -438,7 +498,7 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        stops: validDayStops,
+                        stops: spec.validDayStops,
                         mode: mode,
                         optimize: false
                     }),
@@ -448,17 +508,19 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
                 if (res.ok && isMounted) {
                     const data = await res.json()
                     const coords = data?.route?.geometry?.coordinates
+                    const isStraightFallback = String(data?.source || '').toLowerCase() === 'straight-line'
                     if (coords && Array.isArray(coords) && isMounted) {
-                        // 寫入二級快取
-                        if (!modeCacheRef.current[mode]) {
-                            modeCacheRef.current[mode] = {}
+                        // 拒絕將 straight-line 降級結果寫入二級快取
+                        if (!isStraightFallback) {
+                            if (!modeCacheRef.current[mode]) {
+                                modeCacheRef.current[mode] = {}
+                            }
+                            modeCacheRef.current[mode][spec.coordSignature] = coords
                         }
-                        modeCacheRef.current[mode][dayNum] = coords
 
-                        // 單天抵達立即更新，消滅序列 Waterfall 延遲
                         setRoadRoutesByDay(prev => ({
                             ...prev,
-                            [dayNum]: coords
+                            [spec.dayNum]: coords
                         }))
                     }
                 }
@@ -470,16 +532,25 @@ function MultiDayMasterMapComponent({ trip, onSelectDay, onScrollToDay, onAddPOI
             }
         }
 
-        // 各天獨立併發啟動
-        trip.days.forEach(dayPlan => {
-            fetchSingleDayRoute(dayPlan)
-        })
+        // 限制併發上限為 2，根除 10+ 併發請求觸發 OSRM 429 與 10s Abort 超時
+        const MAX_CONCURRENCY = 2
+        let cursor = 0
+        const runWorker = async () => {
+            while (isMounted && !globalController.signal.aborted && cursor < pendingSpecs.length) {
+                const nextSpec = pendingSpecs[cursor++]
+                await fetchSingleDayRoute(nextSpec)
+            }
+        }
+        const workerCount = Math.min(MAX_CONCURRENCY, pendingSpecs.length)
+        for (let w = 0; w < workerCount; w += 1) {
+            void runWorker()
+        }
 
         return () => {
             isMounted = false
             globalController.abort()
         }
-    }, [trip, mode])
+    }, [routeCoordsFingerprint, mode])
 
     // 6. 安全縮放聚焦 (Fit Bounds)
     const fitMapToBounds = useCallback((targetMap: MapRef | null, resetBearingPitch = false) => {

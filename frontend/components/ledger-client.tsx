@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { Loader2 } from "lucide-react"
 import { API_HOST } from "@/lib/api"
 
@@ -170,11 +171,14 @@ export function LedgerClient({ code }: { code: string }) {
                 <div className="mt-12 mb-6 pt-6 border-t border-slate-100 text-center">
                     <p className="text-sm font-medium text-slate-900 mb-1">🤖 想知道怎麼分最準確嗎？</p>
                     <p className="text-xs text-slate-500 mb-4 transition-colors">
-                        使用 Ryan Travel App 的「AI 一鍵精算」功能
+                        使用 Tabiji 的「AI 一鍵精算」功能
                     </p>
-                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-full text-xs font-bold hover:bg-indigo-100 transition-colors cursor-pointer">
+                    <Link
+                        href="/"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-full text-xs font-bold hover:bg-indigo-100 transition-colors cursor-pointer"
+                    >
                         了解更多
-                    </div>
+                    </Link>
                 </div>
             </div>
         </div>

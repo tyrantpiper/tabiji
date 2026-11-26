@@ -25,6 +25,7 @@ import jwt
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Request, HTTPException, Depends, Header, Query
 from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from utils.deps import get_verified_user, get_supabase, get_session_secret
 
@@ -762,28 +763,32 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         if not supabase:
             return {"jsonrpc": "2.0", "id": req_id, "result": format_mcp_tool_result("資料庫連線不可用", is_error=True)}
         
-        owned_res = None
-        try:
-            owned_res = supabase.table("itineraries").select("id, title, start_date, end_date, created_by, user_id, content").or_(f"created_by.eq.{user_id},user_id.eq.{user_id}").execute()
-        except Exception as e:
-            logger.warning(f"[MCP] Failed to fetch owned itineraries for user {user_id}: {e}")
-
-        member_trip_ids = []
-        try:
-            mem_res = supabase.table("trip_members").select("itinerary_id").eq("user_id", user_id).execute()
-            if mem_res and mem_res.data:
-                member_trip_ids = [m["itinerary_id"] for m in mem_res.data if m.get("itinerary_id")]
-        except Exception as e:
-            logger.warning(f"[MCP] Failed to fetch member trip ids for user {user_id}: {e}")
-
-        collab_trips = []
-        if member_trip_ids:
+        def _list_trips_sync():
+            o_res = None
             try:
-                collab_res = supabase.table("itineraries").select("id, title, start_date, end_date, created_by, user_id, content").in_("id", member_trip_ids).execute()
-                if collab_res and collab_res.data:
-                    collab_trips = collab_res.data
+                o_res = supabase.table("itineraries").select("id, title, start_date, end_date, created_by, user_id, content").or_(f"created_by.eq.{user_id},user_id.eq.{user_id}").execute()
             except Exception as e:
-                logger.warning(f"[MCP] Failed to fetch collab trips for user {user_id}: {e}")
+                logger.warning(f"[MCP] Failed to fetch owned itineraries for user {user_id}: {e}")
+
+            m_ids = []
+            try:
+                mem_res = supabase.table("trip_members").select("itinerary_id").eq("user_id", user_id).execute()
+                if mem_res and mem_res.data:
+                    m_ids = [m["itinerary_id"] for m in mem_res.data if m.get("itinerary_id")]
+            except Exception as e:
+                logger.warning(f"[MCP] Failed to fetch member trip ids for user {user_id}: {e}")
+
+            c_trips = []
+            if m_ids:
+                try:
+                    collab_res = supabase.table("itineraries").select("id, title, start_date, end_date, created_by, user_id, content").in_("id", m_ids).execute()
+                    if collab_res and collab_res.data:
+                        c_trips = collab_res.data
+                except Exception as e:
+                    logger.warning(f"[MCP] Failed to fetch collab trips for user {user_id}: {e}")
+            return o_res, c_trips
+
+        owned_res, collab_trips = await run_in_threadpool(_list_trips_sync)
 
         all_trips_dict = {}
         if owned_res and owned_res.data:
@@ -826,7 +831,9 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
 
         trip_res = None
         try:
-            trip_res = supabase.table("itineraries").select("id, created_by, user_id, title, start_date, end_date, content").eq("id", trip_id).execute()
+            trip_res = await run_in_threadpool(
+                lambda: supabase.table("itineraries").select("id, created_by, user_id, title, start_date, end_date, content").eq("id", trip_id).execute()
+            )
         except Exception as e:
             logger.warning(f"[MCP] Failed to fetch trip {trip_id}: {e}")
 
@@ -838,7 +845,9 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         if owner_id != user_id:
             is_collab = False
             try:
-                mem_chk = supabase.table("trip_members").select("id, user_id").eq("itinerary_id", trip_id).eq("user_id", user_id).execute()
+                mem_chk = await run_in_threadpool(
+                    lambda: supabase.table("trip_members").select("id, user_id").eq("itinerary_id", trip_id).eq("user_id", user_id).execute()
+                )
                 if mem_chk and mem_chk.data:
                     is_collab = any(str(m.get("user_id") or "") == user_id for m in mem_chk.data)
             except Exception:
@@ -863,10 +872,12 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
 
         items_res = None
         try:
-            q = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip_id)
-            if day_number is not None:
-                q = q.eq("day_number", day_number)
-            items_res = q.order("day_number").order("time_slot").order("sort_order").execute()
+            def _fetch_mcp_items():
+                q = supabase.table("itinerary_items").select("*").eq("itinerary_id", trip_id)
+                if day_number is not None:
+                    q = q.eq("day_number", day_number)
+                return q.order("day_number").order("time_slot").order("sort_order").execute()
+            items_res = await run_in_threadpool(_fetch_mcp_items)
         except Exception as e:
             logger.warning(f"[MCP] Failed to fetch itinerary items for {trip_id}: {e}")
             items_res = None
@@ -958,7 +969,9 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         # 租戶邊界查詢 (防範 IDOR 與 BOLA)
         trip_res = None
         try:
-            trip_res = supabase.table("itineraries").select("id, created_by, user_id, title, start_date, end_date, content").eq("id", trip_id).execute()
+            trip_res = await run_in_threadpool(
+                lambda: supabase.table("itineraries").select("id, created_by, user_id, title, start_date, end_date, content").eq("id", trip_id).execute()
+            )
         except Exception as e:
             logger.warning(f"[MCP] Failed to fetch trip {trip_id}: {e}")
 
@@ -975,7 +988,9 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
         if not is_owner:
             is_collab = False
             try:
-                mem_chk = supabase.table("trip_members").select("id, user_id").eq("itinerary_id", trip_id).eq("user_id", user_id).execute()
+                mem_chk = await run_in_threadpool(
+                    lambda: supabase.table("trip_members").select("id, user_id").eq("itinerary_id", trip_id).eq("user_id", user_id).execute()
+                )
                 if mem_chk and mem_chk.data:
                     # 嚴格校驗 user_id 吻合，防範泛用 Mock 洩漏或假陽性
                     is_collab = any(str(m.get("user_id") or "") == user_id for m in mem_chk.data)
@@ -1036,43 +1051,47 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
             return bool(res_obj.data)
 
         if action == "remove":
-            removed_names = []
-            if target_item_id:
-                try:
-                    q = supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("id", target_item_id)
-                    if not is_owner:
-                        q = q.eq("is_private", False)
-                    res = q.execute()
-                    if rows_were_affected(res):
-                        name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or target_item_id
-                        removed_names.append(name)
-                except Exception as e:
-                    logger.warning(f"[MCP] Delete by item_id {target_item_id} failed: {e}")
-            else:
-                for p in raw_places:
-                    p_id = p.get("item_id")
-                    pn = str(p.get("place_name", "")).strip()
-                    if p_id and is_valid_uuid(p_id):
-                        try:
-                            q = supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("id", p_id)
-                            if not is_owner:
-                                q = q.eq("is_private", False)
-                            res = q.execute()
-                            if rows_were_affected(res):
-                                name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or pn or p_id
-                                removed_names.append(name)
-                        except Exception:
-                            pass
-                    elif pn:
-                        try:
-                            q = supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("day_number", day_idx).eq("place_name", pn)
-                            if not is_owner:
-                                q = q.eq("is_private", False)
-                            res = q.execute()
-                            if rows_were_affected(res):
-                                removed_names.append(pn)
-                        except Exception:
-                            pass
+            def _remove_items_sync():
+                r_names = []
+                if target_item_id:
+                    try:
+                        q = supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("id", target_item_id)
+                        if not is_owner:
+                            q = q.eq("is_private", False)
+                        res = q.execute()
+                        if rows_were_affected(res):
+                            name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or target_item_id
+                            r_names.append(name)
+                    except Exception as e:
+                        logger.warning(f"[MCP] Delete by item_id {target_item_id} failed: {e}")
+                else:
+                    for p in raw_places:
+                        p_id = p.get("item_id")
+                        pn = str(p.get("place_name", "")).strip()
+                        if p_id and is_valid_uuid(p_id):
+                            try:
+                                q = supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("id", p_id)
+                                if not is_owner:
+                                    q = q.eq("is_private", False)
+                                res = q.execute()
+                                if rows_were_affected(res):
+                                    name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or pn or p_id
+                                    r_names.append(name)
+                            except Exception:
+                                pass
+                        elif pn:
+                            try:
+                                q = supabase.table("itinerary_items").delete().eq("itinerary_id", trip_id).eq("day_number", day_idx).eq("place_name", pn)
+                                if not is_owner:
+                                    q = q.eq("is_private", False)
+                                res = q.execute()
+                                if rows_were_affected(res):
+                                    r_names.append(pn)
+                            except Exception:
+                                pass
+                return r_names
+
+            removed_names = await run_in_threadpool(_remove_items_sync)
 
             if not removed_names:
                 return {
@@ -1098,7 +1117,9 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                     return cached_update_anchor
                 existing_trip_items = []
                 try:
-                    curr_items = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng, sort_order").eq("itinerary_id", trip_id).order("sort_order", desc=True).execute()
+                    curr_items = await run_in_threadpool(
+                        lambda: supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng, sort_order").eq("itinerary_id", trip_id).order("sort_order", desc=True).execute()
+                    )
                     if curr_items and isinstance(curr_items.data, list):
                         existing_trip_items = curr_items.data
                 except Exception:
@@ -1179,10 +1200,12 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                 up_data = await build_update_payload(single_place, has_id_selector=True)
                 if up_data:
                     try:
-                        q = supabase.table("itinerary_items").update(up_data).eq("itinerary_id", trip_id).eq("id", target_item_id)
-                        if not is_owner:
-                            q = q.eq("is_private", False)
-                        res = q.execute()
+                        def _upd_by_id():
+                            q = supabase.table("itinerary_items").update(up_data).eq("itinerary_id", trip_id).eq("id", target_item_id)
+                            if not is_owner:
+                                q = q.eq("is_private", False)
+                            return q.execute()
+                        res = await run_in_threadpool(_upd_by_id)
                         if rows_were_affected(res):
                             name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or str(single_place.get("place_name") or target_item_id)
                             updated_names.append(name)
@@ -1197,10 +1220,12 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                     if up_data:
                         if has_id:
                             try:
-                                q = supabase.table("itinerary_items").update(up_data).eq("itinerary_id", trip_id).eq("id", p_id)
-                                if not is_owner:
-                                    q = q.eq("is_private", False)
-                                res = q.execute()
+                                def _upd_loop_id(_p_id=p_id, _up=up_data):
+                                    q = supabase.table("itinerary_items").update(_up).eq("itinerary_id", trip_id).eq("id", _p_id)
+                                    if not is_owner:
+                                        q = q.eq("is_private", False)
+                                    return q.execute()
+                                res = await run_in_threadpool(_upd_loop_id)
                                 if rows_were_affected(res):
                                     name = (res.data[0].get("place_name") if (isinstance(res.data, list) and res.data) else "") or pn or p_id
                                     updated_names.append(name)
@@ -1208,10 +1233,12 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                                 pass
                         elif pn:
                             try:
-                                q = supabase.table("itinerary_items").update(up_data).eq("itinerary_id", trip_id).eq("day_number", day_idx).eq("place_name", pn)
-                                if not is_owner:
-                                    q = q.eq("is_private", False)
-                                res = q.execute()
+                                def _upd_loop_name(_pn=pn, _up=up_data):
+                                    q = supabase.table("itinerary_items").update(_up).eq("itinerary_id", trip_id).eq("day_number", day_idx).eq("place_name", _pn)
+                                    if not is_owner:
+                                        q = q.eq("is_private", False)
+                                    return q.execute()
+                                res = await run_in_threadpool(_upd_loop_name)
                                 if rows_were_affected(res):
                                     updated_names.append(pn)
                             except Exception:
@@ -1240,7 +1267,9 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
             curr_items = None
             existing_trip_items = []
             try:
-                curr_items = supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng, sort_order").eq("itinerary_id", trip_id).order("sort_order", desc=True).execute()
+                curr_items = await run_in_threadpool(
+                    lambda: supabase.table("itinerary_items").select("day_number, place_name, location_lat, location_lng, sort_order").eq("itinerary_id", trip_id).order("sort_order", desc=True).execute()
+                )
                 if curr_items and isinstance(curr_items.data, list):
                     existing_trip_items = curr_items.data
             except Exception:
@@ -1332,19 +1361,24 @@ async def handle_mcp_rpc(request: Request, authorization: Optional[str] = Header
                 items_to_insert.append(item_data)
 
             if items_to_insert:
-                try:
-                    res = supabase.table("itinerary_items").insert(items_to_insert).execute()
-                    if res and res.data:
-                        inserted_names.extend(it["place_name"] for it in items_to_insert)
-                except Exception as batch_err:
-                    logger.warning(f"[MCP] Batch insert failed, falling back to single insert: {batch_err}")
-                    for item_data in items_to_insert:
-                        try:
-                            res = supabase.table("itinerary_items").insert(item_data).execute()
-                            if res and res.data:
-                                inserted_names.append(item_data["place_name"])
-                        except Exception as ins_err:
-                            logger.error(f"Failed to insert itinerary item {item_data['place_name']}: {ins_err}")
+                def _insert_mcp_items():
+                    ins_names = []
+                    try:
+                        res = supabase.table("itinerary_items").insert(items_to_insert).execute()
+                        if res and res.data:
+                            ins_names.extend(it["place_name"] for it in items_to_insert)
+                    except Exception as batch_err:
+                        logger.warning(f"[MCP] Batch insert failed, falling back to single insert: {batch_err}")
+                        for item_data in items_to_insert:
+                            try:
+                                res = supabase.table("itinerary_items").insert(item_data).execute()
+                                if res and res.data:
+                                    ins_names.append(item_data["place_name"])
+                            except Exception as ins_err:
+                                logger.error(f"Failed to insert itinerary item {item_data['place_name']}: {ins_err}")
+                    return ins_names
+
+                inserted_names.extend(await run_in_threadpool(_insert_mcp_items))
 
             first_place = inserted_names[0] if inserted_names else "熱門景點"
             from routers.affiliate import build_affiliate_url

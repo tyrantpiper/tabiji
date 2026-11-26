@@ -269,6 +269,172 @@ export default {
       }
     }
 
+    // 🖼️ 2.6 邊緣圖片代理快取：GET /api/poi/media-proxy (7 天 TTL，嚴格僅快取 200 image/* 非 SVG 並保留 sandbox CSP)
+    if (pathname === '/api/poi/media-proxy' && request.method === 'GET') {
+      try {
+        const mediaTarget = (url.searchParams.get('url') || '').trim();
+        if (mediaTarget) {
+          const cache = caches.default;
+          const mediaCacheKey = `https://cache.tabijiapp.com/api/poi/media-proxy?v=1&url=${encodeURIComponent(mediaTarget)}`;
+          const cachedMedia = await cache.match(mediaCacheKey);
+          if (cachedMedia) {
+            const hitHeaders = new Headers(cachedMedia.headers);
+            hitHeaders.set('X-Edge-Cache', 'HIT');
+            hitHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
+            hitHeaders.set('X-Content-Type-Options', 'nosniff');
+            hitHeaders.set('Content-Security-Policy', "script-src 'none'; frame-src 'none'; sandbox;");
+            return new Response(cachedMedia.body, {
+              status: cachedMedia.status,
+              headers: hitHeaders,
+            });
+          }
+
+          const originHeaders = new Headers(request.headers);
+          originHeaders.set('Host', TARGET_HOST);
+          originHeaders.set('X-Forwarded-Host', url.hostname);
+          originHeaders.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
+
+          const backendResp = await fetch(backendUrl.toString(), {
+            method: 'GET',
+            headers: originHeaders,
+            redirect: 'manual',
+          });
+
+          const rawCt = (backendResp.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+          const isCacheableImage =
+            backendResp.status === 200 &&
+            rawCt.startsWith('image/') &&
+            !rawCt.includes('svg') &&
+            !rawCt.includes('xml');
+
+          if (isCacheableImage) {
+            const bytes = await backendResp.arrayBuffer();
+            const safeCsp =
+              backendResp.headers.get('Content-Security-Policy') ||
+              "script-src 'none'; frame-src 'none'; sandbox;";
+            const cacheHeaders = new Headers({
+              'Content-Type': rawCt,
+              'Cache-Control': 'public, max-age=86400, s-maxage=604800',
+              'Content-Security-Policy': safeCsp,
+              'X-Content-Type-Options': 'nosniff',
+            });
+            ctx.waitUntil(
+              cache.put(
+                mediaCacheKey,
+                new Response(bytes, { status: 200, headers: cacheHeaders })
+              )
+            );
+
+            const missHeaders = new Headers(cacheHeaders);
+            missHeaders.set('X-Edge-Cache', 'MISS');
+            missHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
+            return new Response(bytes, { status: 200, headers: missHeaders });
+          }
+
+          const passHeaders = new Headers(backendResp.headers);
+          passHeaders.set('X-Edge-Cache', 'BYPASS');
+          passHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
+          return new Response(backendResp.body, {
+            status: backendResp.status,
+            headers: passHeaders,
+          });
+        }
+      } catch {
+        // 異常退回一般代理
+      }
+    }
+
+    // 🛣️ 2.7 邊緣路線快取：POST /api/route (座標 4 位量化 ≈ 11m + SHA-256 定長鍵 + 14 天 TTL + 拒存 straight-line + 動態 CORS)
+    if (pathname === '/api/route' && request.method === 'POST') {
+      try {
+        const clonedReq = request.clone();
+        const bodyJson = await clonedReq.json().catch(() => null);
+        const stops = Array.isArray(bodyJson?.stops) ? bodyJson.stops : [];
+        const hasValidStops =
+          stops.length >= 2 &&
+          stops.every(
+            (s) =>
+              s &&
+              Number.isFinite(Number(s.lat)) &&
+              Number.isFinite(Number(s.lng))
+          );
+
+        if (hasValidStops) {
+          const normMode = String(bodyJson.mode || 'walk').trim().toLowerCase();
+          const normOptimize = Boolean(bodyJson.optimize) ? '1' : '0';
+          const quantizedStops = stops
+            .map((s) => `${Number(s.lng).toFixed(4)},${Number(s.lat).toFixed(4)}`)
+            .join(';');
+          const keyMaterial = `v1|${normMode}|${normOptimize}|${quantizedStops}`;
+          const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(keyMaterial));
+          const hashHex = Array.from(new Uint8Array(digest))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('');
+
+          const cache = caches.default;
+          const routeCacheKey = `https://cache.tabijiapp.com/api/route?v=1&k=${hashHex}`;
+          const cachedRoute = await cache.match(routeCacheKey);
+          if (cachedRoute) {
+            const hitHeaders = new Headers(cachedRoute.headers);
+            hitHeaders.set('X-Edge-Cache', 'HIT');
+            hitHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
+            hitHeaders.set('X-Content-Type-Options', 'nosniff');
+            const reqOrigin = request.headers.get('Origin');
+            if (reqOrigin && GEOCODE_ALLOWED_ORIGINS.has(reqOrigin)) {
+              hitHeaders.set('Access-Control-Allow-Origin', reqOrigin);
+              hitHeaders.set('Access-Control-Allow-Credentials', 'true');
+              hitHeaders.set('Vary', 'Origin');
+            }
+            return new Response(cachedRoute.body, {
+              status: cachedRoute.status,
+              headers: hitHeaders,
+            });
+          }
+
+          const originHeaders = new Headers(request.headers);
+          originHeaders.delete('Content-Length');
+          originHeaders.delete('Content-Encoding');
+          originHeaders.set('Host', TARGET_HOST);
+          originHeaders.set('X-Forwarded-Host', url.hostname);
+          originHeaders.set('X-Forwarded-Proto', url.protocol.replace(':', ''));
+
+          const backendResp = await fetch(backendUrl.toString(), {
+            method: 'POST',
+            headers: originHeaders,
+            body: JSON.stringify(bodyJson),
+          });
+
+          if (backendResp.ok) {
+            const cloneResp = backendResp.clone();
+            const data = await cloneResp.json().catch(() => null);
+            const src = String(data?.source || '').trim().toLowerCase();
+            if (data && data.route && src && src !== 'straight-line') {
+              const cacheHeaders = new Headers({
+                'Content-Type': 'application/json; charset=utf-8',
+                'Cache-Control': 'public, max-age=1209600, s-maxage=1209600',
+              });
+              ctx.waitUntil(
+                cache.put(
+                  routeCacheKey,
+                  new Response(JSON.stringify(data), { status: 200, headers: cacheHeaders })
+                )
+              );
+            }
+          }
+
+          const outHeaders = new Headers(backendResp.headers);
+          outHeaders.set('X-Edge-Cache', 'MISS');
+          outHeaders.set('X-Edge-Shield', 'Cloudflare-Worker-Active');
+          return new Response(backendResp.body, {
+            status: backendResp.status,
+            headers: outHeaders,
+          });
+        }
+      } catch {
+        // 異常退回一般代理
+      }
+    }
+
     // 3. 標頭重寫（規避 Google Cloud Run 404）
     const newHeaders = new Headers(request.headers);
     newHeaders.set('Host', TARGET_HOST);
@@ -314,7 +480,7 @@ export default {
     } catch (err) {
       return new Response(JSON.stringify({
         error: "Backend Edge Proxy Error",
-        detail: err.message
+        detail: "Upstream service temporarily unavailable"
       }), {
         status: 502,
         headers: { "Content-Type": "application/json" }

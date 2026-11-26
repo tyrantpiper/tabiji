@@ -202,7 +202,8 @@ async def add_expense(
     """建立新費用記錄 (v23.1)"""
     try:
         if request.itinerary_id:
-            if not check_trip_access(supabase, request.itinerary_id, user_id):
+            has_access = await run_in_threadpool(check_trip_access, supabase, request.itinerary_id, user_id)
+            if not has_access:
                 raise HTTPException(status_code=403, detail="您沒有權限為此行程新增費用")
 
         cached_response = get_idempotent_response("add_expense", user_id, idempotency_key)
@@ -285,13 +286,13 @@ async def add_expense(
         }
         
         try:
-            res = supabase.table("expenses").insert(payload).execute()
+            res = await run_in_threadpool(supabase.table("expenses").insert(payload).execute)
         except Exception as db_err:
             if "23503" in str(db_err) or "payer_id" in str(db_err):
                 print(f"⚠️ FK 23503 fallback triggered on insert! Clearing payer_id (was {payload.get('payer_id')})")
                 payload['payer_id'] = None
                 # 嚴禁清空或強制覆寫 payer_name
-                res = supabase.table("expenses").insert(payload).execute()
+                res = await run_in_threadpool(supabase.table("expenses").insert(payload).execute)
             else:
                 raise db_err
         
@@ -382,8 +383,10 @@ async def get_expenses(
     except HTTPException:
         raise
     except Exception as e:
+        if "22P02" in str(e):
+            raise HTTPException(status_code=404, detail="找不到此行程")
         print(f"❌ Get Expenses Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="讀取費用列表失敗，請稍後重試")
 
 
 @router.patch("/{expense_id}")
@@ -394,8 +397,11 @@ async def update_expense(
     supabase=Depends(get_supabase)
 ):
     """更新費用記錄 (v23.1)"""
+    clean_exp_id = str(expense_id or "").strip()
+    if not clean_exp_id or clean_exp_id.lower() in {"undefined", "null", "nan", "none"}:
+        raise HTTPException(status_code=404, detail="Expense not found")
     try:
-        exp_res = supabase.table("expenses").select("*").eq("id", expense_id).execute()
+        exp_res = await run_in_threadpool(supabase.table("expenses").select("*").eq("id", clean_exp_id).execute)
         if not exp_res.data:
             raise HTTPException(status_code=404, detail="Expense not found")
         
@@ -404,11 +410,13 @@ async def update_expense(
              if not exp_data['is_public']:
                  raise HTTPException(status_code=403, detail="您沒有權限修改此私有費用")
              
-             member_check = supabase.table("trip_members")\
-                .select("user_id")\
-                .eq("itinerary_id", exp_data['itinerary_id'])\
-                .eq("user_id", user_id)\
-                .execute()
+             member_check = await run_in_threadpool(
+                 supabase.table("trip_members")
+                 .select("user_id")
+                 .eq("itinerary_id", exp_data['itinerary_id'])
+                 .eq("user_id", user_id)
+                 .execute
+             )
              if not member_check.data:
                  raise HTTPException(status_code=403, detail="您沒有權限修改此行程的公帳")
 
@@ -503,13 +511,13 @@ async def update_expense(
                 data['validation_status'] = "pass"
 
         try:
-            res = supabase.table("expenses").update(data).eq("id", expense_id).execute()
+            res = await run_in_threadpool(supabase.table("expenses").update(data).eq("id", clean_exp_id).execute)
         except Exception as db_err:
             if "23503" in str(db_err) or "payer_id" in str(db_err):
                 print(f"⚠️ FK 23503 fallback triggered on update! Clearing payer_id (was {data.get('payer_id')})")
                 data['payer_id'] = None
                 # 嚴禁清空或強制覆寫 payer_name
-                res = supabase.table("expenses").update(data).eq("id", expense_id).execute()
+                res = await run_in_threadpool(supabase.table("expenses").update(data).eq("id", clean_exp_id).execute)
             else:
                 raise db_err
         
@@ -522,25 +530,33 @@ async def update_expense(
     except HTTPException:
         raise
     except Exception as e:
+        if "22P02" in str(e):
+            raise HTTPException(status_code=404, detail="Expense not found")
         print(f"❌ Update Expense Error: {e}")
         raise HTTPException(status_code=500, detail="更新費用失敗，請稍後重試")
 
 
 @router.delete("/{expense_id}")
-async def delete_expense(
+def delete_expense(
     expense_id: str, 
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
     """刪除費用記錄"""
+    clean_exp_id = str(expense_id or "").strip()
+    if not clean_exp_id or clean_exp_id.lower() in {"undefined", "null", "nan", "none"}:
+        raise HTTPException(status_code=404, detail="Expense not found")
     try:
-        exp_res = supabase.table("expenses").select("created_by").eq("id", expense_id).execute()
+        exp_res = supabase.table("expenses").select("created_by").eq("id", clean_exp_id).execute()
         if exp_res.data and user_id and str(exp_res.data[0]['created_by']) != user_id:
              raise HTTPException(status_code=403, detail="您只能刪除自己建立的費用")
 
-        supabase.table("expenses").delete().eq("id", expense_id).execute()
+        supabase.table("expenses").delete().eq("id", clean_exp_id).execute()
         return {"status": "success"}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        if "22P02" in str(e):
+            raise HTTPException(status_code=404, detail="Expense not found")
+        print(f"❌ Delete Expense Error: {e}")
+        raise HTTPException(status_code=500, detail="刪除費用失敗，請稍後重試")

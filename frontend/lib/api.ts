@@ -463,6 +463,21 @@ export async function consumeTripStream(
 /**
  * Trip API Functions
  */
+const INVALID_TRIP_ID_LITERALS = new Set(["undefined", "null", "nan", "none"])
+
+export function isValidTripId(tripId: string | null | undefined): tripId is string {
+    if (typeof tripId !== "string") return false
+    const clean = tripId.trim()
+    return clean.length > 0 && !INVALID_TRIP_ID_LITERALS.has(clean.toLowerCase())
+}
+
+export function assertValidTripId(tripId: string | null | undefined): string {
+    if (!isValidTripId(tripId)) {
+        throw new Error("Invalid tripId")
+    }
+    return tripId.trim()
+}
+
 export const tripsApi = {
     /** Create a new trip manually */
     create: async (params: CreateTripParams) => {
@@ -490,7 +505,8 @@ export const tripsApi = {
 
     /** 🚗 Leave a trip */
     leave: async (tripId: string, userId: string) => {
-        const res = await fetch(`${API_HOST}/api/trips/${tripId}/leave`, {
+        const validTripId = assertValidTripId(tripId)
+        const res = await fetch(`${API_HOST}/api/trips/${validTripId}/leave`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -520,10 +536,11 @@ export const tripsApi = {
 
     /** Delete a trip */
     delete: async (tripId: string, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = {}
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API.TRIPS}/${tripId}`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}`, {
             method: "DELETE",
             headers
         })
@@ -533,11 +550,12 @@ export const tripsApi = {
 
     /** Get a single trip by ID */
     get: async (tripId: string, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = {}
         if (userId) {
             headers["X-User-ID"] = userId
         }
-        const res = await fetch(`${API.TRIPS}/${tripId}`, { headers })
+        const res = await fetch(`${API.TRIPS}/${validTripId}`, { headers })
         if (!res.ok) throw new Error("Failed to fetch trip")
         const data = await res.json()
         const parsed = TripSchema.safeParse(data)
@@ -550,10 +568,11 @@ export const tripsApi = {
 
     /** Update trip title */
     updateTitle: async (tripId: string, title: string, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API.TRIPS}/${tripId}/title`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}/title`, {
             method: "PATCH",
             headers,
             body: JSON.stringify({ title })
@@ -564,10 +583,11 @@ export const tripsApi = {
 
     /** 🖼️ Update trip cover image */
     updateCover: async (tripId: string, coverImage: string | null, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API.TRIPS}/${tripId}/cover`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}/cover`, {
             method: "PATCH",
             headers,
             body: JSON.stringify({ cover_image: coverImage })
@@ -581,10 +601,11 @@ export const tripsApi = {
 
     /** Update trip info (flight, accommodation, credit cards, etc.) */
     updateInfo: async (tripId: string, info: Record<string, unknown>, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await offlineFetch(`${API.TRIPS}/${tripId}/info`, {
+        const res = await offlineFetch(`${API.TRIPS}/${validTripId}/info`, {
             method: "PATCH", // 🔧 Standardized to PATCH + offline/Lie-Fi queue & JWT auth
             headers,
             body: JSON.stringify(info)
@@ -600,10 +621,11 @@ export const tripsApi = {
 
     /** 📅 Update trip date range (atomic shifting) */
     updateDates: async (tripId: string, payload: { start_date: string; end_date: string; on_shorten?: "merge" | "delete" }, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API.TRIPS}/${tripId}/dates`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}/dates`, {
             method: "PATCH",
             headers,
             body: JSON.stringify(payload)
@@ -617,10 +639,11 @@ export const tripsApi = {
 
     /** Update daily location */
     updateLocation: async (tripId: string, location: { day: number; name: string; lat: number; lng: number }, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API.TRIPS}/${tripId}/location`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}/location`, {
             method: "PATCH",
             headers,
             body: JSON.stringify(location)
@@ -631,10 +654,11 @@ export const tripsApi = {
 
     /** Add a new day to trip */
     addDay: async (tripId: string, position: "before" | "end" | "before:1", userId?: string, cloneContent: boolean = false) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API.TRIPS}/${tripId}/days`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}/days`, {
             method: "POST",
             headers,
             body: JSON.stringify({ position, clone_content: cloneContent })
@@ -645,10 +669,11 @@ export const tripsApi = {
 
     /** Delete a day from trip */
     deleteDay: async (tripId: string, dayNum: number, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = {}
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API.TRIPS}/${tripId}/days/${dayNum}`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}/days/${dayNum}`, {
             method: "DELETE",
             headers
         })
@@ -663,10 +688,11 @@ export const tripsApi = {
         day_tickets?: Record<number, { name: string; price: string; note?: string }[]>
         day_checklists?: Record<number, { id: string; text: string; checked: boolean }[]>
     }, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API.TRIPS}/${tripId}/day-data`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}/day-data`, {
             method: "PATCH",
             headers,
             body: JSON.stringify({ day, ...data })
@@ -677,6 +703,7 @@ export const tripsApi = {
 
     /** 🕵️ Generate AI day review */
     generateAIReview: async (tripId: string, day: number, userId?: string, locale?: string): Promise<{ status: string; day: number; review: string }> => {
+        const validTripId = assertValidTripId(tripId)
         const apiKey = getSecureApiKey()
         const isEn = locale?.toLowerCase().startsWith("en")
 
@@ -691,7 +718,7 @@ export const tripsApi = {
         if (userId) headers["X-User-ID"] = userId
 
         const localeQuery = locale ? `?locale=${encodeURIComponent(locale)}` : ""
-        const res = await fetch(`${API_HOST}/api/ai/trips/${tripId}/days/${day}/ai-review${localeQuery}`, {
+        const res = await fetch(`${API_HOST}/api/ai/trips/${validTripId}/days/${day}/ai-review${localeQuery}`, {
             method: "POST",
             headers
         })
@@ -705,10 +732,11 @@ export const tripsApi = {
 
     /** 🗑️ Clear AI day review */
     clearAIReview: async (tripId: string, day: number, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API_HOST}/api/ai/trips/${tripId}/days/${day}/ai-review`, {
+        const res = await fetch(`${API_HOST}/api/ai/trips/${validTripId}/days/${day}/ai-review`, {
             method: "DELETE",
             headers
         })
@@ -718,9 +746,10 @@ export const tripsApi = {
 
     /** 🚫 Kick a member from trip (only creator can do this) */
     kickMember: async (tripId: string, memberUserId: string, currentUserId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = {}
         if (currentUserId) headers["X-User-ID"] = currentUserId
-        const res = await fetch(`${API.TRIPS}/${tripId}/members/${memberUserId}`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}/members/${memberUserId}`, {
             method: "DELETE",
             headers
         })
@@ -733,9 +762,10 @@ export const tripsApi = {
 
     /** 🧾 Generate shared ledger code */
     generateLedgerShareCode: async (tripId: string, userId?: string) => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = {}
         if (userId) headers["X-User-ID"] = userId
-        const res = await fetch(`${API.TRIPS}/${tripId}/ledger-share`, {
+        const res = await fetch(`${API.TRIPS}/${validTripId}/ledger-share`, {
             method: "PATCH",
             headers
         })
@@ -766,6 +796,7 @@ export const tripsApi = {
 
     /** 📥 Import AI items into an existing trip */
     importToTrip: async (tripId: string, params: Omit<ImportToTripParams, 'trip_id'>) => {
+        const validTripId = assertValidTripId(tripId)
         const { user_id, ...data } = params
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (user_id) headers["X-User-ID"] = user_id
@@ -773,7 +804,7 @@ export const tripsApi = {
         const res = await fetch(`${API.TRIPS}/import-to-trip`, {
             method: "POST",
             headers,
-            body: JSON.stringify({ trip_id: tripId, ...data })
+            body: JSON.stringify({ trip_id: validTripId, ...data })
         })
         if (!res.ok) {
             const error = await res.json().catch(() => ({ detail: "匯入行程失敗" }))
@@ -1669,10 +1700,11 @@ export const sampleTripApi = {
 export const capsulesApi = {
     /** 取得行程時光膠囊摘要與進度 */
     get: async (tripId: string, day?: number, userId?: string): Promise<CapsuleProgressSummary> => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = {}
         if (userId) headers["X-User-ID"] = userId
         const baseUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
-        const url = new URL(`${API_HOST}/api/trips/${tripId}/capsules`, baseUrl)
+        const url = new URL(`${API_HOST}/api/trips/${validTripId}/capsules`, baseUrl)
         if (day !== undefined) url.searchParams.set("day", day.toString())
 
         const res = await fetch(url.toString(), { headers })
@@ -1686,10 +1718,11 @@ export const capsulesApi = {
         payload: { day_number: number; mood_emoji: string; content: string; photo_url?: string | null },
         userId?: string
     ): Promise<TripCapsuleEntry> => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API_HOST}/api/trips/${tripId}/capsules`, {
+        const res = await fetch(`${API_HOST}/api/trips/${validTripId}/capsules`, {
             method: "POST",
             headers,
             body: JSON.stringify(payload)
@@ -1703,10 +1736,11 @@ export const capsulesApi = {
 
     /** 提前解鎖膠囊破印盛典 (告別晚宴) */
     unlock: async (tripId: string, userId?: string): Promise<CapsuleProgressSummary> => {
+        const validTripId = assertValidTripId(tripId)
         const headers: Record<string, string> = { "Content-Type": "application/json" }
         if (userId) headers["X-User-ID"] = userId
 
-        const res = await fetch(`${API_HOST}/api/trips/${tripId}/capsules/unlock`, {
+        const res = await fetch(`${API_HOST}/api/trips/${validTripId}/capsules/unlock`, {
             method: "POST",
             headers,
         })

@@ -7,6 +7,7 @@ import os
 import httpx
 import asyncio
 import re
+import unicodedata
 from typing import List, Dict, Optional, Any, Tuple
 from math import radians, cos, sin, sqrt, atan2
 from urllib.parse import quote
@@ -14,6 +15,8 @@ from datetime import datetime
 import time
 import logging
 from utils.url_safety import is_safe_url
+
+TABIJI_USER_AGENT = "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tabijiapp.com)"
 
 logger = logging.getLogger("poi-service")
 
@@ -55,8 +58,8 @@ def _get_poi_metrics():
             def inc(self, *args, **kwargs): pass
         return MockMetric(), MockMetric()
 
-# 🆕 Phase 1 Concurrency Control
-WIKI_SEMAPHORE = asyncio.Semaphore(50)
+# 🆕 Phase 1 Concurrency Control (壓低至 8 防 Wikimedia 429)
+WIKI_SEMAPHORE = asyncio.Semaphore(8)
 
 # Overpass API endpoint
 OVERPASS_API = "https://overpass-api.de/api/interpreter"
@@ -847,7 +850,7 @@ async def search_wikivoyage(place_name: str, lang: str = "en", client: httpx.Asy
     start_time = time.time()
     try:
         headers = {
-            "User-Agent": "RyanTravelApp/1.2 (contact@example.com)",
+            "User-Agent": TABIJI_USER_AGENT,
             "Accept": "application/json"
         }
         
@@ -918,13 +921,187 @@ async def enrich_poi_with_wikivoyage(poi: Dict, lang: str = "en", client: httpx.
     return poi
 
 
-# ==================== Wikipedia API ====================
+# ==================== Wikipedia API (Multi-Signal Weighted Top-K) ====================
 
-from utils.url_safety import is_safe_url
+_CJK_ORTHO_MAP = str.maketrans({
+    "鐵": "鉄", "铁": "鉄",
+    "臺": "台",
+    "廣": "広", "广": "広",
+    "驛": "駅", "驿": "駅",
+    "澀": "渋", "涩": "渋",
+    "淺": "浅",
+    "廳": "庁", "厅": "庁",
+    "國": "国",
+    "園": "園", "园": "園",
+    "館": "館", "馆": "館",
+    "廟": "廟", "庙": "廟",
+    "樓": "楼",
+    "橋": "橋", "桥": "橋",
+    "島": "島", "岛": "島",
+    "灣": "湾", "湾": "湾",
+    "會": "会", "会": "会",
+    "萬": "万",
+    "龍": "竜", "龙": "竜",
+    "櫻": "桜", "樱": "桜",
+    "濱": "浜", "滨": "浜",
+})
 
-async def get_wikipedia_summary(name: str, lang: str = "zh", client: httpx.AsyncClient = None, is_retry: bool = False, lat: float = None, lng: float = None) -> tuple[str, str]:
+_DINING_OR_SHOP_TYPES = frozenset({
+    "restaurant", "cafe", "bar", "pub", "fast_food", "food", "bakery",
+    "shop", "supermarket", "convenience", "mall", "store", "izakaya", "ramen",
+    "department_store", "pharmacy", "dining", "shopping",
+})
+
+_ADMIN_AREA_RE = re.compile(
+    r"(?:行政區|行政区|特別區|特别区|町丁|丁目|地名|地區|地区|街道|自治體|自治体|"
+    r"(?:^|[\s、，,])(?:區|区|市|町|村|郡|縣|县|府|都|車站|駅)$|"
+    r"\b(?:neighborhood|neighbourhood|district|ward|municipality|town|locality|suburb|prefecture|city in|place in|station|quarter|borough)\b)",
+    re.IGNORECASE,
+)
+
+
+def _poi_haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    r = 6371.0
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = sin(dlat / 2.0) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2.0) ** 2
+    return r * 2.0 * atan2(sqrt(a), sqrt(max(0.0, 1.0 - a)))
+
+
+def _normalize_poi_title(text: str) -> str:
+    if not text:
+        return ""
+    stripped = re.sub(r"\s*[\(（][^\)）]*[\)）]\s*", " ", str(text))
+    nfkd = unicodedata.normalize("NFKD", stripped)
+    no_marks = "".join(ch for ch in nfkd if unicodedata.category(ch) != "Mn")
+    canon = no_marks.translate(_CJK_ORTHO_MAP).lower()
+    return re.sub(r"[^a-z0-9\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+", "", canon)
+
+
+def _compute_name_similarity(query: str, candidate_title: str) -> float:
+    q = _normalize_poi_title(query)
+    t = _normalize_poi_title(candidate_title)
+    if not q or not t:
+        return 0.0
+    if q == t:
+        return 1.0
+
+    min_len = min(len(q), len(t))
+    max_len = max(len(q), len(t))
+    len_ratio = min_len / max_len
+
+    # Containment with length-ratio weighting (blocks short "東京" matching "東京塔攝影棚")
+    if q in t or t in q:
+        if min_len >= 3:
+            return 0.25 + 0.75 * len_ratio
+        return len_ratio
+
+    def _bigrams(s: str) -> set:
+        if len(s) < 2:
+            return {s}
+        return {s[i : i + 2] for i in range(len(s) - 1)}
+
+    q_bi = _bigrams(q)
+    t_bi = _bigrams(t)
+    overlap = len(q_bi & t_bi)
+    if overlap == 0:
+        return 0.0
+    dice = (2.0 * overlap) / (len(q_bi) + len(t_bi))
+    return min(1.0, dice * (0.65 + 0.35 * len_ratio))
+
+
+def _score_wiki_candidate(
+    query: str,
+    cand_title: str,
+    *,
+    poi_lat: Optional[float] = None,
+    poi_lng: Optional[float] = None,
+    cand_lat: Optional[float] = None,
+    cand_lng: Optional[float] = None,
+    poi_qid: Optional[str] = None,
+    cand_qid: Optional[str] = None,
+    poi_type: Optional[str] = None,
+    cand_description: Optional[str] = None,
+) -> Tuple[float, float, bool]:
     """
-    從 Wikipedia 獲取景點簡介 (200 字以內，共享 Client 與 Semaphore)
+    Multi-signal weighted Top-K candidate scorer.
+    Returns (score, name_similarity, qid_matched).
+    """
+    qid_match = bool(
+        poi_qid and cand_qid and str(poi_qid).strip().upper() == str(cand_qid).strip().upper()
+    )
+    name_sim = _compute_name_similarity(query, cand_title)
+
+    has_coords = (
+        poi_lat is not None
+        and poi_lng is not None
+        and cand_lat is not None
+        and cand_lng is not None
+    )
+    if has_coords:
+        dist_km = _poi_haversine_km(float(poi_lat), float(poi_lng), float(cand_lat), float(cand_lng))
+        if dist_km > 5.0 and not qid_match:
+            return float("-inf"), name_sim, False
+        dist_score = 40.0 * max(0.0, 1.0 - dist_km / 5.0)
+        name_score = 60.0 * name_sim
+        score = (100.0 if qid_match else 0.0) + name_score + dist_score
+    else:
+        # Proportional normalization when coordinates are absent so exact/strong matches pass >= 55
+        name_score = 100.0 * name_sim
+        score = (100.0 if qid_match else 0.0) + name_score
+
+    norm_type = (poi_type or "").strip().lower()
+    if norm_type in _DINING_OR_SHOP_TYPES and not qid_match and name_sim < 0.85:
+        desc_and_title = f"{cand_title or ''} {cand_description or ''}"
+        if _ADMIN_AREA_RE.search(desc_and_title):
+            score -= 40.0
+
+    return score, name_sim, qid_match
+
+
+def _is_wiki_candidate_admitted(score: float, name_sim: float, qid_match: bool) -> bool:
+    return score >= 55.0 and (qid_match or name_sim >= 0.35)
+
+
+async def _fetch_wiki_page_summary(
+    title: str,
+    lang: str,
+    headers: Dict[str, str],
+    client: Optional[httpx.AsyncClient] = None,
+) -> Optional[Dict[str, Any]]:
+    clean_name = title.strip().replace(" ", "_")
+    url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote(clean_name, safe='')}"
+    if not is_safe_url(url):
+        return None
+    start_time = time.time()
+    async with WIKI_SEMAPHORE:
+        if client:
+            response = await client.get(url, headers=headers, follow_redirects=True)
+        else:
+            async with httpx.AsyncClient(timeout=10.0) as temp_client:
+                response = await temp_client.get(url, headers=headers, follow_redirects=True)
+        latency = time.time() - start_time
+        latency_metric, requests_metric = _get_poi_metrics()
+        latency_metric.labels(source="wikipedia").observe(latency)
+        if response.status_code == 200:
+            requests_metric.labels(source="wikipedia", status="success").inc()
+            return response.json()
+        requests_metric.labels(source="wikipedia", status="error").inc()
+        return None
+
+
+async def get_wikipedia_summary(
+    name: str,
+    lang: str = "zh",
+    client: httpx.AsyncClient = None,
+    is_retry: bool = False,
+    lat: float = None,
+    lng: float = None,
+    wikidata_id: Optional[str] = None,
+    poi_type: Optional[str] = None,
+) -> tuple[str, str]:
+    """
+    從 Wikipedia 獲取景點簡介 (200 字以內，多維權重 Top-K 消歧，共享 Client 與 Semaphore)
     """
     # 🛡️ SSRF Protection: Validate language whitelist
     allowed_langs = {"en", "zh", "ja", "ko", "fr", "de", "es", "it", "ru", "pt"}
@@ -932,119 +1109,175 @@ async def get_wikipedia_summary(name: str, lang: str = "zh", client: httpx.Async
         print(f"[POI] Blocked potential SSRF attempt with invalid Wikipedia lang: {lang}")
         return "", ""
 
-    start_time = time.time()
+    headers = {
+        "User-Agent": TABIJI_USER_AGENT,
+        "Accept": "application/json"
+    }
+
     try:
-        headers = {
-            "User-Agent": "RyanTravelApp/1.2 (contact@example.com)",
-            "Accept": "application/json"
-        }
-
-        # 📍 優先權加固 (Phase 6.10)：十倍視野優化，確保密集景區地標不遺漏
-        if lat is not None and lng is not None and not is_retry:
-            geo_url = f"https://{lang}.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord={lat}|{lng}&gsradius=1000&gslimit=10&format=json"
-            if is_safe_url(geo_url): # 🛡️ 安全防護不中斷
-                try:
-                    if client:
-                        geo_resp = await client.get(geo_url, headers=headers)
-                    else:
-                        async with httpx.AsyncClient(timeout=5.0) as temp_client:
-                            geo_resp = await temp_client.get(geo_url, headers=headers)
-                            
-                    if geo_resp.status_code == 200:
-                        geo_data = geo_resp.json()
-                        geosearch_results = geo_data.get("query", {}).get("geosearch", [])
-                        if geosearch_results:
-                            # 🎯 智慧選擇：從附近條目中找名字最契合的 (擴大檢索深度至 10)
-                            best_title = geosearch_results[0]["title"]
-                            
-                            # 第一輪：嘗試全字包含 (掃描前 10 項)
-                            found_exact = False
-                            for entry in geosearch_results[:10]:
-                                t = entry["title"]
-                                if name in t or t in name:
-                                    best_title = t
-                                    found_exact = True
-                                    break
-                            
-                            # 第二輪：智慧分詞比對 (處理中正廟 -> 中正紀念堂, 自由廣場 -> 自由廣場 (台北))
-                            if not found_exact:
-                                # 🧠 智慧分詞：生成所有可能的 2 字片段 (N-grams) 提高命中率
-                                search_fragments = [name[i:i+2] for i in range(len(name)-1)]
-                                # 同時保留原始 split 部份 (針對英文關鍵字)
-                                search_fragments.extend([p for p in name.split() if len(p) >= 2])
-                                
-                                # 擴大比對深度至前 10 名
-                                for entry in geosearch_results[:10]:
-                                    entry_t = entry["title"]
-                                    if any(frag in entry_t for frag in search_fragments):
-                                        best_title = entry_t
-                                        break
-                                
-                                # 如果地理搜尋找到了精確條目，直接跳轉
-                                print(f"📍 [Wiki Geosearch] Found best nearby match: {best_title}")
-                                return await get_wikipedia_summary(best_title, lang=lang, client=client, is_retry=True, lat=lat, lng=lng)
-                except Exception as e:
-                    print(f"⚠️ [Wiki Geosearch] Priority check failed: {e}")
-
-        # Wikipedia REST API 規範：空格應轉為下底線 _
-        clean_name = name.strip().replace(' ', '_')
-        url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote(clean_name)}"
-        if not is_safe_url(url):
+        # Direct Sitelink / Top-1 Fetch Mode (is_retry=True): bypass geosearch directly
+        if is_retry:
+            data = await _fetch_wiki_page_summary(name, lang, headers, client=client)
+            if data and data.get("type") != "disambiguation":
+                extract = data.get("extract", "") or ""
+                image_url = (data.get("thumbnail") or {}).get("source", "") or ""
+                if extract:
+                    return (extract[:200] if len(extract) > 200 else extract), image_url
             return "", ""
-        
-        async with WIKI_SEMAPHORE:
-            if client:
-                response = await client.get(url, headers=headers, follow_redirects=True)
-            else:
-                async with httpx.AsyncClient(timeout=10.0) as temp_client:
-                    response = await temp_client.get(url, headers=headers, follow_redirects=True)
-            
-            latency = time.time() - start_time
-            latency_metric, _ = _get_poi_metrics()
-            latency_metric.labels(source="wikipedia").observe(latency)
-                    
-            if response.status_code == 200:
-                _, requests_metric = _get_poi_metrics()
-                requests_metric.labels(source="wikipedia", status="success").inc()
-                data = response.json()
-                extract = data.get("extract", "")
-                image_url = data.get("thumbnail", {}).get("source", "") # 🆕 Phase 5.3.2: Extract image
-                
-                final_extract = extract[:200] if len(extract) > 200 else extract
-                return final_extract, image_url
-            else:
-                _, requests_metric = _get_poi_metrics()
-                requests_metric.labels(source="wikipedia", status="error").inc()
-                
-                # 🆕 智慧搜尋保底：當直接查無結果 (404) 時
-                if response.status_code == 404 and not is_retry:
-                    # 備案：關鍵字搜尋 (OpenSearch)
-                    search_url = f"https://{lang}.wikipedia.org/w/api.php?action=opensearch&search={quote(name)}&limit=1&format=json"
-                    try:
+
+        # Step 1: Direct Title Summary Lookup FIRST (with multi-signal distance/name/type validation)
+        direct_data = await _fetch_wiki_page_summary(name, lang, headers, client=client)
+        if direct_data and direct_data.get("type") != "disambiguation":
+            cand_title = direct_data.get("title") or name
+            cand_coords = direct_data.get("coordinates") or {}
+            cand_lat = cand_coords.get("lat")
+            cand_lng = cand_coords.get("lon")
+            cand_qid = direct_data.get("wikibase_item")
+            cand_desc = direct_data.get("description") or ""
+            score, name_sim, qid_match = _score_wiki_candidate(
+                name,
+                cand_title,
+                poi_lat=lat,
+                poi_lng=lng,
+                cand_lat=cand_lat,
+                cand_lng=cand_lng,
+                poi_qid=wikidata_id,
+                cand_qid=cand_qid,
+                poi_type=poi_type,
+                cand_description=cand_desc,
+            )
+            if _is_wiki_candidate_admitted(score, name_sim, qid_match):
+                extract = direct_data.get("extract", "") or ""
+                image_url = (direct_data.get("thumbnail") or {}).get("source", "") or ""
+                if extract:
+                    return (extract[:200] if len(extract) > 200 else extract), image_url
+
+        # Step 2: Single Batched Geosearch (generator=geosearch&prop=coordinates|pageprops|description)
+        # Scores all candidates in-memory and makes at most ONE page/summary call for the winning Top-1.
+        if lat is not None and lng is not None:
+            geo_url = (
+                f"https://{lang}.wikipedia.org/w/api.php"
+                f"?action=query&generator=geosearch&ggscoord={lat}|{lng}&ggsradius=1000&ggslimit=10"
+                f"&prop=coordinates|pageprops|description&format=json&formatversion=2"
+            )
+            if is_safe_url(geo_url):
+                try:
+                    async with WIKI_SEMAPHORE:
                         if client:
-                            search_resp = await client.get(search_url, headers=headers)
+                            geo_resp = await client.get(geo_url, headers=headers)
                         else:
                             async with httpx.AsyncClient(timeout=5.0) as temp_client:
-                                search_resp = await temp_client.get(search_url, headers=headers)
-                                
-                        if search_resp.status_code == 200:
-                            search_data = search_resp.json()
-                            if len(search_data) > 1 and search_data[1]:
-                                best_title = search_data[1][0]
-                                return await get_wikipedia_summary(best_title, lang=lang, client=client, is_retry=True, lat=lat, lng=lng)
-                    except Exception as search_err:
-                        print(f"⚠️ [Wiki Search] Fallback search failed for '{name}': {search_err}")
+                                geo_resp = await temp_client.get(geo_url, headers=headers)
+
+                    if geo_resp.status_code == 200:
+                        geo_data = geo_resp.json()
+                        pages = geo_data.get("query", {}).get("pages", []) or []
+                        best_title: Optional[str] = None
+                        best_score = float("-inf")
+                        for page in pages:
+                            if not isinstance(page, dict) or page.get("missing"):
+                                continue
+                            cand_title = str(page.get("title") or "").strip()
+                            if not cand_title:
+                                continue
+                            coords_list = page.get("coordinates") or []
+                            first_coord = coords_list[0] if isinstance(coords_list, list) and coords_list else {}
+                            cand_lat = first_coord.get("lat")
+                            cand_lng = first_coord.get("lon")
+                            cand_qid = (page.get("pageprops") or {}).get("wikibase_item")
+                            cand_desc = page.get("description") or ""
+                            score, name_sim, qid_match = _score_wiki_candidate(
+                                name,
+                                cand_title,
+                                poi_lat=lat,
+                                poi_lng=lng,
+                                cand_lat=cand_lat,
+                                cand_lng=cand_lng,
+                                poi_qid=wikidata_id,
+                                cand_qid=cand_qid,
+                                poi_type=poi_type,
+                                cand_description=cand_desc,
+                            )
+                            if _is_wiki_candidate_admitted(score, name_sim, qid_match) and score > best_score:
+                                best_score = score
+                                best_title = cand_title
+
+                        if best_title:
+                            print(f"📍 [Wiki Top-K Geosearch] Winning Top-1: {best_title} (score={best_score:.1f})")
+                            res_top1 = await get_wikipedia_summary(
+                                best_title,
+                                lang=lang,
+                                client=client,
+                                is_retry=True,
+                                lat=None,
+                                lng=None,
+                                wikidata_id=wikidata_id,
+                                poi_type=poi_type,
+                            )
+                            if res_top1[0]:
+                                return res_top1
+                except Exception as e:
+                    print(f"⚠️ [Wiki Geosearch] Batched Top-K lookup failed: {e}")
+
+        # Step 3: Strict OpenSearch Fallback (requires strong name similarity + distance/type verification)
+        search_url = f"https://{lang}.wikipedia.org/w/api.php?action=opensearch&search={quote(name, safe='')}&limit=3&format=json"
+        if is_safe_url(search_url):
+            try:
+                async with WIKI_SEMAPHORE:
+                    if client:
+                        search_resp = await client.get(search_url, headers=headers)
+                    else:
+                        async with httpx.AsyncClient(timeout=5.0) as temp_client:
+                            search_resp = await temp_client.get(search_url, headers=headers)
+
+                if search_resp.status_code == 200:
+                    search_data = search_resp.json()
+                    cand_titles = search_data[1] if len(search_data) > 1 and isinstance(search_data[1], list) else []
+                    for cand_title in cand_titles[:3]:
+                        if _compute_name_similarity(name, cand_title) < 0.6:
+                            continue
+                        os_data = await _fetch_wiki_page_summary(cand_title, lang, headers, client=client)
+                        if not os_data or os_data.get("type") == "disambiguation":
+                            continue
+                        os_coords = os_data.get("coordinates") or {}
+                        score, name_sim, qid_match = _score_wiki_candidate(
+                            name,
+                            os_data.get("title") or cand_title,
+                            poi_lat=lat,
+                            poi_lng=lng,
+                            cand_lat=os_coords.get("lat"),
+                            cand_lng=os_coords.get("lon"),
+                            poi_qid=wikidata_id,
+                            cand_qid=os_data.get("wikibase_item"),
+                            poi_type=poi_type,
+                            cand_description=os_data.get("description") or "",
+                        )
+                        if _is_wiki_candidate_admitted(score, name_sim, qid_match):
+                            extract = os_data.get("extract", "") or ""
+                            image_url = (os_data.get("thumbnail") or {}).get("source", "") or ""
+                            if extract:
+                                return (extract[:200] if len(extract) > 200 else extract), image_url
+            except Exception as search_err:
+                print(f"⚠️ [Wiki Search] Fallback search failed for '{name}': {search_err}")
     except Exception as e:
         _, requests_metric = _get_poi_metrics()
         requests_metric.labels(source="wikipedia", status="exception").inc()
         print(f"Wikipedia API error ({lang}): {e}")
-    
-    # 語言 fallback: zh → ja → en
+
+    # Step 4: Language fallback: zh -> ja -> en
     fallback_order = {"zh": "ja", "ja": "en"}
     if lang in fallback_order:
-        return await get_wikipedia_summary(name, fallback_order[lang], client=client, lat=lat, lng=lng)
-    
-    return "", "" # 🆕 Phase 5.3.2: Return tuple
+        return await get_wikipedia_summary(
+            name,
+            fallback_order[lang],
+            client=client,
+            lat=lat,
+            lng=lng,
+            wikidata_id=wikidata_id,
+            poi_type=poi_type,
+        )
+
+    return "", ""
 
 
 # ==================== Wikidata API ====================
@@ -1063,7 +1296,7 @@ async def get_wikidata_labels(wikidata_id: str, client: httpx.AsyncClient = None
             return None
 
         headers = {
-            "User-Agent": "RyanTravelApp/1.2 (contact@example.com)"
+            "User-Agent": TABIJI_USER_AGENT
         }
         
         async with WIKI_SEMAPHORE:
@@ -1168,113 +1401,146 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None, lang:
     
     lat = poi.get("lat")
     lng = poi.get("lng")
+    poi_type = poi.get("type") or ""
     
-    # 並行查詢三個來源 (每項 3s Timeout 防護)
+    # 並行與分層查詢：當具 Wikidata QID 時優先解析 Sitelinks 精準鎖定百科（is_retry=True 繞過 Geosearch）
     try:
-        tasks = [
-            asyncio.wait_for(get_wikidata_labels(wikidata_id, client=client), 6.0) if wikidata_id else asyncio.sleep(0),
-            asyncio.wait_for(get_wikipedia_summary(name, lang=wiki_lang, client=client, lat=lat, lng=lng), 6.0),
-            asyncio.wait_for(search_wikivoyage(name, lang=wiki_lang, client=client), 6.0)
-        ]
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # 1. 處理 Wikidata 結果
         wikidata_result = None
-        res0 = results[0]
-        if isinstance(res0, asyncio.TimeoutError):
-            poi["warnings"].append("WIKIDATA_TIMEOUT")
-            if poi["status"] == "SUCCESS": poi["status"] = "PARTIAL_SUCCESS"
-        elif isinstance(res0, Exception):
-            poi["warnings"].append("WIKIDATA_ERROR")
-            if poi["status"] == "SUCCESS": poi["status"] = "PARTIAL_SUCCESS"
-        else:
-            wikidata_result = res0
-            
-        # 2. 處理 Wikipedia 結果 (三步 Fallback 流程)
+        wikivoyage_result = None
         wikipedia_result = ""
-        wikipedia_image = "" # 🆕 Phase 5.3.2
-        res1 = results[1]
-        
-        # 定義：內部抓取函式 (方便 fallback 時重用)
-        async def fetch_wiki(title_to_fetch: str):
-            if not title_to_fetch: return "", ""
-            return await get_wikipedia_summary(title_to_fetch, lang=wiki_lang, client=client, lat=lat, lng=lng)
+        wikipedia_image = ""
+        res1: Any = None
 
-        if isinstance(res1, asyncio.TimeoutError):
-            poi["warnings"].append("WIKIPEDIA_TIMEOUT")
-            if poi["status"] == "SUCCESS": poi["status"] = "PARTIAL_SUCCESS"
-        elif isinstance(res1, Exception):
-            # 初始抓取異常，稍後嘗試 Sitelink Fallback
-            pass
-        else:
-            # Unpack the tuple
-            if isinstance(res1, tuple):
-                wikipedia_result, wikipedia_image = res1
+        if wikidata_id:
+            wd_task = asyncio.wait_for(get_wikidata_labels(wikidata_id, client=client), 6.0)
+            wv_task = asyncio.wait_for(search_wikivoyage(name, lang=wiki_lang, client=client), 6.0)
+            res0, res2 = await asyncio.gather(wd_task, wv_task, return_exceptions=True)
+
+            if isinstance(res0, asyncio.TimeoutError):
+                poi["warnings"].append("WIKIDATA_TIMEOUT")
+                if poi["status"] == "SUCCESS": poi["status"] = "PARTIAL_SUCCESS"
+            elif isinstance(res0, Exception):
+                poi["warnings"].append("WIKIDATA_ERROR")
+                if poi["status"] == "SUCCESS": poi["status"] = "PARTIAL_SUCCESS"
             else:
-                wikipedia_result = res1 or ""
+                wikidata_result = res0
 
-        # --- Fallback Step 2 & 3: Wikidata Sitelink ---
-        if not wikipedia_result and wikidata_result:
-            sitelinks = wikidata_result.get("sitelinks", {})
-            
-            # Step 2: 優先核心語系 (依請求語系切換優先序)
-            priority_links = (
-                [("enwiki", "en"), ("jawiki", "ja"), ("zhwiki", "zh")]
-                if is_en
-                else [("zhwiki", "zh"), ("jawiki", "ja"), ("enwiki", "en")]
-            )
-            best_title = ""
-            target_lang = wiki_lang
-            for link_key, link_lang in priority_links:
-                if sitelinks.get(link_key):
-                    best_title = sitelinks[link_key]
-                    target_lang = link_lang
-                    break
-            
-            # Step 3: 全球保底 (Phase 5.2: 抓取第一個可用語系)
-            if not best_title and sitelinks:
-                # 排除一些非百科的 Meta 連結
-                valid_wikis = [k for k in sitelinks.keys() if k.endswith("wiki") and not k.startswith("commons")]
-                if valid_wikis:
-                    wiki_key = valid_wikis[0]
-                    best_title = sitelinks[wiki_key]
-                    target_lang = wiki_key.replace("wiki", "")
-                    print(f"🌍 [Global Fallback] Using {target_lang} Wikipedia: {best_title}")
+            # Priority 1: Wikidata QID Sitelink (direct page/summary with is_retry=True, never falls back into Geosearch)
+            if wikidata_result:
+                sitelinks = wikidata_result.get("sitelinks", {}) or {}
+                priority_links = (
+                    [("enwiki", "en"), ("jawiki", "ja"), ("zhwiki", "zh")]
+                    if is_en
+                    else [("zhwiki", "zh"), ("jawiki", "ja"), ("enwiki", "en")]
+                )
+                best_title = ""
+                target_lang = wiki_lang
+                for link_key, link_lang in priority_links:
+                    if sitelinks.get(link_key):
+                        best_title = sitelinks[link_key]
+                        target_lang = link_lang
+                        break
+                if not best_title and sitelinks:
+                    valid_wikis = [k for k in sitelinks.keys() if k.endswith("wiki") and not k.startswith("commons")]
+                    if valid_wikis:
+                        wiki_key = valid_wikis[0]
+                        best_title = sitelinks[wiki_key]
+                        target_lang = wiki_key.replace("wiki", "")
+                        print(f"🌍 [Global Sitelink] Using {target_lang} Wikipedia: {best_title}")
 
-            if best_title:
-                try:
-                    # 使用 2s timeout 進行二次抓取
-                    res_fallback = await asyncio.wait_for(get_wikipedia_summary(best_title, lang=target_lang, client=client, lat=lat, lng=lng), 2.0)
-                    if isinstance(res_fallback, tuple):
-                        wikipedia_result, wikipedia_image = res_fallback
+                if best_title:
+                    try:
+                        res_sl = await asyncio.wait_for(
+                            get_wikipedia_summary(
+                                best_title,
+                                lang=target_lang,
+                                client=client,
+                                is_retry=True,
+                                lat=None,
+                                lng=None,
+                                wikidata_id=wikidata_id,
+                                poi_type=poi_type,
+                            ),
+                            4.0,
+                        )
+                        if isinstance(res_sl, tuple):
+                            wikipedia_result, wikipedia_image = res_sl
+                        else:
+                            wikipedia_result = res_sl or ""
                         if wikipedia_result and not target_lang.startswith(wiki_lang):
                             used_fallback_lang = target_lang
                             poi["resolved_language"] = target_lang
+                    except asyncio.TimeoutError:
+                        res1 = asyncio.TimeoutError()
+                        poi["warnings"].append("WIKIPEDIA_TIMEOUT")
+                        if poi["status"] == "SUCCESS": poi["status"] = "PARTIAL_SUCCESS"
+                    except Exception:
+                        pass
+
+            # Fallback if QID had no usable sitelink: run Top-K get_wikipedia_summary
+            if not wikipedia_result and not isinstance(res1, asyncio.TimeoutError):
+                try:
+                    res1 = await asyncio.wait_for(
+                        get_wikipedia_summary(
+                            name,
+                            lang=wiki_lang,
+                            client=client,
+                            lat=lat,
+                            lng=lng,
+                            wikidata_id=wikidata_id,
+                            poi_type=poi_type,
+                        ),
+                        6.0,
+                    )
+                    if isinstance(res1, tuple):
+                        wikipedia_result, wikipedia_image = res1
                     else:
-                        wikipedia_result = res_fallback
-                except:
-                    # 二次抓取失敗不中斷流程
+                        wikipedia_result = res1 or ""
+                except asyncio.TimeoutError as te:
+                    res1 = te
+                    poi["warnings"].append("WIKIPEDIA_TIMEOUT")
+                    if poi["status"] == "SUCCESS": poi["status"] = "PARTIAL_SUCCESS"
+                except Exception:
                     pass
+        else:
+            tasks = [
+                asyncio.wait_for(
+                    get_wikipedia_summary(
+                        name,
+                        lang=wiki_lang,
+                        client=client,
+                        lat=lat,
+                        lng=lng,
+                        wikidata_id="",
+                        poi_type=poi_type,
+                    ),
+                    6.0,
+                ),
+                asyncio.wait_for(search_wikivoyage(name, lang=wiki_lang, client=client), 6.0),
+            ]
+            res1, res2 = await asyncio.gather(*tasks, return_exceptions=True)
+
+            if isinstance(res1, asyncio.TimeoutError):
+                poi["warnings"].append("WIKIPEDIA_TIMEOUT")
+                if poi["status"] == "SUCCESS": poi["status"] = "PARTIAL_SUCCESS"
+            elif isinstance(res1, Exception):
+                pass
+            else:
+                if isinstance(res1, tuple):
+                    wikipedia_result, wikipedia_image = res1
+                else:
+                    wikipedia_result = res1 or ""
 
         # 最終 Wikipedia 狀態判定與 Warning 固定
         if not wikipedia_result:
-            if isinstance(res1, asyncio.TimeoutError):
-                # 已經有 TIMEOUT warning 了
-                pass
-            else:
-                # 查無結果 (Page Not Found)
+            if not isinstance(res1, asyncio.TimeoutError):
                 poi["warnings"].append("WIKIPEDIA_NOT_FOUND")
-            
             if poi["status"] == "SUCCESS": poi["status"] = "PARTIAL_SUCCESS"
         else:
-            # 有結果，但如果是空字串 (理論上 fetch_wiki 不會回傳空但保險起見)
             if not wikipedia_result.strip():
                 poi["warnings"].append("WIKIPEDIA_EMPTY")
             
         # 3. 處理 WikiVoyage 結果
-        wikivoyage_result = None
-        res2 = results[2]
         if isinstance(res2, asyncio.TimeoutError):
             poi["warnings"].append("WIKIVOYAGE_TIMEOUT")
         elif isinstance(res2, Exception):
@@ -1283,11 +1549,10 @@ async def enrich_poi_complete(poi: Dict, client: httpx.AsyncClient = None, lang:
             wikivoyage_result = res2
         
         if wikidata_result:
-            # 🆕 Phase 5.1.3: Wikidata Image Fallback
+            # 🆕 Phase 5.1.3: Wikidata Image Fallback (URL-encode filename to protect #/& characters)
             if not poi.get("image_url") and wikidata_result.get("wikidata_image"):
-                # 將 Commons 檔名轉為基本連結 (後續由 Proxy 處理)
                 img_name = wikidata_result["wikidata_image"].replace(" ", "_")
-                poi["image_url"] = f"https://commons.wikimedia.org/wiki/Special:FilePath/{img_name}?width=500"
+                poi["image_url"] = f"https://commons.wikimedia.org/wiki/Special:FilePath/{quote(img_name, safe='')}?width=500"
 
             labels = wikidata_result.get("labels", {})
             ja_name = labels.get("ja-JP", "")

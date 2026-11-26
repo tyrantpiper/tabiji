@@ -79,22 +79,33 @@ export const fetcherWithUserId = async ([url, uid]: [string, string]) => {
     return r.json()
 }
 
+const INVALID_ID_LITERALS = new Set(["undefined", "null", "nan", "none"])
+
+function sanitizeHookId(raw: string | null | undefined): string | null {
+    if (typeof raw !== "string") return null
+    const clean = raw.trim()
+    if (!clean || INVALID_ID_LITERALS.has(clean.toLowerCase())) return null
+    return clean
+}
+
 export function useTrips(userId: string | null) {
-    const [idbTrips, setIdbTrips] = useState<Trip[] | null>(() => getTripsListSnapshotSync<Trip[]>(userId))
+    const safeUserId = sanitizeHookId(userId)
+    const [idbTrips, setIdbTrips] = useState<Trip[] | null>(() => getTripsListSnapshotSync<Trip[]>(safeUserId))
 
     useEffect(() => {
-        if (userId && !idbTrips) {
-            preloadTripsListSnapshot<Trip[]>(userId).then((data) => {
+        if (safeUserId && !idbTrips) {
+            preloadTripsListSnapshot<Trip[]>(safeUserId).then((data) => {
                 if (data && Array.isArray(data) && data.length > 0) {
                     setIdbTrips(data)
                 }
             })
         }
-    }, [userId, idbTrips])
+    }, [safeUserId, idbTrips])
 
-    const initialSnapshot = useMemo(() => getTripsListSnapshotSync<Trip[]>(userId) || idbTrips, [userId, idbTrips])
+    const initialSnapshot = useMemo(() => getTripsListSnapshotSync<Trip[]>(safeUserId) || idbTrips, [safeUserId, idbTrips])
+    const swrKey = safeUserId ? ["/api/trips", safeUserId] : null
     const { data, error, mutate } = useSWR<Trip[]>(
-        userId ? ["/api/trips", userId] : null,
+        swrKey,
         fetcherWithUserId,
         {
             fallbackData: initialSnapshot || undefined,
@@ -103,8 +114,8 @@ export function useTrips(userId: string | null) {
                 if (err instanceof HttpError && (err.status === 401 || err.status === 403 || err.status === 404)) return
             },
             onSuccess: (freshData) => {
-                if (userId && freshData) {
-                    saveTripsListSnapshot(userId, freshData)
+                if (safeUserId && freshData) {
+                    saveTripsListSnapshot(safeUserId, freshData)
                 }
             }
         }
@@ -112,7 +123,7 @@ export function useTrips(userId: string | null) {
     const effectiveTrips = Array.isArray(data) ? data : (Array.isArray(initialSnapshot) ? initialSnapshot : [])
     return {
         trips: effectiveTrips,
-        isLoading: !error && !data && !initialSnapshot,
+        isLoading: Boolean(swrKey) && !error && !data && !initialSnapshot,
         isError: !!error,
         mutate
     }
@@ -124,14 +135,16 @@ export function useTripDetail(
     refreshInterval: number = 0,
     onTripNotFound?: (invalidId: string) => void
 ) {
+    const safeTripId = sanitizeHookId(tripId)
+    const safeUserId = sanitizeHookId(userId)
     // 🔧 FIX: Include userId in cache key to ensure refetch when userId changes
-    // And only make the request when we have a valid userId to prevent unauthenticated fetches
+    // And only make the request when we have a valid userId and non-literal tripId
     // 🧠 2026 Normalization: userId is critical for privacy-aware caching
-    const swrKey = (tripId && userId) ? [`/api/trips/${tripId}`, userId] : null
+    const swrKey = (safeTripId && safeUserId) ? [`/api/trips/${safeTripId}`, safeUserId] : null
 
     // ⚡ 0ms L1 記憶體微秒級快顯 (首幀 0 骨架屏)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const initialSnapshot = useMemo(() => getTripSnapshotSync<any>(tripId), [tripId])
+    const initialSnapshot = useMemo(() => getTripSnapshotSync<any>(safeTripId), [safeTripId])
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error, mutate, isValidating } = useSWR<any>(
@@ -145,8 +158,8 @@ export function useTripDetail(
             dedupingInterval: 2000, // Prevent spam
             onSuccess: (freshData) => {
                 // ⚡ 雲端獲取最新資料後，同步更新 L1 記憶體與 L2 IndexedDB
-                if (tripId && freshData) {
-                    saveTripSnapshot(tripId, freshData)
+                if (safeTripId && freshData) {
+                    saveTripSnapshot(safeTripId, freshData)
                 }
             },
             onErrorRetry: (err) => {
@@ -154,8 +167,8 @@ export function useTripDetail(
                 if (err instanceof HttpError && (err.status === 401 || err.status === 403 || err.status === 404)) return
             },
             onError: (err) => {
-                if (err instanceof HttpError && err.status === 404 && tripId && onTripNotFound) {
-                    onTripNotFound(tripId)
+                if (err instanceof HttpError && err.status === 404 && safeTripId && onTripNotFound) {
+                    onTripNotFound(safeTripId)
                 }
             }
         }
@@ -163,20 +176,20 @@ export function useTripDetail(
 
     // 🚀 非同步自 L2 (IndexedDB) 預熱快取至 L1 記憶體
     useEffect(() => {
-        if (tripId) {
-            preloadTripSnapshot(tripId).then(cached => {
+        if (safeTripId) {
+            preloadTripSnapshot(safeTripId).then(cached => {
                 // 若當前無資料且 L2 預熱出資料，立即觸發一次局部 revalidate 注入
                 if (cached && !data && mutate) {
                     mutate(cached, false)
                 }
             })
         }
-    }, [tripId, data, mutate])
+    }, [safeTripId, data, mutate])
 
             // 🔧 FIX: 當 userId 從 Zustand hydration 準備好後，依模組級雙鍵跨元件去重 (避免多實例重複觸發)
     useEffect(() => {
-        if (userId && tripId && mutate) {
-            const dedupeKey = `${tripId}:${userId}`
+        if (safeUserId && safeTripId && mutate) {
+            const dedupeKey = `${safeTripId}:${safeUserId}`
             const now = Date.now()
             const lastAt = lastTripDetailMutateMap.get(dedupeKey) ?? 0
             if (now - lastAt > 2000) {
@@ -184,11 +197,11 @@ export function useTripDetail(
                 mutate()
             }
         }
-    }, [userId, tripId, mutate])
+    }, [safeUserId, safeTripId, mutate])
 
     return {
         trip: data,
-        isLoading: !error && !data,
+        isLoading: Boolean(swrKey) && !error && !data,
         isValidating,  // 🆕 Indicates SWR is fetching fresh data (even with cache)
         isError: error,
         mutate
@@ -256,8 +269,11 @@ export function useFlightPrice(
 }
 
 export function useExpenses(tripId: string | null, userId: string | null) {
+    const safeTripId = sanitizeHookId(tripId)
+    const safeUserId = sanitizeHookId(userId)
+    const swrKey = (safeTripId && safeUserId) ? [`/api/trips/${safeTripId}/expenses`, safeUserId] : null
     const { data, error, mutate } = useSWR(
-        (tripId && userId) ? [`/api/trips/${tripId}/expenses`, userId] : null,
+        swrKey,
         fetcherWithUserId,
         {
             revalidateOnFocus: false,
@@ -266,7 +282,7 @@ export function useExpenses(tripId: string | null, userId: string | null) {
     )
     return {
         expenses: data || [],
-        isLoading: !error && !data,
+        isLoading: Boolean(swrKey) && !error && !data,
         isError: error,
         mutate
     }
@@ -352,17 +368,20 @@ export function useServiceWorker() {
   * 自動獲取進度摘要與已解鎖/自己之條目清單
   */
 export function useTripCapsules(tripId: string | null | undefined, userId: string | null | undefined) {
+    const safeTripId = sanitizeHookId(tripId)
+    const safeUserId = sanitizeHookId(userId)
+    const swrKey = safeTripId && safeUserId ? [`/api/trips/${safeTripId}/capsules`, safeUserId] : null
     const { data, error, mutate, isValidating } = useSWR<CapsuleProgressSummary>(
-        tripId && userId ? [`/api/trips/${tripId}/capsules`, userId] : null,
+        swrKey,
         fetcherWithUserId,
         {
             revalidateOnFocus: false,
             dedupingInterval: 10000,
-            fallbackData: getTripCapsuleSnapshotSync<CapsuleProgressSummary>(tripId, userId) || undefined,
+            fallbackData: getTripCapsuleSnapshotSync<CapsuleProgressSummary>(safeTripId, safeUserId) || undefined,
             onErrorRetry: stopAuthAndNotFoundRetry,
             onSuccess: (freshData) => {
-                if (tripId && userId && freshData) {
-                    saveTripCapsuleSnapshot(tripId, userId, freshData)
+                if (safeTripId && safeUserId && freshData) {
+                    saveTripCapsuleSnapshot(safeTripId, safeUserId, freshData)
                 }
             },
         }
@@ -374,7 +393,7 @@ export function useTripCapsules(tripId: string | null | undefined, userId: strin
     return {
         capsules: entries,
         summary: data || null,
-        isLoading: !error && !data,
+        isLoading: Boolean(swrKey) && !error && !data,
         isValidating,
         mutate,
     }

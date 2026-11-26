@@ -457,11 +457,11 @@ async def update_user_profile(
         raise
     except Exception as e:
         print(f"🔥 Update Profile Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="更新個人資料失敗，請稍後重試")
 
 
 @router.get("/me/preferences")
-async def get_my_preferences(
+def get_my_preferences(
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
@@ -470,21 +470,26 @@ async def get_my_preferences(
         # 單純查詢該使用者的所有偏好
         res = supabase.table("user_preferences").select("*").eq("user_id", user_id).execute()
         return res.data
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔥 Get Preferences Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="讀取偏好設定失敗，請稍後重試")
 
 
 @router.delete("/me/preferences/{pref_id}")
-async def delete_my_preference(
+def delete_my_preference(
     pref_id: str,
     user_id: str = Depends(get_verified_user),
     supabase=Depends(get_supabase)
 ):
     """🗑️ 刪除特定偏好紀錄"""
+    clean_pref_id = str(pref_id or "").strip()
+    if not clean_pref_id or clean_pref_id.lower() in {"undefined", "null", "nan", "none"}:
+        raise HTTPException(status_code=404, detail="偏好項目不存在")
     try:
         # 1. 🛡️ 權限檢查：確保這條偏好屬於該使用者 (防止組合攻擊)
-        check = supabase.table("user_preferences").select("user_id").eq("id", pref_id).execute()
+        check = supabase.table("user_preferences").select("user_id").eq("id", clean_pref_id).execute()
         
         if not check.data:
             raise HTTPException(status_code=404, detail="偏好項目不存在")
@@ -493,10 +498,12 @@ async def delete_my_preference(
             raise HTTPException(status_code=403, detail="您沒有權限刪除此偏好")
             
         # 2. 執行刪除
-        supabase.table("user_preferences").delete().eq("id", pref_id).execute()
+        supabase.table("user_preferences").delete().eq("id", clean_pref_id).execute()
         return {"status": "success"}
     except HTTPException:
         raise
     except Exception as e:
+        if "22P02" in str(e):
+            raise HTTPException(status_code=404, detail="偏好項目不存在")
         print(f"🔥 Delete Preference Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="刪除偏好失敗，請稍後重試")

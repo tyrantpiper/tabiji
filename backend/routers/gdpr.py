@@ -4,8 +4,9 @@ GDPR Router
 Handles GDPR compliance endpoints for user data deletion.
 """
 
-from typing import Set
+from typing import Set, Tuple, Dict
 from fastapi import APIRouter, Depends, HTTPException
+from starlette.concurrency import run_in_threadpool
 
 from routers.users import collect_cloudinary_urls, destroy_cloudinary_assets
 from utils.deps import get_supabase, get_verified_user
@@ -36,9 +37,9 @@ async def delete_user_data(
 
     target_user_id = str(caller_user_id).strip()
 
-    try:
+    def _delete_db_records() -> Tuple[Dict[str, int], Set[str]]:
         print(f"🗑️ GDPR 刪除請求: user_id = {target_user_id}")
-        deleted_counts = {}
+        deleted_counts: Dict[str, int] = {}
         media_urls: Set[str] = set()
 
         def _rows(res) -> list:
@@ -146,7 +147,10 @@ async def delete_user_data(
         user_rows = _rows(user_res)
         deleted_counts["users"] = len(user_rows)
         media_urls.update(collect_cloudinary_urls(user_rows, fields=("avatar_url",)))
+        return deleted_counts, media_urls
 
+    try:
+        deleted_counts, media_urls = await run_in_threadpool(_delete_db_records)
         deleted_counts["cloudinary_assets"] = await destroy_cloudinary_assets(media_urls)
         
         print(f"🎉 GDPR 刪除完成: {deleted_counts}")
@@ -160,4 +164,4 @@ async def delete_user_data(
         raise
     except Exception as e:
         print(f"🔥 GDPR Delete Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="刪除用戶資料失敗，請稍後重試")

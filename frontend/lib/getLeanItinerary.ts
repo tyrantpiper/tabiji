@@ -23,12 +23,27 @@ export interface LeanDay {
     items: LeanItineraryItem[]
 }
 
+export interface LeanFlightLeg {
+    dep_airport?: string
+    arr_airport?: string
+    dep_date?: string
+    departure_at?: string
+    airline?: string
+    flight_no?: string
+}
+
+export interface LeanFlightInfo {
+    outbound?: LeanFlightLeg[]
+    inbound?: LeanFlightLeg[]
+}
+
 export interface LeanItinerary {
     title: string
     start_date: string | null
     end_date: string | null
     total_days: number
     days: LeanDay[]
+    flight_info?: LeanFlightInfo
     // AI context additions
     day_notes?: Record<number, { icon?: string; title: string; content: string }[]>
     day_costs?: Record<number, { item: string; amount: string; note?: string }[]>
@@ -51,6 +66,7 @@ export function getLeanItinerary(
         title?: string
         start_date?: string | null
         end_date?: string | null
+        flight_info?: LeanFlightInfo | null
     } | null,
     items: Array<{
         day_number?: number
@@ -69,12 +85,36 @@ export function getLeanItinerary(
     focusedDay?: number
 ): LeanItinerary | null {
     if (!fullTrip) return null
-    if (!items || items.length === 0) return null
+
+    const extractLeanFlightInfo = (raw?: LeanFlightInfo | null): LeanFlightInfo | undefined => {
+        if (!raw || typeof raw !== 'object') return undefined
+        const mapLegs = (legs?: LeanFlightLeg[]): LeanFlightLeg[] | undefined => {
+            if (!Array.isArray(legs) || legs.length === 0) return undefined
+            const cleaned = legs
+                .filter((leg) => leg && (leg.dep_airport || leg.arr_airport || leg.dep_date || leg.departure_at))
+                .map((leg) => ({
+                    dep_airport: leg.dep_airport,
+                    arr_airport: leg.arr_airport,
+                    dep_date: leg.dep_date || leg.departure_at,
+                    airline: leg.airline,
+                    flight_no: leg.flight_no,
+                }))
+            return cleaned.length > 0 ? cleaned : undefined
+        }
+        const outbound = mapLegs(raw.outbound)
+        const inbound = mapLegs(raw.inbound)
+        if (!outbound && !inbound) return undefined
+        return { ...(outbound ? { outbound } : {}), ...(inbound ? { inbound } : {}) }
+    }
+
+    const leanFlightInfo = extractLeanFlightInfo(fullTrip.flight_info)
+    const hasTitleOrFlight = Boolean(fullTrip.title?.trim() || leanFlightInfo)
+    if ((!items || items.length === 0) && !hasTitleOrFlight) return null
 
     // 按天數分組
     const dayMap = new Map<number, LeanItineraryItem[]>()
 
-    for (const item of items) {
+    for (const item of items || []) {
         const dayNum = item.day_number || 1
         if (!dayMap.has(dayNum)) {
             dayMap.set(dayNum, [])
@@ -120,6 +160,7 @@ export function getLeanItinerary(
         end_date: fullTrip.end_date || null,
         total_days: days.length,
         days,
+        ...(leanFlightInfo ? { flight_info: leanFlightInfo } : {}),
         day_notes: dayNotes,
         day_costs: dayCosts,
         day_checklists: dayChecklists,

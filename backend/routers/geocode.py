@@ -305,8 +305,9 @@ async def resolve_address(
             content={"code": f"HTTP_{status}", "message": message, "retryable": retryable}
         )
     except Exception as e:
+        print(f"🔥 [Geocode] Resolve Link Internal Error: {e}")
         from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=500,
-            content={"code": "INTERNAL_ERROR", "message": str(e), "retryable": True}
+            content={"code": "INTERNAL_ERROR", "message": "連結解析發生內部錯誤，請稍後重試", "retryable": True}
         )

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any
 from .expenses import normalize_items
-from utils.deps import get_supabase
+from utils.deps import get_supabase, UUID_V4_REGEX
 from models.base import ExpenseItem
 
 from utils.helpers import resolve_payer_name
@@ -9,7 +9,7 @@ from utils.helpers import resolve_payer_name
 router = APIRouter(prefix="/api/ledger", tags=["ledger"])
 
 @router.get("/{code}")
-async def get_public_ledger(
+def get_public_ledger(
     code: str,
     supabase=Depends(get_supabase)
 ):
@@ -18,11 +18,15 @@ async def get_public_ledger(
     
     用於分享給非 App 用戶查看的公開對帳頁面。
     """
+    clean_code = str(code or "").strip()
+    if not UUID_V4_REGEX.fullmatch(clean_code):
+        raise HTTPException(status_code=404, detail="對帳連結已失效或不存在")
+
     try:
         # 1. 透過分享碼尋找行程
         trip_res = supabase.table("itineraries")\
             .select("id, title, start_date, end_date")\
-            .eq("ledger_share_code", code)\
+            .eq("ledger_share_code", clean_code)\
             .execute()
             
         if not trip_res.data:

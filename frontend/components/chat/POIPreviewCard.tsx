@@ -208,7 +208,7 @@ export default function POIPreviewCard({
             mutate()
 
             // 🟢 [BUGFIX]: 顯式刷新行程詳情快取，即時更新時間軸與地圖標記，消除快取空洞
-            if (userId) {
+            if (userId && activeTripId && activeTripId !== "undefined" && activeTripId !== "null") {
                 globalMutate([`/api/trips/${activeTripId}`, userId])
             }
 

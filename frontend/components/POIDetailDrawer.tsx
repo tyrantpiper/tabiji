@@ -1,7 +1,29 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { motion, AnimatePresence, type PanInfo } from "framer-motion"
+
+const WIKIMEDIA_PROXY_HOSTS = new Set([
+    "upload.wikimedia.org",
+    "thumb.wikimedia.org",
+    "commons.wikimedia.org",
+])
+
+function resolveSafePoiImageSrc(rawUrl?: string | null): string | null {
+    const trimmed = (rawUrl || "").trim()
+    if (!trimmed) return null
+    try {
+        const parsed = new URL(trimmed)
+        if (parsed.protocol !== "https:") return null
+        const host = parsed.hostname.toLowerCase()
+        if (WIKIMEDIA_PROXY_HOSTS.has(host)) {
+            return `/api/poi/media-proxy?url=${encodeURIComponent(parsed.toString())}`
+        }
+        return parsed.toString()
+    } catch {
+        return null
+    }
+}
 
 export type POIDrawerDetent = "peek" | "half" | "full"
 
@@ -102,6 +124,8 @@ export default function POIDetailDrawer({
     const [selectedTime, setSelectedTime] = useState(suggestedTime)
     const [isSharing, setIsSharing] = useState(false)
     const [detent, setDetent] = useState<POIDrawerDetent>("half")
+    const [imgError, setImgError] = useState(false)
+    const reqSeqRef = useRef(0)
 
     // 🚀 Phase 3 Logic Guards (Unified Flow)
     const isLegacy = aiData && !('status' in aiData)
@@ -116,11 +140,13 @@ export default function POIDetailDrawer({
     const showWikipediaHint = effectiveStatus === "PARTIAL_SUCCESS" && !hasCulturalDesc
     const isFailed = effectiveStatus === "FAILED"
 
-    // 🛡️ 狀態重置：當 POI、語系變更或關閉時清除舊資料並回歸半屏預設
+    // 🛡️ 狀態重置：當 POI、語系變更或關閉時遞增序列鎖作廢舊請求，清除舊資料與破圖態並回歸半屏預設
     useEffect(() => {
+        reqSeqRef.current += 1
         setAiData(null)
         setAiError(null)
         setAiLoading(false)
+        setImgError(false)
         setSelectedTime(suggestedTime)
         setDetent("half")
     }, [poi?.name, poi?.lat, poi?.lng, suggestedTime, isOpen, lang])
@@ -257,9 +283,9 @@ export default function POIDetailDrawer({
         onClose()
     }
 
-    // AI 分析 (Layer 2)
+    // AI 分析 (Layer 2) — 單調序列鎖防快切景點舊回應串寫
     const handleAIAnalyze = async () => {
-
+        const mySeq = ++reqSeqRef.current
         haptic.tap()
         setAiLoading(true)
         setAiError(null)
@@ -277,13 +303,20 @@ export default function POIDetailDrawer({
                 locale: lang
             }, userId)
 
+            if (reqSeqRef.current !== mySeq) return
+            setImgError(false)
             setAiData(data)
         } catch {
+            if (reqSeqRef.current !== mySeq) return
             setAiError(t('poi_ai_failed'))
         } finally {
-            setAiLoading(false)
+            if (reqSeqRef.current === mySeq) {
+                setAiLoading(false)
+            }
         }
     }
+
+    const displayImageSrc = resolveSafePoiImageSrc(aiData?.image_url || poi.photo_url || poi.image_url)
 
     return (
         <AnimatePresence>
@@ -480,6 +513,21 @@ export default function POIDetailDrawer({
                                         </p>
                                     </div>
                                 </div>
+
+                                {/* 景點縮圖 (Wikimedia 經 /api/poi/media-proxy 安全代理，失敗靜默隱藏零破圖) */}
+                                {displayImageSrc && !imgError && (
+                                    <div className="relative w-full h-40 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img
+                                            src={displayImageSrc}
+                                            alt={poi.name}
+                                            loading="lazy"
+                                            referrerPolicy="no-referrer"
+                                            onError={() => setImgError(true)}
+                                            className="w-full h-full object-cover"
+                                        />
+                                    </div>
+                                )}
 
                                 {/* 基礎資訊 (具備視覺呼吸感) */}
                                 <div className="space-y-2.5 text-sm min-w-0">

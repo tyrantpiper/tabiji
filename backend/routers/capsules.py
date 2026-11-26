@@ -135,8 +135,32 @@ def compute_trip_end_utc(trip: dict) -> datetime:
 # API Endpoints
 # ==============================================================================
 
+_INVALID_ID_SENTINELS = frozenset({"", "undefined", "null", "nan", "none"})
+
+
+def _reject_sentinel_trip_id(trip_id: str) -> str:
+    clean = str(trip_id or "").strip()
+    if clean.lower() in _INVALID_ID_SENTINELS:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    return clean
+
+
+def _fetch_trip_row_or_404(supabase: Client, trip_id: str) -> dict:
+    clean = _reject_sentinel_trip_id(trip_id)
+    try:
+        trip_res = supabase.table("itineraries").select("*").eq("id", clean).execute()
+    except Exception as e:
+        if "22P02" in str(e):
+            raise HTTPException(status_code=404, detail="Trip not found")
+        print(f"🔥 Capsules trip lookup error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load trip capsules")
+    if not trip_res.data:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    return trip_res.data[0]
+
+
 @router.get("/{trip_id}/capsules", response_model=CapsuleProgressSummary)
-async def get_trip_capsules(
+def get_trip_capsules(
     trip_id: str,
     day: Optional[int] = None,
     user_id: str = Depends(get_verified_user),
@@ -148,10 +172,7 @@ async def get_trip_capsules(
     After trip: returns all unsealed entries.
     """
     # 1. Fetch trip from itineraries table and verify membership
-    trip_res = supabase.table("itineraries").select("*").eq("id", trip_id).execute()
-    if not trip_res.data:
-        raise HTTPException(status_code=404, detail="Trip not found")
-    trip = trip_res.data[0]
+    trip = _fetch_trip_row_or_404(supabase, trip_id)
 
     if not check_trip_membership(trip, user_id, supabase):
         raise HTTPException(status_code=403, detail="Not authorized to access capsules for this trip")
@@ -327,7 +348,7 @@ async def get_trip_capsules(
 
 
 @router.post("/{trip_id}/capsules", response_model=CapsuleEntryResponse)
-async def submit_trip_capsule(
+def submit_trip_capsule(
     trip_id: str,
     payload: CapsuleCreateRequest,
     user_id: str = Depends(get_verified_user),
@@ -338,10 +359,7 @@ async def submit_trip_capsule(
     Strictly locked once trip is completed (403 Forbidden).
     """
     # 1. Fetch trip from itineraries table and check membership
-    trip_res = supabase.table("itineraries").select("*").eq("id", trip_id).execute()
-    if not trip_res.data:
-        raise HTTPException(status_code=404, detail="Trip not found")
-    trip = trip_res.data[0]
+    trip = _fetch_trip_row_or_404(supabase, trip_id)
 
     if not check_trip_membership(trip, user_id, supabase):
         raise HTTPException(status_code=403, detail="Not authorized to submit capsule for this trip")
@@ -411,7 +429,7 @@ async def submit_trip_capsule(
 
 
 @router.post("/{trip_id}/capsules/unlock", response_model=CapsuleProgressSummary)
-async def unlock_trip_capsules_early(
+def unlock_trip_capsules_early(
     trip_id: str,
     user_id: str = Depends(get_verified_user),
     supabase: Client = Depends(get_supabase)
@@ -420,10 +438,7 @@ async def unlock_trip_capsules_early(
     提前破印盛典解鎖端點（例如告別晚宴現場全員開箱）。
     權限檢查：必須為行程擁有者或成員，防禦 BOLA 越權。
     """
-    trip_res = supabase.table("itineraries").select("*").eq("id", trip_id).execute()
-    if not trip_res.data:
-        raise HTTPException(status_code=404, detail="Trip not found")
-    trip = trip_res.data[0]
+    trip = _fetch_trip_row_or_404(supabase, trip_id)
 
     if not check_trip_membership(trip, user_id, supabase):
         raise HTTPException(status_code=403, detail="Not authorized to unlock capsules for this trip")
@@ -448,6 +463,7 @@ async def unlock_trip_capsules_early(
     try:
         supabase.table("itineraries").update({"is_capsule_unlocked": True}).eq("id", trip_id).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update unlock status: {e}")
+        print(f"🔥 Failed to update capsule unlock status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update unlock status")
 
-    return await get_trip_capsules(trip_id=trip_id, user_id=user_id, supabase=supabase)
+    return get_trip_capsules(trip_id=trip_id, user_id=user_id, supabase=supabase)

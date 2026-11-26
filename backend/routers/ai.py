@@ -131,7 +131,7 @@ async def safe_download_image(url: str) -> tuple[bytes, str]:
         raise HTTPException(status_code=408, detail="Image download timeout")
     except Exception as e:
         print(f"❌ [SafeDownload] Failed: {e}")
-        raise HTTPException(status_code=400, detail=f"Failed to fetch image: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to fetch image from source URL")
 
 def compute_receipt_target_dimensions(orig_w: int, orig_h: int, max_dimension: int = 2048) -> tuple[int, int]:
     """
@@ -386,26 +386,26 @@ async def parse_markdown(
                     request,
                     auth_header=request.headers.get("Authorization"),
                 )
-            trip_res = supabase.table("itineraries").select("*").eq("id", body.itinerary_id).execute()
+            trip_res = await run_in_threadpool(supabase.table("itineraries").select("*").eq("id", body.itinerary_id).execute)
             if not trip_res.data:
                 raise HTTPException(status_code=404, detail="找不到目標行程")
             target_trip = trip_res.data[0]
             owner_id = str(target_trip.get("created_by") or "")
             if owner_id != str(caller_id):
-                mem_res = (
+                mem_res = await run_in_threadpool(
                     supabase.table("trip_members")
                     .select("id")
                     .eq("itinerary_id", body.itinerary_id)
                     .eq("user_id", caller_id)
-                    .execute()
+                    .execute
                 )
                 if not mem_res.data:
                     raise HTTPException(status_code=403, detail="無權限存取此目標行程之空間錨點")
-            ex_res = (
+            ex_res = await run_in_threadpool(
                 supabase.table("itinerary_items")
                 .select("day_number, place_name, location_lat, location_lng")
                 .eq("itinerary_id", body.itinerary_id)
-                .execute()
+                .execute
             )
             target_existing_items = ex_res.data or []
 
@@ -1004,12 +1004,14 @@ async def generate_trip(
     except (NonRetryableAuthError, NonRetryableRequestError, AllModelsFailedError) as e:
         is_en_gen = bool(body.locale and str(body.locale).strip().lower().startswith("en"))
         status_code, _, detail_msg = map_ai_exception_to_http_status(
-            e, is_en=is_en_gen, fallback_detail=f"Itinerary Generator Error: {str(e)}"
+            e,
+            is_en=is_en_gen,
+            fallback_detail="Itinerary generator temporarily unavailable" if is_en_gen else "AI 行程生成暫時無法使用，請稍後重試",
         )
         raise HTTPException(status_code=status_code, detail=detail_msg)
     except Exception as e:
         print(f"🔥 [Generator Error] {e}")
-        raise HTTPException(status_code=500, detail=f"Itinerary Generator Error: {str(e)}")
+        raise HTTPException(status_code=500, detail="AI 行程生成發生錯誤，請稍後重試")
 
 
 @router.post("/generate-trip/stream")
@@ -1307,13 +1309,15 @@ async def parse_receipt(
     except HTTPException:
         raise
     except (NonRetryableAuthError, NonRetryableRequestError, AllModelsFailedError) as e:
-        status_code, _, detail_msg = map_ai_exception_to_http_status(e, is_en=is_en, fallback_detail=str(e))
+        status_code, _, detail_msg = map_ai_exception_to_http_status(
+            e,
+            is_en=is_en,
+            fallback_detail="Receipt parsing temporarily unavailable" if is_en else "收據解析暫時無法使用，請稍後重試",
+        )
         raise HTTPException(status_code=status_code, detail=detail_msg)
     except Exception as e:
-        # NOTE: Using English-only error messages as a temporary workaround for
-        # Pyre2/Ruff Unicode boundary crashes on Windows during static analysis.
         print(f"[Error] parse_receipt: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Receipt parsing failed" if is_en else "收據解析失敗，請稍後重試")
 
 @router.post("/trips/{trip_id}/days/{day}/ai-review")
 @limiter.limit("5/minute")
@@ -1480,7 +1484,7 @@ async def generate_day_review(
                 not_found_detail="找不到行程資料",
             )
             if rpc_res is None:
-                trip_res = supabase.table("itineraries").select("content").eq("id", trip_id).execute()
+                trip_res = await run_in_threadpool(supabase.table("itineraries").select("content").eq("id", trip_id).execute)
                 if not trip_res.data:
                     raise HTTPException(status_code=404, detail="找不到行程資料")
                 trip_row = trip_res.data[0] if isinstance(trip_res.data, list) else trip_res.data
@@ -1490,7 +1494,7 @@ async def generate_day_review(
                 content["day_ai_reviews"] = day_reviews
 
                 # 寫回更新
-                supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute()
+                await run_in_threadpool(supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute)
         
         return {
             "status": "success", 
@@ -1550,23 +1554,25 @@ async def clear_day_review(
                 if rpc_res is not None:
                     return {"status": "success", "message": "Review cleared"}
 
-        trip_res = supabase.table("itineraries").select("created_by, content").eq("id", trip_id).execute()
+        trip_res = await run_in_threadpool(supabase.table("itineraries").select("created_by, content").eq("id", trip_id).execute)
         if not trip_res.data:
             raise HTTPException(status_code=404, detail="找不到行程資料")
             
         trip = trip_res.data[0]
         created_by = str(trip.get("created_by") or "")
         if created_by != user_id:
-            mem_res = supabase.table("trip_members")\
-                .select("id")\
-                .eq("itinerary_id", trip_id)\
-                .eq("user_id", user_id)\
-                .execute()
+            mem_res = await run_in_threadpool(
+                supabase.table("trip_members")
+                .select("id")
+                .eq("itinerary_id", trip_id)
+                .eq("user_id", user_id)
+                .execute
+            )
             if not mem_res.data:
                 raise HTTPException(status_code=403, detail="無權限清除此行程的審核報告")
 
         async with trip_lock(trip_id):
-            fresh_res = supabase.table("itineraries").select("content").eq("id", trip_id).execute()
+            fresh_res = await run_in_threadpool(supabase.table("itineraries").select("content").eq("id", trip_id).execute)
             if fresh_res is not None and not fresh_res.data:
                 raise HTTPException(status_code=404, detail="找不到行程資料")
             fresh_row = (
@@ -1580,7 +1586,7 @@ async def clear_day_review(
             if str(day) in reviews:
                 del reviews[str(day)]
                 content["day_ai_reviews"] = reviews
-                supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute()
+                await run_in_threadpool(supabase.table("itineraries").update({"content": content}).eq("id", trip_id).execute)
             
         return {"status": "success", "message": "Review cleared"}
     except HTTPException:

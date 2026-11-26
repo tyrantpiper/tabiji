@@ -50,12 +50,12 @@ def test_tc2_workflow_yaml_validity():
         deploy_step = next(s for s in deploy_steps if s.get("name") == "Deploy to Cloud Run")
         run_cmd = deploy_step.get("run", "")
         assert "gcloud run deploy antigravity-backend" in run_cmd
-        assert "--allow-unauthenticated" in run_cmd
+        assert "--allow-unauthenticated" not in run_cmd, "Routine CI deploy must omit --allow-unauthenticated to avoid SetIamPolicy permission errors"
         assert "--memory 1Gi" in run_cmd
     else:
         assert "name: Deploy Backend to Cloud Run" in content
         assert "gcloud run deploy antigravity-backend" in content
-        assert "--allow-unauthenticated" in content
+        assert "--allow-unauthenticated" not in content
 
 
 def test_tc3_cloud_run_environment_retention_contract():

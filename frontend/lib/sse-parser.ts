@@ -54,26 +54,37 @@ export function parseSSE(chunk: string, buffer: string): { events: SSEEvent[]; r
     for (const part of parts) {
         if (!part.trim()) continue
 
-        // 心跳訊號
-        if (part.startsWith(":")) {
-            events.push({ event: "heartbeat", data: "" })
-            continue
-        }
-
-        // 解析事件
-        const lines = part.split("\n")
+        // 逐行剔除 `:` 心跳/註解行（避免 FP-104：心跳行與 event:/data: 黏在同一區塊時誤殺整個事件）
+        const rawLines = part.split("\n")
+        let sawComment = false
         let eventName = "message"
-        let eventData = ""
+        const dataLines: string[] = []
+        let hasEventOrData = false
 
-        for (const line of lines) {
+        for (const rawLine of rawLines) {
+            const line = rawLine.replace(/\r$/, "")
+            if (!line.trim()) continue
+            if (line.trimStart().startsWith(":")) {
+                sawComment = true
+                continue
+            }
             if (line.startsWith("event:")) {
                 eventName = line.slice(6).trim()
+                hasEventOrData = true
             } else if (line.startsWith("data:")) {
-                eventData = line.slice(5).trim()
+                dataLines.push(line.slice(5).trim())
+                hasEventOrData = true
             }
         }
 
-        events.push({ event: eventName, data: eventData })
+        if (!hasEventOrData) {
+            if (sawComment) {
+                events.push({ event: "heartbeat", data: "" })
+            }
+            continue
+        }
+
+        events.push({ event: eventName, data: dataLines.join("\n") })
     }
 
     return { events, remaining }
@@ -315,4 +326,136 @@ export async function streamChat(
     } finally {
         reader.releaseLock()
     }
+}
+
+export interface StreamDeepResearchParams {
+    apiUrl: string
+    apiKey: string
+    prompt: string
+    origin?: string
+    destination?: string
+    booking_context?: string
+    locale?: string
+    signal?: AbortSignal
+    onThinking?: (status: string) => void
+    onText?: (text: string) => void
+    onHeartbeat?: () => void
+}
+
+export interface StreamDeepResearchResult {
+    supported: boolean
+    text?: string
+    engine?: string
+    error?: string
+}
+
+/**
+ * Opt-in Two-Phase SSE 深度研究用戶端。
+ * 遇 404/405/非 event-stream 回應時回傳 { supported: false }，供呼叫端無縫退回 JSON 輪詢。
+ */
+export async function streamDeepResearch(
+    params: StreamDeepResearchParams
+): Promise<StreamDeepResearchResult> {
+    let response: Response
+    try {
+        response = await fetch(`${params.apiUrl}/api/agents/research/stream`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Gemini-API-Key": params.apiKey,
+            },
+            signal: params.signal,
+            body: JSON.stringify({
+                prompt: params.prompt,
+                origin: params.origin || undefined,
+                destination: params.destination || undefined,
+                booking_context: params.booking_context || undefined,
+                locale: params.locale || "zh",
+            }),
+        })
+    } catch (err) {
+        if ((err as Error)?.name === "AbortError") throw err
+        return { supported: false }
+    }
+
+    if (response.status === 404 || response.status === 405 || response.status === 501) {
+        return { supported: false }
+    }
+    const contentType = response.headers.get("content-type") || ""
+    if (!response.ok) {
+        let detail = ""
+        try {
+            const errJson = await response.clone().json()
+            detail = String(errJson?.detail || errJson?.message || "")
+        } catch {
+            detail = ""
+        }
+        return { supported: true, error: detail || `HTTP ${response.status}` }
+    }
+    if (!contentType.includes("text/event-stream") || !response.body) {
+        return { supported: false }
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let collectedText = ""
+    let engine = "gemini-flash-stream"
+    let streamError: string | undefined
+    let terminated = false
+
+    try {
+        while (!terminated && !params.signal?.aborted) {
+            const { done, value } = await reader.read()
+            if (done) break
+            const chunk = decoder.decode(value, { stream: true })
+            const { events, remaining } = parseSSE(chunk, buffer)
+            buffer = remaining
+
+            for (const ev of events) {
+                if (params.signal?.aborted) break
+                if (ev.event === "heartbeat") {
+                    params.onHeartbeat?.()
+                } else if (ev.event === "thinking") {
+                    try {
+                        const d = JSON.parse(ev.data)
+                        params.onThinking?.(String(d?.status || "researching"))
+                    } catch {
+                        params.onThinking?.(ev.data || "researching")
+                    }
+                } else if (ev.event === "text") {
+                    try {
+                        const d = JSON.parse(ev.data)
+                        if (typeof d?.text === "string") {
+                            collectedText += d.text
+                            params.onText?.(d.text)
+                        }
+                    } catch { /* ignore */ }
+                } else if (ev.event === "done") {
+                    try {
+                        const d = JSON.parse(ev.data)
+                        engine = String(d?.engine || d?.model_used || engine)
+                    } catch { /* ignore */ }
+                    terminated = true
+                    break
+                } else if (ev.event === "error") {
+                    try {
+                        const d = JSON.parse(ev.data)
+                        streamError = String(d?.message || "Deep research failed")
+                    } catch {
+                        streamError = ev.data || "Deep research failed"
+                    }
+                    terminated = true
+                    break
+                }
+            }
+        }
+    } finally {
+        reader.releaseLock()
+    }
+
+    if (streamError) {
+        return { supported: true, error: streamError }
+    }
+    return { supported: true, text: collectedText, engine }
 }

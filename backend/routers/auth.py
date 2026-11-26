@@ -190,11 +190,14 @@ def generate_prefixed_recovery_key() -> tuple[str, str, str]:
 def get_vault_master_key(fallback_secret: Optional[str] = None) -> str:
     """
     🛡️ 獨立長生命週期資料加密主密鑰 (Key Encryption Key)
-    優先取用專用 VAULT_MASTER_KEY，未設定時以獨立專屬鹽值派生自 session_secret。
+    優先取用專用 VAULT_MASTER_KEY；生產環境嚴格 Fail-Closed，非生產環境以獨立專屬鹽值派生自 session_secret。
     """
     vault_secret = os.getenv("VAULT_MASTER_KEY")
     if vault_secret and len(vault_secret) >= 16:
         return vault_secret
+    is_prod = os.getenv("ENV") == "production" or os.getenv("NODE_ENV") == "production" or os.getenv("PROD") == "1"
+    if is_prod and not fallback_secret:
+        raise RuntimeError("🚨 [CRITICAL SECURITY] VAULT_MASTER_KEY is required in production environment!")
     sec = fallback_secret or get_session_secret()
     return hashlib.sha256(f"tabiji-dedicated-vault-salt-{sec}".encode()).hexdigest()
 
