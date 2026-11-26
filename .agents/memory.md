@@ -46,4 +46,6 @@
 - **Atomic Bootstrap & Grapheme-Safe Nickname**: `POST /api/auth/session` 於建帳與孤兒補登單步帶入跨端 Unicode/Grapheme 安全清洗之初始暱稱（絕不覆寫既有老用戶），搭配 `ProfileView` `Traveler` 防覆蓋鎖與四重競態守衛，根除兩段式改名斷裂。
 - **Dual-Track 6-Account Fixed Test Pool**: 線上實測一律複用 6 帳固定池（環境變數 RFC 4122 v4 `RYAN_TEST` 專測 D1 POI/UI、`00001/00002/00004/00005` 現代 `tbj_rec_*`、`00003` 硬鎖 Legacy），由 `scripts/manage_test_accounts.py` 統一巡檢、脫敏清理與線上升級。
 - **Single-Worker DNS Bulkhead & Bounded Streaming**: 單進程 Cloud Run (`1 vCPU / 1Gi`) 下出站 DNS 檢查隔離於獨立 4 執行緒艙壁並對白名單走 0ms 純 CPU 快車道，外部抓取一律採 `client.stream` 有界截斷、線性 $O(n)$ 正則與 Vercel 同款 `sandbox` CSP。
+- **4-Tier Zero-Cost Extraction Funnel & Two-Phase SSE**: 外部／IG 網頁萃取走 `LRU/Singleflight ➔ Markdown 協商 ➔ IG Embed (驗實質內容拒 CSR 空殼) ➔ Jina 官方標頭` 並對失效 GAS 404 熔斷 12h；SSE 串流採首字 TTFT 與出字後 25s 閒置雙階段超時，`>=140` 字元嚴禁 `event: reset`。
+- **WYSIWYS Coords Preservation & Map-Only Nav Gate**: 已預覽／手動確認座標以 `preserve_coords` ＋外國／跨城自洽檢核防鎖國誤蓋（續護撞名地標）；`link_url` 經 AI Schema ➔ 前端 ➔ 後端閘道 ➔ 讀取回退 4 層限縮地圖網域，非地圖連結自動去重歸入 `sub_items`（此地備忘錄）與 `website_link`。
 
