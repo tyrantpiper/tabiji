@@ -56,6 +56,25 @@ describe("🛡️ Cloudflare Worker Proxy & Preferences Graceful Degradation Sen
             expect(getOptimizedImageUrl(null)).toBe("");
             expect(getOptimizedImageUrl("https://images.unsplash.com/photo-12345")).toBe("https://images.unsplash.com/photo-12345");
         });
+
+        it("TC-5b (#37 Mantis Block G): Spoofed substring/userinfo/non-HTTPS Cloudinary URLs are NOT rewritten while valid transform URLs still optimize", () => {
+            delete process.env.NEXT_PUBLIC_CLOUDINARY_PROXY_HOST;
+            const spoofedUrls = [
+                "https://evil.com/res.cloudinary.com/dnpcnwrcu/image/upload/v1792785423/a.jpg",
+                "https://res.cloudinary.com.evil.com/dnpcnwrcu/image/upload/v1792785423/a.jpg",
+                "https://res.cloudinary.com@evil.com/dnpcnwrcu/image/upload/v1792785423/a.jpg",
+                "https://evil.com/?next=https://res.cloudinary.com/dnpcnwrcu/image/upload/v1792785423/a.jpg",
+                "http://res.cloudinary.com/dnpcnwrcu/image/upload/v1792785423/a.jpg",
+                "https://res.cloudinary.com:8443/dnpcnwrcu/image/upload/v1792785423/a.jpg",
+            ];
+            for (const spoof of spoofedUrls) {
+                expect(getOptimizedImageUrl(spoof, 640)).toBe(spoof);
+            }
+            const withExistingTransform = "https://res.cloudinary.com/dnpcnwrcu/image/upload/w_1024,c_limit/v1792785423/ryan_travel/a.jpg";
+            expect(getOptimizedImageUrl(withExistingTransform, 640)).toBe(
+                "https://cloudinary-proxy.ryanpig228.workers.dev/w_640/v1792785423/ryan_travel/a.jpg"
+            );
+        });
     });
 
     describe("2. usersApi.getPreferences Graceful Fallback & Auth Resilience", () => {

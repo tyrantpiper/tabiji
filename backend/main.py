@@ -2326,7 +2326,7 @@ Live geographic coordinates have been verified above. When recommending nearby r
                             if is_en_stream
                             else "對話請求格式或附件無效，請調整後重試"
                         )
-                        yield f'event: error\ndata: {json.dumps({"message": str(gen_error) or bad_detail, "code": 400, "detail": bad_detail})}\n\n'
+                        yield f'event: error\ndata: {json.dumps({"message": bad_detail, "code": 400, "detail": bad_detail})}\n\n'
                         return
 
                 # 🛡️ 429 速率限制平滑降級與多租戶熔斷記錄
@@ -2361,7 +2361,7 @@ Live geographic coordinates have been verified above. When recommending nearby r
                         if is_en_stream
                         else "AI 回應串流中途連線逾時或中斷，已保留目前已顯示內容。"
                     )
-                    yield f'event: error\ndata: {json.dumps({"message": err_msg or partial_detail, "code": partial_code, "detail": partial_detail, "partial_preserved": True})}\n\n'
+                    yield f'event: error\ndata: {json.dumps({"message": partial_detail, "code": partial_code, "detail": partial_detail, "partial_preserved": True})}\n\n'
                     return
 
                 if emitted_any_output:
@@ -2578,16 +2578,17 @@ async def test_gemini_api_key(request: Request, api_key: str = Depends(get_gemin
         kind = classify_api_error(e)
         err_code = _get_api_error_code(e)
         err_msg = getattr(e, "message", None) or str(e)
+        logger.warning(f"⚠️ /api/ai/test-key 驗證失敗 ({type(e).__name__}, code={err_code}, kind={kind}): {err_msg}")
         if kind == "auth_fail":
             raise HTTPException(
                 status_code=401, 
                 detail="API Key 無效、已過期或被 Google 封鎖。請至 Google AI Studio 重新生成 Auth Key。"
             )
         if err_code == 429:
-            raise HTTPException(status_code=429, detail=f"API 請求頻率超過配額限制 (429): {err_msg}")
+            raise HTTPException(status_code=429, detail="API 請求頻率超過配額限制 (429)，請稍後再試")
         if kind == "retryable" or err_code in (500, 502, 503, 504):
             raise HTTPException(status_code=503, detail=f"Gemini 服務暫時忙碌 ({err_code or 503})，請稍後重試")
-        raise HTTPException(status_code=400, detail=f"API 測試失敗: {err_msg}")
+        raise HTTPException(status_code=400, detail="API 測試失敗，請確認金鑰權限與設定後重試")
     except Exception as e:
         print(f"🔥 API Key test server error: {e}")
         raise HTTPException(status_code=500, detail="金鑰測試發生伺服器內部錯誤，請稍後重試")

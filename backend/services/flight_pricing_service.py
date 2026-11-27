@@ -27,7 +27,7 @@ TABIJI_USER_AGENT = "TabijiTravelPWA/1.0 (https://www.tabijiapp.com; contact@tab
 _IATA_CODE_RE = re.compile(r"^[A-Z]{3}$")
 _IATA_IN_TEXT_RE = re.compile(r"\(([A-Z]{3})\)")
 _TITLE_NOISE_RE = re.compile(
-    r"(?:20\d{2}|年|家族|之旅|自由行|行程|旅遊|旅行|攻略|獨旅|蜜月|跨年|賞櫻|賞楓|\d+\s*天\s*\d*\s*夜?|"
+    r"(?:20\d{2}|年|家族|之旅|自由行|行程|旅遊|旅行|攻略|獨旅|蜜月|跨年|賞櫻|賞楓|(?<!\d)\d{1,3}[ \t]{0,2}天(?:[ \t]{0,2}(?:\d{1,3}[ \t]{0,2})?夜)?|"
     r"\b(?:trip|travel|itinerary|guide|vacation|holiday|family|days?|nights?)\b)",
     re.IGNORECASE,
 )
@@ -195,7 +195,7 @@ def resolve_iata_to_display_city(destination: Optional[str], locale: str = "zh")
     - English outputs are strictly ASCII city names (never CJK aliases like '沖縄'/'臺北').
     - Unknown 3-letter uppercase IATA codes return '' so bare airport codes never pollute RSS queries.
     """
-    clean = (destination or "").strip()
+    clean = (destination or "").strip()[:200]
     if not clean:
         return ""
 
@@ -319,7 +319,7 @@ async def resolve_iata_code(raw_value: Optional[str], locale: str = "zh", timeou
     Resolve an IATA code (e.g. 'NRT', 'TYO') from a raw IATA string, city name, or trip title
     such as '2026 東京家族之旅'. Uses fast local map -> cached places2 zero-key lookup.
     """
-    clean = (raw_value or "").strip()
+    clean = (raw_value or "").strip()[:200]
     if not clean:
         return ""
 

@@ -352,8 +352,12 @@ async def test_red_poi_enrich_locale_isolation_and_reset_helper():
     )
     assert hasattr(req_model_en, "locale")
 
-    mock_req = MagicMock()
-    mock_req.app.state.client = MagicMock()
+    from types import SimpleNamespace
+
+    def _make_poi_request() -> StarletteRequest:
+        req = _make_request("/api/poi/ai-enrich")
+        req.scope["app"] = SimpleNamespace(state=SimpleNamespace(client=MagicMock()))
+        return req
 
     with patch("routers.poi.call_extraction", new_callable=AsyncMock) as mock_extract, \
          patch("routers.poi.enrich_poi_complete", new_callable=AsyncMock) as mock_wiki:
@@ -370,7 +374,7 @@ async def test_red_poi_enrich_locale_isolation_and_reset_helper():
             api_key="fake_key",
             locale="zh",
         )
-        zh_res = await poi_router.ai_enrich_poi(mock_req, zh_req)
+        zh_res = await poi_router.ai_enrich_poi(_make_poi_request(), zh_req)
         assert "寺廟" in zh_res["summary"]
 
         # Step 2: Enrich same poi_id in English -> MUST NOT hit Chinese cache, and translates non-EN cultural_desc to EN
@@ -389,7 +393,7 @@ async def test_red_poi_enrich_locale_isolation_and_reset_helper():
             api_key="fake_key",
             locale="en",
         )
-        en_res = await poi_router.ai_enrich_poi(mock_req, en_req)
+        en_res = await poi_router.ai_enrich_poi(_make_poi_request(), en_req)
         assert "Buddhist temple" in en_res["summary"]
         assert "en (translated from" in en_res["resolved_language"]
 

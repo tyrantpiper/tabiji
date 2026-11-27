@@ -87,7 +87,8 @@ def unwrap_ddg_redirect(href: str) -> str:
     try:
         norm_href = f"https:{href}" if href.startswith("//") else href
         parsed = urllib.parse.urlparse(norm_href)
-        if "duckduckgo.com" in parsed.netloc and parsed.path.startswith("/l/"):
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if (host == "duckduckgo.com" or host.endswith(".duckduckgo.com")) and parsed.path.startswith("/l/"):
             qs = urllib.parse.parse_qs(parsed.query)
             target = qs.get("uddg")
             if target and target[0]:

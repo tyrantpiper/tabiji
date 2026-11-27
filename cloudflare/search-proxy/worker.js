@@ -149,23 +149,39 @@ function resolveNewsLocale(query) {
   return { hl: "en-US", gl: "US", ceid: "US:en" };
 }
 
+const XML_NAMED_ENTITIES = {
+  nbsp: " ",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
 function decodeXmlEntities(str) {
   return String(str || "")
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
-      const code = parseInt(hex, 16);
-      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
-    })
-    .replace(/&#(\d+);/g, (_, num) => {
-      const code = parseInt(num, 10);
-      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
-    });
+    .replace(
+      /&(?:(nbsp|amp|lt|gt|quot|apos)|#x([0-9a-fA-F]{1,10})|#(\d{1,10}));/gi,
+      (match, named, hex, dec) => {
+        if (named) {
+          return XML_NAMED_ENTITIES[named.toLowerCase()] ?? match;
+        }
+        if (hex) {
+          const code = parseInt(hex, 16);
+          return Number.isFinite(code) && code >= 0 && code <= 0x10ffff
+            ? String.fromCodePoint(code)
+            : "";
+        }
+        if (dec) {
+          const code = parseInt(dec, 10);
+          return Number.isFinite(code) && code >= 0 && code <= 0x10ffff
+            ? String.fromCodePoint(code)
+            : "";
+        }
+        return match;
+      }
+    );
 }
 
 /**

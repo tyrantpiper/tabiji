@@ -50,18 +50,18 @@ PRAISE_PATTERN = re.compile(
 )
 
 REMOVE_PATTERN = re.compile(
-    r"(\b(remove|delete|cancel|drop|take\s*off)\b|刪除|移除|拿掉|取消|不要去|不要排|從行程.*(刪|拿|移除)|把.*(刪掉|移除|拿掉|取消))",
+    r"(\b(?:remove|delete|cancel|drop|take[ \t]{0,3}off)\b|刪除|移除|拿掉|取消|不要去|不要排|從行程[^\n]{0,80}(?:刪|拿)|把[^把\n]{0,120}(?:刪掉|移除|拿掉|取消))",
     re.IGNORECASE
 )
 
 # 💰 全球法定貨幣與花費記帳正則 (支援 JPY, TWD, USD, EUR, GBP, KRW, THB, SGD, AUD, CAD, HKD, VND, RMB 等，含中英動詞)
 EXPENSE_PATTERN = re.compile(
-    r"(\b\d+[\.,]?\d*\s*(日圓|日幣|円|twd|nt\$|台幣|塊|元|usd|dollars?|美金|美元|jpy|eur|euros?|歐元|歐幣|gbp|pounds?|英鎊|krw|won|韓元|韓幣|thb|baht|泰銖|泰幣|sgd|新幣|星幣|aud|澳幣|澳元|cad|加幣|加元|hkd|港幣|港元|vnd|越南盾|越盾|盾|rmb|cny|人民幣|€|£|₩|฿|\$)\b|(\b(spent|bought|paid|cost|expense|record)\b|記帳|花了|買了|花費|消費|付了|餐費|門票費|車資|住宿費|機票費|船票))",
+    r"(\b\d+(?:[.,]\d+){0,3}[ \t]{0,4}(?:日圓|日幣|円|twd|nt\$|台幣|塊|元|usd|dollars?|美金|美元|jpy|eur|euros?|歐元|歐幣|gbp|pounds?|英鎊|krw|won|韓元|韓幣|thb|baht|泰銖|泰幣|sgd|新幣|星幣|aud|澳幣|澳元|cad|加幣|加元|hkd|港幣|港元|vnd|越南盾|越盾|盾|rmb|cny|人民幣|€|£|₩|฿|\$)\b|(\b(?:spent|bought|paid|cost|expense|record)\b|記帳|花了|買了|花費|消費|付了|餐費|門票費|車資|住宿費|機票費|船票))",
     re.IGNORECASE
 )
 
 ITINERARY_PATTERN = re.compile(
-    r"(\b(add|put|schedule|plan|include)\b.*(to|in|on)?\s*(day\s*\d+|itinerary)|Day\s*\d+|第\s*\d+\s*天|排進|加到|加進|排入|加入行程|安排到|排在|加一個|幫我排|想去|推薦.*景點.*排)",
+    r"(\b(?:add|put|schedule|plan|include)\b[^\n]{0,120}(?:day[ \t]{0,4}\d{1,3}|itinerary)\b|Day[ \t]{0,4}\d{1,3}|第[ \t]{0,4}\d{1,3}[ \t]{0,4}天|排進|加到|加進|排入|加入行程|安排到|排在|加一個|幫我排|想去|推薦[^\n]{0,60}景點[^排\n]{0,40}排)",
     re.IGNORECASE
 )
 
@@ -101,29 +101,29 @@ INVISIBLE_FORMAT_CHARS_RE = re.compile(
     r"\uffa0\U000e0000-\U000e01ef]"
 )
 
-# 🛡️ 系統合法前置與後置 Context 標記：涵蓋全庫所有系統脈絡包裝格式
+# 🛡️ 系統合法前置與後置 Context 標記：涵蓋全庫所有系統脈絡包裝格式（非重疊有界正則，呼叫端先 lstrip 與 [:256] 切片防 O(N^3) ReDoS）
 SYSTEM_PREFIX_ANCHOR_RE = re.compile(
-    r"^\s*(?:--- SYSTEM CONTEXT:\s*(?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\)|[A-Za-z0-9_ -]+)\s*---|--- USER PREFERENCES|【系統背景|【當前行程脈絡】|用戶詢問關於「|The user is asking about \"[^\"\n]+\"\.|User is asking about [\"「]|"
+    r"^(?:--- SYSTEM CONTEXT: (?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\)|[A-Za-z0-9_]{1,40}(?: [A-Za-z0-9_-]{1,40}){0,8}) ---|--- USER PREFERENCES|【系統背景|【當前行程脈絡】|用戶詢問關於「|The user is asking about \"[^\"\n]{1,200}\"\.|User is asking about [\"「]|"
     r"📍 \*\*(?:附近|Nearby )|🔬 以下是來自維基百科|💰 \*\*(?:即時機票參考價格|Live Flight Fare Reference )|"
     r"\[系統即時解析外部網頁資訊|\[Live External Webpage Content \(Source: |\[SYSTEM REAL-TIME WEB PAGE ANALYSIS|\[系統提示：使用者上傳了一張圖片|\[System Notice: The uploaded image could not be parsed\]|\[SYSTEM HINT:|\[WEATHER\]|\[2026 Neural Weather\]|\[CURRENT TIME)"
 )
 SYSTEM_BOUNDARY_END_RE = re.compile(
-    r"(?:--- END OF SYSTEM CONTEXT ---|-{20,}|用戶原始問題：|使用者需求：|Original question:|User's original question:|User [Rr]equest:)\s*",
+    r"(?:--- END OF SYSTEM CONTEXT ---|-{20,}|用戶原始問題：|使用者需求：|Original question:|User's original question:|User [Rr]equest:)[ \t\r\n]{0,8}",
     re.DOTALL,
 )
-USER_INPUT_OPEN_TAG_RE = re.compile(r"<user_input_([a-zA-Z0-9_-]+)>\s*")
+USER_INPUT_OPEN_TAG_RE = re.compile(r"<user_input_([a-zA-Z0-9_-]{1,64})>[ \t\r\n]{0,8}")
 SYSTEM_ALLOWED_SUFFIX_RE = re.compile(
-    r"^\s*(?:$|📍 \*\*(?:附近|Nearby )|--- SYSTEM CONTEXT:\s*(?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\))\s*---|--- USER PREFERENCES|💰 \*\*(?:即時機票參考價格|Live Flight Fare Reference )|"
+    r"^(?:$|📍 \*\*(?:附近|Nearby )|--- SYSTEM CONTEXT: (?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\)) ---|--- USER PREFERENCES|💰 \*\*(?:即時機票參考價格|Live Flight Fare Reference )|"
     r"\[CURRENT TIME|\[WEATHER\]|請根據以上(?:即時資料|資料)回答用戶問題|(?:Please )?[Aa]nswer the user's question based on)"
 )
-SPOOFED_USER_TAG_RE = re.compile(r"</?user_input_[a-zA-Z0-9_-]*>")
+SPOOFED_USER_TAG_RE = re.compile(r"</?user_input_[a-zA-Z0-9_-]{0,64}>")
 
 
 def _is_valid_outer_trailing(trailing: str) -> bool:
     """驗證閉合標籤後方不含任何殘留 </user_input_ 標籤，且符合合法系統後綴或結尾"""
     if "</user_input_" in trailing:
         return False
-    return bool(SYSTEM_ALLOWED_SUFFIX_RE.match(trailing))
+    return bool(SYSTEM_ALLOWED_SUFFIX_RE.match(trailing.lstrip()[:256]))
 
 
 def _sanitize_invisible_chars(text: object) -> str:
@@ -140,9 +140,10 @@ def _extract_clean_user_text(message: str, max_len: int = 500) -> str:
         return ""
 
     bounded_raw = sanitized[:32768]
+    lstripped = bounded_raw.lstrip()
     extracted = bounded_raw
 
-    if SYSTEM_PREFIX_ANCHOR_RE.match(bounded_raw):
+    if SYSTEM_PREFIX_ANCHOR_RE.match(lstripped[:256]):
         candidate_starts = [m.end() for m in SYSTEM_BOUNDARY_END_RE.finditer(bounded_raw)]
         if not candidate_starts:
             candidate_starts = [0]
@@ -166,7 +167,6 @@ def _extract_clean_user_text(message: str, max_len: int = 500) -> str:
         if unclosed_fallback is not None:
             extracted = unclosed_fallback
     else:
-        lstripped = bounded_raw.lstrip()
         open_match = USER_INPUT_OPEN_TAG_RE.match(lstripped)
         if open_match:
             outer_salt = open_match.group(1)

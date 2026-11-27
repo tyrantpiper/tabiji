@@ -1,15 +1,178 @@
 {
   "version": "2.0.0",
-  "last_audit_date": "2026-11-25T13:25:00Z",
+  "last_audit_date": "2026-11-27T14:35:00Z",
   "audit_mode": "sentinel-agy-adversarial",
   "statistics": {
-    "total_targets": 464,
-    "audited_targets": 464,
+    "total_targets": 476,
+    "audited_targets": 476,
     "verified_vulnerabilities": 53,
-    "remediated_vulnerabilities": 224,
+    "remediated_vulnerabilities": 236,
     "dismissed_hypotheses": 187
   },
   "targets": [
+    {
+      "id": "backend/services/intent_router.py:codeql_89_102_59_53_linear_regex_redos",
+      "target_type": "backend_intent_classifier",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "cubic_redos_system_prefix_anchor",
+        "quadratic_redos_fast_path_patterns"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Eliminated O(N^3) overlapping quantifiers in SYSTEM_PREFIX_ANCHOR_RE with lstrip() + [:256] prefix slice and bounded non-overlapping grammar, and linearized REMOVE_PATTERN/EXPENSE_PATTERN/ITINERARY_PATTERN (#89, #102, #59, #53). Verified <50ms on 20k-30k hostile payloads.",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "backend/services/poi_service.py:codeql_127_poi_title_redos_and_bounds",
+      "target_type": "backend_poi_service",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "quadratic_redos_poi_title_normalization",
+        "unbounded_poi_name_input"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Removed leading \\s* and excluded opening parens in _normalize_poi_title with [:512] cap, and added max_length=512 on POIAIEnrichRequest.name and POIEnrichRequest.name (#127).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "backend/services/flight_pricing_service.py:codeql_125_title_noise_redos",
+      "target_type": "backend_flight_service",
+      "trust_boundary": "public_to_authenticated",
+      "vectors_checked": [
+        "quadratic_redos_title_noise_digits_and_spaces"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Added (?<!\\d) negative lookbehind + bounded quantifiers in _TITLE_NOISE_RE and [:200] truncation in resolve_iata_code and resolve_iata_to_display_city (#125).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "backend/services/link_resolver.py:codeql_88_87_address_and_title_redos",
+      "target_type": "backend_link_resolver",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "quadratic_redos_taiwan_address_splitter",
+        "quadratic_redos_google_maps_title_strip"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Bounded ADDRESS_POI_PATTERN with disjoint road character class + >300 char short-circuit, truncated raw_title[:500] without leading \\s*, and enforced max_length=2048 on link resolver routes (#88, #87).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "backend/services/geocode_service.py:codeql_36_nominatim_degrade_redos",
+      "target_type": "backend_geocode_service",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "quadratic_redos_under_global_nominatim_lock"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Replaced both L771/L774 degradation regexes with _ADDR_DEGRADE_RE using (?<!\\d)\\d{1,10}, truncated resolve_address_pipeline input to [:512], and enforced ResolveAddressRequest.address max_length=512 (#36).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "backend/utils/poi_utils.py:codeql_30_normalize_poi_name_redos",
+      "target_type": "backend_poi_utility",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "quadratic_redos_whitespace_and_bracket_scan"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Replaced \\s* + .*? with disjoint bracket character class _POI_BRACKET_RE + post-collapse whitespace and [:512] cap (#30).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "backend/routers/mcp.py:codeql_91_95_oauth_redirect_and_host_header_hardening",
+      "target_type": "backend_oauth_mcp_router",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "oauth_wildcard_redirect_hijack_and_userinfo_bypass",
+        "x_forwarded_host_and_proto_discovery_poisoning"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Removed wildcard vercel.app and googleusercontent.com from OAuth redirect allowlist in favor of exact production/Google redirect hosts + project preview regex; rejected userinfo/backslash/control-chars/fragments/non-443/prod-testserver; hardened get_public_base_url with strict host regex and canonical fallback (#91, #95).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "backend/main.py:codeql_55_sse_and_test_key_exception_sanitization",
+      "target_type": "backend_api_route",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "sse_error_raw_exception_exposure",
+        "test_key_raw_exception_exposure"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Sanitized SSE bad_request and partial_preserved error payloads and /api/ai/test-key 429/400 details to static localized messages while preserving 401 API_KEY_INVALID, code, and partial_preserved contracts (#55).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "github/workflows/ci.yml:codeql_51_42_40_least_privilege_permissions",
+      "target_type": "ci_workflow",
+      "trust_boundary": "ci_supply_chain",
+      "vectors_checked": [
+        "missing_github_token_permissions_block"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Added top-level permissions: contents: read to .github/workflows/ci.yml covering meltdown-defense, quality-check, and backend-quality jobs (#51, #42, #40).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "cloudflare/search-proxy/worker.js:codeql_136_single_pass_xml_entity_decode",
+      "target_type": "edge_worker",
+      "trust_boundary": "edge_to_upstream",
+      "vectors_checked": [
+        "double_unescaping_xml_entities"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Replaced chained .replace() XML entity decoding in decodeXmlEntities with single-pass lookup regex preventing &amp;lt; double-decoding (#136).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
+    {
+      "id": "cross_stack:codeql_174_172_73_to_61_76_37_exact_hostname_matching",
+      "target_type": "cross_stack_url_validation",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "incomplete_url_substring_sanitization_17_alerts",
+        "google_maps_netloc_dead_code"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Replaced substring URL checks with exact dot-delimited hostname matching across routers/agents.py (#174), services/destination_taxonomy.py (#172, #73-#61 + Google Maps path dead-code fix), services/web_search_engine.py (#76), and frontend/lib/utils.ts (#37).",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py and frontend/__tests__/cloudinary-proxy-and-preferences-sentinel.test.ts"
+    },
+    {
+      "id": "backend/routers/poi_geocode_and_url_safety:adjacent_ip_only_limits_and_fastpath_hardening",
+      "target_type": "backend_rate_limit_and_ssrf",
+      "trust_boundary": "browser_to_edge",
+      "vectors_checked": [
+        "fake_api_key_public_rate_limit_bypass",
+        "url_safety_fast_path_userinfo_backslash_control_chars"
+      ],
+      "status": "REMEDIATED",
+      "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
+      "validator_details": "Enforced IP-only get_public_ip_rate_limit_key across /api/poi/ai-enrich (60/min), /api/geocode/{search,resolve-link,resolve-address} (60/min), /api/poi/resolve-link (30/min), and /api/poi/media-proxy (30/min) while preserving per-API-key isolation on /api/chat/stream; hardened url_safety fast-path against @ userinfo, backslashes, and control characters.",
+      "remediated_at": "2026-11-27T14:35:00Z",
+      "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
+    },
     {
       "id": "backend/routers/poi.py:resolve_link_and_media_proxy_hardening",
       "target_type": "backend_api_route",

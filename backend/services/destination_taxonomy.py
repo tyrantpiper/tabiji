@@ -715,6 +715,40 @@ async def extract_search_queries_with_lite(
 
 # ==================== 4. AC-2 Blacklist & Category Mapping ====================
 
+_DEFAULT_OFFICIAL_DOMAINS = (
+    "gov.tw", "go.jp", "japan.travel", "visitkorea.or.kr", "tourismthailand.org",
+    "visitsingapore.com", "stb.gov.sg", "vietnam.travel", "france.fr",
+    "visitbritain.com", "visitbritain.org", "italia.it", "spain.info",
+    "germany.travel", "discoverhongkong.com", "visittheusa.com", "visittheusa.org",
+)
+
+_THEFORK_HOSTS = (
+    "thefork.com", "thefork.fr", "thefork.it", "thefork.es",
+    "thefork.co.uk", "thefork.ch", "thefork.nl", "thefork.be",
+    "thefork.pt", "thefork.de", "thefork.at", "thefork.com.au",
+)
+
+
+def _host_matches(host: str, *domains: str) -> bool:
+    """精確主機名或點分隔子網域比對（防範 URL 子字串偽造與非預期徽章配對）"""
+    if not host:
+        return False
+    for domain in domains:
+        d = domain.lower().lstrip(".")
+        if host == d or host.endswith(f".{d}"):
+            return True
+    return False
+
+
+def _is_google_maps_url(host: str, path: str) -> bool:
+    """辨識 Google Maps 連結（修復原 '\"google.com/maps\" in netloc' 死碼）"""
+    if host in ("maps.google.com", "maps.app.goo.gl"):
+        return True
+    if _host_matches(host, "google.com") and (path == "/maps" or path.startswith("/maps/")):
+        return True
+    return False
+
+
 def classify_and_filter_results(
     raw_results: List[Dict[str, Any]], 
     user_query: str,
@@ -755,12 +789,12 @@ def classify_and_filter_results(
         try:
             parsed = urllib.parse.urlparse(url)
             scheme = (parsed.scheme or "").lower()
-            netloc = parsed.netloc.lower()
             host = (parsed.hostname or "").lower().rstrip(".")
+            path = (parsed.path or "").lower()
         except ValueError:
             continue
 
-        if "wikipedia.org" in netloc or "維基百科" in title:
+        if _host_matches(host, "wikipedia.org") or "維基百科" in title:
             haystack_wiki = f"{title} {snippet}".lower()
             wiki_ref = (search_query or user_query or "").strip()
             query_stripped = _VAGUE_QUERY_STRIP_RE.sub(" ", wiki_ref)
@@ -778,14 +812,12 @@ def classify_and_filter_results(
         badge = {"text": "🌐 旅遊指南", "color": "text-slate-500 bg-slate-500/10 border-slate-500/20"}
 
         # 官方站點
-        official_rules = [
-            r"\.gov\.tw", r"\.go\.jp", r"japan\.travel", r"visitkorea", r"tourismthailand",
-            r"visitsingapore", r"stb\.gov\.sg", r"vietnam\.travel", r"france\.fr",
-            r"visitbritain", r"italia\.it", r"spain\.info", r"germany\.travel",
-            r"discoverhongkong", r"visittheusa"
-        ]
+        official_domains = list(_DEFAULT_OFFICIAL_DOMAINS)
         if tax and "official_domains" in tax:
-            official_rules.extend(tax["official_domains"])
+            for pat in tax["official_domains"]:
+                cleaned_dom = pat.replace(r"\.", ".").lstrip(".").lower()
+                if cleaned_dom:
+                    official_domains.append(cleaned_dom)
 
         if scheme in ("http", "https") and host == "news.google.com":
             category = "news"
@@ -793,51 +825,55 @@ def classify_and_filter_results(
                 "text": "📰 即時新聞",
                 "color": "text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/30 dark:border-sky-500/20",
             }
-        elif any(re.search(r, netloc) for r in official_rules):
+        elif _host_matches(host, *official_domains):
             category = "official"
             badge = {"text": "🏛️ 官方觀光局", "color": "text-emerald-500 bg-emerald-500/10 border-emerald-500/20"}
         # 在地論壇與食評
-        elif any(f in netloc for f in [
+        elif _host_matches(
+            host,
             "ptt.cc", "dcard.tw", "mobile01.com", "tabelog.com", "retrip.jp", "jalan.net",
             "blog.naver.com", "pantip.com", "hardwarezone.com.sg", "burpple.com", "sethlui.com",
-            "foody.vn", "tinhte.vn", "voz.vn", "thefork.", "timeout.com", "lihkg.com", "openrice.com"
-        ]):
+            "foody.vn", "tinhte.vn", "voz.vn", "timeout.com", "lihkg.com", "openrice.com",
+            *_THEFORK_HOSTS,
+        ):
             category = "local_forum"
-            if "ptt.cc" in netloc:
+            if _host_matches(host, "ptt.cc"):
                 badge = {"text": "🇹🇼 PTT 在地情報", "color": "text-blue-500 bg-blue-500/10 border-blue-500/20"}
-            elif "dcard.tw" in netloc:
+            elif _host_matches(host, "dcard.tw"):
                 badge = {"text": "🇹🇼 Dcard 旅人熱議", "color": "text-cyan-500 bg-cyan-500/10 border-cyan-500/20"}
-            elif "tabelog.com" in netloc:
+            elif _host_matches(host, "tabelog.com"):
                 badge = {"text": "🇯🇵 Tabelog 老饕評分", "color": "text-orange-500 bg-orange-500/10 border-orange-500/20"}
-            elif "hardwarezone.com.sg" in netloc:
+            elif _host_matches(host, "hardwarezone.com.sg"):
                 badge = {"text": "🇸🇬 HardwareZone 獅城熱議", "color": "text-red-500 bg-red-500/10 border-red-500/20"}
-            elif "burpple.com" in netloc or "sethlui.com" in netloc:
+            elif _host_matches(host, "burpple.com", "sethlui.com"):
                 badge = {"text": "🇸🇬 獅城在地食評", "color": "text-amber-500 bg-amber-500/10 border-amber-500/20"}
-            elif "foody.vn" in netloc or "tinhte.vn" in netloc or "voz.vn" in netloc:
+            elif _host_matches(host, "foody.vn", "tinhte.vn", "voz.vn"):
                 badge = {"text": "🇻🇳 越南社群在地推薦", "color": "text-emerald-500 bg-emerald-500/10 border-emerald-500/20"}
-            elif "thefork." in netloc:
+            elif _host_matches(host, *_THEFORK_HOSTS):
                 badge = {"text": "🇪🇺 TheFork 歐洲老饕首選", "color": "text-violet-500 bg-violet-500/10 border-violet-500/20"}
-            elif "timeout.com" in netloc:
+            elif _host_matches(host, "timeout.com"):
                 badge = {"text": "🗺️ TimeOut 都市導覽", "color": "text-sky-500 bg-sky-500/10 border-sky-500/20"}
-            elif "lihkg.com" in netloc:
+            elif _host_matches(host, "lihkg.com"):
                 badge = {"text": "🇭🇰 LIHKG 香港在地討論", "color": "text-indigo-500 bg-indigo-500/10 border-indigo-500/20"}
-            elif "openrice.com" in netloc:
+            elif _host_matches(host, "openrice.com"):
                 badge = {"text": "🇭🇰 OpenRice 開飯喇", "color": "text-amber-500 bg-amber-500/10 border-amber-500/20"}
             else:
                 badge = {"text": "📍 在地社群/評測", "color": "text-indigo-500 bg-indigo-500/10 border-indigo-500/20"}
         # 全球論壇
-        elif "reddit.com" in netloc:
+        elif _host_matches(host, "reddit.com"):
             category = "global_forum"
             badge = {"text": "💬 Reddit 全球旅人", "color": "text-amber-500 bg-amber-500/10 border-amber-500/20"}
-        elif "tripadvisor.com" in netloc or "wikivoyage.org" in netloc or "lonelyplanet.com" in netloc:
+        elif _host_matches(host, "tripadvisor.com", "wikivoyage.org", "lonelyplanet.com"):
             category = "global_forum"
             badge = {"text": "🌍 國際旅遊社群", "color": "text-yellow-500 bg-yellow-500/10 border-yellow-500/20"}
         # 美食評測
-        elif any(r in netloc for r in ["google.com/maps", "yelp.com", "eater.com", "theinfatuation.com", "walkerland.com.tw", "retty.me"]):
+        elif _is_google_maps_url(host, path) or _host_matches(
+            host, "yelp.com", "eater.com", "theinfatuation.com", "walkerland.com.tw", "retty.me"
+        ):
             category = "review"
-            if "yelp.com" in netloc:
+            if _host_matches(host, "yelp.com"):
                 badge = {"text": "🇺🇸 Yelp 權威食評", "color": "text-red-500 bg-red-500/10 border-red-500/20"}
-            elif "eater.com" in netloc or "theinfatuation.com" in netloc:
+            elif _host_matches(host, "eater.com", "theinfatuation.com"):
                 badge = {"text": "🇺🇸 Eater 深度探店", "color": "text-rose-500 bg-rose-500/10 border-rose-500/20"}
             else:
                 badge = {"text": "⭐ 景點美食評分", "color": "text-rose-500 bg-rose-500/10 border-rose-500/20"}

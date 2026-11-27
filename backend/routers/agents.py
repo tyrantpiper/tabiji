@@ -1117,7 +1117,7 @@ def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -
                 raw_host = (parsed.hostname or "").lower().rstrip(".")
                 clean_host = raw_host.removeprefix("www.")
                 wiki_title = ""
-                if clean_host.endswith("wikipedia.org") and "/wiki/" in (parsed.path or ""):
+                if (clean_host == "wikipedia.org" or clean_host.endswith(".wikipedia.org")) and "/wiki/" in (parsed.path or ""):
                     slug = parsed.path.split("/wiki/", 1)[1].split("/", 1)[0]
                     decoded_slug = urllib.parse.unquote(slug).replace("_", " ").strip()
                     if decoded_slug:

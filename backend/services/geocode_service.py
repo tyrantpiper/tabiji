@@ -649,13 +649,16 @@ async def geocode_with_gas(place_name: str) -> dict | None:
     return None
 
 
+_ADDR_DEGRADE_RE = re.compile(r'(?<!\d)\d{1,10}[號巷弄樓Ff-][^,]{0,200}')
+
+
 async def resolve_address_pipeline(address: str, user_gemini_key: str = None):
     """
     📍 [專用] 獨立結構化地址解析器 (Address Resolver)
     🆕 2026 v2.0: T0 GAS 木馬 → ArcGIS → Gemma Few-Shot + Nominatim 國碼鎖定 → Photon
                  全球 200+ 國動態 countrycodes 鎖定，Few-Shot 5 洲範例錨定。
     """
-    clean_addr = address.strip()
+    clean_addr = (address or "").strip()[:512]
     if not clean_addr:
         return None
         
@@ -767,11 +770,11 @@ async def resolve_address_pipeline(address: str, user_gemini_key: str = None):
             if not result_data:
                 degraded_street = ""
                 if structured_data and "street" in structured_data:
-                    # 拔除「號/巷/弄/樓」等精確字元，退避到路名 (優化正則以防止 ReDoS)
-                    degraded_street = re.sub(r'\d+[號巷弄樓Ff-][^,]*', '', structured_data["street"]).strip()
+                    # 拔除「號/巷/弄/樓」等精確字元，退避到路名 (線性有界正則防 ReDoS)
+                    degraded_street = _ADDR_DEGRADE_RE.sub('', str(structured_data["street"])[:512]).strip()
                 else:
-                    # 如果 AI 沒有作用，直接從原始字串退避 (優化正則以防止 ReDoS)
-                    degraded_street = re.sub(r'\d+[號巷弄樓Ff-][^,]*', '', clean_addr).strip()
+                    # 如果 AI 沒有作用，直接從原始字串退避 (線性有界正則防 ReDoS)
+                    degraded_street = _ADDR_DEGRADE_RE.sub('', clean_addr).strip()
                     
                 # 只有當退避後的字串不同且非空時，才進行降級打擊
                 if degraded_street and ((structured_data and degraded_street != structured_data.get("street")) or (not structured_data and degraded_street != clean_addr)):

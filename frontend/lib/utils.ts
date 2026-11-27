@@ -60,13 +60,26 @@ export function openExternalLink(url?: string | null) {
 export function getOptimizedImageUrl(originalUrl?: string | null, width: 320 | 640 | 768 | 1024 | 1280 = 640): string {
     if (!originalUrl) return '';
 
-    // 檢查是否為 Cloudinary 的圖片 URL
-    if (originalUrl.includes('res.cloudinary.com')) {
+    let parsed: URL;
+    try {
+        parsed = new URL(originalUrl);
+    } catch {
+        return originalUrl;
+    }
+
+    // 🛡️ 嚴格比對官方 Cloudinary HTTPS 主機名（防範 URL 子字串偽造）
+    if (
+        parsed.protocol === 'https:' &&
+        parsed.hostname.toLowerCase() === 'res.cloudinary.com' &&
+        !parsed.username &&
+        !parsed.password &&
+        !parsed.port
+    ) {
         // 使用正則表達式萃取 /image/upload/ 後面的路徑
         // 例如：https://res.cloudinary.com/REDACTED_CLOUDINARY_CLOUD/image/upload/v12345/my_image.jpg
-        // 會萃取出 /v12345/my_image.jpg
+        // 會萃取出 v12345/my_image.jpg
         // 如果原本的 URL 已經包含其他轉換參數 (如 /w_1024,c_limit...)，也會被拔掉保留最乾淨的路徑
-        const uploadPathMatch = originalUrl.match(/\/image\/upload\/(?:[a-zA-Z0-9_,]+\/)?(v\d+\/.*)$/);
+        const uploadPathMatch = parsed.pathname.match(/\/image\/upload\/(?:[a-zA-Z0-9_,]+\/)?(v\d+\/.*)$/);
         
         if (uploadPathMatch && uploadPathMatch[1]) {
             const cleanPath = uploadPathMatch[1];
@@ -79,9 +92,9 @@ export function getOptimizedImageUrl(originalUrl?: string | null, width: 320 | 6
             }
 
             // 🛡️ 雙保險原生轉換：直接截取 base url (/image/upload/) 拼接精確的 cleanPath
-            const baseMatch = originalUrl.match(/^(https:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\/)/);
+            const baseMatch = parsed.pathname.match(/^(\/[^/]+\/image\/upload\/)/);
             if (baseMatch) {
-                return `${baseMatch[1]}w_${width},c_limit,f_auto,q_auto/${cleanPath}`;
+                return `https://res.cloudinary.com${baseMatch[1]}w_${width},c_limit,f_auto,q_auto/${cleanPath}`;
             }
         }
     }

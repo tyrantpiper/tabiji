@@ -20,7 +20,7 @@ import httpx
 import uuid
 import time
 from typing import List, Optional, Any, Dict
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 
@@ -93,11 +93,11 @@ def __resetPoiEnrichCacheForTesting() -> None:
 
 
 class PoiResolveLinkRequest(BaseModel):
-    url: str
+    url: str = Field(..., max_length=2048)
 
 
 @router.post("/poi/resolve-link")
-@limiter.limit("30/minute")
+@limiter.limit("30/minute", key_func=get_public_ip_rate_limit_key)
 async def poi_resolve_link(request: Request, body: PoiResolveLinkRequest):
     """
     🔗 全局 POI 網址解析端點 (Universal Link-to-Pin Engine)
@@ -190,23 +190,24 @@ async def poi_resolve_link(request: Request, body: PoiResolveLinkRequest):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.post("/poi/ai-enrich")
-async def ai_enrich_poi(fastapi_req: Request, request: POIAIEnrichRequest):
+@limiter.limit("60/minute", key_func=get_public_ip_rate_limit_key)
+async def ai_enrich_poi(request: Request, body: POIAIEnrichRequest):
     """
     🤖 整合型 POI 增強端點 - 同時取得 AI 摘要與 Wikipedia/WikiVoyage 資訊
     
     具備背景並行抓取、三級保底鏈防護與 v2 版本化快取。
     """
     try:
-        locale = request.locale or "zh"
+        locale = body.locale or "zh"
         is_en = bool(str(locale).strip().lower().startswith("en"))
 
         # 🆕 Step 3: 快取檢查 (v2 versioned + locale partitioned)
         cache_key = generate_v2_cache_key(
-            name=request.name,
-            lat=request.lat,
-            lng=request.lng,
-            poi_id=request.poi_id,
-            wikidata_id=request.wikidata_id,
+            name=body.name,
+            lat=body.lat,
+            lng=body.lng,
+            poi_id=body.poi_id,
+            wikidata_id=body.wikidata_id,
             locale=locale,
         )
         
@@ -215,18 +216,18 @@ async def ai_enrich_poi(fastapi_req: Request, request: POIAIEnrichRequest):
             print(f"⚡ [Cache Hit] {cache_key}")
             return cached_payload
 
-        api_key = (request.api_key or "").strip()
+        api_key = (body.api_key or "").strip()
         has_api_key = bool(api_key)
 
-        print(f"🔍 [POI Enrich] 開始抓取與摘要: {request.name} (Wiki + {'AI' if has_api_key else 'Wiki-Only Fallback'}, locale={locale})...")
+        print(f"🔍 [POI Enrich] 開始抓取與摘要: {body.name} (Wiki + {'AI' if has_api_key else 'Wiki-Only Fallback'}, locale={locale})...")
 
         if has_api_key:
             lang_label = "English summary" if is_en else "Traditional Chinese summary"
             prompt = f"""
 You are a travel guide assistant. Search the web for reviews and vibes for:
-- Name: {request.name}
-- Type: {request.type}
-- Location: {request.lat}, {request.lng}
+- Name: {body.name}
+- Type: {body.type}
+- Location: {body.lat}, {body.lng}
 
 Output in this EXACT JSON format ({lang_label}):
 {{
@@ -247,12 +248,12 @@ Output in this EXACT JSON format ({lang_label}):
             ai_task = asyncio.sleep(0, result=None)
 
         wiki_task = enrich_poi_complete({
-            "name": request.name,
-            "type": request.type or "",
-            "wikidata_id": request.wikidata_id or "",
-            "lat": request.lat,
-            "lng": request.lng
-        }, getattr(fastapi_req.app.state, "client", None), lang="en" if is_en else "zh")
+            "name": body.name,
+            "type": body.type or "",
+            "wikidata_id": body.wikidata_id or "",
+            "lat": body.lat,
+            "lng": body.lng
+        }, getattr(request.app.state, "client", None), lang="en" if is_en else "zh")
 
         ai_result, wiki_result = await asyncio.gather(ai_task, wiki_task, return_exceptions=True)
 
@@ -264,7 +265,7 @@ Output in this EXACT JSON format ({lang_label}):
         elif isinstance(ai_result, NonRetryableAuthError):
             raise ai_result
         elif isinstance(ai_result, Exception):
-            print(f"⚠️ [POI Enrich] AI 調用失敗 ({request.name}): {type(ai_result).__name__}: {ai_result}")
+            print(f"⚠️ [POI Enrich] AI 調用失敗 ({body.name}): {type(ai_result).__name__}: {ai_result}")
             ai_warning = "AI_UNAVAILABLE"
         elif isinstance(ai_result, str) and ai_result.strip():
             json_match = re.search(r'\{[\s\S]*\}', ai_result)
@@ -272,12 +273,12 @@ Output in this EXACT JSON format ({lang_label}):
                 try:
                     ai_data = json.loads(json_match.group())
                 except Exception as je:
-                    print(f"⚠️ [POI Enrich] AI JSON 解析失敗 ({request.name}): {je} | snippet={ai_result[:160]!r}")
+                    print(f"⚠️ [POI Enrich] AI JSON 解析失敗 ({body.name}): {je} | snippet={ai_result[:160]!r}")
                     ai_data = {"summary": ai_result.strip()[:200]}
             else:
                 ai_data = {"summary": ai_result.strip()[:200]}
         else:
-            print(f"⚠️ [POI Enrich] AI 回傳空內容 ({request.name})")
+            print(f"⚠️ [POI Enrich] AI 回傳空內容 ({body.name})")
             ai_warning = "AI_EMPTY_OUTPUT"
 
         # 2. 處理 Wiki 結果
@@ -325,7 +326,7 @@ Output in this EXACT JSON format ({lang_label}):
                     print(f"⚠️ Translation failed: {te}")
 
         # 3. 數據合流與保底鏈 (Summary Fallback Chain)
-        default_summary = f"{request.name} is a notable local point of interest." if is_en else f"{request.name} 是位於當地的地點。"
+        default_summary = f"{body.name} is a notable local point of interest." if is_en else f"{body.name} 是位於當地的地點。"
         final_summary = ai_data.get("summary") or wiki_result.get("cultural_desc") or default_summary
 
         # 4. 狀態判定
@@ -361,20 +362,20 @@ Output in this EXACT JSON format ({lang_label}):
         if final_status == "SUCCESS" and has_api_key:
             _poi_enrich_cache_set(cache_key, result_payload)
             
-        print(f"✅ [POI Enrich] 完成: {request.name} (Status: {final_status})")
+        print(f"✅ [POI Enrich] 完成: {body.name} (Status: {final_status})")
         return result_payload
         
     except HTTPException:
         raise
     except (NonRetryableAuthError, NonRetryableRequestError, AllModelsFailedError) as e:
-        is_en_err = bool(request.locale and str(request.locale).strip().lower().startswith("en"))
+        is_en_err = bool(body.locale and str(body.locale).strip().lower().startswith("en"))
         status_code, _, detail = map_ai_exception_to_http_status(e, is_en=is_en_err)
         raise HTTPException(status_code=status_code, detail=detail)
     except Exception as e:
         print(f"🔥 AI POI 整合失敗：{e}")
         raise HTTPException(
             status_code=500,
-            detail="AI enrichment temporarily unavailable" if request.locale and str(request.locale).strip().lower().startswith("en") else "AI 增強失敗，請稍後重試"
+            detail="AI enrichment temporarily unavailable" if body.locale and str(body.locale).strip().lower().startswith("en") else "AI 增強失敗，請稍後重試"
         )
 
 
@@ -766,8 +767,8 @@ def _validate_media_proxy_url(candidate: str) -> str:
 
 
 @router.get("/poi/media-proxy")
-@limiter.limit("30/minute")
-async def media_proxy(request: Request, url: str):
+@limiter.limit("30/minute", key_func=get_public_ip_rate_limit_key)
+async def media_proxy(request: Request, url: str = Query(..., max_length=2048)):
     """
     🖼️ 媒體代理端點 - 解決維基百科圖片的 CORS 與 Referrer 限制
     防禦：嚴格 3 主機白名單 (upload/thumb/commons.wikimedia.org)、手動 2 跳 SSRF 安全轉址、

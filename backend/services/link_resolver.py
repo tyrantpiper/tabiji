@@ -198,10 +198,10 @@ def extract_address_from_description(desc: str) -> str | None:
 ADDRESS_POI_PATTERN = re.compile(
     r'^(\d{3,5})?'
     r'([台臺]灣)?'
-    r'([台臺]北市|[台臺]中市|基隆市|[台臺]南市|高雄市|新北市|桃園市|新竹市|嘉義市|[^\s區縣市]+[縣市])'
-    r'([^\s區鄉鎮市]+[區鄉鎮市])?'
-    r'([^\s里村]+[里村])?'
-    r'([^\s號樓]+(?:路|街|大道|巷|弄)[^\s號樓]*\d+號(?:之\d+)?(?:[^\s號樓]*樓)?)'
+    r'([台臺]北市|[台臺]中市|基隆市|[台臺]南市|高雄市|新北市|桃園市|新竹市|嘉義市|[^\s區縣市]{1,10}[縣市])'
+    r'([^\s區鄉鎮市]{1,10}[區鄉鎮市])?'
+    r'([^\s里村]{1,10}[里村])?'
+    r'([^\s路街巷弄號樓]{1,20}(?:大道|路|街|巷|弄)[^\s號樓]{0,30}(?<!\d)\d{1,5}號(?:之\d{1,4})?(?:[^\s號樓]{0,10}樓)?)'
     r'(.*)$'
 )
 
@@ -210,6 +210,8 @@ def split_taiwan_address_and_poi(raw_text: str) -> tuple[str | None, str | None]
     if not raw_text or not isinstance(raw_text, str):
         return None, None
     clean_text = raw_text.strip()
+    if len(clean_text) > 300:
+        return None, clean_text
     m = ADDRESS_POI_PATTERN.search(clean_text)
     if not m:
         return None, clean_text
@@ -774,14 +776,19 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
             
     result["address"] = resolved_address
 
-    # 🧬 繁中地名清洗與解碼 (去除 URL 編碼與 - Google 地圖 後綴)
-    raw_title = result.get("metadata", {}).get("title") or result.get("query") or ""
+    # 🧬 繁中地名清洗與解碼 (去除 URL 編碼與 - Google 地圖 後綴；限長與去前導 \s* 防止 ReDoS)
+    raw_title = (result.get("metadata", {}).get("title") or result.get("query") or "")[:500]
     if "%" in raw_title:
         try:
-            raw_title = unquote_plus(raw_title)
+            raw_title = unquote_plus(raw_title)[:500]
         except Exception:
             pass
-    clean_title = re.sub(r'\s*[-|]\s*Google\s*(Maps|地图|地圖|マップ|映射|map|search).*$', '', raw_title, flags=re.IGNORECASE).strip()
+    clean_title = re.sub(
+        r'[-|][ \t]{0,4}Google[ \t]{0,4}(?:Maps|地图|地圖|マップ|映射|map|search).*$',
+        '',
+        raw_title,
+        flags=re.IGNORECASE,
+    ).strip()
 
     # 🇹🇼 台灣地址與景點名稱分離演算法 (Zero-Cost 分離純店名與純門牌)
     extracted_addr = None

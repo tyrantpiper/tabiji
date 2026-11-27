@@ -189,7 +189,7 @@ class ExpenseResponse(BaseModel):
 
 class ResolveAddressRequest(BaseModel):
     """獨立地址解析請求"""
-    address: str
+    address: str = Field(..., max_length=512)
 
 
 class ResolveAddressErrorResponse(BaseModel):
@@ -453,7 +453,7 @@ class SummarizeRequest(BaseModel):
 
 class POIAIEnrichRequest(BaseModel):
     """POI AI 增強請求"""
-    name: str
+    name: str = Field(..., max_length=512)
     type: str
     lat: float
     lng: float
@@ -465,7 +465,7 @@ class POIAIEnrichRequest(BaseModel):
 
 class POIEnrichRequest(BaseModel):
     """POI 三源整合請求"""
-    name: str
+    name: str = Field(..., max_length=512)
     type: Optional[str] = None
     wikidata_id: Optional[str] = None
     lat: Optional[float] = None
@@ -521,7 +521,7 @@ class UpdateProfileRequest(BaseModel):
 
 class ResolveLinkRequest(BaseModel):
     """解析地圖連結請求"""
-    url: str
+    url: str = Field(..., max_length=2048)
 
 
 class UpdateTripTitleRequest(BaseModel):

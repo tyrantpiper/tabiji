@@ -90,8 +90,15 @@ def get_safe_ip(url: str) -> Optional[str]:
     Returns the IP string if safe, otherwise returns None.
     """
     try:
-        parsed = urlparse(url.strip())
+        if not url or not isinstance(url, str):
+            return None
+        url_str = url.strip()
+        if "\\" in url_str or any(ord(ch) < 32 or ord(ch) == 127 for ch in url_str):
+            return None
+        parsed = urlparse(url_str)
         if parsed.scheme not in ["http", "https"]:
+            return None
+        if parsed.username is not None or parsed.password is not None or "@" in (parsed.netloc or ""):
             return None
 
         hostname = parsed.hostname
@@ -142,6 +149,8 @@ def _classify_url_without_dns(url: str) -> Optional[bool]:
         return False
 
     url_str = url.strip()
+    if "\\" in url_str or any(ord(ch) < 32 or ord(ch) == 127 for ch in url_str):
+        return False
     try:
         parsed = urlparse(url_str)
         _ = parsed.port
@@ -149,6 +158,9 @@ def _classify_url_without_dns(url: str) -> Optional[bool]:
         return False
 
     if parsed.scheme.lower() not in ("http", "https"):
+        return False
+
+    if parsed.username is not None or parsed.password is not None or "@" in (parsed.netloc or ""):
         return False
 
     hostname = parsed.hostname or ""

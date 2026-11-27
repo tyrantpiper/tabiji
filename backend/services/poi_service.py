@@ -1116,7 +1116,8 @@ def _poi_haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> flo
 def _normalize_poi_title(text: str) -> str:
     if not text:
         return ""
-    stripped = re.sub(r"\s*[\(（][^\)）]*[\)）]\s*", " ", str(text))
+    bounded = str(text)[:512]
+    stripped = re.sub(r"[\(（][^\(\)（）]*[\)）]", " ", bounded)
     nfkd = unicodedata.normalize("NFKD", stripped)
     no_marks = "".join(ch for ch in nfkd if unicodedata.category(ch) != "Mn")
     canon = no_marks.translate(_CJK_ORTHO_MAP).lower()

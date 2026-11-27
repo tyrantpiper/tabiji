@@ -44,44 +44,83 @@ SUPPORTED_MCP_VERSIONS = [
     "2024-11-05"
 ]
 
-TRUSTED_BASE_DOMAINS = {
+_PROD_TRUSTED_BASE_DOMAINS = frozenset({
     "tabijiapp.com",
     "www.tabijiapp.com",
     "travel-pwa-five.vercel.app",
+})
+_LOCAL_BASE_DOMAINS = frozenset({
     "localhost",
     "127.0.0.1",
-    "testserver"
-}
+    "testserver",
+})
+TRUSTED_BASE_DOMAINS = set(_PROD_TRUSTED_BASE_DOMAINS | _LOCAL_BASE_DOMAINS)
+_SAFE_HOST_HEADER_RE = re.compile(r"^[a-z0-9.-]+(?::(\d{1,5}))?$")
+_CANONICAL_PUBLIC_BASE_URL = "https://www.tabijiapp.com"
+
+
+def _is_production_env() -> bool:
+    return (
+        os.getenv("ENV") == "production"
+        or os.getenv("NODE_ENV") == "production"
+        or os.getenv("PROD") == "1"
+    )
+
+
+def _parse_trusted_host_header(raw_value: Optional[str], *, allow_local: bool) -> Optional[tuple[str, str]]:
+    """嚴格驗證 Host / X-Forwarded-Host 格式與白名單，拒收 @ userinfo、路徑、反斜線、控制字元與非法埠號。"""
+    if not raw_value or not isinstance(raw_value, str):
+        return None
+    candidate = raw_value.split(",", 1)[0].strip().lower()
+    m = _SAFE_HOST_HEADER_RE.fullmatch(candidate)
+    if not m:
+        return None
+    port_str = m.group(1)
+    if port_str is not None:
+        port_num = int(port_str)
+        if port_num < 1 or port_num > 65535:
+            return None
+    hostname = candidate.split(":", 1)[0]
+    if hostname in _PROD_TRUSTED_BASE_DOMAINS:
+        if port_str not in (None, "443"):
+            return None
+        return hostname, hostname
+    if allow_local and hostname in _LOCAL_BASE_DOMAINS:
+        return hostname, candidate
+    return None
+
 
 def get_public_base_url(request: Request) -> str:
     """
     動態且安全地取得 MCP 客戶端可訪問的公開 Base URL。
     解析反向代理（Cloudflare / Vercel）之 X-Forwarded-Host 與 X-Forwarded-Proto 標頭，
-    嚴防 RFC 9728 協定撕裂與 Host Header 偽造注入。
+    嚴防 RFC 9728 協定撕裂與 Host / X-Forwarded-Proto Header 偽造注入。
+    未知 Host（含直連 Cloud Run *.run.app 或偽造 Host）一律回退至官方網域 https://www.tabijiapp.com。
     """
+    is_prod = _is_production_env()
+    allow_local = not is_prod
+
     forwarded_host = request.headers.get("x-forwarded-host")
     forwarded_proto = request.headers.get("x-forwarded-proto")
     host = request.headers.get("host")
-    
-    if forwarded_host:
-        raw_f_host = forwarded_host.split(",")[0].strip()
-        clean_f_host = raw_f_host.split(":")[0]
-        if clean_f_host in TRUSTED_BASE_DOMAINS:
-            proto = forwarded_proto or ("http" if clean_f_host in {"localhost", "127.0.0.1", "testserver"} else "https")
-            return f"{proto}://{raw_f_host}".rstrip("/")
-    
-    if host:
-        clean_host = host.split(":")[0]
-        if clean_host in ["tabijiapp.com", "www.tabijiapp.com", "travel-pwa-five.vercel.app"]:
-            return f"https://{host}".rstrip("/")
-        if clean_host in ["localhost", "127.0.0.1", "testserver"]:
-            proto = "http" if "testserver" in host or "localhost" in host or "127.0.0.1" in host else "https"
-            return f"{proto}://{host}".rstrip("/")
 
-    raw_base = str(request.base_url).rstrip("/")
-    if "tabijiapp.com" in raw_base and raw_base.startswith("http://"):
-        raw_base = "https://" + raw_base[7:]
-    return raw_base
+    parsed_f = _parse_trusted_host_header(forwarded_host, allow_local=allow_local)
+    if parsed_f:
+        clean_f_host, safe_f_host = parsed_f
+        if clean_f_host in _PROD_TRUSTED_BASE_DOMAINS:
+            return f"https://{safe_f_host}"
+        raw_proto = (forwarded_proto or "").split(",", 1)[0].strip().lower()
+        proto = raw_proto if raw_proto in {"http", "https"} else "http"
+        return f"{proto}://{safe_f_host}"
+
+    parsed_h = _parse_trusted_host_header(host, allow_local=allow_local)
+    if parsed_h:
+        clean_host, safe_host = parsed_h
+        if clean_host in _PROD_TRUSTED_BASE_DOMAINS:
+            return f"https://{safe_host}"
+        return f"http://{safe_host}"
+
+    return _CANONICAL_PUBLIC_BASE_URL
 
 def format_mcp_tool_result(text_content: str, is_error: bool = False) -> Dict[str, Any]:
     """遵循 MCP 官方規範的標準 ToolResult Content Envelope"""
@@ -163,7 +202,6 @@ def is_valid_uuid(val: Any) -> bool:
 
 TRUSTED_REDIRECT_DOMAINS = (
     "google.com",
-    "googleusercontent.com",
     "perplexity.ai",
     "claude.ai",
     "claude.com",
@@ -172,28 +210,63 @@ TRUSTED_REDIRECT_DOMAINS = (
     "openai.com",
     "tabijiapp.com",
     "tabiji.app",
-    "vercel.app",
 )
+
+TRUSTED_REDIRECT_EXACT_HOSTS = frozenset({
+    "travel-pwa-five.vercel.app",
+    "oauth-redirect.googleusercontent.com",
+    "oauth-redirect-sandbox.googleusercontent.com",
+})
+
+TRUSTED_VERCEL_PREVIEW_HOST_RE = re.compile(
+    r"^travel-[a-z0-9-]+-tyrantpipers-projects\.vercel\.app$"
+)
+
+_REDIRECT_SAFE_HOSTNAME_RE = re.compile(r"^[a-z0-9.-]+$")
+
 
 def is_trusted_redirect_uri(redirect_uri: str) -> bool:
     """驗證 OAuth redirect_uri 是否屬於受信信任之網域，外部網域強制 HTTPS，嚴防 Open Redirect 與 Account Takeover"""
-    if not redirect_uri:
+    if not redirect_uri or not isinstance(redirect_uri, str):
+        return False
+    if "\\" in redirect_uri or any(ord(ch) < 32 or ord(ch) == 127 for ch in redirect_uri):
+        return False
+    cleaned = redirect_uri.strip()
+    if not cleaned or any(ch.isspace() for ch in cleaned):
         return False
     try:
-        parsed = urllib.parse.urlparse(redirect_uri.strip())
-        hostname = (parsed.hostname or "").lower()
-        if not hostname:
-            return False
-        if hostname in ("localhost", "127.0.0.1", "testserver"):
-            return parsed.scheme in ("http", "https")
-        if parsed.scheme != "https":
-            return False
-        return any(
-            hostname == domain or hostname.endswith(f".{domain}")
-            for domain in TRUSTED_REDIRECT_DOMAINS
-        )
+        parsed = urllib.parse.urlsplit(cleaned)
+        port = parsed.port
     except Exception:
         return False
+
+    if parsed.username is not None or parsed.password is not None or "@" in (parsed.netloc or ""):
+        return False
+    if parsed.fragment:
+        return False
+
+    hostname = (parsed.hostname or "").lower()
+    if not hostname or hostname.endswith(".") or not _REDIRECT_SAFE_HOSTNAME_RE.fullmatch(hostname):
+        return False
+
+    scheme = parsed.scheme.lower()
+    if hostname == "testserver":
+        if _is_production_env():
+            return False
+        return scheme in ("http", "https")
+    if hostname in ("localhost", "127.0.0.1"):
+        return scheme in ("http", "https")
+
+    if scheme != "https" or port not in (None, 443):
+        return False
+    if hostname in TRUSTED_REDIRECT_EXACT_HOSTS:
+        return True
+    if TRUSTED_VERCEL_PREVIEW_HOST_RE.fullmatch(hostname):
+        return True
+    return any(
+        hostname == domain or hostname.endswith(f".{domain}")
+        for domain in TRUSTED_REDIRECT_DOMAINS
+    )
 
 def extract_valid_user_id(raw_client_id: str) -> Optional[str]:
     """
@@ -303,6 +376,7 @@ async def oauth_authorize(
     # 🛡️ 驗證 redirect_uri 安全白名單 (RFC 6749 防範 Open Redirect 與 Account Takeover)
     if not is_trusted_redirect_uri(redirect_uri):
         raise HTTPException(status_code=400, detail="Invalid redirect_uri: untrusted domain")
+    normalized_redirect_uri = redirect_uri.strip()
 
     # 🛡️ 驗證並自癒提取 client_id 中的合法 UUID (若誤填 JWT 自動提取 sub，若為非法字串立即阻斷)
     resolved_user_id = extract_valid_user_id(client_id)
@@ -326,7 +400,7 @@ async def oauth_authorize(
     stateless_payload = {
         "cid": normalized_client_id,
         "uid": resolved_user_id,
-        "ruri": redirect_uri,
+        "ruri": normalized_redirect_uri,
         "cc": code_challenge or "",
         "jti": secrets.token_hex(8),
         "iat": int(now),
@@ -338,15 +412,23 @@ async def oauth_authorize(
 
     OAUTH_CODES[auth_code] = {
         "client_id": normalized_client_id,
-        "redirect_uri": redirect_uri,
+        "redirect_uri": normalized_redirect_uri,
         "code_challenge": code_challenge,
         "expires_at": now + 300,
         "user_id": resolved_user_id
     }
-    delimiter = "&" if "?" in redirect_uri else "?"
-    callback_url = f"{redirect_uri}{delimiter}code={urllib.parse.quote(auth_code, safe='')}"
+    parsed_cb = urllib.parse.urlsplit(normalized_redirect_uri)
+    cb_query = urllib.parse.parse_qsl(parsed_cb.query, keep_blank_values=True)
+    cb_query.append(("code", auth_code))
     if state:
-        callback_url += f"&state={urllib.parse.quote(state, safe='')}"
+        cb_query.append(("state", state))
+    callback_url = urllib.parse.urlunsplit((
+        parsed_cb.scheme.lower(),
+        parsed_cb.netloc,
+        parsed_cb.path,
+        urllib.parse.urlencode(cb_query),
+        "",
+    ))
     return RedirectResponse(url=callback_url, status_code=302)
 
 class OAuthTokenRequest(BaseModel):

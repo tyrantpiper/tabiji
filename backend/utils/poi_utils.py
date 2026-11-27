@@ -1,13 +1,18 @@
 import re
 
+_POI_BRACKET_RE = re.compile(r'[\(\[（【][^\(\[\)（【\]）】]*[\)\]）】]')
+_MULTI_SPACE_RE = re.compile(r'\s+')
+
+
 def normalize_poi_name(name: str) -> str:
     """正規化 POI 名稱：轉小寫、去除多餘空白與括號內容"""
     if not name:
         return ""
-    # 轉小寫、去首尾空白
-    n = name.lower().strip()
-    # 移除括號內容 (例如 "淺草寺 (Senso-ji)" -> "淺草寺")
-    n = re.sub(r'\s*[\(\[（【].*?[\)\]）】]', '', n)
+    # 轉小寫、去首尾空白並限制輸入長度防禦
+    n = str(name)[:512].lower().strip()
+    # 移除括號內容 (例如 "淺草寺 (Senso-ji)" -> "淺草寺")，互斥字元類避免 O(N^2) 回溯
+    n = _POI_BRACKET_RE.sub('', n)
+    n = _MULTI_SPACE_RE.sub(' ', n)
     return n.strip()
 
 def round_poi_coord(coord: float) -> str:

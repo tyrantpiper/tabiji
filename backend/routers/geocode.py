@@ -4,7 +4,9 @@ Geocode Router
 Handles all geocoding-related API endpoints.
 """
 
+from typing import Optional
 from fastapi import APIRouter, Header, Request
+from pydantic import BaseModel, Field
 from models.base import GeocodeSearchRequest, GeocodeReverseRequest
 from services.geocode_service import (
     smart_geocode_logic,
@@ -22,11 +24,17 @@ from models.base import ResolveAddressRequest, ResolveAddressErrorResponse
 import httpx
 import re
 import asyncio
-from utils.limiter import limiter
+from utils.limiter import limiter, get_public_ip_rate_limit_key
 from utils.search_util import is_poi_query
 from services.smart_search_service import smart_search
 
 router = APIRouter(prefix="/api/geocode", tags=["geocode"])
+
+
+class GeocodeResolveLinkRequest(BaseModel):
+    """公開連結解析請求（含長度上界防禦）"""
+    url: Optional[str] = Field(default=None, max_length=2048)
+    type: str = Field(default="map", max_length=32)
 
 
 async def _timed_smart_search(**kwargs):
@@ -42,7 +50,7 @@ async def _timed_smart_search(**kwargs):
 
 
 @router.post("/search")
-@limiter.limit("30/minute")
+@limiter.limit("60/minute", key_func=get_public_ip_rate_limit_key)
 async def geocode_search(
     request: Request,
     body: GeocodeSearchRequest,
@@ -218,15 +226,15 @@ async def geocode_reverse(request: Request, body: GeocodeReverseRequest):
 
 
 @router.post("/resolve-link")
-@limiter.limit("20/minute")
-async def geocode_resolve_link(request: Request, body: dict):
+@limiter.limit("60/minute", key_func=get_public_ip_rate_limit_key)
+async def geocode_resolve_link(request: Request, body: GeocodeResolveLinkRequest):
     """🆕 Heuristic Dual-Link Engine (2026)
     
     解析 Google Maps 座標或 官網/社群 媒體首圖。
     body: { url: str, type: "map" | "media" }
     """
-    url = body.get("url")
-    res_type = body.get("type", "map")
+    url = body.url
+    res_type = body.type or "map"
     
     if not url:
         return {"success": False, "error": "No URL provided"}
@@ -263,7 +271,7 @@ async def geocode_resolve_link(request: Request, body: dict):
 
 
 @router.post("/resolve-address", response_model=None)
-@limiter.limit("20/minute")
+@limiter.limit("60/minute", key_func=get_public_ip_rate_limit_key)
 async def resolve_address(
     request: Request,
     body: ResolveAddressRequest,
