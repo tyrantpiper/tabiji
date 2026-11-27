@@ -133,8 +133,8 @@ class _FakeChunkStream:
 # ==============================================================================
 @pytest.mark.asyncio
 async def test_ac1_antigravity_stream_polling_sources_dead_link_sanitization_and_polling_parity(monkeypatch):
-    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_POLL_INTERVAL_SEC", 0.01)
-    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_HEARTBEAT_SEC", 0.005)
+    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_POLL_INTERVAL_SEC", 0.025)
+    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_HEARTBEAT_SEC", 0.01)
     monkeypatch.setattr(agents_router, "_ANTIGRAVITY_MAX_WAIT_SEC", 5.0)
 
     created_obj = py_types.SimpleNamespace(id="int_ag_live_001", status="in_progress")
@@ -719,4 +719,272 @@ async def test_edge_antigravity_timeout_empty_degradation_and_redos_sanitizer(mo
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert "file:///workspace/" not in sanitized.lower()
     assert elapsed_ms < 50.0, f"Workspace sanitizer too slow: {elapsed_ms:.2f}ms"
+
+
+# ==============================================================================
+# Hardening Regression Suite (AnyIO CancelScope, ReDoS, Markdown Preservation,
+# www. prefix, Wiki slug, CJK punct, Pricing Marker Stripping, Factual Search Tightening)
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_hardening_anyio_cancel_scope_shield_poll_error_cancel_and_degrade_thinking_reset(monkeypatch):
+    import anyio
+
+    # 1. Real AnyIO CancelScope (as used by Starlette StreamingResponse on http.disconnect)
+    # MUST still execute interactions.cancel via shielded cancel scope!
+    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_POLL_INTERVAL_SEC", 5.0)
+    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_MAX_WAIT_SEC", 30.0)
+    created_obj = py_types.SimpleNamespace(id="int_anyio_disconnect_1", status="in_progress")
+    poll_running = py_types.SimpleNamespace(id="int_anyio_disconnect_1", status="in_progress", output_text="")
+    mock_client = MagicMock()
+    mock_client.interactions.create = MagicMock(return_value=created_obj)
+    mock_client.interactions.get = MagicMock(return_value=poll_running)
+    mock_client.interactions.cancel = MagicMock(return_value={"status": "cancelled"})
+
+    req_body = agents_router.AgentResearchRequest(prompt="Long sandbox run", destination="TYO", locale="en")
+    with patch("routers.agents.genai.Client", return_value=mock_client), \
+         patch.object(agents_router, "_fetch_live_pricing_context", AsyncMock(return_value="")):
+        resp = await agents_router.stream_deep_research(req_body, request=None, api_key=TEST_KEY)
+        agen = resp.body_iterator
+        for _ in range(3):
+            await agen.__anext__()
+
+        async with anyio.create_task_group() as tg:
+            async def _consume():
+                await agen.__anext__()
+
+            async def _disconnect():
+                await anyio.sleep(0.05)
+                tg.cancel_scope.cancel()
+
+            tg.start_soon(_consume)
+            tg.start_soon(_disconnect)
+
+    mock_client.interactions.cancel.assert_called_once_with(id="int_anyio_disconnect_1")
+
+    # 2. Non-401 poll error cancels remote interaction AND emits thinking engine reset before Tier 2
+    mock_poll_err_client = MagicMock()
+    mock_poll_err_client.interactions.create = MagicMock(
+        return_value=py_types.SimpleNamespace(id="int_poll_err_1", status="in_progress")
+    )
+    mock_poll_err_client.interactions.get = MagicMock(side_effect=_make_compat_error(503, "Poll backend error"))
+    mock_poll_err_client.interactions.cancel = MagicMock(return_value={"status": "cancelled"})
+    mock_poll_err_client.aio.models.generate_content = AsyncMock(
+        return_value=_make_text_resp("# Tier 2 After Poll Error [602410]")
+    )
+    tc = TestClient(app)
+    with patch("routers.agents.genai.Client", return_value=mock_poll_err_client), \
+         patch.object(agents_router, "_fetch_live_pricing_context", AsyncMock(return_value="")):
+        r_pe = tc.post(
+            "/api/agents/research/stream",
+            json={"prompt": "Kyoto 3-day budget", "destination": "KIX", "locale": "en"},
+            headers=HEADERS,
+        )
+    assert r_pe.status_code == 200
+    evs_pe, _ = _parse_sse_blocks(r_pe.text)
+    thinking_engines = [d.get("engine") for ev, d in evs_pe if ev == "thinking" and isinstance(d, dict) and d.get("engine")]
+    assert thinking_engines == ["antigravity", "gemini-flash-stream"]
+    mock_poll_err_client.interactions.cancel.assert_called_once_with(id="int_poll_err_1")
+    text_pe = "".join(d.get("text", "") for ev, d in evs_pe if ev == "text" and isinstance(d, dict))
+    assert "602410" not in text_pe
+    assert "Tier 2 After Poll Error" in text_pe
+
+    # 3. Blocking interactions.get exceeding _ANTIGRAVITY_GET_TIMEOUT_SEC cancels sandbox and degrades cleanly
+    import time as _time
+    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_GET_TIMEOUT_SEC", 0.06)
+    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_HEARTBEAT_SEC", 0.02)
+    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_MAX_WAIT_SEC", 5.0)
+    mock_hang_client = MagicMock()
+    mock_hang_client.interactions.create = MagicMock(
+        return_value=py_types.SimpleNamespace(id="int_get_hang_1", status="in_progress")
+    )
+    mock_hang_client.interactions.get = MagicMock(side_effect=lambda id=None: (_time.sleep(0.25), None)[1])
+    mock_hang_client.interactions.cancel = MagicMock(return_value={"status": "cancelled"})
+    mock_hang_client.aio.models.generate_content = AsyncMock(
+        return_value=_make_text_resp("# Tier 2 After Get Timeout")
+    )
+    with patch("routers.agents.genai.Client", return_value=mock_hang_client), \
+         patch.object(agents_router, "_fetch_live_pricing_context", AsyncMock(return_value="")):
+        r_hang = tc.post(
+            "/api/agents/research/stream",
+            json={"prompt": "Osaka hotel comparison", "destination": "KIX", "locale": "en"},
+            headers=HEADERS,
+        )
+    assert r_hang.status_code == 200
+    evs_hang, hb_hang = _parse_sse_blocks(r_hang.text)
+    assert hb_hang >= 1, "Blocking interactions.get must still emit SSE heartbeats while waiting"
+    assert "Tier 2 After Get Timeout" in r_hang.text
+    mock_hang_client.interactions.cancel.assert_called_once_with(id="int_get_hang_1")
+
+
+@pytest.mark.asyncio
+async def test_hardening_sanitizer_preserves_markdown_code_no_redos_www_wiki_cjk_punct_and_pricing_marker():
+    import time
+
+    # 1. ReDoS safety on 40K newlines for _NUMBERED_REF_URL_RE and _sanitize_antigravity_markdown
+    nl_payload = "\n" * 40000 + "[1] Ref https://example.com/a"
+    t0 = time.perf_counter()
+    matches = list(agents_router._NUMBERED_REF_URL_RE.finditer(nl_payload))
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    assert len(matches) == 1
+    assert elapsed_ms < 50.0, f"_NUMBERED_REF_URL_RE slow on repeated newlines: {elapsed_ms:.2f}ms"
+
+    # 2. Markdown code blocks, function parens (), and nested list indentation preserved when workspace link stripped
+    md_doc = (
+        "# Summary\n"
+        "- Parent item\n"
+        "  - Nested indented item\n"
+        "    - Deeply nested item\n"
+        "```python\n"
+        "def compute_route():\n"
+        "    return get_best()\n"
+        "```\n"
+        "See [local chart](file:///workspace/chart.png) and `file:///workspace/tmp.log`.\n"
+        "- [file:///workspace/only_dead.md](file:///workspace/only_dead.md)\n"
+        "Leaked tag [602410] （分潤標記追蹤碼: 602410） should vanish.\n"
+    )
+    sanitized = agents_router._sanitize_antigravity_markdown(md_doc)
+    assert "file:///workspace/" not in sanitized
+    assert "602410" not in sanitized
+    assert "  - Nested indented item" in sanitized
+    assert "    - Deeply nested item" in sanitized
+    assert "def compute_route():" in sanitized
+    assert "    return get_best()" in sanitized
+    assert "local chart" in sanitized
+
+    # 3. _strip_internal_pricing_marker strips marker before LLM prompt without touching _fetch_live_pricing_context
+    raw_pricing = (
+        "【Travelpayouts 即時票價參考 (TPE ➔ NRT)】:\n"
+        "- 長榮航空 出發日:2026-09-15 最低票價約 NT$12,500\n"
+        "（分潤標記追蹤碼: 602410）"
+    )
+    stripped_pricing = agents_router._strip_internal_pricing_marker(raw_pricing)
+    assert "長榮航空" in stripped_pricing
+    assert "602410" not in stripped_pricing and "分潤標記追蹤碼" not in stripped_pricing
+
+    # 4. www. prefix removal (wiki.example.com NOT corrupted to iki.example.com),
+    # CJK trailing punctuation stripped, is_error=True skipped, untitled Wikipedia survives, numbered order preserved
+    interaction = py_types.SimpleNamespace(
+        id="int_src_edge_1",
+        status="completed",
+        output_text=(
+            "Details at https://wiki.example.com/guide。\n"
+            "References:\n"
+            "[1] Official Shrine Guide https://www.japan.travel/en/spot/1555/。\n"
+            "[2] Wiki Host https://wiki.example.com/guide\n"
+        ),
+        steps=[
+            py_types.SimpleNamespace(
+                type="url_context_result",
+                result=[
+                    py_types.SimpleNamespace(status="success", url="https://en.wikipedia.org/wiki/Kiyomizu-dera"),
+                    py_types.SimpleNamespace(status="success", is_error=True, url="https://failed-flag.example.com/err"),
+                    py_types.SimpleNamespace(status="success", url="https://world.example.org/pass"),
+                ],
+            ),
+        ],
+    )
+    with patch.object(agents_router, "is_safe_url_async", AsyncMock(return_value=True)):
+        _, srcs = await agents_router._extract_antigravity_output_and_sources(
+            interaction, user_query="Kiyomizu-dera Temple Kyoto hours", locale="en", destination="KIX"
+        )
+    uris = [s["uri"] for s in srcs]
+    assert "https://failed-flag.example.com/err" not in uris
+    assert "https://wiki.example.com/guide" in uris
+    assert "https://en.wikipedia.org/wiki/Kiyomizu-dera" in uris
+    # Numbered [1], [2] appear first in explicit reference order
+    assert uris[0] == "https://www.japan.travel/en/spot/1555/"
+    assert uris[1] == "https://wiki.example.com/guide"
+    world_src = next(s for s in srcs if s["uri"] == "https://world.example.org/pass")
+    assert world_src["title"] == "world.example.org"
+    wiki_src = next(s for s in srcs if s["uri"] == "https://en.wikipedia.org/wiki/Kiyomizu-dera")
+    assert "Kiyomizu-dera" in wiki_src["title"]
+
+
+@pytest.mark.asyncio
+async def test_hardening_factual_search_tight_regex_hangul_locale_and_accented_latin_query():
+    # 1. Pure factual queries containing ramen/restaurant/cancel/schedule/plan/around MUST unload tools
+    for factual_msg in (
+        "一蘭拉麵營業時間跟低消",
+        "敘敘苑餐廳幾點關門",
+        "新幹線退票取消手續費規定",
+        "What is the Kyoto bus schedule to Arashiyama?",
+        "How do I cancel my Shinkansen ticket?",
+        "I plan to visit next week, what are the opening hours around holidays?",
+    ):
+        assert backend_main._should_retain_search_itinerary_tools(factual_msg, [], []) is False, (
+            f"Pure factual query must NOT retain itinerary tools: {factual_msg}"
+        )
+
+    # Genuine action / scheduling / nearby recommendation queries MUST retain tools
+    for action_msg in (
+        "幫我查清水寺附近推薦餐廳並加入行程",
+        "把淺草寺從行程移除",
+        "幫我取消Day 2的行程",
+        "Add Kiyomizu-dera to my itinerary",
+        "Recommend best ramen near Kyoto Station",
+        "Find places to eat near Shibuya",
+        "Schedule a visit to Tokyo Tower",
+    ):
+        assert backend_main._should_retain_search_itinerary_tools(action_msg, [], []) is True, (
+            f"Action/recommendation query must retain itinerary tools: {action_msg}"
+        )
+
+    # 2. Hangul detected by _HAS_CJK_RE, and Chinese trip_destination does NOT leak CJK into locale="en"
+    assert destination_taxonomy._HAS_CJK_RE.search("경복궁 운영시간") is not None
+    local_q, global_q, meta = destination_taxonomy.generate_dual_queries(
+        "What are the opening hours of Senso-ji Temple?",
+        locale="en",
+        trip_destination="2026 東京自由行",
+    )
+    assert not destination_taxonomy._HAS_CJK_RE.search(local_q), f"Chinese leaked into en local_q: {local_q}"
+    assert not destination_taxonomy._HAS_CJK_RE.search(global_q), f"Chinese leaked into en global_q: {global_q}"
+    assert meta["matched_destination"] == "Tokyo"
+
+    # 3. Accented Latin query (non-ASCII but non-CJK) keeps 7-word / 45-char limit
+    with patch.object(
+        agents_router,
+        "extract_search_queries_with_lite",
+        AsyncMock(
+            return_value={
+                "should_search": True,
+                "source": "gemini-3.1-flash-lite",
+                "local_query": "Café de Flore Paris opening hours 2026",
+            }
+        ),
+    ):
+        q_acc = await agents_router._build_research_news_query(
+            "Café de Flore Paris hours", "PAR", TEST_KEY, locale="en"
+        )
+    assert q_acc == "Café de Flore Paris opening hours 2026"
+
+    # 4. Non-streaming /api/chat parity: pure factual SEARCH unloads itinerary tools (tools=None)
+    captured_chat_kwargs = []
+
+    async def fake_call_with_fallback(**kwargs):
+        captured_chat_kwargs.append(kwargs)
+        return {
+            "text": "Kiyomizu-dera opens 6:00 AM to 6:00 PM.",
+            "raw_parts": [{"text": "Kiyomizu-dera opens 6:00 AM to 6:00 PM."}],
+            "model_used": "gemini-3.5-flash-lite",
+            "grounding_metadata": None,
+        }
+
+    tc = TestClient(app)
+    app.dependency_overrides[backend_main.get_verified_user] = lambda: "00000000-0000-4000-8000-000000000001"
+    try:
+        with patch.object(backend_main, "classify_chat_intent", AsyncMock(return_value=("SEARCH", model_manager.ALL_CHAT_TOOLS))), \
+             patch.object(backend_main, "call_with_fallback", side_effect=fake_call_with_fallback), \
+             patch.object(backend_main.MemoryService, "get_preferences_context", AsyncMock(return_value="")):
+            r_nonstream = tc.post(
+                "/api/chat",
+                json={"message": "What are the opening hours of Kiyomizu-dera?", "history": [], "locale": "en"},
+                headers=HEADERS,
+            )
+    finally:
+        app.dependency_overrides.pop(backend_main.get_verified_user, None)
+    assert r_nonstream.status_code == 200
+    assert len(captured_chat_kwargs) == 1
+    assert captured_chat_kwargs[0]["tools"] is None
+
+
 

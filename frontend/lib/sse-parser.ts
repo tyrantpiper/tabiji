@@ -456,6 +456,9 @@ export async function streamDeepResearch(
             try {
                 const d = JSON.parse(ev.data)
                 const engineVal = typeof d?.engine === "string" && d.engine.trim() ? d.engine.trim() : undefined
+                if (engineVal) {
+                    engine = engineVal
+                }
                 params.onThinking?.(String(d?.status || "researching"), engineVal)
             } catch {
                 params.onThinking?.(ev.data || "researching")

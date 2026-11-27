@@ -333,7 +333,47 @@ def resolve_destination_regions(dest_code: str, query: str) -> Tuple[str, str]:
     return local_reg, "us-en"
 
 
-_HAS_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]")
+_HAS_CJK_RE = re.compile(r"[\u1100-\u11ff\u3040-\u30ff\u3130-\u318f\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff]")
+
+# 英文介面離線保底映射：防止中文行程標題（如「2026 東京自由行」）在 locale="en" 時洩漏中文字詞至英文檢索查詢
+_TAXONOMY_ZH_TO_EN: Dict[str, str] = {
+    "台灣": "Taiwan", "臺灣": "Taiwan", "台北": "Taipei", "臺北": "Taipei", "新北": "New Taipei",
+    "台中": "Taichung", "臺中": "Taichung", "台南": "Tainan", "臺南": "Tainan", "高雄": "Kaohsiung",
+    "花蓮": "Hualien", "台東": "Taitung", "臺東": "Taitung", "墾丁": "Kenting", "宜蘭": "Yilan",
+    "日本": "Japan", "東京": "Tokyo", "京都": "Kyoto", "大阪": "Osaka", "北海道": "Hokkaido",
+    "沖繩": "Okinawa", "福岡": "Fukuoka", "名古屋": "Nagoya", "札幌": "Sapporo", "奈良": "Nara",
+    "神戶": "Kobe", "箱根": "Hakone",
+    "韓國": "Korea", "首爾": "Seoul", "釜山": "Busan", "濟州": "Jeju", "弘大": "Hongdae",
+    "明洞": "Myeongdong", "仁川": "Incheon", "大邱": "Daegu",
+    "泰國": "Thailand", "曼谷": "Bangkok", "清邁": "Chiang Mai", "普吉島": "Phuket",
+    "芭達雅": "Pattaya", "蘇美島": "Koh Samui",
+    "新加坡": "Singapore", "獅城": "Singapore", "樟宜": "Changi", "濱海灣": "Marina Bay", "聖淘沙": "Sentosa",
+    "越南": "Vietnam", "河內": "Hanoi", "胡志明": "Ho Chi Minh City", "胡志明市": "Ho Chi Minh City",
+    "峴港": "Da Nang", "會安": "Hoi An", "富國島": "Phu Quoc", "下龍灣": "Ha Long Bay",
+    "歐洲": "Europe", "法國": "France", "巴黎": "Paris", "英國": "UK", "倫敦": "London",
+    "義大利": "Italy", "羅馬": "Rome", "佛羅倫斯": "Florence", "米蘭": "Milan", "威尼斯": "Venice",
+    "西班牙": "Spain", "巴塞隆納": "Barcelona", "馬德里": "Madrid", "德國": "Germany",
+    "柏林": "Berlin", "慕尼黑": "Munich", "瑞士": "Switzerland", "蘇黎世": "Zurich",
+    "荷蘭": "Netherlands", "阿姆斯特丹": "Amsterdam",
+    "美國": "USA", "紐約": "New York", "洛杉磯": "Los Angeles", "舊金山": "San Francisco",
+    "西雅圖": "Seattle", "芝加哥": "Chicago", "拉斯維加斯": "Las Vegas", "夏威夷": "Hawaii", "波士頓": "Boston",
+    "香港": "Hong Kong", "九龍": "Kowloon", "尖沙咀": "Tsim Sha Tsui", "中環": "Central Hong Kong",
+    "旺角": "Mong Kok", "銅鑼灣": "Causeway Bay", "澳門": "Macau",
+}
+
+
+def _localize_taxonomy_dest(matched_name: str, code: str, is_en: bool) -> str:
+    if not is_en or not matched_name or not _HAS_CJK_RE.search(matched_name):
+        return matched_name
+    mapped = _TAXONOMY_ZH_TO_EN.get(matched_name)
+    if mapped:
+        return mapped
+    tax = DESTINATION_TAXONOMY.get(code)
+    if tax:
+        for candidate in tax.get("names", []):
+            if candidate.isascii():
+                return candidate
+    return matched_name
 
 
 def generate_dual_queries(
@@ -365,16 +405,17 @@ def generate_dual_queries(
 
     local_reg, global_reg = resolve_destination_regions(code, query)
 
+    localized_matched_dest = _localize_taxonomy_dest(dest_info["matched_name"], code, is_en) if code != "GLOBAL" else dest_info["matched_name"]
     metadata = {
         "destination_code": code,
-        "matched_destination": dest_info["matched_name"],
+        "matched_destination": localized_matched_dest,
         "clean_query": clean_text,
         "local_region": local_reg,
         "global_region": global_reg,
     }
 
     if code != "GLOBAL" and tax:
-        matched_dest = dest_info["matched_name"]
+        matched_dest = localized_matched_dest
         local_terms = "local travel tips" if is_en else tax["local_keywords"]
         global_terms = tax["global_reddit_terms"]
 

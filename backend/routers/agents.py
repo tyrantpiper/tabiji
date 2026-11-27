@@ -19,6 +19,7 @@ import urllib.parse
 import uuid
 import logging
 import asyncio
+import anyio
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -39,6 +40,7 @@ from services.destination_taxonomy import (
     prune_and_align_citations,
     detect_destination,
     _sanitize_xml_boundary_text,
+    _HAS_CJK_RE,
 )
 
 os.environ.setdefault("GOOGLE_GENAI_API_VERSION", "v1beta")
@@ -101,7 +103,78 @@ _ORIGINAL_EXECUTE_WITH_TRANSIENT_RETRY = _execute_with_transient_retry
 _ANTIGRAVITY_POLL_INTERVAL_SEC = 2.5
 _ANTIGRAVITY_MAX_WAIT_SEC = 180.0
 _ANTIGRAVITY_HEARTBEAT_SEC = 12.0
+_ANTIGRAVITY_CREATE_TIMEOUT_SEC = 35.0
+_ANTIGRAVITY_GET_TIMEOUT_SEC = 25.0
+_ANTIGRAVITY_CANCEL_TIMEOUT_SEC = 5.0
 _ANTIGRAVITY_MAX_SOURCES = 8
+
+
+async def _cancel_antigravity_best_effort(
+    interactions_api: Any,
+    interaction_id: str,
+    *,
+    reason: str = "abort",
+) -> None:
+    """
+    在 anyio.CancelScope(shield=True) 保護下以有界超時呼叫 interactions.cancel：
+    確保 Starlette StreamingResponse 偵測 http.disconnect 取消 TaskGroup 時，
+    不會在 run_in_threadpool 取消檢查點被提前攔截，真正中止遠端沙盒止血 Token。
+    """
+    cancel_fn = getattr(interactions_api, "cancel", None)
+    if not interaction_id or not callable(cancel_fn):
+        return
+    try:
+        with anyio.CancelScope(shield=True):
+            await asyncio.wait_for(
+                run_in_threadpool(cancel_fn, id=interaction_id),
+                timeout=_ANTIGRAVITY_CANCEL_TIMEOUT_SEC,
+            )
+    except BaseException as cancel_err:
+        logger.warning(
+            f"⚠️ [Agents Stream] Antigravity cancel ({reason}) skipped ({interaction_id}): "
+            f"{type(cancel_err).__name__}: {cancel_err}"
+        )
+
+
+async def _run_blocking_with_heartbeat(
+    fn,
+    *,
+    timeout_sec: float,
+    heartbeat_sec: float,
+    last_heartbeat: float,
+    **kwargs,
+):
+    """
+    在 threadpool 執行阻塞式 SDK 呼叫並加上上限超時；等待期間每 heartbeat_sec 回報一次心跳需求。
+    回傳 AsyncGenerator，逐次 yield (": heartbeat\\n\\n", None, new_last_hb) 或 (None, result, new_last_hb)。
+    """
+    task = asyncio.create_task(run_in_threadpool(fn, **kwargs))
+    deadline = time.monotonic() + max(0.05, timeout_sec)
+    cur_hb = last_heartbeat
+    try:
+        while not task.done():
+            now_ts = time.monotonic()
+            rem = deadline - now_ts
+            if rem <= 0:
+                task.cancel()
+                raise asyncio.TimeoutError(f"Blocking Antigravity call timed out after {timeout_sec}s")
+            until_hb = max(0.001, heartbeat_sec - (now_ts - cur_hb))
+            wait_step = min(rem, until_hb)
+            done_set, _ = await asyncio.wait({task}, timeout=wait_step)
+            if done_set:
+                break
+            now_after = time.monotonic()
+            if now_after >= deadline:
+                task.cancel()
+                raise asyncio.TimeoutError(f"Blocking Antigravity call timed out after {timeout_sec}s")
+            if now_after - cur_hb >= heartbeat_sec:
+                cur_hb = now_after
+                yield ": heartbeat\n\n", None, cur_hb
+        yield None, task.result(), cur_hb
+    except BaseException:
+        if not task.done():
+            task.cancel()
+        raise
 
 
 def _callable_accepts_kwarg(fn: Any, kwarg: str) -> bool:
@@ -501,8 +574,9 @@ async def _build_research_news_query(
             cand = _RESEARCH_FORUM_NOISE_RE.sub(" ", cand)
             cand = _strip_bare_iata_tokens(cand, allow_usa=allow_usa)
             cand = re.sub(r"\s+", " ", cand).strip()
-            max_len = 45 if cand.isascii() else 32
-            max_words = 7 if cand.isascii() else 5
+            is_latin_like = not _HAS_CJK_RE.search(cand)
+            max_len = 45 if is_latin_like else 32
+            max_words = 7 if is_latin_like else 5
             if cand and len(cand) <= max_len and len(cand.split()) <= max_words:
                 return cand
 
@@ -541,19 +615,26 @@ async def _fetch_live_research_intelligence(
         return "", []
 
     effective_fetch_timeout = fetch_timeout
+    rss_outer_timeout = fetch_timeout + 0.3
+    rss_inner_timeout = fetch_timeout
     if total_budget is not None:
         elapsed_lite = time.monotonic() - t0
         headroom = min(0.15, max(0.02, total_budget * 0.1))
-        remaining = total_budget - elapsed_lite - headroom
-        effective_fetch_timeout = min(fetch_timeout, max(0.05, remaining))
+        remaining = max(0.05, total_budget - elapsed_lite - headroom)
+        effective_fetch_timeout = min(fetch_timeout, remaining)
+        rss_outer_timeout = min(fetch_timeout + 0.3, remaining)
+        if rss_outer_timeout > 0.38:
+            rss_inner_timeout = min(effective_fetch_timeout, max(0.05, rss_outer_timeout - 0.3))
+        else:
+            rss_inner_timeout = max(0.03, rss_outer_timeout * 0.8)
 
     async def _safe_rss() -> List[Dict[str, str]]:
         if not _is_direct_rss_enabled():
             return []
         try:
             res = await asyncio.wait_for(
-                fetch_google_news_rss(news_query, max_results=5, timeout=effective_fetch_timeout),
-                timeout=effective_fetch_timeout + 0.3,
+                fetch_google_news_rss(news_query, max_results=5, timeout=rss_inner_timeout),
+                timeout=rss_outer_timeout,
             )
             return res if isinstance(res, list) else []
         except asyncio.CancelledError:
@@ -661,13 +742,38 @@ _WORKSPACE_MD_LINK_RE = re.compile(
 )
 _WORKSPACE_BACKTICK_RE = re.compile(r"`file:///workspace/[^`\r\n]{0,500}`", re.IGNORECASE)
 _WORKSPACE_ANGLE_RE = re.compile(r"<file:///workspace/[^\s>\r\n]{0,500}>", re.IGNORECASE)
-_WORKSPACE_PAREN_RE = re.compile(r"\(\s*file:///workspace/[^\s\)\r\n]{0,500}\s*\)", re.IGNORECASE)
+_WORKSPACE_PAREN_RE = re.compile(r"\([ \t]*file:///workspace/[^\s\)\r\n]{0,500}[ \t]*\)", re.IGNORECASE)
 _WORKSPACE_BARE_RE = re.compile(r"file:///workspace/[^\s\)\]>\"'`\r\n]{0,500}", re.IGNORECASE)
 _MD_EXTERNAL_LINK_RE = re.compile(r"\[([^\]\r\n]{1,160})\]\((https?://[^\s\)\r\n]{4,1000})\)")
 _NUMBERED_REF_URL_RE = re.compile(
-    r"(?m)^\s*(?:\[(\d{1,2})\]|(\d{1,2})\.)\s*([^\r\n]{0,160}?)(https?://[^\s\)\]>\"'\r\n]{4,1000})"
+    r"(?m)^[ \t]*(?:\[(\d{1,2})\]|(\d{1,2})\.)[ \t]*([^\r\n]{0,160}?)(https?://[^\s\)\]>\"'\r\n]{4,1000})"
 )
-_URL_TRAILING_PUNCT = ".,;:!?)>]}'\""
+_URL_TRAILING_PUNCT = ".,;:!?)>]}'\"。，、；：！？）】》」』"
+_PRICING_MARKER_LINE_RE = re.compile(
+    r"(?m)^[ \t]*(?:（分潤標記追蹤碼[^\r\n]{0,80}）|\(Affiliate tracking marker[^\r\n]{0,80}\))[ \t]*\r?\n?",
+    re.IGNORECASE,
+)
+_LEAKED_TRACKING_MARKER_RE = re.compile(
+    r"(?:（分潤標記追蹤碼[^\r\n）]{0,60}）|\(Affiliate tracking marker[^\r\n\)]{0,60}\)|\[(?:marker[:：\s]*)?602410\])",
+    re.IGNORECASE,
+)
+
+
+def _strip_internal_pricing_marker(pricing_text: str) -> str:
+    """在注入 LLM prompt 前移除內部 Travelpayouts 分潤追蹤碼行（保留 _fetch_live_pricing_context 原有單測契約）。"""
+    if not isinstance(pricing_text, str) or not pricing_text:
+        return ""
+    return _PRICING_MARKER_LINE_RE.sub("", pricing_text).rstrip()
+
+
+def _strip_leaked_tracking_marker(text: str) -> str:
+    """縱深防禦：若模型仍於報告正文誤吐 [602410] 或分潤標記括號，於輸出前線性剝除。"""
+    if not isinstance(text, str) or not text:
+        return ""
+    if "602410" not in text and "分潤標記追蹤碼" not in text and "affiliate tracking marker" not in text.lower():
+        return text
+    cleaned = _LEAKED_TRACKING_MARKER_RE.sub("", text)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
 def _get_field(obj: Any, key: str) -> Any:
@@ -720,12 +826,14 @@ def _canonicalize_antigravity_url(url: str) -> str:
 def _sanitize_antigravity_markdown(text: str) -> str:
     """
     線性 O(n) 消毒 Antigravity 沙盒輸出：
-    移除無法點擊之 file:///workspace/... 本地死鏈，保留合法 Markdown 內容與外部 https:// 連結。
+    僅對含 file:///workspace/... 死鏈之行進行局部清洗（嚴格保全程式碼區塊、() 函式呼叫與巢狀縮排），
+    並於最後縱深剝除任何誤吐之內部追蹤碼 [602410]。
     """
     if not isinstance(text, str) or not text:
         return ""
+
     if "file:///workspace/" not in text.lower():
-        return text
+        return _strip_leaked_tracking_marker(text)
 
     def _replace_ws_md(match: re.Match) -> str:
         label = (match.group(1) or "").strip()
@@ -733,17 +841,29 @@ def _sanitize_antigravity_markdown(text: str) -> str:
             return ""
         return label
 
-    cleaned = _WORKSPACE_MD_LINK_RE.sub(_replace_ws_md, text)
-    cleaned = _WORKSPACE_BACKTICK_RE.sub("", cleaned)
-    cleaned = _WORKSPACE_ANGLE_RE.sub("", cleaned)
-    cleaned = _WORKSPACE_PAREN_RE.sub("", cleaned)
-    cleaned = _WORKSPACE_BARE_RE.sub("", cleaned)
-    # 清除移除死鏈後殘留之空括號與多餘空白行
-    cleaned = re.sub(r"\(\s*\)", "", cleaned)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    cleaned = re.sub(r"(?m)^\s*[-*]\s*$", "", cleaned)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    return cleaned.strip()
+    out_lines: List[str] = []
+    for line in text.splitlines():
+        if "file:///workspace/" not in line.lower():
+            out_lines.append(line)
+            continue
+        indent_len = len(line) - len(line.lstrip(" \t"))
+        indent = line[:indent_len]
+        body = line[indent_len:]
+        body = _WORKSPACE_MD_LINK_RE.sub(_replace_ws_md, body)
+        body = _WORKSPACE_BACKTICK_RE.sub("", body)
+        body = _WORKSPACE_ANGLE_RE.sub("", body)
+        body = _WORKSPACE_PAREN_RE.sub("", body)
+        body = _WORKSPACE_BARE_RE.sub("", body)
+        # 僅清洗本行移除死鏈後殘留之空括號與多餘連續空白，絕不破壞其他行之程式碼縮排
+        body = re.sub(r"\([ \t]*\)", "", body)
+        body = re.sub(r"[ \t]{2,}", " ", body).rstrip()
+        if re.fullmatch(r"[-*•][ \t]*", body):
+            continue
+        out_lines.append(f"{indent}{body}" if body else "")
+
+    cleaned = "\n".join(out_lines)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return _strip_leaked_tracking_marker(cleaned)
 
 
 def _extract_raw_antigravity_text(interaction: Any) -> str:
@@ -776,11 +896,18 @@ def _collect_urls_from_step_item(item: Any, bucket: List[Dict[str, str]], depth:
             _collect_urls_from_step_item(sub, bucket, depth + 1)
         return
 
+    if _get_field(item, "is_error") is True:
+        return
+
     status = _get_str_field(item, "status").lower()
     if status in ("error", "unsafe", "failed", "blocked"):
         return
 
-    raw_url = _get_str_field(item, "url") or _get_str_field(item, "uri")
+    raw_url = (
+        _get_str_field(item, "url")
+        or _get_str_field(item, "uri")
+        or _get_str_field(item, "source_url")
+    )
     clean_url = _clean_extracted_url(raw_url)
     if clean_url:
         title = _get_str_field(item, "title") or _get_str_field(item, "name")
@@ -862,6 +989,7 @@ def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -
             _upsert(cand["url"], cand["title"], cand["snippet"])
 
     # 2. 報告正文外部 Markdown 連結 [title](https://...) 與編號參考清單
+    numbered_order: Dict[str, int] = {}
     if sanitized_text:
         bounded_md = sanitized_text[:40000]
         for m in _MD_EXTERNAL_LINK_RE.finditer(bounded_md):
@@ -872,18 +1000,44 @@ def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -
                 link_title = ""
             _upsert(link_url, link_title)
         for m in _NUMBERED_REF_URL_RE.finditer(bounded_md):
+            ref_num_raw = m.group(1) or m.group(2)
             prefix_label = (m.group(3) or "").strip(" -:：|[]()•*")
             link_url = (m.group(4) or "").strip()
             _upsert(link_url, prefix_label)
+            clean_ref_url = _clean_extracted_url(link_url)
+            if clean_ref_url and ref_num_raw and ref_num_raw.isdigit():
+                canon_ref = _canonicalize_antigravity_url(clean_ref_url)
+                ref_num = int(ref_num_raw)
+                if canon_ref not in numbered_order or ref_num < numbered_order[canon_ref]:
+                    numbered_order[canon_ref] = ref_num
 
-    # 為無標題 URL 補上乾淨主機名稱（確保前端徽章可讀）
+    # 若報告附帶明確編號參考清單（[1]/[2]/1.），優先依編號順序對齊內文引文，再接續其餘 steps 來源
+    if numbered_order:
+        numbered_keys = sorted(
+            [k for k in ordered_keys if k in numbered_order],
+            key=lambda k: (numbered_order[k], ordered_keys.index(k)),
+        )
+        unnumbered_keys = [k for k in ordered_keys if k not in numbered_order]
+        final_keys = numbered_keys + unnumbered_keys
+    else:
+        final_keys = ordered_keys
+
+    # 為無標題 URL 補上乾淨主機名稱（Wikipedia 自動解碼條目 slug 以通過主題相關性守衛並提升徽章可讀性）
     results: List[Dict[str, str]] = []
-    for canon in ordered_keys:
+    for canon in final_keys:
         rec = by_canon[canon]
         if not rec["title"]:
             try:
-                host = (urllib.parse.urlsplit(rec["url"]).hostname or "").lower().lstrip("www.")
-                rec["title"] = host or rec["url"]
+                parsed = urllib.parse.urlsplit(rec["url"])
+                raw_host = (parsed.hostname or "").lower().rstrip(".")
+                clean_host = raw_host.removeprefix("www.")
+                wiki_title = ""
+                if clean_host.endswith("wikipedia.org") and "/wiki/" in (parsed.path or ""):
+                    slug = parsed.path.split("/wiki/", 1)[1].split("/", 1)[0]
+                    decoded_slug = urllib.parse.unquote(slug).replace("_", " ").strip()
+                    if decoded_slug:
+                        wiki_title = f"{decoded_slug} - Wikipedia"[:180]
+                rec["title"] = wiki_title or clean_host or rec["url"]
             except ValueError:
                 rec["title"] = rec["url"]
         results.append(rec)
@@ -1067,7 +1221,7 @@ async def _execute_flash_fallback_task(
                     timeout_sec=timeout_sec,
                     tag="AgentFallback",
                 )
-                clean_text = extract_clean_response_text(response)
+                clean_text = _strip_leaked_tracking_marker(extract_clean_response_text(response))
                 if not clean_text or not clean_text.strip():
                     diag = summarize_response_diagnostics(response)
                     logger.warning(f"⚠️ [Agents] {candidate_model} returned empty visible output: {diag}")
@@ -1195,8 +1349,9 @@ async def start_deep_research(
     if body.booking_context:
         ctx_header = "[Confirmed User Booking / Stay Info]" if is_en else "【用戶已確認訂單/住宿資料】"
         context_blocks.append(f"{ctx_header}:\n{body.booking_context}")
-    if live_pricing:
-        context_blocks.append(live_pricing)
+    clean_live_pricing = _strip_internal_pricing_marker(live_pricing)
+    if clean_live_pricing:
+        context_blocks.append(clean_live_pricing)
     if live_news_context:
         context_blocks.append(live_news_context)
 
@@ -1336,14 +1491,16 @@ async def stream_deep_research(
             if body.booking_context:
                 ctx_header = "[Confirmed User Booking / Stay Info]" if is_en else "【用戶已確認訂單/住宿資料】"
                 base_context_blocks.append(f"{ctx_header}:\n{body.booking_context}")
-            if live_pricing:
-                base_context_blocks.append(live_pricing)
+            clean_live_pricing = _strip_internal_pricing_marker(live_pricing)
+            if clean_live_pricing:
+                base_context_blocks.append(clean_live_pricing)
 
             req_header = "[Research Task Requirement]" if is_en else "【研究任務需求】"
 
             # ==================================================================
             # Tier 1: Antigravity 遠端沙盒優先（僅於合法非空 str interaction.id 時啟用）
             # ==================================================================
+            degraded_from_antigravity = False
             if _is_antigravity_stream_enabled():
                 sandbox_prompt = (
                     ("\n\n".join(base_context_blocks) + "\n\n" if base_context_blocks else "")
@@ -1353,16 +1510,26 @@ async def stream_deep_research(
                 interaction_id: Optional[str] = None
                 interactions_api = getattr(client, "interactions", None)
                 create_fn = getattr(interactions_api, "create", None)
+                last_heartbeat = time.monotonic()
                 if callable(create_fn):
                     try:
-                        created = await run_in_threadpool(
+                        created = None
+                        async for hb_chunk, res_val, last_heartbeat in _run_blocking_with_heartbeat(
                             create_fn,
+                            timeout_sec=_ANTIGRAVITY_CREATE_TIMEOUT_SEC,
+                            heartbeat_sec=_ANTIGRAVITY_HEARTBEAT_SEC,
+                            last_heartbeat=last_heartbeat,
                             agent=ANTIGRAVITY_AGENT_ID,
                             input=sandbox_prompt,
                             environment=body.environment,
                             background=True,
                             store=True,
-                        )
+                        ):
+                            if hb_chunk:
+                                yield hb_chunk
+                                await asyncio.sleep(0)
+                            else:
+                                created = res_val
                         raw_id = getattr(created, "id", None)
                         if isinstance(raw_id, str) and raw_id.strip():
                             interaction_id = raw_id.strip()
@@ -1396,6 +1563,7 @@ async def stream_deep_research(
 
                     poll_start = time.monotonic()
                     last_heartbeat = poll_start
+                    interaction_terminal = False
                     try:
                         while True:
                             now_ts = time.monotonic()
@@ -1403,14 +1571,29 @@ async def stream_deep_research(
                                 logger.warning(
                                     f"⚠️ [Agents Stream] Antigravity {interaction_id} timed out after {_ANTIGRAVITY_MAX_WAIT_SEC}s; cancelling and degrading to Tier 2"
                                 )
-                                try:
-                                    await run_in_threadpool(interactions_api.cancel, id=interaction_id)
-                                except Exception as cancel_err:
-                                    logger.warning(f"⚠️ [Agents Stream] Antigravity timeout cancel skipped ({interaction_id}): {cancel_err}")
+                                await _cancel_antigravity_best_effort(
+                                    interactions_api, interaction_id, reason="timeout"
+                                )
+                                interaction_terminal = True
+                                degraded_from_antigravity = True
                                 break
 
+                            remaining_for_get = _ANTIGRAVITY_MAX_WAIT_SEC - (now_ts - poll_start)
+                            get_timeout = min(_ANTIGRAVITY_GET_TIMEOUT_SEC, max(0.05, remaining_for_get))
                             try:
-                                polled = await run_in_threadpool(interactions_api.get, id=interaction_id)
+                                polled = None
+                                async for hb_chunk, res_val, last_heartbeat in _run_blocking_with_heartbeat(
+                                    interactions_api.get,
+                                    timeout_sec=get_timeout,
+                                    heartbeat_sec=_ANTIGRAVITY_HEARTBEAT_SEC,
+                                    last_heartbeat=last_heartbeat,
+                                    id=interaction_id,
+                                ):
+                                    if hb_chunk:
+                                        yield hb_chunk
+                                        await asyncio.sleep(0)
+                                    else:
+                                        polled = res_val
                             except _INTERACTION_API_ERRORS as poll_err:
                                 p_status = _get_api_error_status(poll_err)
                                 p_msg_low = (_get_api_error_message(poll_err) or "").lower()
@@ -1426,15 +1609,26 @@ async def stream_deep_research(
                                     )
                                 )
                                 if (p_status == 401) or (classify_api_error(poll_err) == "auth_fail" and p_status != 403) or p_key_invalid:
+                                    interaction_terminal = True
                                     err_msg = "Invalid or revoked Gemini API Key." if is_en else "API Key 無效或已失效，請更新 Gemini API Key。"
                                     yield f'event: error\ndata: {json.dumps({"message": err_msg, "code": 401})}\n\n'
                                     return
-                                logger.warning(f"⚠️ [Agents Stream] Antigravity poll failed ({p_status}): {poll_err}; degrading to Tier 2")
+                                logger.warning(f"⚠️ [Agents Stream] Antigravity poll failed ({p_status}): {poll_err}; cancelling and degrading to Tier 2")
+                                await _cancel_antigravity_best_effort(
+                                    interactions_api, interaction_id, reason="poll_error"
+                                )
+                                interaction_terminal = True
+                                degraded_from_antigravity = True
                                 break
                             except asyncio.CancelledError:
                                 raise
                             except Exception as poll_err:
-                                logger.warning(f"⚠️ [Agents Stream] Antigravity poll error: {poll_err}; degrading to Tier 2")
+                                logger.warning(f"⚠️ [Agents Stream] Antigravity poll error: {poll_err}; cancelling and degrading to Tier 2")
+                                await _cancel_antigravity_best_effort(
+                                    interactions_api, interaction_id, reason="poll_error"
+                                )
+                                interaction_terminal = True
+                                degraded_from_antigravity = True
                                 break
 
                             raw_status = str(getattr(polled, "status", getattr(polled, "state", "completed"))).lower()
@@ -1447,15 +1641,17 @@ async def stream_deep_research(
                                 remaining_wait = _ANTIGRAVITY_MAX_WAIT_SEC - (time.monotonic() - poll_start)
                                 if remaining_wait <= 0:
                                     continue
-                                await asyncio.sleep(min(_ANTIGRAVITY_POLL_INTERVAL_SEC, max(0.01, remaining_wait)))
+                                await asyncio.sleep(min(_ANTIGRAVITY_POLL_INTERVAL_SEC, max(0.001, remaining_wait)))
                                 if time.monotonic() - last_heartbeat >= _ANTIGRAVITY_HEARTBEAT_SEC:
                                     yield ": heartbeat\n\n"
                                     await asyncio.sleep(0)
                                     last_heartbeat = time.monotonic()
                                 continue
 
+                            interaction_terminal = True
                             if "fail" in raw_status or "cancel" in raw_status:
                                 logger.warning(f"⚠️ [Agents Stream] Antigravity {interaction_id} ended with status={raw_status}; degrading to Tier 2")
+                                degraded_from_antigravity = True
                                 break
 
                             clean_ag_text, ag_sources = await _extract_antigravity_output_and_sources(
@@ -1470,13 +1666,17 @@ async def stream_deep_research(
                                 return
 
                             logger.warning(f"⚠️ [Agents Stream] Antigravity {interaction_id} completed with empty output; degrading to Tier 2")
+                            degraded_from_antigravity = True
                             break
-                    except asyncio.CancelledError:
-                        try:
-                            await run_in_threadpool(interactions_api.cancel, id=interaction_id)
-                        except Exception as cancel_err:
-                            logger.warning(f"⚠️ [Agents Stream] Antigravity cancel on abort skipped ({interaction_id}): {cancel_err}")
-                        raise
+                    finally:
+                        if not interaction_terminal:
+                            await _cancel_antigravity_best_effort(
+                                interactions_api, interaction_id, reason="abort"
+                            )
+
+            if degraded_from_antigravity:
+                yield f'event: thinking\ndata: {json.dumps({"status": "researching", "engine": "gemini-flash-stream"})}\n\n'
+                await asyncio.sleep(0)
 
             # ==================================================================
             # Tier 2: Flash/Hydrogen 零 GoogleSearch() + 503 零延遲自動輪替鏈
@@ -1539,7 +1739,7 @@ async def stream_deep_research(
                             yield ": heartbeat\n\n"
                             await asyncio.sleep(0)
                     response = task.result()
-                    clean_text = extract_clean_response_text(response)
+                    clean_text = _strip_leaked_tracking_marker(extract_clean_response_text(response))
                     if clean_text and clean_text.strip():
                         final_text = clean_text
                         used_engine = candidate_model

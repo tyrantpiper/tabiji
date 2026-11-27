@@ -267,4 +267,47 @@ describe("Deep Research v2 News RSS Frontend Contracts (AC-7 & Security)", () =>
         )
         expect(screen.getByText("深度沙盒")).toBeTruthy()
     })
+
+    it("streamDeepResearch preserves thinking engine when done omits engine and reflects degradation engine updates", async () => {
+        const encoder = new TextEncoder()
+        const ssePreserve = new ReadableStream({
+            start(controller) {
+                controller.enqueue(encoder.encode('event: thinking\ndata: {"status":"researching","engine":"antigravity"}\n\n'))
+                controller.enqueue(encoder.encode('event: text\ndata: {"text":"## Sandbox OK"}\n\n'))
+                controller.enqueue(encoder.encode('event: done\ndata: {}\n\n'))
+                controller.close()
+            },
+        })
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+            new Response(ssePreserve, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+        )
+        const resPreserve = await streamDeepResearch({
+            apiUrl: "https://api.example.test",
+            apiKey: "AIzaSyTestKey1234567890123456789012345678",
+            prompt: "Tokyo test",
+        })
+        expect(resPreserve.engine).toBe("antigravity")
+
+        const sseDegrade = new ReadableStream({
+            start(controller) {
+                controller.enqueue(encoder.encode('event: thinking\ndata: {"status":"researching","engine":"antigravity"}\n\n'))
+                controller.enqueue(encoder.encode('event: thinking\ndata: {"status":"researching","engine":"gemini-flash-stream"}\n\n'))
+                controller.enqueue(encoder.encode('event: text\ndata: {"text":"## Fallback OK"}\n\n'))
+                controller.enqueue(encoder.encode('event: done\ndata: {"engine":"gemini-3.8-flash"}\n\n'))
+                controller.close()
+            },
+        })
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+            new Response(sseDegrade, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+        )
+        const seenEngines: Array<string | undefined> = []
+        const resDegrade = await streamDeepResearch({
+            apiUrl: "https://api.example.test",
+            apiKey: "AIzaSyTestKey1234567890123456789012345678",
+            prompt: "Kyoto degrade test",
+            onThinking: (_s, eng) => seenEngines.push(eng),
+        })
+        expect(seenEngines).toEqual(["antigravity", "gemini-flash-stream"])
+        expect(resDegrade.engine).toBe("gemini-3.8-flash")
+    })
 })

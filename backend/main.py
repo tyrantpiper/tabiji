@@ -123,10 +123,18 @@ _URL_DETECT_RE = re.compile(
 _STREAM_IDLE_CHUNK_TIMEOUT = 25.0
 _STREAM_ACTIVE_TOTAL_CAP = 95.0
 _STREAM_PRESERVE_PARTIAL_MIN_CHARS = 140
-# 🛡️ 純事實 SEARCH 防誤觸行程工具正則（僅在含明確加入／排程／移除／附近推薦意圖詞時保留行程增刪工具）
+# 🛡️ 純事實 SEARCH 防誤觸行程工具正則（嚴格限定明確加入／排程／移除／附近推薦動作詞，避免誤傷拉麵／餐廳營業時間、班次表、取消政策等純事實問答）
 _SEARCH_ACTION_OR_RECOMMEND_RE = re.compile(
-    r"(?:加入|新增|幫我排|排進|排入|排到|安排|刪除|移除|拿掉|取消|附近|周邊|周圍|推薦|必吃|必去|餐廳|拉麵|美食|咖啡|景點清單|"
-    r"\b(?:add|insert|put|schedule|remove|delete|drop|plan|itinerary|nearby|around|recommend\w*|suggest\w*|best\s+(?:food|ramen|cafe|restaurant|spot|places?))\b)",
+    r"(?:加入|新增|加進|幫我排|排進|排入|排到|幫我安排|安排(?:行程|路線|一下|進去|到|在|Day|第)|排行程|排個|"
+    r"刪除|移除|拿掉|從行程(?:取消|刪)|取消.{0,12}行程|"
+    r"附近|周邊|周圍|推薦|必吃|必去|景點清單|美食清單|有什麼好吃|好吃的|"
+    r"\b(?:add|insert|remove|delete|itinerary|nearby|near\s+me|recommend\w*|suggest\w*|"
+    r"put\s+(?:it|this|that|them)\s+(?:in|into|on)|"
+    r"schedule\s+(?:a|an|this|that|it|my|our|the\s+visit|day)\b|"
+    r"help\s+me\s+plan|plan\s+(?:a|an|my|our|the)\s+(?:trip|day|route|visit|schedule)|"
+    r"where\s+to\s+(?:eat|go|stay|visit)|"
+    r"(?:places?|eat|food|restaurants?|cafes?|bars?|hotels?|shops?)\s+(?:near|around)|"
+    r"best\s+(?:food|ramen|cafe|cafes|restaurant|restaurants|spot|spots|places?|things?\s+to\s+(?:do|eat|see)))\b)",
     re.IGNORECASE,
 )
 
@@ -1286,9 +1294,12 @@ Please answer the user's question based on the live data above."""
                 final_message = f"{err_prefix}\n{enhanced_message}"
         
         # [NEW] 調用 Model Manager (含思想簽名 Round-Trip 與精確動態工具覆寫)
-        # /api/chat 不具備伺服端 ReAct 執行迴圈，剔除伺服端專屬搜尋工具以免模型空等
+        # /api/chat 不具備伺服端 ReAct 執行迴圈，剔除伺服端專屬搜尋工具以免模型空等；
+        # 純事實 SEARCH 且無 POI 上下文與行程動作意圖時一併卸載行程增刪工具（與 /api/chat/stream 行為對齊）
         _SERVER_ONLY_TOOL_NAMES = {"search_web", "fetch_webpage", "get_world_time", "search_nearby_places"}
-        if isinstance(resolved_tools, list):
+        if intent_type == "SEARCH" and not poi_context and not _should_retain_search_itinerary_tools(body.message, [], []):
+            chat_tools = None
+        elif isinstance(resolved_tools, list):
             chat_tools = []
             for t in resolved_tools:
                 decls = getattr(t, "function_declarations", None) or []
@@ -1986,13 +1997,20 @@ async def stream_chat_generator(
                             b_text = item.get("badge", {}).get("text", "Global Info")
                             grounding_text += f"[{item['citation_index']}] «{item.get('title')}»: {item.get('snippet')} (URL: {item.get('url')}) [{b_text}]\n"
 
-                    grounding_text += """
-[Strict Dual-Perspective Citation & Place Card Guidance]:
-1. Base your answer strictly on the search results above. Synthesize or compare [📍 Local Perspective] and [🌐 Global Traveler Insights].
-2. Cite the matching reference number (e.g. [1], [3]) when mentioning specific facts or spots.
-3. Never cite unrelated results; every factual claim must match its numbered source.
-4. [Place Card Guidance]: When recommending concrete restaurants, cafes, attractions, or shops, you may call `add_itinerary_item` (either directly or via `items` array) with place_name, duration, category, lat, and lng so the UI displays interactive In-Card MiniMap previews. Feel free to provide natural language recommendations alongside any tool calls.
-[/Live Web Search Results]\n"""
+                    retain_place_card_tools = _should_retain_search_itinerary_tools(eval_message, executed_geo_results, succeeded_urls)
+                    place_card_rule_en = (
+                        "\n4. [Place Card Guidance]: When recommending concrete restaurants, cafes, attractions, or shops, you may call `add_itinerary_item` (either directly or via `items` array) with place_name, duration, category, lat, and lng so the UI displays interactive In-Card MiniMap previews. Feel free to provide natural language recommendations alongside any tool calls."
+                        if retain_place_card_tools
+                        else ""
+                    )
+                    grounding_text += (
+                        "\n[Strict Dual-Perspective Citation & Place Card Guidance]:\n"
+                        "1. Base your answer strictly on the search results above. Synthesize or compare [📍 Local Perspective] and [🌐 Global Traveler Insights].\n"
+                        "2. Cite the matching reference number (e.g. [1], [3]) when mentioning specific facts or spots.\n"
+                        "3. Never cite unrelated results; every factual claim must match its numbered source."
+                        f"{place_card_rule_en}\n"
+                        "[/Live Web Search Results]\n"
+                    )
                 else:
                     grounding_text = f"\n\n[即時網路搜尋結果 (雙軌在地與全球情報)]\n目的地: {dest_name}\n"
                     if local_items:
@@ -2006,13 +2024,20 @@ async def stream_chat_generator(
                             b_text = item.get("badge", {}).get("text", "國際情報")
                             grounding_text += f"[{item['citation_index']}] 《{item.get('title')}》: {item.get('snippet')} (網址: {item.get('url')}) [{b_text}]\n"
 
-                    grounding_text += """
-【嚴格雙重視角引用與空間卡片指引】：
-1. 你的回答必須**嚴格依據上述搜尋結果**。請對比或整合【📍 在地視角】與【🌐 全球旅人觀點】進行客觀推薦。
-2. 當提及具體事實、景點或推薦時，請在句末標註對應的來源編號（例如：在地人推薦這家拉麵[1]，而國際社群普遍建議[3]...）。
-3. 嚴禁內文與來源脫節（各說各話）。你提及的內容必須能從對應的來源編號中得到印證。若某來源與旅遊無關，切勿採用。
-4. 【空間卡片建議】：當你向使用者推薦具體餐廳、拉麵店、咖啡廳、景點或店家時，可針對推薦的地點調用 add_itinerary_item 工具 (可直接調用或使用 items 陣列批次呼叫)，帶入店名 (place_name)、預估停留時間、類別與經緯度，以便前端顯示 In-Card MiniMap 預覽卡片，並提供親切詳盡的自然語言解說。
-[/即時網路搜尋結果]\n"""
+                    retain_place_card_tools = _should_retain_search_itinerary_tools(eval_message, executed_geo_results, succeeded_urls)
+                    place_card_rule_zh = (
+                        "\n4. 【空間卡片建議】：當你向使用者推薦具體餐廳、拉麵店、咖啡廳、景點或店家時，可針對推薦的地點調用 add_itinerary_item 工具 (可直接調用或使用 items 陣列批次呼叫)，帶入店名 (place_name)、預估停留時間、類別與經緯度，以便前端顯示 In-Card MiniMap 預覽卡片，並提供親切詳盡的自然語言解說。"
+                        if retain_place_card_tools
+                        else ""
+                    )
+                    grounding_text += (
+                        "\n【嚴格雙重視角引用與空間卡片指引】：\n"
+                        "1. 你的回答必須**嚴格依據上述搜尋結果**。請對比或整合【📍 在地視角】與【🌐 全球旅人觀點】進行客觀推薦。\n"
+                        "2. 當提及具體事實、景點或推薦時，請在句末標註對應的來源編號（例如：在地人推薦這家拉麵[1]，而國際社群普遍建議[3]...）。\n"
+                        "3. 嚴禁內文與來源脫節（各說各話）。你提及的內容必須能從對應的來源編號中得到印證。若某來源與旅遊無關，切勿採用。"
+                        f"{place_card_rule_zh}\n"
+                        "[/即時網路搜尋結果]\n"
+                    )
                 if contents and contents[-1].role == "user":
                     contents[-1].parts.append(genai.types.Part.from_text(text=grounding_text))
                 else:
