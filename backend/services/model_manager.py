@@ -13,6 +13,7 @@ Intelligent multi-tier routing with:
 
 import copy
 import inspect
+import logging
 import time
 import os
 import asyncio
@@ -26,6 +27,8 @@ import weakref
 from collections import OrderedDict
 from contextvars import ContextVar
 from dataclasses import dataclass
+
+logger = logging.getLogger("ryan-travel-api")
 
 # google-genai>=3.0.0 預設為 v1，但 gemini-decision-1、interactions 與 preview 模型必須走 v1beta
 os.environ.setdefault("GOOGLE_GENAI_API_VERSION", "v1beta")
@@ -1882,8 +1885,9 @@ async def _execute_with_transient_retry(
     config: types.GenerateContentConfig,
     timeout_sec: float,
     tag: str,
+    retry_5xx: bool = True,
 ):
-    """執行單一模型請求，具備 429 快速重試、5xx 短退避單次重試、及 400 config_unsupported 原地自癒降階重試。"""
+    """執行單一模型請求，具備 429 快速重試、可選 5xx 短退避單次重試、及 400 config_unsupported 原地自癒降階重試。"""
     retried_429 = False
     retried_5xx = False
     retried_config = False
@@ -1899,7 +1903,7 @@ async def _execute_with_transient_retry(
 
             if kind == "config_unsupported" and not retried_config:
                 retried_config = True
-                print(f"🛠️ [{tag} 400 Self-Heal] {model_name} config_unsupported ({e}); stripping thinking/schema & retrying once...")
+                logger.warning(f"🛠️ [{tag} 400 Self-Heal] {model_name} config_unsupported ({e}); stripping thinking/schema & retrying once...")
                 current_config = build_degraded_config_on_400(current_config, e)
                 continue
 
@@ -1910,14 +1914,14 @@ async def _execute_with_transient_retry(
                 if not is_daily and retry_delay <= 1.5:
                     retried_429 = True
                     sleep_sec = retry_delay if retry_delay > 0.0 else 0.1
-                    print(f"⏳ [{tag} 429 Quick Retry] {model_name} rate limit throttled, waiting {sleep_sec:.2f}s before retry...")
+                    logger.warning(f"⏳ [{tag} 429 Quick Retry] {model_name} rate limit throttled, waiting {sleep_sec:.2f}s before retry...")
                     await asyncio.sleep(sleep_sec)
                     continue
 
-            if not fast_fail and code in (500, 502, 503, 504) and not retried_5xx:
+            if retry_5xx and not fast_fail and code in (500, 502, 503, 504) and not retried_5xx:
                 retried_5xx = True
                 sleep_sec = 0.8 + random.uniform(0.05, 0.25)
-                print(f"⏳ [{tag} {code} Short Retry] {model_name} transient server error, waiting {sleep_sec:.2f}s before retry...")
+                logger.warning(f"⏳ [{tag} {code} Short Retry] {model_name} transient server error, waiting {sleep_sec:.2f}s before retry...")
                 await asyncio.sleep(sleep_sec)
                 continue
 

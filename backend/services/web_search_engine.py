@@ -8,6 +8,7 @@ Web Search & Reader Engine (Zero-Key Resilient Architecture)
 
 import os
 import asyncio
+import logging
 import math
 import re
 import html
@@ -23,6 +24,8 @@ from typing import Iterator, List, Dict, Optional, Any, Tuple
 from bs4 import BeautifulSoup
 from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
 from services.link_resolver import _read_bounded_text
+
+logger = logging.getLogger("ryan-travel-api")
 
 # 全域共用非同步 HTTP 連線池
 _http_client: Optional[httpx.AsyncClient] = None
@@ -216,11 +219,11 @@ async def _search_cloudflare_edge(query: str, max_results: int = 3) -> List[Dict
             )
     except asyncio.CancelledError:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        print(f"⚠️ [SearchEngine] Tier2 status=cancelled source=timeout_budget count=0 elapsed_ms={elapsed_ms}")
+        logger.warning(f"⚠️ [SearchEngine] Tier2 status=cancelled source=timeout_budget count=0 elapsed_ms={elapsed_ms}")
         raise
     except Exception as e:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        print(f"⚠️ [SearchEngine] Tier2 status=error source=exception count=0 elapsed_ms={elapsed_ms} err={type(e).__name__}: {e}")
+        logger.warning(f"⚠️ [SearchEngine] Tier2 status=error source=exception count=0 elapsed_ms={elapsed_ms} err={type(e).__name__}: {e}")
     return []
 
 
@@ -475,7 +478,7 @@ _NEWS_CJK_STOPWORD_RE = re.compile(
     r"가볼만한곳|추천|근처|인기|여행|코스|정보|후기|리뷰|어디|알려줘|"
     r"ที่เที่ยว|ร้านอร่อย|ยอดนิยม|แนะนำ|รีวิว|เที่ยว|ใกล้|"
     r"最熱門|這附近|有沒有|哪裡有|請問|幫我|推薦|附近|熱門|哪裡|哪家|這裡|這家|這個|這些|那些|"
-    r"一下|什麼|怎麼|可以|介紹|資訊|情報|攻略|心得|評價|行程|必吃|必去|值得|好吃|好玩|這)"
+    r"一下|什麼|怎麼|可以|介紹|資訊|情報|動態|攻略|心得|評價|行程|必吃|必去|值得|好吃|好玩|這)"
 )
 
 _ZH_TW_LOCALE_SIGNAL_RE = re.compile(
@@ -879,12 +882,12 @@ async def fetch_google_news_rss(
         if asyncio.iscoroutine(stream_ctx):
             stream_ctx.close()
             elapsed_ms = int((time.monotonic() - t0) * 1000)
-            print(f"📰 [NewsRSS] status=error locale={ceid} count=0 elapsed_ms={elapsed_ms} err=CoroutineStream")
+            logger.warning(f"⚠️ [NewsRSS] status=error locale={ceid} count=0 elapsed_ms={elapsed_ms} err=CoroutineStream")
             return []
         async with stream_ctx as resp:
             if resp.status_code != 200:
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
-                print(f"📰 [NewsRSS] status={resp.status_code} locale={ceid} count=0 elapsed_ms={elapsed_ms}")
+                logger.warning(f"⚠️ [NewsRSS] status={resp.status_code} locale={ceid} count=0 elapsed_ms={elapsed_ms}")
                 return []
 
             raw_final_url = getattr(resp, "url", None)
@@ -896,24 +899,26 @@ async def fetch_google_news_rss(
                     final_host = (final_parts.hostname or "").lower().rstrip(".")
                     if final_scheme != "https" or final_host != "news.google.com":
                         elapsed_ms = int((time.monotonic() - t0) * 1000)
-                        print(f"📰 [NewsRSS] status=redirect_blocked locale={ceid} count=0 elapsed_ms={elapsed_ms}")
+                        logger.warning(f"⚠️ [NewsRSS] status=redirect_blocked locale={ceid} count=0 elapsed_ms={elapsed_ms}")
                         return []
 
             xml = await _read_bounded_text(resp, max_bytes=_NEWS_RSS_MAX_BYTES)
     except asyncio.CancelledError:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.warning(f"⚠️ [NewsRSS] status=cancelled locale={ceid} count=0 elapsed_ms={elapsed_ms}")
         raise
     except SSRFSecurityError:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        print(f"📰 [NewsRSS] status=ssrf_blocked locale={ceid} count=0 elapsed_ms={elapsed_ms}")
+        logger.warning(f"⚠️ [NewsRSS] status=ssrf_blocked locale={ceid} count=0 elapsed_ms={elapsed_ms}")
         return []
     except Exception as e:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        print(f"📰 [NewsRSS] status=error locale={ceid} count=0 elapsed_ms={elapsed_ms} err={type(e).__name__}")
+        logger.warning(f"⚠️ [NewsRSS] status=error locale={ceid} count=0 elapsed_ms={elapsed_ms} err={type(e).__name__}")
         return []
 
     if not xml or _XXE_DECL_RE.search(xml):
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        print(f"📰 [NewsRSS] status=xml_rejected locale={ceid} count=0 elapsed_ms={elapsed_ms}")
+        logger.warning(f"⚠️ [NewsRSS] status=xml_rejected locale={ceid} count=0 elapsed_ms={elapsed_ms}")
         return []
 
     core_tokens = _extract_news_core_tokens(trimmed)

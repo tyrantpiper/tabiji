@@ -350,7 +350,8 @@ async def test_ac2_iata_resolution_and_query_distillation():
 # AC-3: Prompt Injection XML Escaping, News Badge & Host Spoofing, Fallback Scan Limit
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_ac3_xml_injection_escaping_news_badge_spoof_guard_and_pruner_limit():
+async def test_ac3_xml_injection_escaping_news_badge_spoof_guard_and_pruner_limit(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEEP_RESEARCH_DIRECT_RSS", "1")
     # Exact host check for news.google.com vs spoofed subdomain
     classified = destination_taxonomy.classify_and_filter_results(
         [
@@ -411,9 +412,10 @@ async def test_ac3_xml_injection_escaping_news_badge_spoof_guard_and_pruner_limi
 
 
 # ==============================================================================
-# AC-4: Free Tier 429 Degradation Retains Live News & Citations (SSE + Polling)
+# AC-4: Free Tier Zero-GoogleSearch Retains Live News & Citations (SSE + Polling)
 # ==============================================================================
-def test_ac4_stream_429_ungrounded_retry_preserves_news_citations_and_polling_sources():
+def test_ac4_stream_429_ungrounded_retry_preserves_news_citations_and_polling_sources(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEEP_RESEARCH_DIRECT_RSS", "1")
     mock_news = [
         {
             "title": "北海道冬季周遊電子票 2026 上市 - 聯合新聞網",
@@ -436,7 +438,7 @@ def test_ac4_stream_429_ungrounded_retry_preserves_news_citations_and_polling_so
 
     async def fake_gen_content(*, model, contents, config):
         captured_prompts.append((model, contents, getattr(config, "tools", None)))
-        # First call with GoogleSearch() raises 429; retry with tools=None succeeds with [1] and [2]
+        # P0-2: Must NEVER attach GoogleSearch() tool on Free Tier fallback
         if getattr(config, "tools", None):
             raise _make_api_error(429, "Quota exceeded for grounding tool")
         return _make_text_resp("# 北海道研究報告\n最新電子票已上市[1]，雪祭會場動線已更新[2]。")
@@ -457,10 +459,9 @@ def test_ac4_stream_429_ungrounded_retry_preserves_news_citations_and_polling_so
         )
 
     assert resp.status_code == 200
-    assert len(captured_prompts) >= 2
-    assert any(tools for _, _, tools in captured_prompts[:-1]), "Initial grounded attempt must carry GoogleSearch tool"
-    assert "<live_news_reference" in captured_prompts[-1][1]
-    assert captured_prompts[-1][2] is None, "429 retry must strip GoogleSearch tools"
+    assert len(captured_prompts) == 1, "Zero wasted GoogleSearch() 429 roundtrip; succeeds on first call"
+    assert "<live_news_reference" in captured_prompts[0][1]
+    assert captured_prompts[0][2] is None, "Tier 2 fallback must never send paid GoogleSearch tools"
 
     done_payload = None
     for block in resp.text.split("\n\n"):
@@ -530,6 +531,7 @@ async def test_ac4_fallback_polling_merges_sources_after_bola_check():
 # ==============================================================================
 @pytest.mark.asyncio
 async def test_ac5_graceful_degradation_slow_ddg_isolation_and_kill_switch(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEEP_RESEARCH_DIRECT_RSS", "1")
     # 1. Slow DDG times out while fast RSS succeeds -> RSS items MUST survive!
     fast_rss = [
         {"title": "東京迪士尼 2026 新園區開幕", "snippet": "最新新聞", "url": "https://news.google.com/rss/articles/TDL1"}
@@ -646,7 +648,8 @@ def test_ac6_unicode_locale_tokens_and_worker_mixed_dedup_invariants():
 # Per-Leaf Isolation Verification (conftest.py safety net)
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_per_leaf_isolation_guards_unmocked_sibling_and_preserves_generate_content_side_effect():
+async def test_per_leaf_isolation_guards_unmocked_sibling_and_preserves_generate_content_side_effect(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEEP_RESEARCH_DIRECT_RSS", "1")
     # 1. Patching ONLY RSS leaf must isolate unmocked execute_web_search (no CF Edge / DDGS leak)
     with patch.object(agents_router, "_build_research_news_query", AsyncMock(return_value="東京 2026")), \
          patch.object(
@@ -700,7 +703,8 @@ async def test_per_leaf_isolation_guards_unmocked_sibling_and_preserves_generate
 # Hardening Regression Tests (Budget Race, Acronyms, Whole-Word EN, XML/URL Edge Cases)
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_hardening_budget_headroom_preserves_fast_rss_when_lite_and_ddg_both_timeout():
+async def test_hardening_budget_headroom_preserves_fast_rss_when_lite_and_ddg_both_timeout(monkeypatch):
+    monkeypatch.setenv("ENABLE_DEEP_RESEARCH_DIRECT_RSS", "1")
     async def slow_lite(*args, **kwargs):
         await asyncio.sleep(2.0)
         return {"should_search": True, "source": "deterministic_fallback"}

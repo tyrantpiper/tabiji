@@ -123,6 +123,22 @@ _URL_DETECT_RE = re.compile(
 _STREAM_IDLE_CHUNK_TIMEOUT = 25.0
 _STREAM_ACTIVE_TOTAL_CAP = 95.0
 _STREAM_PRESERVE_PARTIAL_MIN_CHARS = 140
+# 🛡️ 純事實 SEARCH 防誤觸行程工具正則（僅在含明確加入／排程／移除／附近推薦意圖詞時保留行程增刪工具）
+_SEARCH_ACTION_OR_RECOMMEND_RE = re.compile(
+    r"(?:加入|新增|幫我排|排進|排入|排到|安排|刪除|移除|拿掉|取消|附近|周邊|周圍|推薦|必吃|必去|餐廳|拉麵|美食|咖啡|景點清單|"
+    r"\b(?:add|insert|put|schedule|remove|delete|drop|plan|itinerary|nearby|around|recommend\w*|suggest\w*|best\s+(?:food|ramen|cafe|restaurant|spot|places?))\b)",
+    re.IGNORECASE,
+)
+
+
+def _should_retain_search_itinerary_tools(
+    eval_message: str,
+    executed_geo_results: List[Any],
+    succeeded_urls: Any,
+) -> bool:
+    if executed_geo_results or succeeded_urls:
+        return True
+    return bool(_SEARCH_ACTION_OR_RECOMMEND_RE.search((eval_message or "")[:500]))
 _URL_UNAMBIGUOUS_TRAILING_PUNCT = '.,!?:;"\'<>。，、；：！？）】》」』'
 _URL_BALANCED_CLOSERS = {")": "(", "]": "[", "}": "{"}
 _URL_FILLER_RE = re.compile(
@@ -2049,18 +2065,22 @@ Live geographic coordinates have been verified above. When recommending nearby r
                 label = "[BRAIN] Primary" if i == 0 else f"[REF] Fallback #{i}"
                 print(f"{label} Stream: {candidate_model} (Intent: {detected_intent})")
 
-                # 🛡️ 關鍵守護：若為 SEARCH 意圖或已執行過地理檢索，搜尋已完成且資料已注入 contents，卸載伺服端搜尋工具 (防止二次聯網)，
-                # 但保留行程工具 (ADD/REMOVE) 供「查詢並加入行程」或「空間卡片展示」使用，Gemma 系列模型自動適配超扁平 ADD_ITINERARY_FLAT_DECL
+                # 🛡️ 關鍵守護：若為 SEARCH 意圖或已執行過地理檢索，搜尋已完成且資料已注入 contents，卸載伺服端搜尋工具 (防止二次聯網)；
+                # 僅於有地理結果、成功讀取外部連結、或訊息含明確動作／排程／附近推薦意圖詞時保留行程工具，純事實問答 (營業時間/票價/公告) 一律設 tools=None 防誤觸罐頭導語
                 if (detected_intent == "SEARCH" or executed_geo_results) and safe_config.tools is not None:
-                    model_caps = MODEL_CAPS.get(candidate_model)
-                    if model_caps and model_caps.family == "gemma":
-                        safe_config.tools = [
-                            genai.types.Tool(function_declarations=[ADD_ITINERARY_FLAT_DECL, REMOVE_ITINERARY_DECL])
-                        ]
+                    if _should_retain_search_itinerary_tools(eval_message, executed_geo_results, succeeded_urls):
+                        model_caps = MODEL_CAPS.get(candidate_model)
+                        if model_caps and model_caps.family == "gemma":
+                            safe_config.tools = [
+                                genai.types.Tool(function_declarations=[ADD_ITINERARY_FLAT_DECL, REMOVE_ITINERARY_DECL])
+                            ]
+                        else:
+                            safe_config.tools = [
+                                genai.types.Tool(function_declarations=[ADD_ITINERARY_DECL, REMOVE_ITINERARY_DECL])
+                            ]
                     else:
-                        safe_config.tools = [
-                            genai.types.Tool(function_declarations=[ADD_ITINERARY_DECL, REMOVE_ITINERARY_DECL])
-                        ]
+                        safe_config.tools = None
+                        safe_config.tool_config = None
 
                 # 🟢 恢復 mode=AUTO，讓模型自由決定純文字回覆或調用工具
                 if safe_config.tools:
@@ -2231,7 +2251,7 @@ Live geographic coordinates have been verified above. When recommending nearby r
                 # 攔截 thought-only / 完全空白假性成功：觸發模型降級而非偽造成功回覆
                 if not full_text.strip() and not collected_function_calls:
                     diag = summarize_response_diagnostics(last_chunk)
-                    print(f"⚠️ [Stream] {candidate_model} 回傳空白內容 (thought-only/empty): {diag}")
+                    logger.warning(f"⚠️ [Stream] {candidate_model} 回傳空白內容 (thought-only/empty): {diag}")
                     record_model_error(candidate_model, api_key=api_key, is_rate_limit=False)
                     if emitted_any_output:
                         yield f'event: reset\ndata: {json.dumps({"reason": "empty_fallback", "model": candidate_model})}\n\n'
@@ -2250,7 +2270,7 @@ Live geographic coordinates have been verified above. When recommending nearby r
                 
             except (*_MODEL_API_ERRORS, asyncio.TimeoutError, Exception) as gen_error:
                 err_msg = str(gen_error).strip()
-                print(
+                logger.warning(
                     f"⚠️ {candidate_model} 串流失敗 ({type(gen_error).__name__})"
                     + (f": {err_msg}" if err_msg else "")
                 )

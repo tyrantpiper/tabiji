@@ -10,10 +10,12 @@ Interactions API with automated Gemini 3.7 Flash fallback defense.
 import copy
 import hashlib
 import hmac
+import inspect
 import json
 import os
 import re
 import time
+import urllib.parse
 import uuid
 import logging
 import asyncio
@@ -76,6 +78,7 @@ def _get_api_error_message(err: Exception) -> str:
 from utils.deps import get_gemini_key, get_supabase
 from utils.limiter import limiter
 from utils.ai_config import DAILY_ROUTING
+from utils.url_safety import is_safe_url_async
 from services.model_manager import (
     build_effective_routing,
     classify_api_error,
@@ -92,6 +95,66 @@ logger = logging.getLogger("ryan-travel-api")
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 _ORIGINAL_GENAI_CLIENT = genai.Client
+_ORIGINAL_EXECUTE_WITH_TRANSIENT_RETRY = _execute_with_transient_retry
+
+# Antigravity SSE 輪詢排程參數（模組級常數，便於測試覆寫且生產維持 2.5s / 180s / 12s）
+_ANTIGRAVITY_POLL_INTERVAL_SEC = 2.5
+_ANTIGRAVITY_MAX_WAIT_SEC = 180.0
+_ANTIGRAVITY_HEARTBEAT_SEC = 12.0
+_ANTIGRAVITY_MAX_SOURCES = 8
+
+
+def _callable_accepts_kwarg(fn: Any, kwarg: str) -> bool:
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    if kwarg in sig.parameters:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+
+async def _invoke_with_retry_no_5xx(
+    invoke_fn,
+    *,
+    model_name: str,
+    config: types.GenerateContentConfig,
+    timeout_sec: float,
+    tag: str,
+):
+    """
+    呼叫 _execute_with_transient_retry 並強制 retry_5xx=False，
+    遇 500/502/503/504 零原地空等立即輪替下一個健康模型；
+    同時相容既有只收 5 個參數之測試 Mock side_effect。
+    """
+    fn = _execute_with_transient_retry
+    if fn is _ORIGINAL_EXECUTE_WITH_TRANSIENT_RETRY:
+        return await fn(
+            invoke_fn,
+            model_name=model_name,
+            config=config,
+            timeout_sec=timeout_sec,
+            tag=tag,
+            retry_5xx=False,
+        )
+    side_effect = getattr(fn, "side_effect", None)
+    target = side_effect if callable(side_effect) else fn
+    if _callable_accepts_kwarg(target, "retry_5xx"):
+        return await fn(
+            invoke_fn,
+            model_name=model_name,
+            config=config,
+            timeout_sec=timeout_sec,
+            tag=tag,
+            retry_5xx=False,
+        )
+    return await fn(
+        invoke_fn,
+        model_name=model_name,
+        config=config,
+        timeout_sec=timeout_sec,
+        tag=tag,
+    )
 
 
 def _get_agents_genai_client(api_key: str):
@@ -284,12 +347,12 @@ _RESEARCH_DURATION_RE = re.compile(
 )
 _RESEARCH_YEAR_RE = re.compile(r"\b20\d{2}\b|20\d{2}年?")
 _RESEARCH_FILLER_RE = re.compile(
-    r"(?:深度研究|最佳路線|最優路線|怎麼安排|如何安排|親子自由行|自由行|過路費|油資|租車費|花費|預算|費用|精算|計算|分析|比較|評估|規劃|整理|研究|"
-    r"動線|方案|清單|建議|心得|攻略|之旅|行程|最新|資訊|消息|情報|請問|幫我|以及|還有|飛往|前往|從|與|和|及|並|的|之|食べログ|맛집|"
-    r"\b(?:calculate|compute|analyze|analyse|compare|evaluate|optimize|optimise|plan|planning|research|"
-    r"budget|itinerary|route|routes|best|optimal|latest|recent|info|information|news|tips|guide|"
+    r"(?:深度研究|深度|最佳路線|最優路線|怎麼安排|如何安排|親子自由行|自由行|過路費|油資|租車費|花費|預算|費用|精算|計算|分析|比較|評估|規劃|整理|研究|"
+    r"動線|方案|清單|建議|心得|攻略|之旅|行程|最新|資訊|消息|情報|動態|請問|幫我|以及|還有|飛往|前往|從|與|和|及|並|的|之|食べログ|맛집|"
+    r"\b(?:calculate|compute|analyze|analyse|analysis|compare|evaluate|optimize|optimise|plan|planning|research|deep|"
+    r"budget|itinerary|route|routes|best|optimal|latest|recent|new|info|information|news|tips|guide|"
     r"ptt|dcard|reddit|pantip|openrice|eater|tabelog|yelp|recommendations?|"
-    r"for|and|with|about|from|into|onto|the|of|to|in|on|at|a|an)\b)",
+    r"for|and|with|about|from|into|onto|the|of|to|in|on|at|a|an|de)\b)",
     re.IGNORECASE,
 )
 _RESEARCH_PUNCT_RE = re.compile(r"[\s\-_/·・,，。!?？、()（）【】「」『』:：;；\"']+")
@@ -298,6 +361,18 @@ _RESEARCH_PUNCT_RE = re.compile(r"[\s\-_/·・,，。!?？、()（）【】「�
 def _is_news_rss_enabled() -> bool:
     """Kill-Switch: ENABLE_DEEP_RESEARCH_NEWS_RSS（預設 '1'，設為 0/false/off 秒級停用）。"""
     raw = (os.getenv("ENABLE_DEEP_RESEARCH_NEWS_RSS", "1") or "1").strip().lower()
+    return raw not in ("0", "false", "off", "no")
+
+
+def _is_direct_rss_enabled() -> bool:
+    """GCP 直連 Google News RSS 開關（ENABLE_DEEP_RESEARCH_DIRECT_RSS 預設 '0'，避免雲端機房反爬白等 3.2s；保留函式與測試供未來重開）。"""
+    raw = (os.getenv("ENABLE_DEEP_RESEARCH_DIRECT_RSS", "0") or "0").strip().lower()
+    return raw in ("1", "true", "on", "yes")
+
+
+def _is_antigravity_stream_enabled() -> bool:
+    """深度研究 SSE 優先使用 Antigravity 遠端沙盒開關（ENABLE_ANTIGRAVITY_STREAM 預設 '1'）。"""
+    raw = (os.getenv("ENABLE_ANTIGRAVITY_STREAM", "1") or "1").strip().lower()
     return raw not in ("0", "false", "off", "no")
 
 
@@ -427,7 +502,8 @@ async def _build_research_news_query(
             cand = _strip_bare_iata_tokens(cand, allow_usa=allow_usa)
             cand = re.sub(r"\s+", " ", cand).strip()
             max_len = 45 if cand.isascii() else 32
-            if cand and len(cand) <= max_len and len(cand.split()) <= 5:
+            max_words = 7 if cand.isascii() else 5
+            if cand and len(cand) <= max_len and len(cand.split()) <= max_words:
                 return cand
 
     return _compress_research_fallback_query(bounded_prompt, resolved_city, locale=locale)
@@ -472,16 +548,18 @@ async def _fetch_live_research_intelligence(
         effective_fetch_timeout = min(fetch_timeout, max(0.05, remaining))
 
     async def _safe_rss() -> List[Dict[str, str]]:
+        if not _is_direct_rss_enabled():
+            return []
         try:
             res = await asyncio.wait_for(
                 fetch_google_news_rss(news_query, max_results=5, timeout=effective_fetch_timeout),
-                timeout=effective_fetch_timeout,
+                timeout=effective_fetch_timeout + 0.3,
             )
             return res if isinstance(res, list) else []
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.debug(f"[Agents] ResearchNews RSS error skipped: {type(e).__name__}")
+            logger.warning(f"⚠️ [Agents] ResearchNews RSS error skipped: {type(e).__name__}")
             return []
 
     async def _safe_web() -> List[Dict[str, str]]:
@@ -494,7 +572,7 @@ async def _fetch_live_research_intelligence(
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.debug(f"[Agents] ResearchNews Web error skipped: {type(e).__name__}")
+            logger.warning(f"⚠️ [Agents] ResearchNews Web error skipped: {type(e).__name__}")
             return []
 
     rss_out, web_out = await asyncio.gather(_safe_rss(), _safe_web(), return_exceptions=True)
@@ -574,6 +652,371 @@ async def _fetch_live_research_intelligence(
     return xml_block, candidate_sources
 
 
+# ==============================================================================
+# 🧹 Antigravity 沙盒輸出清洗 + 結構化來源萃取器（SSE 與輪詢共用）
+# ==============================================================================
+_WORKSPACE_MD_LINK_RE = re.compile(
+    r"\[([^\]\r\n]{1,200})\]\(file:///workspace/[^\s\)\r\n]{1,500}\)",
+    re.IGNORECASE,
+)
+_WORKSPACE_BACKTICK_RE = re.compile(r"`file:///workspace/[^`\r\n]{0,500}`", re.IGNORECASE)
+_WORKSPACE_ANGLE_RE = re.compile(r"<file:///workspace/[^\s>\r\n]{0,500}>", re.IGNORECASE)
+_WORKSPACE_PAREN_RE = re.compile(r"\(\s*file:///workspace/[^\s\)\r\n]{0,500}\s*\)", re.IGNORECASE)
+_WORKSPACE_BARE_RE = re.compile(r"file:///workspace/[^\s\)\]>\"'`\r\n]{0,500}", re.IGNORECASE)
+_MD_EXTERNAL_LINK_RE = re.compile(r"\[([^\]\r\n]{1,160})\]\((https?://[^\s\)\r\n]{4,1000})\)")
+_NUMBERED_REF_URL_RE = re.compile(
+    r"(?m)^\s*(?:\[(\d{1,2})\]|(\d{1,2})\.)\s*([^\r\n]{0,160}?)(https?://[^\s\)\]>\"'\r\n]{4,1000})"
+)
+_URL_TRAILING_PUNCT = ".,;:!?)>]}'\""
+
+
+def _get_field(obj: Any, key: str) -> Any:
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    val = getattr(obj, key, None)
+    if val is not None:
+        return val
+    extra = getattr(obj, "model_extra", None)
+    if isinstance(extra, dict):
+        return extra.get(key)
+    return None
+
+
+def _get_str_field(obj: Any, key: str) -> str:
+    val = _get_field(obj, key)
+    return val.strip() if isinstance(val, str) else ""
+
+
+def _clean_extracted_url(raw_url: str) -> str:
+    if not isinstance(raw_url, str):
+        return ""
+    url = raw_url.strip()
+    while url and url[-1] in _URL_TRAILING_PUNCT:
+        if url[-1] == ")" and url.count("(") >= url.count(")"):
+            break
+        url = url[:-1]
+    if not url.startswith(("http://", "https://")) or len(url) > 2048:
+        return ""
+    return url
+
+
+def _canonicalize_antigravity_url(url: str) -> str:
+    try:
+        parts = urllib.parse.urlsplit(url)
+        scheme = (parts.scheme or "").lower()
+        host = (parts.hostname or "").lower().rstrip(".")
+        port = parts.port
+        if (scheme == "https" and port == 443) or (scheme == "http" and port == 80):
+            port = None
+        netloc = f"{host}:{port}" if port else host
+        path = parts.path.rstrip("/") if parts.path and parts.path != "/" else (parts.path or "")
+        return urllib.parse.urlunsplit((scheme, netloc, path, parts.query, ""))
+    except ValueError:
+        return url.strip().lower()
+
+
+def _sanitize_antigravity_markdown(text: str) -> str:
+    """
+    線性 O(n) 消毒 Antigravity 沙盒輸出：
+    移除無法點擊之 file:///workspace/... 本地死鏈，保留合法 Markdown 內容與外部 https:// 連結。
+    """
+    if not isinstance(text, str) or not text:
+        return ""
+    if "file:///workspace/" not in text.lower():
+        return text
+
+    def _replace_ws_md(match: re.Match) -> str:
+        label = (match.group(1) or "").strip()
+        if not label or "file:///workspace/" in label.lower():
+            return ""
+        return label
+
+    cleaned = _WORKSPACE_MD_LINK_RE.sub(_replace_ws_md, text)
+    cleaned = _WORKSPACE_BACKTICK_RE.sub("", cleaned)
+    cleaned = _WORKSPACE_ANGLE_RE.sub("", cleaned)
+    cleaned = _WORKSPACE_PAREN_RE.sub("", cleaned)
+    cleaned = _WORKSPACE_BARE_RE.sub("", cleaned)
+    # 清除移除死鏈後殘留之空括號與多餘空白行
+    cleaned = re.sub(r"\(\s*\)", "", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"(?m)^\s*[-*]\s*$", "", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _extract_raw_antigravity_text(interaction: Any) -> str:
+    for field in ("output_text", "text", "output"):
+        val = _get_field(interaction, field)
+        if isinstance(val, str) and val.strip():
+            return val
+    steps = _get_field(interaction, "steps")
+    if isinstance(steps, list):
+        step_texts: List[str] = []
+        for step in steps[:200]:
+            if _get_str_field(step, "type").lower() == "model_output":
+                content = _get_field(step, "content")
+                if isinstance(content, list):
+                    for item in content:
+                        item_type = _get_str_field(item, "type").lower()
+                        item_text = _get_field(item, "text")
+                        if item_type == "text" and isinstance(item_text, str) and item_text:
+                            step_texts.append(item_text)
+        if step_texts:
+            return "".join(step_texts)
+    return ""
+
+
+def _collect_urls_from_step_item(item: Any, bucket: List[Dict[str, str]], depth: int = 0) -> None:
+    if item is None or depth > 3:
+        return
+    if isinstance(item, list):
+        for sub in item[:50]:
+            _collect_urls_from_step_item(sub, bucket, depth + 1)
+        return
+
+    status = _get_str_field(item, "status").lower()
+    if status in ("error", "unsafe", "failed", "blocked"):
+        return
+
+    raw_url = _get_str_field(item, "url") or _get_str_field(item, "uri")
+    clean_url = _clean_extracted_url(raw_url)
+    if clean_url:
+        title = _get_str_field(item, "title") or _get_str_field(item, "name")
+        snippet = (
+            _get_str_field(item, "snippet")
+            or _get_str_field(item, "description")
+            or _get_str_field(item, "rendered_content")
+        )[:240]
+        bucket.append({"title": title, "url": clean_url, "snippet": snippet})
+
+    web_obj = _get_field(item, "web")
+    if web_obj is not None and not isinstance(web_obj, (str, int, float, bool)):
+        _collect_urls_from_step_item(web_obj, bucket, depth + 1)
+
+    for nested_key in ("results", "items", "sources", "grounding_chunks", "annotations"):
+        nested = _get_field(item, nested_key)
+        if isinstance(nested, list):
+            _collect_urls_from_step_item(nested, bucket, depth + 1)
+
+
+def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -> List[Dict[str, str]]:
+    """自 interaction.steps 與報告正文萃取去重後之候選外部 http(s) 來源（合併最佳標題）。"""
+    ordered_keys: List[str] = []
+    by_canon: Dict[str, Dict[str, str]] = {}
+
+    def _upsert(url: str, title: str = "", snippet: str = "") -> None:
+        clean_url = _clean_extracted_url(url)
+        if not clean_url:
+            return
+        canon = _canonicalize_antigravity_url(clean_url)
+        clean_title = (title or "").strip()[:180]
+        clean_snippet = (snippet or "").strip()[:240]
+        if canon not in by_canon:
+            ordered_keys.append(canon)
+            by_canon[canon] = {
+                "title": clean_title,
+                "url": clean_url,
+                "snippet": clean_snippet,
+            }
+        else:
+            existing = by_canon[canon]
+            if clean_title and (not existing["title"] or len(clean_title) > len(existing["title"])):
+                existing["title"] = clean_title
+            if clean_snippet and not existing["snippet"]:
+                existing["snippet"] = clean_snippet
+
+    # 1. interaction.steps（url_context_result / google_search_result / retrieval_result / web / model_output annotations）
+    steps = _get_field(interaction, "steps")
+    if isinstance(steps, list):
+        step_bucket: List[Dict[str, str]] = []
+        for step in steps[:200]:
+            step_type = _get_str_field(step, "type").lower()
+            if step_type == "model_output":
+                content = _get_field(step, "content")
+                if isinstance(content, list):
+                    for c_item in content[:50]:
+                        anns = _get_field(c_item, "annotations")
+                        if isinstance(anns, list):
+                            _collect_urls_from_step_item(anns, step_bucket)
+            elif step_type in (
+                "url_context_result",
+                "google_search_result",
+                "retrieval_result",
+                "web",
+                "web_search_result",
+            ):
+                res_val = _get_field(step, "result")
+                if res_val is not None:
+                    _collect_urls_from_step_item(res_val, step_bucket)
+                _collect_urls_from_step_item(step, step_bucket)
+            else:
+                web_field = _get_field(step, "web")
+                if web_field is not None and not isinstance(web_field, (str, int, float, bool)):
+                    _collect_urls_from_step_item(web_field, step_bucket)
+                gm = _get_field(step, "grounding_metadata")
+                if gm is not None and not isinstance(gm, (str, int, float, bool)):
+                    _collect_urls_from_step_item(gm, step_bucket)
+        for cand in step_bucket:
+            _upsert(cand["url"], cand["title"], cand["snippet"])
+
+    # 2. 報告正文外部 Markdown 連結 [title](https://...) 與編號參考清單
+    if sanitized_text:
+        bounded_md = sanitized_text[:40000]
+        for m in _MD_EXTERNAL_LINK_RE.finditer(bounded_md):
+            link_title = (m.group(1) or "").strip()
+            link_url = (m.group(2) or "").strip()
+            # 略過純數字標籤如 [1](https://...) 改以網域回退，除非無更好標題
+            if link_title.isdigit():
+                link_title = ""
+            _upsert(link_url, link_title)
+        for m in _NUMBERED_REF_URL_RE.finditer(bounded_md):
+            prefix_label = (m.group(3) or "").strip(" -:：|[]()•*")
+            link_url = (m.group(4) or "").strip()
+            _upsert(link_url, prefix_label)
+
+    # 為無標題 URL 補上乾淨主機名稱（確保前端徽章可讀）
+    results: List[Dict[str, str]] = []
+    for canon in ordered_keys:
+        rec = by_canon[canon]
+        if not rec["title"]:
+            try:
+                host = (urllib.parse.urlsplit(rec["url"]).hostname or "").lower().lstrip("www.")
+                rec["title"] = host or rec["url"]
+            except ValueError:
+                rec["title"] = rec["url"]
+        results.append(rec)
+    return results
+
+
+async def _extract_antigravity_output_and_sources(
+    interaction: Any,
+    *,
+    user_query: str = "",
+    locale: str = "zh",
+    destination: Optional[str] = None,
+) -> Tuple[str, List[Dict[str, Any]]]:
+    """
+    Antigravity 共用輸出與來源萃取器（同時供 SSE 與 GET /api/agents/interactions/{id} 使用）：
+    1. 抽取文字並消毒所有 file:///workspace/... 死鏈
+    2. 自 interaction.steps 與正文萃取合法 http(s):// 外部連結並去重
+    3. 經 is_safe_url_async（單請求 host_safe_cache）驗證 SSRF 安全
+    4. 經 classify_and_filter_results 產生結構化 sources 徽章（最多 8 筆）
+    """
+    raw_text = _extract_raw_antigravity_text(interaction)
+    clean_text = _sanitize_antigravity_markdown(raw_text)
+    raw_candidates = _extract_antigravity_raw_candidates(interaction, clean_text)
+    if not raw_candidates:
+        return clean_text, []
+
+    host_safe_cache: Dict[Tuple[str, str, Optional[int]], bool] = {}
+    safe_candidates: List[Dict[str, str]] = []
+    for cand in raw_candidates[:24]:
+        url = cand["url"]
+        try:
+            parsed = urllib.parse.urlsplit(url)
+            scheme = (parsed.scheme or "").lower()
+            host = (parsed.hostname or "").lower().rstrip(".")
+            port = parsed.port
+        except ValueError:
+            continue
+        if scheme not in ("http", "https") or not host or "@" in (parsed.netloc or ""):
+            continue
+        host_key = (scheme, host, port)
+        is_safe = host_safe_cache.get(host_key)
+        if is_safe is None:
+            try:
+                is_safe = await is_safe_url_async(url)
+            except Exception:
+                is_safe = False
+            host_safe_cache[host_key] = bool(is_safe)
+        if not is_safe:
+            continue
+        safe_candidates.append(cand)
+
+    if not safe_candidates:
+        return clean_text, []
+
+    effective_query = (user_query or clean_text or "")[:500]
+    resolved_city = resolve_iata_to_display_city(destination or "", locale=locale) if destination else ""
+    dest_info = detect_destination(
+        effective_query,
+        history=None,
+        locale=locale,
+        trip_destination=resolved_city or None,
+    )
+    dest_code = dest_info.get("code", "GLOBAL")
+
+    classified = classify_and_filter_results(
+        safe_candidates,
+        user_query=effective_query,
+        dest_code=dest_code,
+        search_query=effective_query,
+    )
+    structured_sources: List[Dict[str, Any]] = []
+    for idx, src in enumerate(classified[:_ANTIGRAVITY_MAX_SOURCES], 1):
+        structured_sources.append({
+            "citation_index": idx,
+            "title": src.get("title") or "Web Source",
+            "uri": src.get("uri") or src.get("url") or "",
+            "snippet": src.get("snippet", ""),
+            "category": src.get("category", "general"),
+            "badge": src.get(
+                "badge",
+                {"text": "🌐 旅遊指南", "color": "text-slate-500 bg-slate-500/10 border-slate-500/20"},
+            ),
+        })
+    return clean_text, structured_sources
+
+
+def _build_deep_research_sys_inst(is_en: bool, *, has_live_sources: bool) -> str:
+    """建構深度研究 Tier 2 系統提示詞：僅於有外部來源時要求 [1]/[2] 標註，且一律禁止外洩內部追蹤碼 602410。"""
+    if is_en:
+        citation_rule = (
+            "Prioritize freshly retrieved facts inside <live_news_reference> for current events, openings, closures, fare updates, or schedule changes, and cite them inline as [1], [2], etc. "
+            if has_live_sources
+            else "No external web sources are attached to this turn; do NOT fabricate or output numbered inline citation brackets such as [1] or [2]. "
+        )
+        return (
+            "You are a highly rigorous AI Deep Travel Researcher. "
+            "Conduct deep algorithmic analysis and factual research for the traveler's complex itinerary, budget optimization, and transit routes. "
+            + citation_rule
+            + "When mentioning flights or lodging, include estimated prices and reputable booking platforms. "
+            "NEVER output or echo internal affiliate/tracking codes such as 602410 or sandbox paths like file:///workspace/ in the report body. "
+            "Format clearly in Markdown (with tables and concise breakdowns), and conclude immediately once done."
+        )
+    citation_rule = (
+        "上下文提供 <live_news_reference> 即時新聞與網路情報，請優先參考其中的最新展覽、休館、漲價或班次異動，並於內文以 [1]、[2] 標註對應出處。"
+        if has_live_sources
+        else "本次上下文未檢附外部檢索來源，嚴禁在報告中編造或輸出 [1]、[2] 等懸空引用編號。"
+    )
+    return (
+        "你是一位極致嚴謹的 AI 深度旅遊研究副官 (Deep Travel Researcher)。"
+        "請針對使用者的複雜行程、預算精算、交通動線進行深度演算與真實性研究。"
+        + citation_rule
+        + "如果提及機票或住宿，請標記即時預估價格與推薦預訂平台。"
+        "嚴禁在報告正文中輸出或複述任何內部追蹤碼、分潤編號（如 602410）或沙盒本地路徑（如 file:///workspace/）。"
+        "請以 Markdown 結構化輸出（包含表格與分析），生成完畢後立即結束，嚴禁贅述。"
+    )
+
+
+def _build_antigravity_termination_anchor(is_en: bool) -> str:
+    if is_en:
+        return (
+            "\n[System Instruction]: Respond in fluent English. Autonomously verify live facts and compute optimal routes in the Linux sandbox. "
+            "NEVER output internal sandbox file paths (such as file:///workspace/...) or internal affiliate/tracking codes (such as 602410) in the final report. "
+            "When citing live facts, include verifiable https:// reference links. "
+            "Finish immediately once the structured Markdown travel report is complete; do not run repeated retry loops."
+        )
+    return (
+        "\n【系統指令】：請以流暢繁體中文回覆，並自主在 Linux 沙盒中核實即時資料或精算最佳方案。"
+        "報告正文嚴禁輸出任何沙盒本地路徑（如 file:///workspace/...）或內部追蹤碼／分潤編號（如 602410）。"
+        "引用最新資訊時請附上可點擊之 https:// 官方參考連結。"
+        "生成完結構化 Markdown 旅遊精算報告後立即結束任務，請勿進行重複循環測試。"
+    )
+
+
 async def _execute_flash_fallback_task(
     task_id: str,
     prompt: str,
@@ -584,27 +1027,15 @@ async def _execute_flash_fallback_task(
     candidate_sources: Optional[List[Dict[str, Any]]] = None,
 ):
     """
-    沙盒排隊/不可用時的 Flash 多模型自動熔斷降級處理器
+    沙盒排隊/不可用時的 Flash/Hydrogen 多模型自動熔斷降級處理器（零 GoogleSearch 429 + 503 即刻輪替）
     """
     key_hash = key_hash or _hash_api_key(api_key)
     try:
         is_en = bool(locale and str(locale).strip().lower().startswith("en"))
-        sys_inst = (
-            "You are a highly rigorous AI Deep Travel Researcher. "
-            "Conduct deep algorithmic analysis and factual research for the traveler's complex itinerary, budget optimization, and transit routes. "
-            "Prioritize freshly retrieved facts inside <live_news_reference> (if present) for current events, openings, closures, fare updates, or schedule changes, and cite them inline as [1], [2], etc. "
-            "When mentioning flights or lodging, include estimated prices and reputable booking platforms. "
-            "Format clearly in Markdown (with tables and concise breakdowns), and conclude immediately once done."
-            if is_en
-            else "你是一位極致嚴謹的 AI 深度旅遊研究副官 (Deep Travel Researcher)。"
-            "請針對使用者的複雜行程、預算精算、交通動線進行深度演算與真實性研究。"
-            "若上下文提供 <live_news_reference> 即時新聞與網路情報，請優先參考其中的最新展覽、休館、漲價或班次異動，並於內文以 [1]、[2] 標註對應出處。"
-            "如果提及機票或住宿，請標記即時預估價格與推薦預訂平台。"
-            "請以 Markdown 結構化輸出（包含表格與分析），生成完畢後立即結束，嚴禁贅述。"
-        )
+        has_live_sources = bool(candidate_sources) or ("<live_news_reference" in (prompt or ""))
+        sys_inst = _build_deep_research_sys_inst(is_en=is_en, has_live_sources=has_live_sources)
         client = _get_agents_genai_client(api_key)
         base_config = types.GenerateContentConfig(
-            tools=[types.Tool(google_search=types.GoogleSearch())],
             system_instruction=sys_inst,
             max_output_tokens=8192,
             thinking_config=types.ThinkingConfig(thinking_level="low", include_thoughts=False),
@@ -617,16 +1048,15 @@ async def _execute_flash_fallback_task(
         last_error: Optional[Exception] = None
 
         for candidate_model in effective_routing:
-            safe_config = None
             timeout_sec = _get_call_timeout("DIAGNOSIS", model_name=candidate_model)
             try:
                 safe_config = sanitize_config_for_model(
                     base_config,
                     candidate_model,
                     intent_type="SEARCH",
-                    explicit_grounding=True,
+                    explicit_grounding=False,
                 )
-                response = await _execute_with_transient_retry(
+                response = await _invoke_with_retry_no_5xx(
                     lambda cfg: client.aio.models.generate_content(
                         model=candidate_model,
                         contents=prompt,
@@ -640,7 +1070,7 @@ async def _execute_flash_fallback_task(
                 clean_text = extract_clean_response_text(response)
                 if not clean_text or not clean_text.strip():
                     diag = summarize_response_diagnostics(response)
-                    logger.warning(f"[Agents] {candidate_model} returned empty visible output: {diag}")
+                    logger.warning(f"⚠️ [Agents] {candidate_model} returned empty visible output: {diag}")
                     record_model_error(candidate_model, api_key=api_key, is_rate_limit=False)
                     last_error = ValueError(f"{candidate_model} empty output ({diag})")
                     continue
@@ -676,78 +1106,17 @@ async def _execute_flash_fallback_task(
                     )
                     return
                 err_code = _get_api_error_status(e)
-                has_search_grounding = any(
-                    getattr(t, "google_search", None) is not None
-                    for t in (getattr(safe_config, "tools", None) or [])
-                )
-                # Free Tier GoogleSearch() Grounding 429：立即嘗試剝離 Search Grounding 重試該模型一次（不污染熔斷器）
-                if err_code == 429 and has_search_grounding:
-                    try:
-                        ungrounded_cfg = copy.deepcopy(safe_config)
-                        ungrounded_cfg.tools = None
-                        ungrounded_resp = await _execute_with_transient_retry(
-                            lambda cfg: client.aio.models.generate_content(
-                                model=candidate_model,
-                                contents=prompt,
-                                config=cfg,
-                            ),
-                            model_name=candidate_model,
-                            config=ungrounded_cfg,
-                            timeout_sec=timeout_sec,
-                            tag="AgentFallbackUngrounded",
-                        )
-                        ungrounded_text = extract_clean_response_text(ungrounded_resp)
-                        if ungrounded_text and ungrounded_text.strip():
-                            if await run_in_threadpool(_is_fallback_task_cancelled, supabase, task_id):
-                                return
-                            aligned_ungrounded = (
-                                prune_and_align_citations(ungrounded_text, candidate_sources, fallback_scan_limit=6)
-                                if candidate_sources
-                                else []
-                            )
-                            await run_in_threadpool(
-                                _persist_fallback_task,
-                                supabase,
-                                task_id,
-                                status="completed",
-                                key_hash=key_hash,
-                                engine=candidate_model if candidate_model not in ("gemini-3.7-flash", "gemini-3.8-flash") else "gemini-3.7-flash-fallback",
-                                output_text=ungrounded_text,
-                                sources=aligned_ungrounded,
-                            )
-                            return
-                    except _INTERACTION_API_ERRORS as e2:
-                        kind2 = classify_api_error(e2)
-                        if kind2 == "auth_fail":
-                            await run_in_threadpool(
-                                _persist_fallback_task,
-                                supabase,
-                                task_id,
-                                status="failed",
-                                key_hash=key_hash,
-                                error_message="API Key 無效或已失效，請更新 Gemini API Key。" if not is_en else "Invalid or revoked Gemini API Key.",
-                                code=401,
-                            )
-                            return
-                        err2_code = _get_api_error_status(e2)
-                        err2_msg = (_get_api_error_message(e2) or "").lower()
-                        if kind2 not in ("bad_request", "config_unsupported") and not (
-                            err2_code == 429 and ("grounding" in err2_msg or "search" in err2_msg)
-                        ):
-                            record_model_error(candidate_model, api_key=api_key, is_rate_limit=(err2_code == 429))
-                        last_error = e2
-                        continue
-                    except Exception as e2:
-                        last_error = e2
-                        continue
-                # Free Tier GoogleSearch() Grounding 429 不污染全域熔斷器，避免連帶封鎖無須聯網的常規端點
-                if kind not in ("bad_request", "config_unsupported") and not (err_code == 429 and has_search_grounding):
+                err_msg = (_get_api_error_message(e) or "").lower()
+                is_grounding_429 = err_code == 429 and ("grounding" in err_msg or "search" in err_msg)
+                # Free Tier GoogleSearch/Grounding 429 不污染全域熔斷器，避免連帶封鎖無須聯網的常規端點
+                if kind not in ("bad_request", "config_unsupported") and not is_grounding_429:
                     record_model_error(candidate_model, api_key=api_key, is_rate_limit=(err_code == 429))
+                logger.warning(f"⚠️ [Agents] Candidate {candidate_model} API error ({err_code}/{kind}): {e}")
                 last_error = e
                 continue
             except Exception as e:
                 last_error = e
-                logger.warning(f"[Agents] Candidate {candidate_model} fallback error: {e}")
+                logger.warning(f"⚠️ [Agents] Candidate {candidate_model} fallback error: {e}")
                 continue
 
         await run_in_threadpool(
@@ -831,19 +1200,9 @@ async def start_deep_research(
     if live_news_context:
         context_blocks.append(live_news_context)
 
-    # 注入 Ralph Loop 防死鎖終止錨點
-    if is_en:
-        termination_anchor = (
-            "\n[System Instruction]: Respond in fluent English. Autonomously compute optimal routes or verify facts in the Linux sandbox. "
-            "Finish immediately once the structured Markdown travel report is complete; do not run repeated retry loops."
-        )
-        req_header = "[Research Task Requirement]"
-    else:
-        termination_anchor = (
-            "\n【系統指令】：請自主在 Linux 沙盒中計算最佳解或爬取真實資料。"
-            "生成完結構化 Markdown 旅遊精算報告後立即結束任務，請勿進行重複循環測試。"
-        )
-        req_header = "【研究任務需求】"
+    # 注入 Ralph Loop 防死鎖終止錨點與沙盒路徑／內部代碼禁令
+    termination_anchor = _build_antigravity_termination_anchor(is_en=is_en)
+    req_header = "[Research Task Requirement]" if is_en else "【研究任務需求】"
 
     enhanced_prompt = (
         ("\n\n".join(context_blocks) + "\n\n" if context_blocks else "")
@@ -875,9 +1234,9 @@ async def start_deep_research(
                 status_code=401,
                 detail="Invalid or expired Gemini API Key" if is_en else "Gemini API Key 無效或已過期，請更新金鑰。",
             )
-        logger.warning(f"[Agents] Antigravity interactions.create failed ({e}). Falling back to Gemini 3.8 Flash...")
+        logger.warning(f"⚠️ [Agents] Antigravity interactions.create failed ({e}). Falling back to Gemini 3.8 Flash...")
     except Exception as e:
-        logger.warning(f"[Agents] Antigravity interactions.create failed ({e}). Falling back to Gemini 3.8 Flash...")
+        logger.warning(f"⚠️ [Agents] Antigravity interactions.create failed ({e}). Falling back to Gemini 3.8 Flash...")
 
     # 🛡️ 關鍵 0.5 分自動熔斷降級：建立背景 Flash 任務 (雙寫記憶體 + DB 並綁定 key_hash 雜湊)
     supabase = _resolve_supabase(request)
@@ -922,10 +1281,10 @@ async def stream_deep_research(
     api_key: str = Depends(get_gemini_key),
 ):
     """
-    Opt-in Two-Phase SSE 深度研究串流端點：
-    - 保持請求活躍（避開 Cloud Run cpu-throttling 背景任務凍結）
-    - 每 15 秒送出 `: heartbeat\\n\\n` 保活
-    - BYOK Gemini API Key 全程只駐記憶體、零落盤
+    Two-Phase SSE 深度研究串流端點：
+    - Tier 1 優先啟動 Antigravity 遠端沙盒（自帶真聯網 + 2.5s 輪詢 + 12s 心跳 + 取消自動 interactions.cancel）
+    - Tier 2 無縫降級至 Flash/Hydrogen 零 GoogleSearch() + 503 零延遲自動輪替鏈
+    - 保持請求活躍（避開 Cloud Run cpu-throttling 背景任務凍結），BYOK API Key 僅駐記憶體
     """
     is_en = bool(body.locale and str(body.locale).strip().lower().startswith("en"))
     locale_val = body.locale or "zh"
@@ -944,7 +1303,7 @@ async def stream_deep_research(
                 try:
                     return await asyncio.wait_for(
                         _fetch_live_pricing_context(body.origin or "TPE", body.destination, locale=locale_val),
-                        timeout=2.5,
+                        timeout=2.0,
                     )
                 except asyncio.CancelledError:
                     raise
@@ -959,54 +1318,184 @@ async def stream_deep_research(
                             body.destination,
                             api_key,
                             locale=locale_val,
-                            lite_timeout=2.2,
+                            lite_timeout=2.6,
                             fetch_timeout=3.2,
-                            total_budget=5.4,
+                            total_budget=6.0,
                         ),
-                        timeout=5.5,
+                        timeout=6.2,
                     )
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     return "", []
 
-            live_pricing, (live_news_context, candidate_sources) = await asyncio.gather(
-                _gather_stream_pricing(),
-                _gather_stream_news(),
-            )
+            live_pricing = await _gather_stream_pricing()
+            client = _get_agents_genai_client(api_key)
 
-            context_blocks = []
+            base_context_blocks = []
             if body.booking_context:
                 ctx_header = "[Confirmed User Booking / Stay Info]" if is_en else "【用戶已確認訂單/住宿資料】"
-                context_blocks.append(f"{ctx_header}:\n{body.booking_context}")
+                base_context_blocks.append(f"{ctx_header}:\n{body.booking_context}")
             if live_pricing:
-                context_blocks.append(live_pricing)
+                base_context_blocks.append(live_pricing)
+
+            req_header = "[Research Task Requirement]" if is_en else "【研究任務需求】"
+
+            # ==================================================================
+            # Tier 1: Antigravity 遠端沙盒優先（僅於合法非空 str interaction.id 時啟用）
+            # ==================================================================
+            if _is_antigravity_stream_enabled():
+                sandbox_prompt = (
+                    ("\n\n".join(base_context_blocks) + "\n\n" if base_context_blocks else "")
+                    + f"{req_header}：\n{body.prompt}"
+                    + _build_antigravity_termination_anchor(is_en=is_en)
+                )
+                interaction_id: Optional[str] = None
+                interactions_api = getattr(client, "interactions", None)
+                create_fn = getattr(interactions_api, "create", None)
+                if callable(create_fn):
+                    try:
+                        created = await run_in_threadpool(
+                            create_fn,
+                            agent=ANTIGRAVITY_AGENT_ID,
+                            input=sandbox_prompt,
+                            environment=body.environment,
+                            background=True,
+                            store=True,
+                        )
+                        raw_id = getattr(created, "id", None)
+                        if isinstance(raw_id, str) and raw_id.strip():
+                            interaction_id = raw_id.strip()
+                    except _INTERACTION_API_ERRORS as e:
+                        err_status = _get_api_error_status(e)
+                        err_msg_low = (_get_api_error_message(e) or "").lower()
+                        is_key_invalid = any(
+                            k in err_msg_low
+                            for k in (
+                                "api_key_invalid",
+                                "api key not valid",
+                                "invalid api key",
+                                "api key invalid",
+                                "key expired",
+                                "unauthenticated",
+                            )
+                        )
+                        if (err_status == 401) or (classify_api_error(e) == "auth_fail" and err_status != 403) or is_key_invalid:
+                            err_msg = "Invalid or revoked Gemini API Key." if is_en else "API Key 無效或已失效，請更新 Gemini API Key。"
+                            yield f'event: error\ndata: {json.dumps({"message": err_msg, "code": 401})}\n\n'
+                            return
+                        logger.warning(f"⚠️ [Agents Stream] Antigravity interactions.create failed ({err_status}): {e}; degrading to Tier 2")
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.warning(f"⚠️ [Agents Stream] Antigravity interactions.create error: {e}; degrading to Tier 2")
+
+                if interaction_id:
+                    yield f'event: thinking\ndata: {json.dumps({"status": "researching", "engine": "antigravity"})}\n\n'
+                    await asyncio.sleep(0)
+
+                    poll_start = time.monotonic()
+                    last_heartbeat = poll_start
+                    try:
+                        while True:
+                            now_ts = time.monotonic()
+                            if now_ts - poll_start >= _ANTIGRAVITY_MAX_WAIT_SEC:
+                                logger.warning(
+                                    f"⚠️ [Agents Stream] Antigravity {interaction_id} timed out after {_ANTIGRAVITY_MAX_WAIT_SEC}s; cancelling and degrading to Tier 2"
+                                )
+                                try:
+                                    await run_in_threadpool(interactions_api.cancel, id=interaction_id)
+                                except Exception as cancel_err:
+                                    logger.warning(f"⚠️ [Agents Stream] Antigravity timeout cancel skipped ({interaction_id}): {cancel_err}")
+                                break
+
+                            try:
+                                polled = await run_in_threadpool(interactions_api.get, id=interaction_id)
+                            except _INTERACTION_API_ERRORS as poll_err:
+                                p_status = _get_api_error_status(poll_err)
+                                p_msg_low = (_get_api_error_message(poll_err) or "").lower()
+                                p_key_invalid = any(
+                                    k in p_msg_low
+                                    for k in (
+                                        "api_key_invalid",
+                                        "api key not valid",
+                                        "invalid api key",
+                                        "api key invalid",
+                                        "key expired",
+                                        "unauthenticated",
+                                    )
+                                )
+                                if (p_status == 401) or (classify_api_error(poll_err) == "auth_fail" and p_status != 403) or p_key_invalid:
+                                    err_msg = "Invalid or revoked Gemini API Key." if is_en else "API Key 無效或已失效，請更新 Gemini API Key。"
+                                    yield f'event: error\ndata: {json.dumps({"message": err_msg, "code": 401})}\n\n'
+                                    return
+                                logger.warning(f"⚠️ [Agents Stream] Antigravity poll failed ({p_status}): {poll_err}; degrading to Tier 2")
+                                break
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as poll_err:
+                                logger.warning(f"⚠️ [Agents Stream] Antigravity poll error: {poll_err}; degrading to Tier 2")
+                                break
+
+                            raw_status = str(getattr(polled, "status", getattr(polled, "state", "completed"))).lower()
+                            if "progress" in raw_status or "running" in raw_status or "queued" in raw_status:
+                                elapsed_hb = time.monotonic() - last_heartbeat
+                                if elapsed_hb >= _ANTIGRAVITY_HEARTBEAT_SEC:
+                                    yield ": heartbeat\n\n"
+                                    await asyncio.sleep(0)
+                                    last_heartbeat = time.monotonic()
+                                remaining_wait = _ANTIGRAVITY_MAX_WAIT_SEC - (time.monotonic() - poll_start)
+                                if remaining_wait <= 0:
+                                    continue
+                                await asyncio.sleep(min(_ANTIGRAVITY_POLL_INTERVAL_SEC, max(0.01, remaining_wait)))
+                                if time.monotonic() - last_heartbeat >= _ANTIGRAVITY_HEARTBEAT_SEC:
+                                    yield ": heartbeat\n\n"
+                                    await asyncio.sleep(0)
+                                    last_heartbeat = time.monotonic()
+                                continue
+
+                            if "fail" in raw_status or "cancel" in raw_status:
+                                logger.warning(f"⚠️ [Agents Stream] Antigravity {interaction_id} ended with status={raw_status}; degrading to Tier 2")
+                                break
+
+                            clean_ag_text, ag_sources = await _extract_antigravity_output_and_sources(
+                                polled,
+                                user_query=body.prompt,
+                                locale=locale_val,
+                                destination=body.destination,
+                            )
+                            if clean_ag_text and clean_ag_text.strip():
+                                yield f'event: text\ndata: {json.dumps({"text": clean_ag_text})}\n\n'
+                                yield f'event: done\ndata: {json.dumps({"model_used": "antigravity", "engine": "antigravity", "raw_parts": [{"text": clean_ag_text}], "sources": ag_sources})}\n\n'
+                                return
+
+                            logger.warning(f"⚠️ [Agents Stream] Antigravity {interaction_id} completed with empty output; degrading to Tier 2")
+                            break
+                    except asyncio.CancelledError:
+                        try:
+                            await run_in_threadpool(interactions_api.cancel, id=interaction_id)
+                        except Exception as cancel_err:
+                            logger.warning(f"⚠️ [Agents Stream] Antigravity cancel on abort skipped ({interaction_id}): {cancel_err}")
+                        raise
+
+            # ==================================================================
+            # Tier 2: Flash/Hydrogen 零 GoogleSearch() + 503 零延遲自動輪替鏈
+            # ==================================================================
+            live_news_context, candidate_sources = await _gather_stream_news()
+
+            context_blocks = list(base_context_blocks)
             if live_news_context:
                 context_blocks.append(live_news_context)
 
-            req_header = "[Research Task Requirement]" if is_en else "【研究任務需求】"
             enhanced_prompt = (
                 ("\n\n".join(context_blocks) + "\n\n" if context_blocks else "")
                 + f"{req_header}：\n{body.prompt}"
             )
 
-            sys_inst = (
-                "You are a highly rigorous AI Deep Travel Researcher. "
-                "Conduct deep algorithmic analysis and factual research for the traveler's complex itinerary, budget optimization, and transit routes. "
-                "Prioritize freshly retrieved facts inside <live_news_reference> (if present) for current events, openings, closures, fare updates, or schedule changes, and cite them inline as [1], [2], etc. "
-                "When mentioning flights or lodging, include estimated prices and reputable booking platforms. "
-                "Format clearly in Markdown (with tables and concise breakdowns), and conclude immediately once done."
-                if is_en
-                else "你是一位極致嚴謹的 AI 深度旅遊研究副官 (Deep Travel Researcher)。"
-                "請針對使用者的複雜行程、預算精算、交通動線進行深度演算與真實性研究。"
-                "若上下文提供 <live_news_reference> 即時新聞與網路情報，請優先參考其中的最新展覽、休館、漲價或班次異動，並於內文以 [1]、[2] 標註對應出處。"
-                "如果提及機票或住宿，請標記即時預估價格與推薦預訂平台。"
-                "請以 Markdown 結構化輸出（包含表格與分析），生成完畢後立即結束，嚴禁贅述。"
-            )
+            has_live_sources = bool(live_news_context and candidate_sources)
+            sys_inst = _build_deep_research_sys_inst(is_en=is_en, has_live_sources=has_live_sources)
 
-            client = _get_agents_genai_client(api_key)
             base_config = types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())],
                 system_instruction=sys_inst,
                 max_output_tokens=8192,
                 thinking_config=types.ThinkingConfig(thinking_level="low", include_thoughts=False),
@@ -1025,12 +1514,12 @@ async def stream_deep_research(
                     base_config,
                     candidate_model,
                     intent_type="SEARCH",
-                    explicit_grounding=True,
+                    explicit_grounding=False,
                 )
                 timeout_sec = _get_call_timeout("DIAGNOSIS", model_name=candidate_model)
 
                 async def _run_model(cfg):
-                    return await _execute_with_transient_retry(
+                    return await _invoke_with_retry_no_5xx(
                         lambda c: client.aio.models.generate_content(
                             model=candidate_model,
                             contents=enhanced_prompt,
@@ -1055,6 +1544,8 @@ async def stream_deep_research(
                         final_text = clean_text
                         used_engine = candidate_model
                         break
+                    diag = summarize_response_diagnostics(response)
+                    logger.warning(f"⚠️ [Agents Stream] {candidate_model} returned empty visible output: {diag}")
                     record_model_error(candidate_model, api_key=api_key, is_rate_limit=False)
                 except _INTERACTION_API_ERRORS as e:
                     kind = classify_api_error(e)
@@ -1063,42 +1554,18 @@ async def stream_deep_research(
                         yield f'event: error\ndata: {json.dumps({"message": err_msg, "code": 401})}\n\n'
                         return
                     err_code = _get_api_error_status(e)
-                    has_grounding = any(
-                        getattr(t, "google_search", None) is not None
-                        for t in (getattr(safe_config, "tools", None) or [])
-                    )
-                    if err_code == 429 and has_grounding:
-                        retry_task = None
-                        try:
-                            ungrounded_cfg = copy.deepcopy(safe_config)
-                            ungrounded_cfg.tools = None
-                            retry_task = asyncio.create_task(_run_model(ungrounded_cfg))
-                            while not retry_task.done():
-                                done_set, _ = await asyncio.wait({retry_task}, timeout=15.0)
-                                if not done_set:
-                                    yield ": heartbeat\n\n"
-                                    await asyncio.sleep(0)
-                            retry_resp = retry_task.result()
-                            ungrounded_text = extract_clean_response_text(retry_resp)
-                            if ungrounded_text and ungrounded_text.strip():
-                                final_text = ungrounded_text
-                                used_engine = candidate_model
-                                break
-                        except asyncio.CancelledError:
-                            if retry_task is not None and not retry_task.done():
-                                retry_task.cancel()
-                            raise
-                        except Exception:
-                            pass
-                    if kind not in ("bad_request", "config_unsupported") and not (err_code == 429 and has_grounding):
+                    err_msg_low = (_get_api_error_message(e) or "").lower()
+                    is_grounding_429 = err_code == 429 and ("grounding" in err_msg_low or "search" in err_msg_low)
+                    if kind not in ("bad_request", "config_unsupported") and not is_grounding_429:
                         record_model_error(candidate_model, api_key=api_key, is_rate_limit=(err_code == 429))
+                    logger.warning(f"⚠️ [Agents Stream] Candidate {candidate_model} API error ({err_code}/{kind}): {e}")
                     continue
                 except asyncio.CancelledError:
                     if not task.done():
                         task.cancel()
                     raise
                 except Exception as e:
-                    logger.warning(f"[Agents Stream] Candidate {candidate_model} error: {e}")
+                    logger.warning(f"⚠️ [Agents Stream] Candidate {candidate_model} error: {e}")
                     continue
 
             if final_text:
@@ -1174,7 +1641,7 @@ async def get_interaction_status(
         client = _get_agents_genai_client(api_key)
         interaction = await run_in_threadpool(client.interactions.get, id=interaction_id)
         raw_status = str(getattr(interaction, "status", getattr(interaction, "state", "completed"))).lower()
-        if "progress" in raw_status or "running" in raw_status:
+        if "progress" in raw_status or "running" in raw_status or "queued" in raw_status:
             normalized_status = "running"
         elif "fail" in raw_status:
             normalized_status = "failed"
@@ -1183,30 +1650,16 @@ async def get_interaction_status(
         else:
             normalized_status = "completed"
 
-        out_text = (
-            getattr(interaction, "output_text", None) or
-            getattr(interaction, "text", None) or
-            getattr(interaction, "output", None)
-        )
-        if not out_text:
-            steps = getattr(interaction, "steps", None)
-            if isinstance(steps, list):
-                step_texts = []
-                for step in steps:
-                    if getattr(step, "type", None) == "model_output":
-                        content = getattr(step, "content", None)
-                        if isinstance(content, list):
-                            for item in content:
-                                if getattr(item, "type", None) == "text" and isinstance(getattr(item, "text", None), str):
-                                    step_texts.append(item.text)
-                if step_texts:
-                    out_text = "".join(step_texts)
-        return {
+        clean_out_text, extracted_sources = await _extract_antigravity_output_and_sources(interaction)
+        resp_data: Dict[str, Any] = {
             "id": interaction.id,
             "status": normalized_status,
-            "output_text": out_text,
-            "engine": "antigravity"
+            "output_text": clean_out_text or None,
+            "engine": "antigravity",
         }
+        if extracted_sources:
+            resp_data["sources"] = extracted_sources
+        return resp_data
     except _INTERACTION_API_ERRORS as e:
         status = _get_api_error_status(e)
         kind = classify_api_error(e)

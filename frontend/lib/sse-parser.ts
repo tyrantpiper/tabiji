@@ -380,7 +380,7 @@ export interface StreamDeepResearchParams {
     booking_context?: string
     locale?: string
     signal?: AbortSignal
-    onThinking?: (status: string) => void
+    onThinking?: (status: string, engine?: string) => void
     onText?: (text: string) => void
     onHeartbeat?: () => void
 }
@@ -455,7 +455,8 @@ export async function streamDeepResearch(
         } else if (ev.event === "thinking") {
             try {
                 const d = JSON.parse(ev.data)
-                params.onThinking?.(String(d?.status || "researching"))
+                const engineVal = typeof d?.engine === "string" && d.engine.trim() ? d.engine.trim() : undefined
+                params.onThinking?.(String(d?.status || "researching"), engineVal)
             } catch {
                 params.onThinking?.(ev.data || "researching")
             }

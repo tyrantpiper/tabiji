@@ -703,8 +703,8 @@ async def test_agents_429_grounding_strips_tools_and_interaction_steps_fallback(
         await agents_router._execute_flash_fallback_task(
             "fallback_429_ungrounded", "Analyze Sapporo rail pass", DUMMY_KEY, locale="zh"
         )
-    assert seen_tools[0] == ("gemini-4-hydrogen", True)
-    assert seen_tools[-1] == ("gemini-4-hydrogen", False)
+    # P0-2: Free Tier Flash/Hydrogen fallback never sends paid GoogleSearch() tools (zero wasted 429 roundtrip)
+    assert seen_tools == [("gemini-4-hydrogen", False)]
     assert agents_router._FALLBACK_TASKS["fallback_429_ungrounded"]["status"] == "completed"
     assert agents_router._FALLBACK_TASKS["fallback_429_ungrounded"]["engine"] == "gemini-4-hydrogen"
 

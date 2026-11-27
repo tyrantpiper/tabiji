@@ -206,4 +206,65 @@ describe("Deep Research v2 News RSS Frontend Contracts (AC-7 & Security)", () =>
             )
         ).not.toThrow()
     })
+
+    it("streamDeepResearch forwards thinking engine='antigravity' to onThinking and DeepResearchCard renders sandbox badge", async () => {
+        const encoder = new TextEncoder()
+        const sseBody = new ReadableStream({
+            start(controller) {
+                controller.enqueue(encoder.encode('event: start\ndata: {}\n\n'))
+                controller.enqueue(encoder.encode('event: thinking\ndata: {"status":"researching"}\n\n'))
+                controller.enqueue(encoder.encode('event: thinking\ndata: {"status":"researching","engine":"antigravity"}\n\n'))
+                controller.enqueue(encoder.encode('event: text\ndata: {"text":"## 沙盒研究結果"}\n\n'))
+                controller.enqueue(encoder.encode('event: done\ndata: {"engine":"antigravity","model_used":"antigravity","sources":[{"citation_index":1,"title":"Official Guide","uri":"https://www.japan.travel/en/"}]}\n\n'))
+                controller.close()
+            },
+        })
+
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+            new Response(sseBody, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+        )
+
+        const seenThinking: Array<{ status: string; engine?: string }> = []
+        const res = await streamDeepResearch({
+            apiUrl: "https://api.example.test",
+            apiKey: "AIzaSyTestKey1234567890123456789012345678",
+            prompt: "京都清水寺最新攻略",
+            destination: "KIX",
+            onThinking: (status, engine) => seenThinking.push({ status, engine }),
+        })
+
+        expect(seenThinking).toEqual([
+            { status: "researching", engine: undefined },
+            { status: "researching", engine: "antigravity" },
+        ])
+        expect(res.supported).toBe(true)
+        expect(res.engine).toBe("antigravity")
+        expect(res.sources).toHaveLength(1)
+        expect(res.sources?.[0].uri).toBe("https://www.japan.travel/en/")
+
+        // Running DeepResearchCard with engine="antigravity" renders 深度沙盒 badge
+        const { rerender } = render(
+            <DeepResearchCard
+                data={{
+                    id: "stream_ag_1",
+                    status: "running",
+                    prompt: "京都清水寺最新攻略",
+                    engine: "gemini-flash-stream",
+                }}
+            />
+        )
+        expect(screen.getByText("智慧深度推理")).toBeTruthy()
+
+        rerender(
+            <DeepResearchCard
+                data={{
+                    id: "stream_ag_1",
+                    status: "running",
+                    prompt: "京都清水寺最新攻略",
+                    engine: "antigravity",
+                }}
+            />
+        )
+        expect(screen.getByText("深度沙盒")).toBeTruthy()
+    })
 })

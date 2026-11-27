@@ -767,8 +767,25 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                 // Opt-in Two-Phase SSE 深度研究（保持 HTTP 活躍避開 Cloud Run cpu-throttling 凍結；遇 404/非串流自動退回 JSON 輪詢）
                 const streamId = `stream_${Date.now()}`
                 let streamCardInserted = false
-                const ensureStreamCard = (engineName = "gemini-flash-stream") => {
-                    if (streamCardInserted || !isMountedRef.current || currentController.signal.aborted) return
+                const ensureStreamCard = (engineName?: string) => {
+                    if (!isMountedRef.current || currentController.signal.aborted) return
+                    const resolvedEngine = engineName || "gemini-flash-stream"
+                    if (streamCardInserted) {
+                        if (engineName) {
+                            setMessages(prev => prev.map(m =>
+                                m.researchData?.id === streamId && m.researchData.engine !== engineName
+                                    ? {
+                                        ...m,
+                                        researchData: {
+                                            ...m.researchData,
+                                            engine: engineName,
+                                        }
+                                    }
+                                    : m
+                            ))
+                        }
+                        return
+                    }
                     streamCardInserted = true
                     activeResearchIdRef.current = streamId
                     setMessages(prev => [...prev, hydrateMessage({
@@ -778,7 +795,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             id: streamId,
                             status: "running",
                             prompt: cleanPrompt,
-                            engine: engineName,
+                            engine: resolvedEngine,
                         }
                     })])
                 }
@@ -792,8 +809,8 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                     booking_context: researchBookingContext,
                     locale: lang,
                     signal: currentController.signal,
-                    onThinking: () => {
-                        ensureStreamCard()
+                    onThinking: (_status, engine) => {
+                        ensureStreamCard(engine)
                     },
                     onText: (chunkText) => {
                         ensureStreamCard()

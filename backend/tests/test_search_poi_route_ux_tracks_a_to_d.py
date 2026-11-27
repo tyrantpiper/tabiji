@@ -277,8 +277,10 @@ async def test_track_a_tier2_observability_log_and_prod_skips_tier3_ddg(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_track_a_tier2_logs_cancellation_and_reraises(monkeypatch, capsys):
-    """CancelledError from outer asyncio.wait_for must log Tier2 status=cancelled and re-raise (never swallow)."""
+async def test_track_a_tier2_logs_cancellation_and_reraises(monkeypatch, caplog):
+    """CancelledError from outer asyncio.wait_for must log WARNING Tier2 status=cancelled and re-raise (never swallow)."""
+    import logging
+
     monkeypatch.setenv("CF_WORKER_SEARCH_URL", "https://search-proxy.example.com")
     monkeypatch.setenv("CF_PROXY_SECRET", "unit-test-secret")
 
@@ -291,7 +293,8 @@ async def test_track_a_tier2_logs_cancellation_and_reraises(monkeypatch, capsys)
     fake_client = MagicMock()
     fake_client.get = slow_get
 
-    with patch.object(web_search_engine, "get_search_client", return_value=fake_client):
+    with caplog.at_level(logging.WARNING, logger="ryan-travel-api"), \
+         patch.object(web_search_engine, "get_search_client", return_value=fake_client):
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(
                 web_search_engine._search_cloudflare_edge("東京車站 2026", max_results=3),
@@ -299,8 +302,11 @@ async def test_track_a_tier2_logs_cancellation_and_reraises(monkeypatch, capsys)
             )
 
     assert captured_timeout["value"] == 4.5
-    out = capsys.readouterr().out
-    assert "[SearchEngine] Tier2 status=cancelled source=timeout_budget count=0 elapsed_ms=" in out
+    assert any(
+        rec.levelno == logging.WARNING
+        and "[SearchEngine] Tier2 status=cancelled source=timeout_budget count=0 elapsed_ms=" in rec.getMessage()
+        for rec in caplog.records
+    )
 
 
 # ============================================================================
