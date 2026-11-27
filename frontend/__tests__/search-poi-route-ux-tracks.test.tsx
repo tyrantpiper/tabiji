@@ -66,6 +66,7 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
     })
 
     afterEach(() => {
+        vi.useRealTimers()
         vi.restoreAllMocks()
     })
 
@@ -93,7 +94,7 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
           </channel></rss>
         `
 
-        // Case 1: Both DDG and RSS succeed -> DDG wins (higher quality web result)
+        // Case 1: Both DDG and RSS succeed -> Option A dual-source merge (DDG first + non-duplicate RSS supplement)
         vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
             const u = String(input)
             if (u.includes("news.google.com")) {
@@ -115,8 +116,10 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         )
         expect(respBoth.status).toBe(200)
         const jsonBoth = await respBoth.json()
-        expect(jsonBoth.source).toBe("ddg")
+        expect(jsonBoth.source).toBe("ddg+google_news_rss")
+        expect(jsonBoth.results).toHaveLength(2)
         expect(jsonBoth.results[0].url).toBe("https://www.tokyoeki-1bangai.co.jp/")
+        expect(jsonBoth.results[1].url).toBe("https://news.example.tw/tokyo-station-2026")
         // Crucial: "東京車站 食べログ 推薦" must query zh-TW Google News, NOT hl=ja&gl=JP
         expect(seenRssUrls[0]).toContain("hl=zh-TW")
         expect(seenRssUrls[0]).toContain("gl=TW")
@@ -277,7 +280,7 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         expect(jsonMultiTemporal.results).toHaveLength(1)
         expect(jsonMultiTemporal.results[0].title).toContain("淺草寺")
 
-        // Case 5: Zero head-of-line blocking — fast DDG result MUST return immediately & abort stalled RSS (never wait 2800ms)
+        // Case 5: Bounded grace window (anti-HOL blocking) — fast DDG waits at most ~600ms grace, aborts stalled RSS, never waits 2800ms
         let rssAborted = false
         vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
             const u = String(input)
@@ -313,7 +316,473 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         expect(jsonFastDdg.source).toBe("ddg")
         expect(jsonFastDdg.results).toHaveLength(1)
         expect(rssAborted).toBe(true)
-        expect(elapsedMs).toBeLessThan(500)
+        expect(elapsedMs).toBeLessThan(1200)
+    })
+
+    it("Track A (Option A Merge & Dual-Key Dedup): enforces limit+2 cap, deduplicates URLs/cross-domain titles/syndication, protects short official titles, and caps pure-RSS fallback to limit", async () => {
+        const searchWorkerMod = await import("../../cloudflare/search-proxy/worker.js")
+
+        // 1. AC-1: limit=3 + 3 DDG + 3 distinct RSS -> 5 results (3 DDG + 2 RSS), source="ddg+google_news_rss"
+        const ddg3Html = `
+          <table>
+            <tr><td><a class="result-link" href="https://example.tw/tokyo-1">東京車站一番街官方指南</a></td></tr>
+            <tr><td class="result-snippet">DDG snippet 1</td></tr>
+            <tr><td><a class="result-link" href="https://example.tw/tokyo-2">東京車站拉麵街必吃清單</a></td></tr>
+            <tr><td class="result-snippet">DDG snippet 2</td></tr>
+            <tr><td><a class="result-link" href="https://example.tw/tokyo-3">東京車站寄物櫃位置攻略</a></td></tr>
+            <tr><td class="result-snippet">DDG snippet 3</td></tr>
+          </table>
+        `
+        const rss4Xml = `
+          <rss><channel>
+            <item>
+              <title>東京車站春季限定伴手禮開賣 - 旅遊新聞A</title>
+              <link>https://news.google.com/rss/articles/CBMiNews1?oc=5</link>
+              <source>旅遊新聞A</source>
+            </item>
+            <item>
+              <title>東京車站春季限定伴手禮開賣｜旅遊新聞B</title>
+              <link>https://news.google.com/rss/articles/CBMiNews1Syndicated?oc=5</link>
+              <source>旅遊新聞B</source>
+            </item>
+            <item>
+              <title>東京車站夜間光雕秀 2026 新檔期公開 - 文化日報</title>
+              <link>https://news.google.com/rss/articles/CBMiNews2?oc=5</link>
+              <source>文化日報</source>
+            </item>
+            <item>
+              <title>東京車站地下街新咖啡館開幕 - 美食誌</title>
+              <link>https://news.google.com/rss/articles/CBMiNews3?oc=5</link>
+              <source>美食誌</source>
+            </item>
+          </channel></rss>
+        `
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+            const u = String(input)
+            if (u.includes("lite.duckduckgo.com")) return new Response(ddg3Html, { status: 200 })
+            if (u.includes("news.google.com")) return new Response(rss4Xml, { status: 200 })
+            return new Response("{}", { status: 404 })
+        })
+
+        const respMerged = await searchWorkerMod.default.fetch(
+            new Request("https://search-proxy.local/search?q=" + encodeURIComponent("東京車站 2026 推薦") + "&limit=3", {
+                headers: { "x-tabidachi-key": "secret-track-a" },
+            }),
+            { PROXY_SECRET: "secret-track-a" },
+            {}
+        )
+        expect(respMerged.status).toBe(200)
+        const jsonMerged = await respMerged.json()
+        expect(jsonMerged.source).toBe("ddg+google_news_rss")
+        expect(jsonMerged.results).toHaveLength(5)
+        expect(jsonMerged.results.slice(0, 3).map((r: { url: string }) => r.url)).toEqual([
+            "https://example.tw/tokyo-1",
+            "https://example.tw/tokyo-2",
+            "https://example.tw/tokyo-3",
+        ])
+        // Syndicated duplicate News1Syndicated MUST be skipped so News2 fills the 2nd RSS slot!
+        expect(jsonMerged.results.slice(3).map((r: { url: string }) => r.url)).toEqual([
+            "https://news.google.com/rss/articles/CBMiNews1?oc=5",
+            "https://news.google.com/rss/articles/CBMiNews2?oc=5",
+        ])
+
+        // 2. AC-2 & Safety-Net Dedup unit checks (URL canonicalization, fullwidth｜, hyphenated publisher, short official title, malformed URL)
+        const dedupedAll = searchWorkerMod.mergeDualSourceResults(
+            [
+                { title: "東京車站新拉麵街開幕", snippet: "s", url: "https://EXAMPLE.tw/a/?utm_source=ddg#top" },
+                { title: "Tokyo Station New Ramen Hall", snippet: "s", url: "https://example.jp/hall/" },
+            ],
+            [
+                // Same canonical URL (ignoring utm_medium, case, trailing slash)
+                { title: "完全不同標題但同網址的新聞", snippet: "n", url: "https://example.tw/a?utm_medium=rss" },
+                // Cross-domain same title with " - " suffix
+                { title: "東京車站新拉麵街開幕 - 旅遊新聞", snippet: "n", url: "https://news.google.com/rss/articles/CBMiAAA" },
+                // Cross-domain same title with fullwidth "｜" without spaces
+                { title: "東京車站新拉麵街開幕｜Yahoo奇摩旅遊", snippet: "n", url: "https://news.google.com/rss/articles/CBMiBBB" },
+                // Cross-domain same title with hyphenated publisher name
+                { title: "Tokyo Station New Ramen Hall - BBC-News", snippet: "n", url: "https://news.google.com/rss/articles/CBMiCCC" },
+            ],
+            3
+        )
+        expect(dedupedAll.source).toBe("ddg")
+        expect(dedupedAll.results).toHaveLength(2)
+
+        // Short official site title MUST NOT falsely eliminate a distinct longer news headline (ratio < 0.75)
+        const shortOfficialSafe = searchWorkerMod.mergeDualSourceResults(
+            [{ title: "東京車站官方網站", snippet: "s", url: "https://official.example.jp/" }],
+            [
+                {
+                    title: "東京車站官方網站公布2026春節加開列車與展覽指南 - 旅訊",
+                    snippet: "n",
+                    url: "https://news.example.tw/spring-2026",
+                },
+                // Malformed URL fallback must never throw
+                {
+                    title: "東京車站冬季點燈新路線曝光 - 旅訊",
+                    snippet: "n",
+                    url: "not a valid url://[broken]",
+                },
+            ],
+            3
+        )
+        expect(shortOfficialSafe.source).toBe("ddg+google_news_rss")
+        expect(shortOfficialSafe.results).toHaveLength(3)
+
+        // 3. Pure-RSS fallback when DDG returns HTTP 202: strictly slices to limit (3, not rssFetchLimit=5) & cancels non-200 body
+        let ddg202BodyCanceled = false
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+            const u = String(input)
+            if (u.includes("lite.duckduckgo.com")) {
+                const body = new ReadableStream({
+                    start(ctrl) {
+                        ctrl.enqueue(new TextEncoder().encode("<html>CAPTCHA</html>"))
+                    },
+                    cancel() {
+                        ddg202BodyCanceled = true
+                    },
+                })
+                return new Response(body, { status: 202 })
+            }
+            if (u.includes("news.google.com")) {
+                return new Response(
+                    `<rss><channel>
+                      <item><title>東京車站活動一 - 媒體</title><link>https://news.example.tw/1</link></item>
+                      <item><title>東京車站活動二 - 媒體</title><link>https://news.example.tw/2</link></item>
+                      <item><title>東京車站活動三 - 媒體</title><link>https://news.example.tw/3</link></item>
+                      <item><title>東京車站活動四 - 媒體</title><link>https://news.example.tw/4</link></item>
+                      <item><title>東京車站活動五 - 媒體</title><link>https://news.example.tw/5</link></item>
+                    </channel></rss>`,
+                    { status: 200 }
+                )
+            }
+            return new Response("{}", { status: 404 })
+        })
+
+        const respPureRss = await searchWorkerMod.default.fetch(
+            new Request("https://search-proxy.local/search?q=" + encodeURIComponent("東京車站 活動") + "&limit=3", {
+                headers: { "x-tabidachi-key": "secret-track-a" },
+            }),
+            { PROXY_SECRET: "secret-track-a" },
+            {}
+        )
+        expect(respPureRss.status).toBe(200)
+        const jsonPureRss = await respPureRss.json()
+        expect(jsonPureRss.source).toBe("google_news_rss")
+        expect(jsonPureRss.results).toHaveLength(3)
+        expect(ddg202BodyCanceled).toBe(true)
+    })
+
+    it("Track A (Grace Window FSM): supports 0ms settled merge even after 1800ms, immediate abort when DDG > 1800ms, and zero leaked timers", async () => {
+        const searchWorkerMod = await import("../../cloudflare/search-proxy/worker.js")
+        const ddgHtml = `
+          <table>
+            <tr><td><a class="result-link" href="https://example.jp/official">Tokyo Station Official</a></td></tr>
+            <tr><td class="result-snippet">Official info</td></tr>
+          </table>
+        `
+        const rssXml = `
+          <rss><channel>
+            <item><title>Tokyo Station 2026 New Exhibition Opens - Travel Daily</title><link>https://news.example.com/exhibition</link></item>
+          </channel></rss>
+        `
+
+        const makeBarrier = () => {
+            let resolve!: () => void
+            const promise = new Promise<void>((r) => { resolve = r })
+            return { promise, resolve }
+        }
+
+        vi.useFakeTimers()
+        try {
+            // Path A: RSS settles at 50ms, DDG finishes late at 1950ms (> 1800ms budget) -> 0ms extra wait & still merges!
+            const ddgStartA = makeBarrier()
+            const rssStartA = makeBarrier()
+            vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
+                const u = String(input)
+                if (u.includes("news.google.com")) {
+                    const p = new Promise<Response>((resolve) => {
+                        setTimeout(() => resolve(new Response(rssXml, { status: 200 })), 50)
+                    })
+                    rssStartA.resolve()
+                    return p
+                }
+                if (u.includes("lite.duckduckgo.com")) {
+                    const p = new Promise<Response>((resolve) => {
+                        setTimeout(() => resolve(new Response(ddgHtml, { status: 200 })), 1950)
+                    })
+                    ddgStartA.resolve()
+                    return p
+                }
+                return Promise.resolve(new Response("{}", { status: 404 }))
+            })
+
+            const pSettled = searchWorkerMod.default.fetch(
+                new Request("https://search-proxy.local/search?q=Tokyo%20Station%202026&limit=3", {
+                    headers: { "x-tabidachi-key": "secret-fsm" },
+                }),
+                { PROXY_SECRET: "secret-fsm" },
+                {}
+            )
+            await Promise.all([ddgStartA.promise, rssStartA.promise])
+            await vi.advanceTimersByTimeAsync(2000)
+            const jSettled = await (await pSettled).json()
+            expect(jSettled.source).toBe("ddg+google_news_rss")
+            expect(jSettled.results).toHaveLength(2)
+            expect(vi.getTimerCount()).toBe(0)
+
+            // Path B: DDG finishes at 1850ms (> 1800ms) while RSS is still hanging -> graceMs === 0 -> immediate abort, 0ms wait!
+            let abortedPathB = false
+            const ddgStartB = makeBarrier()
+            const rssStartB = makeBarrier()
+            vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+                const u = String(input)
+                if (u.includes("lite.duckduckgo.com")) {
+                    const p = new Promise<Response>((resolve) => {
+                        setTimeout(() => resolve(new Response(ddgHtml, { status: 200 })), 1850)
+                    })
+                    ddgStartB.resolve()
+                    return p
+                }
+                if (u.includes("news.google.com")) {
+                    const p = new Promise<Response>((_, reject) => {
+                        init?.signal?.addEventListener("abort", () => {
+                            abortedPathB = true
+                            reject(new DOMException("Aborted", "AbortError"))
+                        })
+                    })
+                    rssStartB.resolve()
+                    return p
+                }
+                return Promise.resolve(new Response("{}", { status: 404 }))
+            })
+
+            const pOverBudget = searchWorkerMod.default.fetch(
+                new Request("https://search-proxy.local/search?q=Tokyo%20Station%202026&limit=3", {
+                    headers: { "x-tabidachi-key": "secret-fsm" },
+                }),
+                { PROXY_SECRET: "secret-fsm" },
+                {}
+            )
+            await Promise.all([ddgStartB.promise, rssStartB.promise])
+            await vi.advanceTimersByTimeAsync(1860)
+            const jOverBudget = await (await pOverBudget).json()
+            expect(jOverBudget.source).toBe("ddg")
+            expect(abortedPathB).toBe(true)
+            expect(vi.getTimerCount()).toBe(0)
+
+            // Path C: DDG finishes at 100ms, RSS finishes at 350ms (inside 600ms grace) -> merges & clears grace timer cleanly
+            const ddgStartC = makeBarrier()
+            const rssStartC = makeBarrier()
+            vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
+                const u = String(input)
+                if (u.includes("lite.duckduckgo.com")) {
+                    const p = new Promise<Response>((resolve) => {
+                        setTimeout(() => resolve(new Response(ddgHtml, { status: 200 })), 100)
+                    })
+                    ddgStartC.resolve()
+                    return p
+                }
+                if (u.includes("news.google.com")) {
+                    const p = new Promise<Response>((resolve) => {
+                        setTimeout(() => resolve(new Response(rssXml, { status: 200 })), 350)
+                    })
+                    rssStartC.resolve()
+                    return p
+                }
+                return Promise.resolve(new Response("{}", { status: 404 }))
+            })
+
+            const pWithinGrace = searchWorkerMod.default.fetch(
+                new Request("https://search-proxy.local/search?q=Tokyo%20Station%202026&limit=3", {
+                    headers: { "x-tabidachi-key": "secret-fsm" },
+                }),
+                { PROXY_SECRET: "secret-fsm" },
+                {}
+            )
+            await Promise.all([ddgStartC.promise, rssStartC.promise])
+            await vi.advanceTimersByTimeAsync(400)
+            const jWithinGrace = await (await pWithinGrace).json()
+            expect(jWithinGrace.source).toBe("ddg+google_news_rss")
+            expect(jWithinGrace.results).toHaveLength(2)
+            expect(vi.getTimerCount()).toBe(0)
+
+            // Path D: DDG finishes at 100ms, RSS hangs forever -> grace expires at +600ms, aborts RSS, leaves 0 timers
+            let abortedPathD = false
+            const ddgStartD = makeBarrier()
+            const rssStartD = makeBarrier()
+            vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+                const u = String(input)
+                if (u.includes("lite.duckduckgo.com")) {
+                    const p = new Promise<Response>((resolve) => {
+                        setTimeout(() => resolve(new Response(ddgHtml, { status: 200 })), 100)
+                    })
+                    ddgStartD.resolve()
+                    return p
+                }
+                if (u.includes("news.google.com")) {
+                    const p = new Promise<Response>((_, reject) => {
+                        init?.signal?.addEventListener("abort", () => {
+                            abortedPathD = true
+                            reject(new DOMException("Aborted", "AbortError"))
+                        })
+                    })
+                    rssStartD.resolve()
+                    return p
+                }
+                return Promise.resolve(new Response("{}", { status: 404 }))
+            })
+
+            const pGraceTimeout = searchWorkerMod.default.fetch(
+                new Request("https://search-proxy.local/search?q=Tokyo%20Station%202026&limit=3", {
+                    headers: { "x-tabidachi-key": "secret-fsm" },
+                }),
+                { PROXY_SECRET: "secret-fsm" },
+                {}
+            )
+            await Promise.all([ddgStartD.promise, rssStartD.promise])
+            await vi.advanceTimersByTimeAsync(750)
+            const jGraceTimeout = await (await pGraceTimeout).json()
+            expect(jGraceTimeout.source).toBe("ddg")
+            expect(abortedPathD).toBe(true)
+            expect(vi.getTimerCount()).toBe(0)
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it("Track A (Full-Locale Unicode & PBT Invariants): routes ko/th/vi/ja/zh-TW/en-US safely, folds Latin accents symmetrically, and preserves NFC Hangul/Kana", async () => {
+        const searchWorkerMod = await import("../../cloudflare/search-proxy/worker.js")
+        const {
+            resolveNewsLocale,
+            normalizeForMatch,
+            extractCoreTokens,
+            isRelevantNewsItem,
+        } = searchWorkerMod
+
+        // 1. AC-4 Locale routing + macOS NFD clipboard defense + script hijack guards
+        expect(resolveNewsLocale("서울 성수동 카페 추천")).toEqual({ hl: "ko", gl: "KR", ceid: "KR:ko" })
+        expect(resolveNewsLocale("서울 성수동 카페 추천".normalize("NFD"))).toEqual({ hl: "ko", gl: "KR", ceid: "KR:ko" })
+        expect(resolveNewsLocale("首爾 聖水洞 맛집 推薦")).toEqual({ hl: "zh-TW", gl: "TW", ceid: "TW:zh-Hant" })
+        expect(resolveNewsLocale("東京車站 食べログ 推薦".normalize("NFD"))).toEqual({ hl: "zh-TW", gl: "TW", ceid: "TW:zh-Hant" })
+        expect(resolveNewsLocale("กรุงเทพ จตุจักร แนะนำ")).toEqual({ hl: "th", gl: "TH", ceid: "TH:th" })
+        expect(resolveNewsLocale("Phở Hà Nội ngon 2026")).toEqual({ hl: "vi", gl: "VN", ceid: "VN:vi" })
+        expect(resolveNewsLocale("Best Phở in Hanoi 2026")).toEqual({ hl: "en-US", gl: "US", ceid: "US:en" })
+        expect(resolveNewsLocale("Paris Café de Flore 2026")).toEqual({ hl: "en-US", gl: "US", ceid: "US:en" })
+        expect(resolveNewsLocale("München Oktoberfest 2026")).toEqual({ hl: "en-US", gl: "US", ceid: "US:en" })
+        // Pure Kana Japanese with foreign loanword MUST stay ja/JP
+        expect(resolveNewsLocale("カフェ Phở Hà Nội")).toEqual({ hl: "ja", gl: "JP", ceid: "JP:ja" })
+        expect(resolveNewsLocale("ラーメン 서울")).toEqual({ hl: "ja", gl: "JP", ceid: "JP:ja" })
+
+        // 2. AC-PBT-5: Symmetric Latin accent/special-letter folding + NFC Hangul/Kana conservation + 500-char ReDoS bound
+        const accentPairs: Array<[string, string]> = [
+            ["Café", "Cafe"],
+            ["München", "Munchen"],
+            ["Zürich", "Zurich"],
+            ["São Paulo", "Sao Paulo"],
+            ["İstanbul", "Istanbul"],
+            ["Iğdır", "Igdir"],
+            ["Łódź", "Lodz"],
+            ["København", "Kobenhavn"],
+            ["Đà Nẵng", "Da Nang"],
+            ["Straße", "Strasse"],
+            ["STRAẞE", "Strasse"],
+            ["Cœur", "Coeur"],
+            ["Ærø", "Aero"],
+        ]
+        for (const [accented, asciiFolded] of accentPairs) {
+            expect(normalizeForMatch(accented)).toBe(normalizeForMatch(asciiFolded))
+        }
+        for (const nfcChar of ["한", "성", "수", "동", "が", "ぎ", "ぐ", "げ", "ご", "パ", "ピ"]) {
+            const outFromNfc = normalizeForMatch(nfcChar)
+            const outFromNfd = normalizeForMatch(nfcChar.normalize("NFD"))
+            expect(outFromNfc).toBe(nfcChar)
+            expect(outFromNfd).toBe(nfcChar)
+            expect([...outFromNfc]).toHaveLength(1)
+        }
+        expect(normalizeForMatch("a".repeat(2000))).toHaveLength(500)
+
+        // 3. Core token extraction & relevance filtering across scripts
+        expect(extractCoreTokens("서울 성수동 카페 추천")).toEqual(["서울", "성수동", "카페"])
+        // Korean trailing particle stem replacement (no double-write)
+        expect(extractCoreTokens("성수동에서 카페")).toEqual(["성수동", "카페"])
+        expect(isRelevantNewsItem("서울 성수동 카페 추천", "서울 성수동 인기 카페 베스트 5", "트래블뉴스")).toBe(true)
+        expect(isRelevantNewsItem("서울 성수동 카페 추천", "부산 해운대 호텔 할인 이벤트", "경제일보")).toBe(false)
+
+        // Thai longest stopword first ("ที่เที่ยว" stripped completely without leaving "ที่")
+        const thaiTokens = extractCoreTokens("ที่เที่ยว เชียงใหม่ 2026")
+        expect(thaiTokens.length).toBeGreaterThan(0)
+        expect(thaiTokens.some((t: string) => t.includes("ที่"))).toBe(false)
+        expect(isRelevantNewsItem("กรุงเทพ จตุจักร แนะนำ", "ตลาดนัดจตุจักร กรุงเทพ เปิดโซนใหม่ 2026")).toBe(true)
+        expect(isRelevantNewsItem("กรุงเทพ จตุจักร แนะนำ", "ราคาทองคำวันนี้ปรับขึ้น 500 บาท")).toBe(false)
+
+        // East Asian masking preserves digits in "台北101"
+        const tpe101Tokens = extractCoreTokens("台北101 2026 觀景台")
+        expect(tpe101Tokens).toContain("台北")
+        expect(tpe101Tokens).toContain("101")
+
+        // Vietnamese & European accents symmetric matching + word-bounded temporal stripping
+        expect(extractCoreTokens("Phở Hà Nội ngon 2026")).toEqual(["pho", "ha", "noi"])
+        expect(isRelevantNewsItem("Phở Hà Nội ngon 2026", "Best Pho in Ha Noi traditional recipe")).toBe(true)
+        expect(extractCoreTokens("Paris Café de Flore horaires")).toEqual(["paris", "cafe", "flore"])
+        expect(isRelevantNewsItem("Paris Café de Flore horaires", "Paris Cafe de Flore announces new terrace")).toBe(true)
+        expect(isRelevantNewsItem("Paris Cafe de Flore", "Paris Café de Flore ouvre sa terrasse")).toBe(true)
+        expect(extractCoreTokens("München Öffnungszeiten Eintritt")).toEqual(["munchen"])
+        // Word boundary guard: "tarif" inside "starfish" must NOT be stripped
+        expect(extractCoreTokens("Starfish Bay")).toEqual(["starfish", "bay"])
+        // Precomputed tokens shortcut honored
+        expect(isRelevantNewsItem("ignored query", "München Marienplatz", "", ["munchen"])).toBe(true)
+        expect(isRelevantNewsItem("ignored query", "London Bridge", "", ["munchen"])).toBe(false)
+
+        // 4. End-to-end Worker whitelist mapping: Accept-Language + Wiki lang + European/Korean temporal wiki block
+        const capturedDdgAcceptLang: string[] = []
+        const capturedWikiUrls: string[] = []
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const u = String(input)
+            if (u.includes("lite.duckduckgo.com")) {
+                const hdrs = init?.headers as Record<string, string> | undefined
+                capturedDdgAcceptLang.push(hdrs?.["Accept-Language"] || "")
+                return new Response("<html>CAPTCHA</html>", { status: 202 })
+            }
+            if (u.includes("news.google.com")) {
+                return new Response("<rss><channel></channel></rss>", { status: 200 })
+            }
+            if (u.includes(".wikipedia.org/w/api.php")) {
+                capturedWikiUrls.push(u)
+                return new Response(
+                    JSON.stringify({
+                        query: { search: [{ title: "경복궁", snippet: "서울 종로구에 위치한 조선 왕궁" }] },
+                    }),
+                    { status: 200 }
+                )
+            }
+            return new Response("{}", { status: 404 })
+        })
+
+        // Non-temporal Korean query -> ko-KR Accept-Language + ko.wikipedia.org fallback
+        const respKoWiki = await searchWorkerMod.default.fetch(
+            new Request("https://search-proxy.local/search?q=" + encodeURIComponent("서울 경복궁") + "&limit=2", {
+                headers: { "x-tabidachi-key": "secret-unicode" },
+            }),
+            { PROXY_SECRET: "secret-unicode" },
+            {}
+        )
+        const jsonKoWiki = await respKoWiki.json()
+        expect(jsonKoWiki.source).toBe("wikipedia")
+        expect(capturedDdgAcceptLang[0]).toContain("ko-KR")
+        expect(capturedWikiUrls[0]).toContain("https://ko.wikipedia.org/w/api.php")
+
+        // Temporal German query ("Öffnungszeiten") MUST NOT hit Wikipedia fallback
+        capturedWikiUrls.length = 0
+        const respDeTemporal = await searchWorkerMod.default.fetch(
+            new Request("https://search-proxy.local/search?q=" + encodeURIComponent("München Öffnungszeiten") + "&limit=2", {
+                headers: { "x-tabidachi-key": "secret-unicode" },
+            }),
+            { PROXY_SECRET: "secret-unicode" },
+            {}
+        )
+        const jsonDeTemporal = await respDeTemporal.json()
+        expect(jsonDeTemporal.source).toBe("none")
+        expect(capturedWikiUrls).toHaveLength(0)
     })
 
     // -------------------------------------------------------------------------
