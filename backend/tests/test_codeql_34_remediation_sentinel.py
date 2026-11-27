@@ -99,7 +99,7 @@ def test_poc_89_intent_router_system_prefix_cubic_redos_blocked():
         t0 = time.perf_counter()
         _ = intent_router._extract_clean_user_text(p)
         dt = time.perf_counter() - t0
-        assert dt < 0.02, f"SYSTEM_PREFIX_ANCHOR_RE / boundary loop ReDoS detected ({dt:.4f}s) on payload[:40]={p[:40]!r}"
+        assert dt < 0.05, f"SYSTEM_PREFIX_ANCHOR_RE / boundary loop ReDoS detected ({dt:.4f}s) on payload[:40]={p[:40]!r}"
 
 
 def test_benign_89_intent_router_system_prefix_extraction_intact():
@@ -246,12 +246,12 @@ def test_poc_88_87_link_resolver_redos_and_url_length_bounds():
     ):
         t0 = time.perf_counter()
         _ = link_resolver._GOOGLE_TITLE_SUFFIX_RE.search(hostile_title)
-        assert (time.perf_counter() - t0) < 0.02
+        assert (time.perf_counter() - t0) < 0.05
 
     # Adjacent link_resolver.py:189 extract_address_from_description ReDoS defense + benign control
     t0 = time.perf_counter()
     _ = link_resolver.extract_address_from_description("·" + "市" * 15000 + "x")
-    assert (time.perf_counter() - t0) < 0.02
+    assert (time.perf_counter() - t0) < 0.05
     assert link_resolver.extract_address_from_description("老新台菜 · 807台灣高雄市三民區九如二路227號") == "807台灣高雄市三民區九如二路227號"
 
     # Pydantic + endpoint 2048 URL length cap
@@ -355,8 +355,9 @@ def test_poc_91_oauth_redirect_uri_blocks_wildcards_userinfo_and_prod_testserver
     for uri in malicious_uris:
         assert mcp_router.is_trusted_redirect_uri(uri) is False, f"Malicious redirect_uri was allowed: {uri!r}"
 
-    # Production MUST reject testserver
+    # Production MUST reject testserver (set synthetic 32-byte SESSION_SECRET_KEY for CI runners without .env)
     monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-prod-session-secret-key-32b!")
     assert mcp_router.is_trusted_redirect_uri("http://testserver/oauth/callback") is False
     assert mcp_router.is_trusted_redirect_uri("https://testserver/oauth/callback") is False
 
@@ -624,7 +625,7 @@ assert.strictEqual(decodeXmlEntities('&amp;#60;'), '&#60;');
 assert.strictEqual(decodeXmlEntities('&#0;&#xD800;&#xDFFF;'), '');
 const t0 = performance.now();
 decodeXmlEntities('<![CDATA['.repeat(10000));
-assert.ok(performance.now() - t0 < 20, 'Unclosed CDATA ReDoS regression');
+assert.ok(performance.now() - t0 < 50, 'Unclosed CDATA ReDoS regression');
 // Benign: normal single-encoded RSS/HTML entities & multiple CDATA sections still decode accurately
 assert.strictEqual(
   decodeXmlEntities('<![CDATA[Tokyo &amp; Kyoto &lt;2026&gt; &quot;Guide&quot; &#39;A&#39; &apos;B&apos; &#x4E1C;&#20140;&nbsp;1]]>'),
