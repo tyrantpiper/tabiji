@@ -92,10 +92,15 @@ def get_safe_ip(url: str) -> Optional[str]:
     try:
         if not url or not isinstance(url, str):
             return None
+        if "\\" in url or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in url):
+            return None
         url_str = url.strip()
-        if "\\" in url_str or any(ord(ch) < 32 or ord(ch) == 127 for ch in url_str):
+        if not url_str:
             return None
         parsed = urlparse(url_str)
+        port = parsed.port
+        if port is not None and (port < 1 or port > 65535):
+            return None
         if parsed.scheme not in ["http", "https"]:
             return None
         if parsed.username is not None or parsed.password is not None or "@" in (parsed.netloc or ""):
@@ -148,13 +153,18 @@ def _classify_url_without_dns(url: str) -> Optional[bool]:
     if not url or not isinstance(url, str):
         return False
 
+    if "\\" in url or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in url):
+        return False
     url_str = url.strip()
-    if "\\" in url_str or any(ord(ch) < 32 or ord(ch) == 127 for ch in url_str):
+    if not url_str:
         return False
     try:
         parsed = urlparse(url_str)
-        _ = parsed.port
+        port = parsed.port
     except Exception:
+        return False
+
+    if port is not None and (port < 1 or port > 65535):
         return False
 
     if parsed.scheme.lower() not in ("http", "https"):

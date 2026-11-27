@@ -90,12 +90,16 @@ def test_poc_89_intent_router_system_prefix_cubic_redos_blocked():
         "--- SYSTEM CONTEXT: " + ("a " * 10000) + "!",
         "--- SYSTEM CONTEXT: " + ("a-" * 10000) + "!",
         ("\n" * 30000) + "--- SYSTEM CONTEXT: " + (" " * 5000) + "!",
+        "--- SYSTEM CONTEXT: A ---" + ("用戶原始問題：" * 2300) + "<user_input_x>" + ("a" * 16000),
+        "--- SYSTEM CONTEXT: A ---" + ("用戶原始問題：" * 2300) + "<user_input_x>hi</user_input_x>" + (" " * 15000) + "INVALID",
+        "--- SYSTEM CONTEXT: A ---" + ("用戶原始問題：" * 2300) + ("<user_input_" * 1300),
+        "--- SYSTEM CONTEXT: A ---" + ("用戶原始問題：" * 4650),
     ]
     for p in payloads:
         t0 = time.perf_counter()
         _ = intent_router._extract_clean_user_text(p)
         dt = time.perf_counter() - t0
-        assert dt < 0.05, f"SYSTEM_PREFIX_ANCHOR_RE ReDoS detected ({dt:.4f}s) on payload[:40]={p[:40]!r}"
+        assert dt < 0.02, f"SYSTEM_PREFIX_ANCHOR_RE / boundary loop ReDoS detected ({dt:.4f}s) on payload[:40]={p[:40]!r}"
 
 
 def test_benign_89_intent_router_system_prefix_extraction_intact():
@@ -234,15 +238,21 @@ def test_poc_88_87_link_resolver_redos_and_url_length_bounds():
     assert link_resolver.ADDRESS_POI_PATTERN.search("台北市" + "路" * 10000 + "x") is None
     assert (time.perf_counter() - t0) < 0.05
 
-    # #87: direct regex check matching link_resolver.py:786
-    title_strip_re = re.compile(
-        r"[-|][ \t]{0,4}Google[ \t]{0,4}(?:Maps|地图|地圖|マップ|映射|map|search).*$",
-        re.IGNORECASE,
-    )
-    for hostile_title in ("A" + " " * 30000 + "x", "- " * 15000 + "x"):
+    # #87: direct regex check on production _GOOGLE_TITLE_SUFFIX_RE (including multiline "- Google Maps" * N + "\nx")
+    for hostile_title in (
+        "A" + " " * 30000 + "x",
+        "- " * 15000 + "x",
+        ("- Google Maps" * 3000) + "\nx",
+    ):
         t0 = time.perf_counter()
-        _ = title_strip_re.sub("", hostile_title).strip()
-        assert (time.perf_counter() - t0) < 0.05
+        _ = link_resolver._GOOGLE_TITLE_SUFFIX_RE.search(hostile_title)
+        assert (time.perf_counter() - t0) < 0.02
+
+    # Adjacent link_resolver.py:189 extract_address_from_description ReDoS defense + benign control
+    t0 = time.perf_counter()
+    _ = link_resolver.extract_address_from_description("·" + "市" * 15000 + "x")
+    assert (time.perf_counter() - t0) < 0.02
+    assert link_resolver.extract_address_from_description("老新台菜 · 807台灣高雄市三民區九如二路227號") == "807台灣高雄市三民區九如二路227號"
 
     # Pydantic + endpoint 2048 URL length cap
     with pytest.raises(ValidationError):
@@ -256,7 +266,7 @@ def test_poc_88_87_link_resolver_redos_and_url_length_bounds():
 
 
 def test_benign_88_87_taiwan_address_splitter_and_empty_geocode_resolve_link():
-    """#88/#87 Benign Control: Taiwan addresses split cleanly & empty geocode resolve-link keeps legacy JSON."""
+    """#88/#87 Benign Control: Taiwan addresses split cleanly & empty/null-type geocode resolve-link keeps legacy JSON."""
     cases = [
         ("807台灣高雄市三民區九如二路227號老新台菜 (九如創始店)", "高雄市三民區九如二路227號", "老新台菜 (九如創始店)"),
         ("台北市大安區忠孝東路四段181巷7弄13號星巴克", "台北市大安區忠孝東路四段181巷7弄13號", "星巴克"),
@@ -272,6 +282,9 @@ def test_benign_88_87_taiwan_address_splitter_and_empty_geocode_resolve_link():
     r_empty = client.post("/api/geocode/resolve-link", json={})
     assert r_empty.status_code == 200
     assert r_empty.json() == {"success": False, "error": "No URL provided"}
+    r_null_type = client.post("/api/geocode/resolve-link", json={"url": None, "type": None})
+    assert r_null_type.status_code == 200
+    assert r_null_type.json() == {"success": False, "error": "No URL provided"}
 
 
 # ============================================================================
@@ -331,7 +344,11 @@ def test_poc_91_oauth_redirect_uri_blocks_wildcards_userinfo_and_prod_testserver
         "https://www.tabijiapp.com\\@evil.com/callback",
         "https://www.tabijiapp.com/callback\r\nX-Inject: 1",
         "https://www.tabijiapp.com/callback\x00evil",
+        "https://www.tabijiapp.com/callback\x85",
         "https://www.tabijiapp.com/callback#frag",
+        "https://www.tabijiapp.com/callback#",
+        "http://localhost:0/callback",
+        "https://claude.ai:/api/mcp/auth_callback",
         "http://www.tabijiapp.com/callback",
         "https://www.tabijiapp.com./callback",
     ]
@@ -343,7 +360,7 @@ def test_poc_91_oauth_redirect_uri_blocks_wildcards_userinfo_and_prod_testserver
     assert mcp_router.is_trusted_redirect_uri("http://testserver/oauth/callback") is False
     assert mcp_router.is_trusted_redirect_uri("https://testserver/oauth/callback") is False
 
-    # Endpoint enforces 400 on malicious redirect
+    # Endpoint enforces 400 on malicious redirect and preserves RFC 3986 %20 state + existing query params on benign redirect
     client = TestClient(backend_main.app)
     r_bad = client.get(
         "/api/oauth/authorize",
@@ -355,6 +372,21 @@ def test_poc_91_oauth_redirect_uri_blocks_wildcards_userinfo_and_prod_testserver
         follow_redirects=False,
     )
     assert r_bad.status_code == 400
+
+    r_ok = client.get(
+        "/api/oauth/authorize",
+        params={
+            "client_id": "3f7abf22-b447-4281-b240-584549c79943",
+            "redirect_uri": "https://claude.ai/api/mcp/auth_callback?token=a+b%2Fc",
+            "response_type": "code",
+            "state": "session 123",
+        },
+        follow_redirects=False,
+    )
+    assert r_ok.status_code == 302
+    loc = r_ok.headers["location"]
+    assert loc.startswith("https://claude.ai/api/mcp/auth_callback?token=a+b%2Fc&code=")
+    assert "&state=session%20123" in loc
 
 
 def test_benign_91_oauth_redirect_uri_preserves_all_legitimate_clients(monkeypatch):
@@ -588,10 +620,19 @@ assert.strictEqual(decodeXmlEntities('&amp;lt;b&amp;gt;hi&amp;lt;/b&amp;gt;'), '
 assert.strictEqual(decodeXmlEntities('&amp;amp;'), '&amp;');
 assert.strictEqual(decodeXmlEntities('&amp;#x3c;script&amp;#x3e;'), '&#x3c;script&#x3e;');
 assert.strictEqual(decodeXmlEntities('&amp;#60;'), '&#60;');
-// Benign: normal single-encoded RSS/HTML entities & CDATA still decode accurately
+// Exploit: NUL and UTF-16 surrogates are rejected, and 10k unclosed CDATA runs in linear <10ms
+assert.strictEqual(decodeXmlEntities('&#0;&#xD800;&#xDFFF;'), '');
+const t0 = performance.now();
+decodeXmlEntities('<![CDATA['.repeat(10000));
+assert.ok(performance.now() - t0 < 20, 'Unclosed CDATA ReDoS regression');
+// Benign: normal single-encoded RSS/HTML entities & multiple CDATA sections still decode accurately
 assert.strictEqual(
   decodeXmlEntities('<![CDATA[Tokyo &amp; Kyoto &lt;2026&gt; &quot;Guide&quot; &#39;A&#39; &apos;B&apos; &#x4E1C;&#20140;&nbsp;1]]>'),
   'Tokyo & Kyoto <2026> "Guide" \\'A\\' \\'B\\' 东京 1'
+);
+assert.strictEqual(
+  decodeXmlEntities('<![CDATA[A &amp;lt; B]]> + <![CDATA[C &amp; D]]>'),
+  'A &lt; B + C & D'
 );
 console.log('WORKER_XML_SINGLE_PASS_OK');
 """
@@ -626,7 +667,12 @@ def test_poc_172_73_to_61_destination_taxonomy_exact_host_and_google_maps_fix():
         {"title": "Spoof TheFork", "url": "https://thefork.attacker.com/r/1", "snippet": "paris"},
         {"title": "Spoof Official", "url": "https://travel.taipei.evil.com/spot", "snippet": "taipei"},
         {"title": "Spoof Reddit", "url": "https://evil-reddit.com/r/JapanTravel", "snippet": "tokyo"},
+        {"title": "Spoof TripAdvisor", "url": "https://tripadvisor.com.tw.evil.com/Attraction", "snippet": "tokyo"},
         {"title": "Real Google Maps", "url": "https://www.google.com/maps/place/Tokyo+Tower", "snippet": "tower"},
+        {"title": "Real Google Maps JP", "url": "https://www.google.co.jp/maps/place/Tokyo+Tower", "snippet": "tower"},
+        {"title": "Real Google Maps TW", "url": "https://maps.google.com.tw/?q=Taipei+101", "snippet": "taipei"},
+        {"title": "Real TripAdvisor TW", "url": "https://www.tripadvisor.com.tw/Attraction_Review-Tokyo.html", "snippet": "tokyo"},
+        {"title": "Real Yelp TW", "url": "https://www.yelp.com.tw/biz/ramen", "snippet": "ramen"},
         {"title": "Real PTT", "url": "https://www.ptt.cc/bbs/Japan_Travel/M.1.html", "snippet": "tokyo"},
         {"title": "Real TheFork", "url": "https://www.thefork.fr/restaurant/le-bistro", "snippet": "paris"},
         {"title": "Real Official", "url": "https://www.japan.travel/en/spot/tokyo/", "snippet": "japan"},
@@ -635,12 +681,16 @@ def test_poc_172_73_to_61_destination_taxonomy_exact_host_and_google_maps_fix():
     by_title = {item["title"]: item for item in out}
 
     # Exploits MUST NOT receive trusted badges
-    for spoof in ("Spoof PTT", "Spoof Yelp", "Spoof TheFork", "Spoof Official", "Spoof Reddit"):
+    for spoof in ("Spoof PTT", "Spoof Yelp", "Spoof TheFork", "Spoof Official", "Spoof Reddit", "Spoof TripAdvisor"):
         assert by_title[spoof]["category"] == "general", f"{spoof} misclassified as {by_title[spoof]['category']}"
 
-    # Benign controls (including previously dead-code Google Maps branch!)
-    assert by_title["Real Google Maps"]["category"] == "review"
-    assert "景點美食評分" in by_title["Real Google Maps"]["badge"]["text"]
+    # Benign controls (including previously dead-code Google Maps branch & regional ccTLDs!)
+    for gm_title in ("Real Google Maps", "Real Google Maps JP", "Real Google Maps TW"):
+        assert by_title[gm_title]["category"] == "review"
+        assert "景點美食評分" in by_title[gm_title]["badge"]["text"]
+    assert by_title["Real TripAdvisor TW"]["category"] == "global_forum"
+    assert by_title["Real Yelp TW"]["category"] == "review"
+    assert "Yelp" in by_title["Real Yelp TW"]["badge"]["text"]
     assert by_title["Real PTT"]["category"] == "local_forum"
     assert "PTT" in by_title["Real PTT"]["badge"]["text"]
     assert by_title["Real TheFork"]["category"] == "local_forum"
@@ -758,6 +808,20 @@ def test_poc_adjacent_public_proxy_ip_only_rate_limits_block_fake_key_bypass():
     assert media_codes[:30] == [400] * 30
     assert media_codes[30] == 429
 
+    # 7. POST /api/geocode/reverse (60/min pure IP)
+    limiter._storage.reset()
+    with patch("routers.geocode.reverse_geocode_with_photon", AsyncMock(return_value={"name": "Tokyo", "address": "Minato"})):
+        rev_codes = [
+            client.post(
+                "/api/geocode/reverse",
+                json={"lat": 35.6586, "lng": 139.7454},
+                headers={"X-Gemini-API-Key": f"fake-rev-{i}", "X-Forwarded-For": "203.0.113.58"},
+            ).status_code
+            for i in range(61)
+        ]
+    assert rev_codes[:60] == [200] * 60
+    assert rev_codes[60] == 429
+
 
 def test_benign_adjacent_chat_stream_keeps_per_api_key_family_isolation():
     """/api/chat/stream must remain keyed by X-Gemini-API-Key so family members on shared Wi-Fi stay isolated."""
@@ -788,8 +852,13 @@ def test_poc_adjacent_url_safety_fast_path_rejects_userinfo_backslash_ctrl_prese
     assert url_safety.is_safe_url("https://user:pass@upload.wikimedia.org/a.png") is False
     assert url_safety.is_safe_url("https://en.wikipedia.org\\@127.0.0.1/wiki/Tokyo") is False
     assert url_safety.is_safe_url("https://en.wikipedia.org/wiki/Tokyo\r\nX-Test: 1") is False
+    assert url_safety.is_safe_url("https://en.wikipedia.org/wiki/Tokyo\n") is False
+    assert url_safety.is_safe_url("https://en.wikipedia.org/wiki/Tokyo\t") is False
+    assert url_safety.is_safe_url("https://en.wikipedia.org/wiki/Tokyo\x85") is False
+    assert url_safety.is_safe_url("https://en.wikipedia.org:0/wiki/Tokyo") is False
 
     # Benign controls
+    assert url_safety.is_safe_url("  https://en.wikipedia.org/wiki/Tokyo  ") is True
     assert url_safety.is_safe_url("https://en.wikipedia.org/wiki/Tokyo") is True
     with patch("utils.url_safety.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("142.250.190.46", 0))]):
         assert url_safety.is_safe_url("https://www.google.com/maps/place/Tokyo+Tower/@35.6585805,139.7454329,17z") is True

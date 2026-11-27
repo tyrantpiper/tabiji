@@ -728,6 +728,26 @@ _THEFORK_HOSTS = (
     "thefork.pt", "thefork.de", "thefork.at", "thefork.com.au",
 )
 
+_TRIPADVISOR_HOSTS = (
+    "tripadvisor.com", "tripadvisor.com.tw", "tripadvisor.com.hk",
+    "tripadvisor.com.sg", "tripadvisor.com.au", "tripadvisor.jp",
+    "tripadvisor.co.jp", "tripadvisor.co.uk", "tripadvisor.co.kr",
+    "tripadvisor.fr", "tripadvisor.de", "tripadvisor.it", "tripadvisor.es",
+    "tripadvisor.ca",
+)
+
+_YELP_HOSTS = (
+    "yelp.com", "yelp.com.tw", "yelp.com.hk", "yelp.com.sg", "yelp.com.au",
+    "yelp.co.uk", "yelp.co.jp", "yelp.ca", "yelp.fr", "yelp.de", "yelp.it", "yelp.es",
+)
+
+_GOOGLE_MAPS_DOMAINS = (
+    "google.com", "google.com.tw", "google.com.hk", "google.com.sg",
+    "google.com.au", "google.co.jp", "google.co.kr", "google.co.uk",
+    "google.co.th", "google.fr", "google.de", "google.it", "google.es",
+    "google.ca",
+)
+
 
 def _host_matches(host: str, *domains: str) -> bool:
     """精確主機名或點分隔子網域比對（防範 URL 子字串偽造與非預期徽章配對）"""
@@ -741,10 +761,14 @@ def _host_matches(host: str, *domains: str) -> bool:
 
 
 def _is_google_maps_url(host: str, path: str) -> bool:
-    """辨識 Google Maps 連結（修復原 '\"google.com/maps\" in netloc' 死碼）"""
-    if host in ("maps.google.com", "maps.app.goo.gl"):
+    """辨識 Google Maps 連結（修復原 '\"google.com/maps\" in netloc' 死碼，含區域網域與短網址）"""
+    if host == "maps.app.goo.gl":
         return True
-    if _host_matches(host, "google.com") and (path == "/maps" or path.startswith("/maps/")):
+    if host == "goo.gl" and (path == "/maps" or path.startswith("/maps/")):
+        return True
+    if any(host == f"maps.{dom}" for dom in _GOOGLE_MAPS_DOMAINS):
+        return True
+    if _host_matches(host, *_GOOGLE_MAPS_DOMAINS) and (path == "/maps" or path.startswith("/maps/")):
         return True
     return False
 
@@ -863,15 +887,15 @@ def classify_and_filter_results(
         elif _host_matches(host, "reddit.com"):
             category = "global_forum"
             badge = {"text": "💬 Reddit 全球旅人", "color": "text-amber-500 bg-amber-500/10 border-amber-500/20"}
-        elif _host_matches(host, "tripadvisor.com", "wikivoyage.org", "lonelyplanet.com"):
+        elif _host_matches(host, *_TRIPADVISOR_HOSTS, "wikivoyage.org", "lonelyplanet.com"):
             category = "global_forum"
             badge = {"text": "🌍 國際旅遊社群", "color": "text-yellow-500 bg-yellow-500/10 border-yellow-500/20"}
         # 美食評測
         elif _is_google_maps_url(host, path) or _host_matches(
-            host, "yelp.com", "eater.com", "theinfatuation.com", "walkerland.com.tw", "retty.me"
+            host, *_YELP_HOSTS, "eater.com", "theinfatuation.com", "walkerland.com.tw", "retty.me"
         ):
             category = "review"
-            if _host_matches(host, "yelp.com"):
+            if _host_matches(host, *_YELP_HOSTS):
                 badge = {"text": "🇺🇸 Yelp 權威食評", "color": "text-red-500 bg-red-500/10 border-red-500/20"}
             elif _host_matches(host, "eater.com", "theinfatuation.com"):
                 badge = {"text": "🇺🇸 Eater 深度探店", "color": "text-rose-500 bg-rose-500/10 border-rose-500/20"}

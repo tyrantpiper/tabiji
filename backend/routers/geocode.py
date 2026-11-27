@@ -34,7 +34,7 @@ router = APIRouter(prefix="/api/geocode", tags=["geocode"])
 class GeocodeResolveLinkRequest(BaseModel):
     """公開連結解析請求（含長度上界防禦）"""
     url: Optional[str] = Field(default=None, max_length=2048)
-    type: str = Field(default="map", max_length=32)
+    type: Optional[str] = Field(default="map", max_length=32)
 
 
 async def _timed_smart_search(**kwargs):
@@ -209,7 +209,7 @@ async def geocode_search(
 
 
 @router.post("/reverse")
-@limiter.limit("30/minute")
+@limiter.limit("60/minute", key_func=get_public_ip_rate_limit_key)
 async def geocode_reverse(request: Request, body: GeocodeReverseRequest):
     """反向地理編碼：座標 → 地名
     

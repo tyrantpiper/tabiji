@@ -56,7 +56,7 @@ REMOVE_PATTERN = re.compile(
 
 # 💰 全球法定貨幣與花費記帳正則 (支援 JPY, TWD, USD, EUR, GBP, KRW, THB, SGD, AUD, CAD, HKD, VND, RMB 等，含中英動詞)
 EXPENSE_PATTERN = re.compile(
-    r"(\b\d+(?:[.,]\d+){0,3}[ \t]{0,4}(?:日圓|日幣|円|twd|nt\$|台幣|塊|元|usd|dollars?|美金|美元|jpy|eur|euros?|歐元|歐幣|gbp|pounds?|英鎊|krw|won|韓元|韓幣|thb|baht|泰銖|泰幣|sgd|新幣|星幣|aud|澳幣|澳元|cad|加幣|加元|hkd|港幣|港元|vnd|越南盾|越盾|盾|rmb|cny|人民幣|€|£|₩|฿|\$)\b|(\b(?:spent|bought|paid|cost|expense|record)\b|記帳|花了|買了|花費|消費|付了|餐費|門票費|車資|住宿費|機票費|船票))",
+    r"(\b\d{1,15}(?:[.,]\d{1,6}){0,4}[ \t]{0,4}(?:日圓|日幣|円|twd|nt\$|台幣|塊|元|usd|dollars?|美金|美元|jpy|eur|euros?|歐元|歐幣|gbp|pounds?|英鎊|krw|won|韓元|韓幣|thb|baht|泰銖|泰幣|sgd|新幣|星幣|aud|澳幣|澳元|cad|加幣|加元|hkd|港幣|港元|vnd|越南盾|越盾|盾|rmb|cny|人民幣|€|£|₩|฿|\$)\b|(\b(?:spent|bought|paid|cost|expense|record)\b|記帳|花了|買了|花費|消費|付了|餐費|門票費|車資|住宿費|機票費|船票))",
     re.IGNORECASE
 )
 
@@ -108,7 +108,7 @@ SYSTEM_PREFIX_ANCHOR_RE = re.compile(
     r"\[系統即時解析外部網頁資訊|\[Live External Webpage Content \(Source: |\[SYSTEM REAL-TIME WEB PAGE ANALYSIS|\[系統提示：使用者上傳了一張圖片|\[System Notice: The uploaded image could not be parsed\]|\[SYSTEM HINT:|\[WEATHER\]|\[2026 Neural Weather\]|\[CURRENT TIME)"
 )
 SYSTEM_BOUNDARY_END_RE = re.compile(
-    r"(?:--- END OF SYSTEM CONTEXT ---|-{20,}|用戶原始問題：|使用者需求：|Original question:|User's original question:|User [Rr]equest:)[ \t\r\n]{0,8}",
+    r"(?:--- END OF SYSTEM CONTEXT ---|(?<!-)-{20,}|用戶原始問題：|使用者需求：|Original question:|User's original question:|User [Rr]equest:)[ \t\r\n]{0,8}",
     re.DOTALL,
 )
 USER_INPUT_OPEN_TAG_RE = re.compile(r"<user_input_([a-zA-Z0-9_-]{1,64})>[ \t\r\n]{0,8}")
@@ -147,23 +147,39 @@ def _extract_clean_user_text(message: str, max_len: int = 500) -> str:
         candidate_starts = [m.end() for m in SYSTEM_BOUNDARY_END_RE.finditer(bounded_raw)]
         if not candidate_starts:
             candidate_starts = [0]
+        last_any_close = bounded_raw.rfind("</user_input_")
+        last_open_start = -1
+        missing_close_salts: set[str] = set()
         unclosed_fallback: Optional[str] = None
         for start_pos in candidate_starts:
+            if start_pos <= last_open_start:
+                continue
             open_match = USER_INPUT_OPEN_TAG_RE.search(bounded_raw, pos=start_pos)
             if not open_match:
-                continue
+                break
+            last_open_start = open_match.start()
+            body_start = open_match.end()
+            if last_any_close < body_start:
+                if unclosed_fallback is None:
+                    unclosed_fallback = bounded_raw[body_start:]
+                break
             outer_salt = open_match.group(1)
-            body_after_open = bounded_raw[open_match.end():]
             close_tag = f"</user_input_{outer_salt}>"
-            close_idx = body_after_open.find(close_tag)
-            if close_idx != -1:
-                trailing = body_after_open[close_idx + len(close_tag):]
-                if _is_valid_outer_trailing(trailing):
-                    extracted = body_after_open[:close_idx]
-                    unclosed_fallback = None
-                    break
+            if outer_salt in missing_close_salts:
+                abs_close_idx = -1
+            else:
+                abs_close_idx = bounded_raw.find(close_tag, body_start)
+                if abs_close_idx == -1:
+                    missing_close_salts.add(outer_salt)
+            if abs_close_idx != -1:
+                if abs_close_idx >= last_any_close:
+                    trailing = bounded_raw[abs_close_idx + len(close_tag):]
+                    if _is_valid_outer_trailing(trailing):
+                        extracted = bounded_raw[body_start:abs_close_idx]
+                        unclosed_fallback = None
+                        break
             elif unclosed_fallback is None:
-                unclosed_fallback = body_after_open
+                unclosed_fallback = bounded_raw[body_start:]
         if unclosed_fallback is not None:
             extracted = unclosed_fallback
     else:

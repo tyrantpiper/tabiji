@@ -229,10 +229,10 @@ def is_trusted_redirect_uri(redirect_uri: str) -> bool:
     """驗證 OAuth redirect_uri 是否屬於受信信任之網域，外部網域強制 HTTPS，嚴防 Open Redirect 與 Account Takeover"""
     if not redirect_uri or not isinstance(redirect_uri, str):
         return False
-    if "\\" in redirect_uri or any(ord(ch) < 32 or ord(ch) == 127 for ch in redirect_uri):
+    if "\\" in redirect_uri or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in redirect_uri):
         return False
     cleaned = redirect_uri.strip()
-    if not cleaned or any(ch.isspace() for ch in cleaned):
+    if not cleaned or "#" in cleaned or any(ch.isspace() for ch in cleaned):
         return False
     try:
         parsed = urllib.parse.urlsplit(cleaned)
@@ -244,9 +244,14 @@ def is_trusted_redirect_uri(redirect_uri: str) -> bool:
         return False
     if parsed.fragment:
         return False
+    if port is not None and (port < 1 or port > 65535):
+        return False
 
     hostname = (parsed.hostname or "").lower()
     if not hostname or hostname.endswith(".") or not _REDIRECT_SAFE_HOSTNAME_RE.fullmatch(hostname):
+        return False
+    expected_netloc = hostname if port is None else f"{hostname}:{port}"
+    if (parsed.netloc or "").lower() != expected_netloc:
         return False
 
     scheme = parsed.scheme.lower()
@@ -418,15 +423,22 @@ async def oauth_authorize(
         "user_id": resolved_user_id
     }
     parsed_cb = urllib.parse.urlsplit(normalized_redirect_uri)
-    cb_query = urllib.parse.parse_qsl(parsed_cb.query, keep_blank_values=True)
-    cb_query.append(("code", auth_code))
+    cb_host = (parsed_cb.hostname or "").lower()
+    cb_port = parsed_cb.port
+    safe_netloc = cb_host if cb_port is None else f"{cb_host}:{cb_port}"
+    extra_params = [f"code={urllib.parse.quote(auth_code, safe='')}"]
     if state:
-        cb_query.append(("state", state))
+        extra_params.append(f"state={urllib.parse.quote(state, safe='')}")
+    merged_query = (
+        f"{parsed_cb.query}&{'&'.join(extra_params)}"
+        if parsed_cb.query
+        else "&".join(extra_params)
+    )
     callback_url = urllib.parse.urlunsplit((
         parsed_cb.scheme.lower(),
-        parsed_cb.netloc,
+        safe_netloc,
         parsed_cb.path,
-        urllib.parse.urlencode(cb_query),
+        merged_query,
         "",
     ))
     return RedirectResponse(url=callback_url, status_code=302)

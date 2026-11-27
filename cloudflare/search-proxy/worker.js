@@ -159,29 +159,48 @@ const XML_NAMED_ENTITIES = {
 };
 
 function decodeXmlEntities(str) {
-  return String(str || "")
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(
-      /&(?:(nbsp|amp|lt|gt|quot|apos)|#x([0-9a-fA-F]{1,10})|#(\d{1,10}));/gi,
-      (match, named, hex, dec) => {
-        if (named) {
-          return XML_NAMED_ENTITIES[named.toLowerCase()] ?? match;
-        }
-        if (hex) {
-          const code = parseInt(hex, 16);
-          return Number.isFinite(code) && code >= 0 && code <= 0x10ffff
-            ? String.fromCodePoint(code)
-            : "";
-        }
-        if (dec) {
-          const code = parseInt(dec, 10);
-          return Number.isFinite(code) && code >= 0 && code <= 0x10ffff
-            ? String.fromCodePoint(code)
-            : "";
-        }
-        return match;
+  const input = String(str || "");
+  let unwrapped = input;
+  if (input.includes("<![CDATA[")) {
+    let out = "";
+    let pos = 0;
+    while (pos < input.length) {
+      const start = input.indexOf("<![CDATA[", pos);
+      if (start === -1) {
+        out += input.slice(pos);
+        break;
       }
-    );
+      const end = input.indexOf("]]>", start + 9);
+      if (end === -1) {
+        out += input.slice(pos);
+        break;
+      }
+      out += input.slice(pos, start) + input.slice(start + 9, end);
+      pos = end + 3;
+    }
+    unwrapped = out;
+  }
+  return unwrapped.replace(
+    /&(?:(nbsp|amp|lt|gt|quot|apos)|#x([0-9a-fA-F]{1,10})|#(\d{1,10}));/gi,
+    (match, named, hex, dec) => {
+      if (named) {
+        return XML_NAMED_ENTITIES[named.toLowerCase()] ?? match;
+      }
+      if (hex) {
+        const code = parseInt(hex, 16);
+        return Number.isFinite(code) && code >= 1 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)
+          ? String.fromCodePoint(code)
+          : "";
+      }
+      if (dec) {
+        const code = parseInt(dec, 10);
+        return Number.isFinite(code) && code >= 1 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)
+          ? String.fromCodePoint(code)
+          : "";
+      }
+      return match;
+    }
+  );
 }
 
 /**

@@ -181,15 +181,25 @@ RE_SEARCH_PATH = re.compile(r'/search/([^/?&]+)')
 # Pattern F: staticmap?center=lat,lng (Metadata extraction)
 RE_STATICMAP = re.compile(r'center=(-?\d+\.\d+)(?:%2C|,)(-?\d+\.\d+)')
 
+_DESC_ADDR_RE = re.compile(
+    r'·[ \t]{0,8}([0-9\u4e00-\u9fa5]{1,12}(?:市|縣|區|鄉|鎮)[^\s·]{1,60}[路街巷弄號樓][^\s·]{0,30})'
+)
+_GOOGLE_TITLE_SUFFIX_RE = re.compile(
+    r'[-|][ \t]{0,4}Google[ \t]{0,4}(?:Maps|地图|地圖|マップ|映射|map|search)',
+    re.IGNORECASE,
+)
+
+
 def extract_address_from_description(desc: str) -> str | None:
     """從 Google Maps 的 og:description 提取真實門牌 (例如: '老新台菜 · 807台灣高雄市三民區九如二路227號')"""
     if not desc or not isinstance(desc, str):
         return None
-    # 匹配包含郵遞區號或市/區/路/街/號的片段
-    match = re.search(r'·\s*([0-9\u4e00-\u9fa5]+(?:市|縣|區|鄉|鎮)[^\s·]+[路街巷弄號樓][^\s·]*)', desc)
+    bounded = desc[:1000]
+    # 匹配包含郵遞區號或市/區/路/街/號的片段（線性有界正則防 ReDoS）
+    match = _DESC_ADDR_RE.search(bounded)
     if match:
         return match.group(1).strip()
-    parts = [p.strip() for p in desc.split('·')]
+    parts = [p.strip() for p in bounded.split('·')]
     for p in parts[1:]:
         if any(k in p for k in ["市", "縣", "區", "鄉", "鎮", "路", "街", "號"]):
             return p
@@ -776,19 +786,19 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
             
     result["address"] = resolved_address
 
-    # 🧬 繁中地名清洗與解碼 (去除 URL 編碼與 - Google 地圖 後綴；限長與去前導 \s* 防止 ReDoS)
-    raw_title = (result.get("metadata", {}).get("title") or result.get("query") or "")[:500]
+    # 🧬 繁中地名清洗與解碼 (去除 URL 編碼與 - Google 地圖 後綴；無 .*$ 線性搜尋防 ReDoS)
+    raw_title = (result.get("metadata", {}).get("title") or result.get("query") or "")[:1500]
     if "%" in raw_title:
         try:
-            raw_title = unquote_plus(raw_title)[:500]
+            raw_title = unquote_plus(raw_title)
         except Exception:
             pass
-    clean_title = re.sub(
-        r'[-|][ \t]{0,4}Google[ \t]{0,4}(?:Maps|地图|地圖|マップ|映射|map|search).*$',
-        '',
-        raw_title,
-        flags=re.IGNORECASE,
-    ).strip()
+    raw_title = raw_title[:500]
+    suffix_match = _GOOGLE_TITLE_SUFFIX_RE.search(raw_title)
+    if suffix_match and "\n" not in raw_title[suffix_match.end():]:
+        clean_title = raw_title[:suffix_match.start()].strip()
+    else:
+        clean_title = raw_title.strip()
 
     # 🇹🇼 台灣地址與景點名稱分離演算法 (Zero-Cost 分離純店名與純門牌)
     extracted_addr = None
