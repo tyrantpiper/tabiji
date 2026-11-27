@@ -123,7 +123,7 @@ export default function DeepResearchCard({
                 )}
 
                 {/* 2.5 Live News & Web Source Citations */}
-                {isCompleted && data.sources && data.sources.length > 0 && (
+                {isCompleted && Array.isArray(data.sources) && data.sources.length > 0 && (
                     <SourceCitation sources={data.sources} />
                 )}
 

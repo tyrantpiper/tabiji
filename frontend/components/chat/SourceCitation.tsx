@@ -34,10 +34,10 @@ const DEFAULT_SOURCE_BADGE_COLOR =
 export default function SourceCitation({ sources }: SourceCitationProps) {
     const { lang } = useLanguage()
     const zh = lang === 'zh'
-    if (!sources || sources.length === 0) return null
+    if (!Array.isArray(sources) || sources.length === 0) return null
 
     const safeSources = sources.filter(
-        (s) => Boolean(s && typeof s.uri === "string" && SAFE_SOURCE_URI_RE.test(s.uri.trim()))
+        (s) => Boolean(s && typeof s === "object" && typeof s.uri === "string" && SAFE_SOURCE_URI_RE.test(s.uri.trim()))
     )
     if (safeSources.length === 0) return null
 
@@ -47,10 +47,15 @@ export default function SourceCitation({ sources }: SourceCitationProps) {
                 {zh ? '來源：' : 'Sources:'}
             </span>
             {safeSources.map((source, idx) => {
+                const rawBadgeColor = typeof source.badge?.color === "string" ? source.badge.color.trim() : ""
+                const rawBadgeText = typeof source.badge?.text === "string" ? source.badge.text.trim() : ""
                 const badgeColor =
-                    source.badge?.color ||
+                    rawBadgeColor ||
                     (source.category === "news" ? NEWS_SOURCE_BADGE_COLOR : DEFAULT_SOURCE_BADGE_COLOR)
-                const citationNum = source.citation_index || (idx + 1)
+                const citationNum =
+                    typeof source.citation_index === "number" && Number.isFinite(source.citation_index)
+                        ? source.citation_index
+                        : (idx + 1)
                 const safeUri = source.uri.trim()
                 const hostname = (() => {
                     try {
@@ -59,6 +64,8 @@ export default function SourceCitation({ sources }: SourceCitationProps) {
                         return safeUri
                     }
                 })()
+                const safeTitle = typeof source.title === "string" ? source.title.trim() : ""
+                const safeSnippet = typeof source.snippet === "string" ? source.snippet.trim() : ""
 
                 return (
                     <a
@@ -67,14 +74,14 @@ export default function SourceCitation({ sources }: SourceCitationProps) {
                         target="_blank"
                         rel="noopener noreferrer"
                         className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded-full border transition-all hover:scale-105 active:scale-95 ${badgeColor}`}
-                        title={source.snippet || source.title || safeUri}
+                        title={safeSnippet || safeTitle || safeUri}
                     >
                         <span className="font-semibold text-[9px] opacity-80">[{citationNum}]</span>
-                        {source.badge?.text && (
-                            <span className="font-medium text-[9px] mr-0.5">{source.badge.text}</span>
+                        {rawBadgeText && (
+                            <span className="font-medium text-[9px] mr-0.5">{rawBadgeText}</span>
                         )}
                         <span className="max-w-27.5 truncate">
-                            {source.title || hostname}
+                            {safeTitle || hostname}
                         </span>
                         <ExternalLink className="w-2.5 h-2.5 opacity-50 shrink-0" />
                     </a>

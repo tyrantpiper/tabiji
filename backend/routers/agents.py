@@ -267,6 +267,17 @@ async def _fetch_live_pricing_context(origin: str, destination: str, locale: str
 # 📰 Deep Research v2: Google News RSS + Parallel Web Intelligence Pipeline
 # ==============================================================================
 _BARE_IATA_RE = re.compile(r"(?<![A-Za-z])[A-Z]{3}(?![A-Za-z])")
+# 常見非機場 3 碼旅遊／交通／園區／國家／幣別縮寫（不可被裸 IATA 過濾器誤殺）
+_NON_IATA_TRAVEL_ACRONYMS = frozenset({
+    "USA", "UAE", "USJ", "TDL", "TDS", "KTX", "MRT", "LRT", "BTS",
+    "ANA", "JAL", "EVA", "LCC", "SIM", "VPN", "ATM", "VIP", "TAX",
+    "BBQ", "SPA", "JPY", "USD", "TWD", "KRW", "EUR", "GBP", "THB",
+    "SGD", "AUD", "CAD", "CHF", "NZD", "CNY", "RMB",
+})
+_RESEARCH_FORUM_NOISE_RE = re.compile(
+    r"(?:食べログ|맛집|推薦|\b(?:ptt|dcard|reddit|pantip|openrice|eater|tabelog|yelp|recommendations?)\b)",
+    re.IGNORECASE,
+)
 _RESEARCH_DURATION_RE = re.compile(
     r"(?:\d+\s*天\s*\d*\s*夜?|\b\d+\s*[- ]?(?:day|days|night|nights)\b)",
     re.IGNORECASE,
@@ -293,7 +304,7 @@ def _is_news_rss_enabled() -> bool:
 def _strip_bare_iata_tokens(text: str, *, allow_usa: bool = False) -> str:
     def _repl(match: re.Match) -> str:
         tok = match.group(0)
-        if allow_usa and tok == "USA":
+        if tok in _NON_IATA_TRAVEL_ACRONYMS or (allow_usa and tok == "USA"):
             return tok
         return " "
 
@@ -303,7 +314,7 @@ def _strip_bare_iata_tokens(text: str, *, allow_usa: bool = False) -> str:
 def _compress_research_fallback_query(prompt: str, resolved_city: str, locale: str = "zh") -> str:
     """
     0ms 決定性壓縮降級查詢詞：
-    resolved_city + 剝除口語/計算動詞/論壇尾詞/裸 3 碼 IATA 後之核心詞 + 動態年份（嚴格 <= 28 字元）。
+    resolved_city + 剝除口語/計算動詞/論壇尾詞/裸 3 碼 IATA 後之核心詞 + 動態年份（嚴格 <= 28 字元，且不腰斬英文單字）。
     """
     current_year = str(datetime.now(timezone.utc).year)
     year_suffix = f" {current_year}"
@@ -337,7 +348,13 @@ def _compress_research_fallback_query(prompt: str, resolved_city: str, locale: s
         remaining = max_body_len - cur_len - sep_len
         if remaining < 2:
             break
-        piece = tok if len(tok) <= remaining else tok[:remaining]
+        if len(tok) > remaining:
+            # 嚴禁腰斬拉丁／英文單字（如 "expansion" -> "ex" 會破壞 Google News 隱式 AND 召回率）
+            if any(ch.isascii() and ch.isalpha() for ch in tok):
+                continue
+            piece = tok[:remaining]
+        else:
+            piece = tok
         if len(piece) < 2:
             continue
         parts.append(piece)
@@ -372,7 +389,8 @@ async def _build_research_news_query(
     """
     將深度研究長題目蒸餾為適合 Google News RSS / 網頁搜尋的短查詢詞：
     - 優先以 Flash-Lite（外層 lite_timeout 限時）提煉；should_search=False 直接跳過外網檢索
-    - 失敗／逾時／deterministic_fallback 一律走 0ms 壓縮降級（<= 28 字、無裸 IATA）
+    - 自動剝除論壇污染詞並守衛長度（CJK <= 32 字 / 英文 <= 45 字、詞數 <= 5）
+    - 失敗／逾時／deterministic_fallback／超長一律走 0ms 壓縮降級（<= 28 字、無裸 IATA）
     """
     bounded_prompt = (prompt or "").strip()[:500]
     if not bounded_prompt:
@@ -405,8 +423,11 @@ async def _build_research_news_query(
             return ""
         if lite_res.get("source") != "deterministic_fallback":
             cand = str(lite_res.get("local_query") or lite_res.get("search_query") or "").strip()
+            cand = _RESEARCH_FORUM_NOISE_RE.sub(" ", cand)
             cand = _strip_bare_iata_tokens(cand, allow_usa=allow_usa)
-            if cand and len(cand) <= 60:
+            cand = re.sub(r"\s+", " ", cand).strip()
+            max_len = 45 if cand.isascii() else 32
+            if cand and len(cand) <= max_len and len(cand.split()) <= 5:
                 return cand
 
     return _compress_research_fallback_query(bounded_prompt, resolved_city, locale=locale)
@@ -420,10 +441,12 @@ async def _fetch_live_research_intelligence(
     *,
     lite_timeout: float = 2.2,
     fetch_timeout: float = 3.2,
+    total_budget: Optional[float] = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """
     深度研究並行即時新聞與網頁情報引擎（選項 A）：
     1. 獨立 asyncio.wait_for + try/except 並行執行 Cloud Run 直連 Google News RSS 與 execute_web_search
+       （若指定 total_budget，自動扣除蒸餾耗時與排程餘裕，避免外層超時誤殺已回傳之高速 RSS）
     2. 先以 classify_and_filter_results 剔除雜訊，再以 dedupe_and_merge_search_results 保留最多 6 筆
     3. 經 _sanitize_xml_boundary_text 防間接提示詞注入後封裝為 <live_news_reference>
     """
@@ -441,11 +464,18 @@ async def _fetch_live_research_intelligence(
     if not news_query:
         return "", []
 
+    effective_fetch_timeout = fetch_timeout
+    if total_budget is not None:
+        elapsed_lite = time.monotonic() - t0
+        headroom = min(0.15, max(0.02, total_budget * 0.1))
+        remaining = total_budget - elapsed_lite - headroom
+        effective_fetch_timeout = min(fetch_timeout, max(0.05, remaining))
+
     async def _safe_rss() -> List[Dict[str, str]]:
         try:
             res = await asyncio.wait_for(
-                fetch_google_news_rss(news_query, max_results=5, timeout=fetch_timeout),
-                timeout=fetch_timeout,
+                fetch_google_news_rss(news_query, max_results=5, timeout=effective_fetch_timeout),
+                timeout=effective_fetch_timeout,
             )
             return res if isinstance(res, list) else []
         except asyncio.CancelledError:
@@ -458,7 +488,7 @@ async def _fetch_live_research_intelligence(
         try:
             res = await asyncio.wait_for(
                 execute_web_search(news_query, max_results=3),
-                timeout=fetch_timeout,
+                timeout=effective_fetch_timeout,
             )
             return res if isinstance(res, list) else []
         except asyncio.CancelledError:
@@ -778,8 +808,9 @@ async def start_deep_research(
                     locale=locale_val,
                     lite_timeout=1.2,
                     fetch_timeout=2.2,
+                    total_budget=3.4,
                 ),
-                timeout=3.4,
+                timeout=3.5,
             )
         except asyncio.CancelledError:
             raise
@@ -930,8 +961,9 @@ async def stream_deep_research(
                             locale=locale_val,
                             lite_timeout=2.2,
                             fetch_timeout=3.2,
+                            total_budget=5.4,
                         ),
-                        timeout=5.4,
+                        timeout=5.5,
                     )
                 except asyncio.CancelledError:
                     raise
@@ -1113,16 +1145,18 @@ async def get_interaction_status(
         task = await run_in_threadpool(_load_fallback_task, supabase, interaction_id)
         if not task:
             raise HTTPException(status_code=404, detail="Fallback 任務不存在")
+        caller_hash = _hash_api_key(api_key)
         stored_hash = task.get("key_hash")
         if stored_hash:
-            caller_hash = _hash_api_key(api_key)
             if not hmac.compare_digest(str(stored_hash), caller_hash):
                 raise HTTPException(status_code=403, detail="無權存取此深度研究任務")
         mem_sources = task.get("sources")
         if mem_sources is None:
             mem_entry = _FALLBACK_TASKS.get(interaction_id)
             if isinstance(mem_entry, dict) and isinstance(mem_entry.get("sources"), list):
-                mem_sources = mem_entry["sources"]
+                mem_hash = mem_entry.get("key_hash")
+                if not mem_hash or hmac.compare_digest(str(mem_hash), caller_hash):
+                    mem_sources = mem_entry["sources"]
         resp_payload: Dict[str, Any] = {
             "id": interaction_id,
             "status": task.get("status", "unknown"),

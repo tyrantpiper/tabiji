@@ -678,9 +678,15 @@ def classify_and_filter_results(
                 continue
 
         # 1b. 維基百科偏題守衛（防止邊緣搜尋代理在泛字詞命中動漫/音樂等無關條目；使用提煉後的 search_query 與實體詞對齊）
-        parsed_pre = urllib.parse.urlparse(url)
-        netloc_pre = parsed_pre.netloc.lower()
-        if "wikipedia.org" in netloc_pre or "維基百科" in title:
+        try:
+            parsed = urllib.parse.urlparse(url)
+            scheme = (parsed.scheme or "").lower()
+            netloc = parsed.netloc.lower()
+            host = (parsed.hostname or "").lower().rstrip(".")
+        except ValueError:
+            continue
+
+        if "wikipedia.org" in netloc or "維基百科" in title:
             haystack_wiki = f"{title} {snippet}".lower()
             wiki_ref = (search_query or user_query or "").strip()
             query_stripped = _VAGUE_QUERY_STRIP_RE.sub(" ", wiki_ref)
@@ -694,10 +700,6 @@ def classify_and_filter_results(
                 continue
 
         # 2. Domain Category Mapping
-        parsed = urllib.parse.urlparse(url)
-        netloc = parsed.netloc.lower()
-        host = (parsed.hostname or "").lower().rstrip(".")
-
         category = "general"
         badge = {"text": "🌐 旅遊指南", "color": "text-slate-500 bg-slate-500/10 border-slate-500/20"}
 
@@ -711,7 +713,7 @@ def classify_and_filter_results(
         if tax and "official_domains" in tax:
             official_rules.extend(tax["official_domains"])
 
-        if host == "news.google.com":
+        if scheme in ("http", "https") and host == "news.google.com":
             category = "news"
             badge = {
                 "text": "📰 即時新聞",

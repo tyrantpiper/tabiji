@@ -448,6 +448,7 @@ _ASCII_LOWER_TRANS = str.maketrans(
 )
 _XXE_DECL_RE = re.compile(r"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
 _XML_TAG_STRIP_RE = re.compile(r"<[^<>]{1,200}>")
+_RSS_INVISIBLE_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
 
 _NEWS_ACCEPT_LANG_BY_HL: Dict[str, str] = {
     "zh-TW": "zh-TW,zh;q=0.9,ja;q=0.8,en;q=0.7",
@@ -695,20 +696,21 @@ def _is_relevant_news_item(
     return hits >= max(1, math.ceil(len(tokens) * 0.34))
 
 
-def _iter_xml_blocks_linear(xml: str, tag: str) -> Iterator[str]:
-    """純線性 O(n) XML 標籤區塊迭代器（ASCII 等長小寫映射防土耳其 İ 位移，並略過自閉合 <tag/>）。"""
-    if not xml or not tag:
+def _iter_xml_blocks_linear(xml: str, tag: str, max_blocks: int = 60) -> Iterator[str]:
+    """純線性 O(n) XML 標籤區塊迭代器（ASCII 等長小寫映射防土耳其 İ 位移，支援 </tag > 與自閉合 <tag/>，並設上限防大量空標籤 CPU 放大）。"""
+    if not xml or not tag or max_blocks <= 0:
         return
     tag_low = tag.translate(_ASCII_LOWER_TRANS)
     open_prefix = f"<{tag_low}"
-    close_tag = f"</{tag_low}>"
+    close_prefix = f"</{tag_low}"
     lowered = xml.translate(_ASCII_LOWER_TRANS)
     n = len(xml)
     pos = 0
+    yielded = 0
     prefix_len = len(open_prefix)
-    close_len = len(close_tag)
+    close_prefix_len = len(close_prefix)
 
-    while pos < n:
+    while pos < n and yielded < max_blocks:
         start = lowered.find(open_prefix, pos)
         if start == -1:
             break
@@ -719,21 +721,66 @@ def _iter_xml_blocks_linear(xml: str, tag: str) -> Iterator[str]:
         if boundary_ch not in (">", "/", " ", "\t", "\n", "\r"):
             pos = after_name
             continue
-        gt = lowered.find(">", after_name)
+        # 線性掃描起始標籤結尾 '>'（尊重屬性引號內 '>' 並以 4KB 單標籤上限保 O(n)）
+        gt = -1
+        q_char = ""
+        i = after_name
+        scan_limit = min(n, after_name + 4096)
+        while i < scan_limit:
+            ch = lowered[i]
+            if q_char:
+                if ch == q_char:
+                    q_char = ""
+            else:
+                if ch in ('"', "'"):
+                    q_char = ch
+                elif ch == ">":
+                    gt = i
+                    break
+                elif ch == "<":
+                    break
+            i += 1
         if gt == -1:
-            break
+            pos = i if (i < n and lowered[i] == "<") else n
+            continue
         if xml[after_name:gt].rstrip().endswith("/"):
             pos = gt + 1
             continue
-        end = lowered.find(close_tag, gt + 1)
+
+        # 線性尋找 </tag> 或合規 XML 1.0 尾隨空白 </tag >
+        search_from = gt + 1
+        end = -1
+        close_end = -1
+        while search_from < n:
+            cand = lowered.find(close_prefix, search_from)
+            if cand == -1:
+                break
+            after_close = cand + close_prefix_len
+            if after_close >= n:
+                break
+            c_ch = lowered[after_close]
+            if c_ch == ">":
+                end = cand
+                close_end = after_close + 1
+                break
+            if c_ch in (" ", "\t", "\n", "\r"):
+                k = after_close + 1
+                while k < n and lowered[k] in (" ", "\t", "\n", "\r"):
+                    k += 1
+                if k < n and lowered[k] == ">":
+                    end = cand
+                    close_end = k + 1
+                    break
+            search_from = after_close
         if end == -1:
             break
         yield xml[gt + 1 : end]
-        pos = end + close_len
+        pos = close_end
+        yielded += 1
 
 
 def _strip_cdata_linear(text: str) -> str:
-    """純線性 O(n) CDATA 剝除器（免疫未閉合 <![CDATA[ 之 O(N^2) 回溯）。"""
+    """純線性 O(n) CDATA 剝除器（免疫未閉合 <![CDATA[ 之 O(N^2) 回溯，且不殘留未閉合標記）。"""
     if not text or "<![CDATA[" not in text:
         return text or ""
     out: List[str] = []
@@ -748,11 +795,11 @@ def _strip_cdata_linear(text: str) -> str:
         if idx == -1:
             out.append(text[pos:])
             break
+        out.append(text[pos:idx])
         end = text.find(end_marker, idx + m_len)
         if end == -1:
-            out.append(text[pos:])
+            out.append(text[idx + m_len :])
             break
-        out.append(text[pos:idx])
         out.append(text[idx + m_len : end])
         pos = end + e_len
     return "".join(out)
@@ -761,6 +808,7 @@ def _strip_cdata_linear(text: str) -> str:
 def _decode_rss_field(raw: str, *, strip_tags: bool = True) -> str:
     cleaned = _strip_cdata_linear(raw or "")
     cleaned = html.unescape(cleaned).replace("\xa0", " ")
+    cleaned = _RSS_INVISIBLE_CTRL_RE.sub("", cleaned)
     if strip_tags:
         cleaned = _XML_TAG_STRIP_RE.sub("", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
@@ -827,7 +875,13 @@ async def fetch_google_news_rss(
     t0 = time.monotonic()
     client = get_search_client()
     try:
-        async with client.stream("GET", rss_url, headers=headers, timeout=timeout) as resp:
+        stream_ctx = client.stream("GET", rss_url, headers=headers, timeout=timeout)
+        if asyncio.iscoroutine(stream_ctx):
+            stream_ctx.close()
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            print(f"📰 [NewsRSS] status=error locale={ceid} count=0 elapsed_ms={elapsed_ms} err=CoroutineStream")
+            return []
+        async with stream_ctx as resp:
             if resp.status_code != 200:
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
                 print(f"📰 [NewsRSS] status={resp.status_code} locale={ceid} count=0 elapsed_ms={elapsed_ms}")
@@ -837,8 +891,10 @@ async def fetch_google_news_rss(
             if isinstance(raw_final_url, (str, httpx.URL)):
                 final_url_str = str(raw_final_url).strip()
                 if final_url_str:
-                    final_host = (urllib.parse.urlsplit(final_url_str).hostname or "").lower().rstrip(".")
-                    if final_host != "news.google.com":
+                    final_parts = urllib.parse.urlsplit(final_url_str)
+                    final_scheme = (final_parts.scheme or "").lower()
+                    final_host = (final_parts.hostname or "").lower().rstrip(".")
+                    if final_scheme != "https" or final_host != "news.google.com":
                         elapsed_ms = int((time.monotonic() - t0) * 1000)
                         print(f"📰 [NewsRSS] status=redirect_blocked locale={ceid} count=0 elapsed_ms={elapsed_ms}")
                         return []
@@ -965,7 +1021,8 @@ def _canonicalize_search_url(raw_url: Any) -> str:
         hostname = (parsed.hostname or "").lower().rstrip(".")
         if not scheme or not hostname:
             return trimmed.lower().rstrip("/")
-        port = f":{parsed.port}" if parsed.port else ""
+        is_default_port = (scheme == "https" and parsed.port == 443) or (scheme == "http" and parsed.port == 80)
+        port = f":{parsed.port}" if (parsed.port and not is_default_port) else ""
         clean_path = (parsed.path or "").rstrip("/") or "/"
         kept_qs = sorted(
             (k, v)

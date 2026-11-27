@@ -694,3 +694,176 @@ async def test_per_leaf_isolation_guards_unmocked_sibling_and_preserves_generate
     assert resp.status_code == 200
     assert "Only Main Call" in resp.text
     assert mock_client.aio.models.generate_content.await_count == 1
+
+
+# ==============================================================================
+# Hardening Regression Tests (Budget Race, Acronyms, Whole-Word EN, XML/URL Edge Cases)
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_hardening_budget_headroom_preserves_fast_rss_when_lite_and_ddg_both_timeout():
+    async def slow_lite(*args, **kwargs):
+        await asyncio.sleep(2.0)
+        return {"should_search": True, "source": "deterministic_fallback"}
+
+    async def fast_rss(*args, **kwargs):
+        await asyncio.sleep(0.01)
+        return [
+            {
+                "title": "北海道札幌雪祭 2026 開幕時間公布",
+                "snippet": "[新聞] 最新開幕時間",
+                "url": "https://news.google.com/rss/articles/FAST_RSS_1",
+            }
+        ]
+
+    async def slow_web(*args, **kwargs):
+        await asyncio.sleep(2.0)
+        return []
+
+    with patch.object(agents_router, "extract_search_queries_with_lite", side_effect=slow_lite), \
+         patch.object(agents_router, "fetch_google_news_rss", side_effect=fast_rss), \
+         patch.object(agents_router, "execute_web_search", side_effect=slow_web):
+        xml_block, cands = await asyncio.wait_for(
+            agents_router._fetch_live_research_intelligence(
+                "北海道雪祭 2026",
+                "CTS",
+                TEST_API_KEY,
+                locale="zh",
+                lite_timeout=0.18,
+                fetch_timeout=0.32,
+                total_budget=0.50,
+            ),
+            timeout=0.55,
+        )
+    assert len(cands) == 1
+    assert cands[0]["url"] == "https://news.google.com/rss/articles/FAST_RSS_1"
+    assert "<live_news_reference" in xml_block
+
+
+@pytest.mark.asyncio
+async def test_hardening_non_iata_acronyms_whole_word_english_and_lite_forum_guard():
+    # 1. Non-IATA 3-letter travel acronyms (USJ, TDL, KTX, MRT, ANA, USA) MUST NOT be stripped
+    assert "USJ" in agents_router._compress_research_fallback_query("USJ 門票 2026", "", "zh")
+    assert "TDL" in agents_router._compress_research_fallback_query("TDL 門票 2026", "", "zh")
+    assert "KTX" in agents_router._compress_research_fallback_query("KTX 票價 2026", "", "zh")
+    assert "USA" in agents_router._compress_research_fallback_query("USA 國家公園 2026", "", "zh")
+    assert "ANA" in agents_router._compress_research_fallback_query("ANA 台北飛東京行李規定 2026", "東京", "zh")
+    # Bare airport codes (CTS, TPE, ZZQ) MUST still be stripped
+    stripped = agents_router._strip_bare_iata_tokens("TPE 飛往 CTS 與 ZZQ 及 USJ")
+    assert "TPE" not in stripped and "CTS" not in stripped and "ZZQ" not in stripped
+    assert "USJ" in stripped
+
+    # 2. English compression MUST NEVER chop Latin words mid-word ("expansion" -> "ex", "festival" -> "fe")
+    q_en1 = agents_router._compress_research_fallback_query(
+        "Tokyo Disneyland 2026 new expansion opening date", "Tokyo", "en"
+    )
+    assert len(q_en1) <= 28
+    assert " ex " not in f" {q_en1} "
+    assert q_en1.startswith("Tokyo Disneyland")
+
+    q_en2 = agents_router._compress_research_fallback_query(
+        "Kyoto cherry blossom festival forecast", "Kyoto", "en"
+    )
+    assert len(q_en2) <= 28
+    assert " fe " not in f" {q_en2} "
+    assert q_en2.startswith("Kyoto cherry blossom")
+
+    # 3. Flash-Lite branch strips forum noise & falls back on overlong CJK sentences while keeping USJ/USA
+    with patch.object(
+        agents_router,
+        "extract_search_queries_with_lite",
+        AsyncMock(return_value={"should_search": True, "source": "gemini-3.1-flash-lite", "local_query": "USJ 門票 2026"}),
+    ):
+        q_usj = await agents_router._build_research_news_query("USJ 門票", "OSA", TEST_API_KEY, locale="zh")
+    assert q_usj == "USJ 門票 2026"
+
+    with patch.object(
+        agents_router,
+        "extract_search_queries_with_lite",
+        AsyncMock(return_value={"should_search": True, "source": "gemini-3.1-flash-lite", "local_query": "北海道 雪祭 食べログ 推薦 ptt dcard"}),
+    ):
+        q_clean = await agents_router._build_research_news_query("北海道雪祭", "CTS", TEST_API_KEY, locale="zh")
+    assert "食べログ" not in q_clean and "ptt" not in q_clean.lower() and "dcard" not in q_clean.lower() and "推薦" not in q_clean
+    assert "北海道" in q_clean
+
+    with patch.object(
+        agents_router,
+        "extract_search_queries_with_lite",
+        AsyncMock(return_value={
+            "should_search": True,
+            "source": "gemini-3.1-flash-lite",
+            "local_query": "這是一個超級無敵長到超過三十二個字而且根本不可能在新聞搜尋命中的完整對話句子查詢",
+        }),
+    ):
+        q_overlong = await agents_router._build_research_news_query(
+            "精算北海道 2026 冬季 5 天自駕油資與最新雪祭活動", "CTS", TEST_API_KEY, locale="zh"
+        )
+    assert len(q_overlong) <= 28
+
+
+@pytest.mark.asyncio
+async def test_hardening_xml_whitespace_close_max_blocks_unclosed_cdata_https_scheme_and_taxonomy_urls():
+    # 1. Legal XML 1.0 </item > whitespace, quoted '>' in attribute, unclosed CDATA, BiDi stripping
+    xml_edge = (
+        "<rss><channel>"
+        '<item data-hint="a>b">'
+        "<title><![CDATA[北海道\u202e雪祭\u200b 2026 開幕</title >"
+        "<link>https://news.google.com/rss/articles/EDGE1</link >"
+        '<source url="https://ex.com/?x=1>2">聯合報</source >'
+        "</item >"
+        "</channel></rss>"
+    ).encode("utf-8")
+    fc, _ = _make_fake_rss_client([_FakeStreamResponse(body=xml_edge)])
+    with patch.object(web_search_engine, "get_search_client", return_value=fc), \
+         patch.object(web_search_engine, "is_safe_url_async", AsyncMock(return_value=True)):
+        res = await web_search_engine.fetch_google_news_rss("北海道 雪祭 2026", max_results=5)
+    assert len(res) == 1
+    assert "<![CDATA[" not in res[0]["title"]
+    assert "\u202e" not in res[0]["title"] and "\u200b" not in res[0]["title"]
+    assert "北海道雪祭 2026 開幕" in res[0]["title"]
+    assert "來源: 聯合報" in res[0]["snippet"]
+
+    # 2. 512KB of 2800 off-topic items MUST stay capped by max_blocks and finish well under 50ms
+    many_offtopic = (
+        "<item><title>Completely unrelated finance futures 2026</title>"
+        "<link>https://news.google.com/rss/articles/off</link></item>"
+    ) * 2800
+    t0 = time.perf_counter()
+    capped = list(web_search_engine._iter_xml_blocks_linear(many_offtopic, "item"))
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    assert len(capped) == 60
+    assert elapsed_ms < 25.0
+
+    # 3. HTTP scheme downgrade to http://news.google.com/... rejected before reading body
+    http_downgrade = _FakeStreamResponse(
+        status_code=200,
+        body=b"<rss><channel><item><title>Tokyo</title><link>https://news.google.com/1</link></item></channel></rss>",
+        url="http://news.google.com/rss/search?q=Tokyo",
+    )
+    fc_http, _ = _make_fake_rss_client([http_downgrade])
+    with patch.object(web_search_engine, "get_search_client", return_value=fc_http):
+        assert await web_search_engine.fetch_google_news_rss("Tokyo 2026") == []
+    assert http_downgrade.read_called is False
+
+    # 4. AsyncMock stream returning coroutine is safely closed without raising
+    coro_client = MagicMock()
+    coro_client.stream = AsyncMock(return_value=_FakeStreamResponse(body=b"<rss/>"))
+    with patch.object(web_search_engine, "get_search_client", return_value=coro_client):
+        assert await web_search_engine.fetch_google_news_rss("Osaka 2026") == []
+
+    # 5. Default port canonicalization parity (:443 == default https)
+    assert web_search_engine._canonicalize_search_url("https://example.com:443/path/") == "https://example.com/path"
+    assert web_search_engine._canonicalize_search_url("http://example.com:80/path") == "http://example.com/path"
+
+    # 6. classify_and_filter_results: javascript://news.google.com must NOT get news badge, malformed IPv6 must NOT crash
+    classified = destination_taxonomy.classify_and_filter_results(
+        [
+            {"title": "Bad Scheme", "url": "javascript://news.google.com/%0aalert(1)", "snippet": "x"},
+            {"title": "Broken IPv6", "url": "http://[::1", "snippet": "x"},
+            {"title": "Valid News", "url": "https://news.google.com/rss/articles/OK1", "snippet": "x"},
+        ],
+        user_query="北海道",
+        dest_code="JP",
+    )
+    assert len(classified) == 2
+    assert classified[0]["category"] == "general"
+    assert classified[1]["category"] == "news"

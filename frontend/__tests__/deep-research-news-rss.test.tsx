@@ -176,4 +176,34 @@ describe("Deep Research v2 News RSS Frontend Contracts (AC-7 & Security)", () =>
         )
         expect(screen.queryByText("📰 即時新聞")).toBeNull()
     })
+
+    it("SourceCitation and DeepResearchCard survive corrupted non-array sources and malformed fields without crashing", () => {
+        const { container } = render(
+            <SourceCitation sources={"corrupt-string" as unknown as GroundingSource[]} />
+        )
+        expect(container.firstChild).toBeNull()
+
+        const malformedItems = [
+            null,
+            { title: { broken: true }, uri: "https://news.google.com/rss/articles/SAFE_1", badge: "not-an-object", category: "news" },
+        ] as unknown as GroundingSource[]
+        const { getByRole } = render(<SourceCitation sources={malformedItems} />)
+        const link = getByRole("link")
+        expect(link.getAttribute("href")).toBe("https://news.google.com/rss/articles/SAFE_1")
+        expect(link.textContent).toContain("news.google.com")
+
+        expect(() =>
+            render(
+                <DeepResearchCard
+                    data={{
+                        id: "corrupt_card",
+                        status: "completed",
+                        prompt: "北海道攻略",
+                        outputText: "## 報告",
+                        sources: "corrupt-string" as unknown as GroundingSource[],
+                    }}
+                />
+            )
+        ).not.toThrow()
+    })
 })
