@@ -82,11 +82,11 @@ function normalizeForMatch(str) {
   return String(str || "")
     .slice(0, MAX_QUERY_ANALYZE_LEN)
     .normalize("NFC")
-    .replace(/\p{Script=Latin}+/gu, (seg) =>
+    .replace(/\p{Script=Latin}[\p{Script=Latin}\u0300-\u036f]*/gu, (seg) =>
       seg
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
-        .replace(/đ/gi, "d")
+        .replace(/[đð]/gi, "d")
         .replace(/ø/gi, "o")
         .replace(/ł/gi, "l")
         .replace(/ı/g, "i")
@@ -160,11 +160,11 @@ function decodeXmlEntities(str) {
     .replace(/&#39;|&apos;/g, "'")
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
       const code = parseInt(hex, 16);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
     })
     .replace(/&#(\d+);/g, (_, num) => {
       const code = parseInt(num, 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
     });
 }
 
@@ -222,7 +222,7 @@ function extractCoreTokens(query) {
     /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af\u0e00-\u0e7f]+/g,
     " "
   );
-  const unicodeWordMatches = nonEastAsian.match(/[\p{L}\p{N}]{2,}/gu) || [];
+  const unicodeWordMatches = nonEastAsian.match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]+/gu) || [];
   for (const w of unicodeWordMatches) {
     if (!LATIN_STOPWORDS.has(w)) {
       tokens.add(w);
@@ -316,9 +316,13 @@ function canonicalizeUrl(rawUrl) {
   }
 }
 
+function normalizeRawTitleFingerprint(title) {
+  return normalizeForMatch(title).replace(/[^\p{L}\p{N}]/gu, "");
+}
+
 function normalizeTitleFingerprint(title) {
   const stripped = stripTrailingPublisher(title);
-  return normalizeForMatch(stripped).replace(/[^\p{L}\p{N}]/gu, "");
+  return normalizeRawTitleFingerprint(stripped);
 }
 
 function isDuplicateTitleFingerprint(fp, seenFingerprints) {
@@ -336,7 +340,8 @@ function isDuplicateTitleFingerprint(fp, seenFingerprints) {
 
 /**
  * 雙鍵去重合併：DDG 前 limit 筆為主，RSS 補入最多 maxRssSupplement (預設 2) 筆不重複新聞；
- * 收錄之 RSS 項目同步寫回 seenUrls 與 seenTitleFingerprints 防止新聞聯播重複。
+ * 同步記錄去尾詞與原始標題指紋（解「標題｜副標」vs「標題｜副標 - 媒體」不對稱問題），
+ * 並將收錄之 RSS 項目寫回 seenUrls 與 seenTitleFingerprints 防止新聞聯播重複。
  * @param {Array<{ title?: string; snippet?: string; url?: string }>} ddgResults
  * @param {Array<{ title?: string; snippet?: string; url?: string }>} newsResults
  * @param {number} limit
@@ -344,24 +349,36 @@ function isDuplicateTitleFingerprint(fp, seenFingerprints) {
  * @returns {{ results: Array<{ title?: string; snippet?: string; url?: string }>; source: string }}
  */
 function mergeDualSourceResults(ddgResults, newsResults, limit, maxRssSupplement = RSS_SUPPLEMENT_MAX) {
-  const safeDdg = Array.isArray(ddgResults) ? ddgResults.slice(0, limit) : [];
+  const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
+  const safeMaxRss = Number.isFinite(maxRssSupplement)
+    ? Math.max(0, Math.floor(maxRssSupplement))
+    : RSS_SUPPLEMENT_MAX;
+  const safeDdg = Array.isArray(ddgResults) ? ddgResults.slice(0, safeLimit) : [];
   const safeNews = Array.isArray(newsResults) ? newsResults : [];
   const seenUrls = new Set();
   const seenTitleFingerprints = [];
   const merged = [];
+  let addedDdg = 0;
+
+  const recordTitleFingerprints = (title) => {
+    const fp = normalizeTitleFingerprint(title);
+    if (fp.length >= 8) seenTitleFingerprints.push(fp);
+    const rawFp = normalizeRawTitleFingerprint(title);
+    if (rawFp.length >= 8 && rawFp !== fp) seenTitleFingerprints.push(rawFp);
+  };
 
   for (const item of safeDdg) {
     if (!item) continue;
     merged.push(item);
+    addedDdg += 1;
     const canonUrl = canonicalizeUrl(item.url);
     if (canonUrl) seenUrls.add(canonUrl);
-    const fp = normalizeTitleFingerprint(item.title);
-    if (fp.length >= 8) seenTitleFingerprints.push(fp);
+    recordTitleFingerprints(item.title);
   }
 
   let addedNews = 0;
   for (const item of safeNews) {
-    if (addedNews >= maxRssSupplement) break;
+    if (addedNews >= safeMaxRss) break;
     if (!item || !item.url) continue;
     const canonUrl = canonicalizeUrl(item.url);
     if (canonUrl && seenUrls.has(canonUrl)) continue;
@@ -370,12 +387,12 @@ function mergeDualSourceResults(ddgResults, newsResults, limit, maxRssSupplement
 
     merged.push(item);
     if (canonUrl) seenUrls.add(canonUrl);
-    if (fp.length >= 8) seenTitleFingerprints.push(fp);
+    recordTitleFingerprints(item.title);
     addedNews += 1;
   }
 
   const source =
-    safeDdg.length > 0
+    addedDdg > 0
       ? (addedNews > 0 ? "ddg+google_news_rss" : "ddg")
       : (addedNews > 0 ? "google_news_rss" : "none");
 
@@ -621,15 +638,23 @@ async function fetchDDGLite(q, limit, timeoutMs = 2800, locale = null) {
     }
 
     const list = [];
+    const seenUrls = new Set();
+    const seenRawTitleFps = new Set();
     for (let i = 0; i < allAnchors.length && list.length < limit; i++) {
       const cur = allAnchors[i];
       if (cur.isAd) continue;
+      const canonUrl = canonicalizeUrl(cur.url);
+      if (canonUrl && seenUrls.has(canonUrl)) continue;
+      const rawFp = normalizeRawTitleFingerprint(cur.title);
+      if (rawFp.length >= 8 && seenRawTitleFps.has(rawFp)) continue;
       const sliceEnd = i + 1 < allAnchors.length ? allAnchors[i + 1].start : html.length;
       const segment = html.slice(cur.end, sliceEnd);
       const snipMatch = segment.match(singleSnippetRegex);
       const snippet = snipMatch
         ? decodeXmlEntities(snipMatch[1].replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim()
         : "";
+      if (canonUrl) seenUrls.add(canonUrl);
+      if (rawFp.length >= 8) seenRawTitleFps.add(rawFp);
       list.push({
         title: cur.title,
         snippet,
@@ -793,7 +818,10 @@ export default {
 
       const newsResults = await rssTracked;
       if (newsResults.length > 0) {
-        return jsonResponse({ results: newsResults.slice(0, limit), source: "google_news_rss" });
+        const dedupedNews = mergeDualSourceResults([], newsResults, 0, limit);
+        if (dedupedNews.results.length > 0) {
+          return jsonResponse(dedupedNews);
+        }
       }
 
       // 優先鏈 4: 條件維基 (含時效詞禁走 + 嚴格標題相關性門檻；未達標回空)

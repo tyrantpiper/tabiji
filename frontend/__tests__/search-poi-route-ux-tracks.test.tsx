@@ -428,7 +428,60 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         expect(shortOfficialSafe.source).toBe("ddg+google_news_rss")
         expect(shortOfficialSafe.results).toHaveLength(3)
 
-        // 3. Pure-RSS fallback when DDG returns HTTP 202: strictly slices to limit (3, not rssFetchLimit=5) & cancels non-200 body
+        // Real-world asymmetrical "title｜subtitle" (DDG) vs "title｜subtitle - Publisher" (RSS) MUST deduplicate
+        // without falsely deduplicating two different articles that share a prefix before "｜"
+        const subtitleDedup = searchWorkerMod.mergeDualSourceResults(
+            [
+                {
+                    title: "2026東京車站必買伴手禮12選｜東京站一番街GIFTPALETTE（附折扣優惠券）",
+                    snippet: "s",
+                    url: "https://funliday.example.tw/gift-12",
+                },
+                {
+                    title: "2026東京自由行｜淺草寺雷門必吃美食10選",
+                    snippet: "s2",
+                    url: "https://guide.example.tw/asakusa",
+                },
+            ],
+            [
+                {
+                    title: "2026東京車站必買伴手禮12選｜東京站一番街GIFTPALETTE（附折扣優惠券） - Funliday",
+                    snippet: "n1",
+                    url: "https://news.google.com/rss/articles/CBMiFunliday?oc=5",
+                },
+                {
+                    title: "2026東京自由行｜上野阿美橫町購物攻略 - 旅遊誌",
+                    snippet: "n2",
+                    url: "https://news.google.com/rss/articles/CBMiUeno?oc=5",
+                },
+            ],
+            3
+        )
+        expect(subtitleDedup.source).toBe("ddg+google_news_rss")
+        expect(subtitleDedup.results).toHaveLength(3)
+        expect(subtitleDedup.results.map((r) => r.url)).toEqual([
+            "https://funliday.example.tw/gift-12",
+            "https://guide.example.tw/asakusa",
+            "https://news.google.com/rss/articles/CBMiUeno?oc=5",
+        ])
+
+        // Contract safety: falsy DDG entries & negative/invalid limit must never return source="ddg" with empty results
+        expect(searchWorkerMod.mergeDualSourceResults([null as unknown as { title: string; url: string }], [], 3)).toEqual({
+            results: [],
+            source: "none",
+        })
+        expect(
+            searchWorkerMod.mergeDualSourceResults(
+                [
+                    { title: "A", url: "https://a.example/1" },
+                    { title: "B", url: "https://b.example/2" },
+                ],
+                [],
+                -1
+            )
+        ).toEqual({ results: [], source: "none" })
+
+        // 3. Pure-RSS fallback when DDG returns HTTP 202: deduplicates syndicated wire items, slices to limit (3), survives out-of-range XML entities, & cancels non-200 body
         let ddg202BodyCanceled = false
         vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
             const u = String(input)
@@ -446,11 +499,11 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
             if (u.includes("news.google.com")) {
                 return new Response(
                     `<rss><channel>
-                      <item><title>東京車站活動一 - 媒體</title><link>https://news.example.tw/1</link></item>
-                      <item><title>東京車站活動二 - 媒體</title><link>https://news.example.tw/2</link></item>
+                      <item><title>東京車站春季限定活動盛大開幕 &#9999999; - 媒體A</title><link>https://news.example.tw/1</link></item>
+                      <item><title>東京車站春季限定活動盛大開幕｜媒體B</title><link>https://news.example.tw/1-syndicated</link></item>
+                      <item><title>東京車站活動二 &#x110000; - 媒體</title><link>https://news.example.tw/2</link></item>
                       <item><title>東京車站活動三 - 媒體</title><link>https://news.example.tw/3</link></item>
                       <item><title>東京車站活動四 - 媒體</title><link>https://news.example.tw/4</link></item>
-                      <item><title>東京車站活動五 - 媒體</title><link>https://news.example.tw/5</link></item>
                     </channel></rss>`,
                     { status: 200 }
                 )
@@ -469,7 +522,46 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         const jsonPureRss = await respPureRss.json()
         expect(jsonPureRss.source).toBe("google_news_rss")
         expect(jsonPureRss.results).toHaveLength(3)
+        expect(jsonPureRss.results.map((r: { url: string }) => r.url)).toEqual([
+            "https://news.example.tw/1",
+            "https://news.example.tw/2",
+            "https://news.example.tw/3",
+        ])
         expect(ddg202BodyCanceled).toBe(true)
+
+        // 4. DDG intra-source dedup: skips identical title / canonical URL duplicates while keeping distinct "prefix｜subtitle" guides
+        const ddgDupHtml = `
+          <table>
+            <tr><td><a class="result-link" href="https://blog.example.tw/seongsu-13?utm_source=a">2026首爾聖水洞13間美食盤點指南</a></td></tr>
+            <tr><td class="result-snippet">First copy &#9999999;</td></tr>
+            <tr><td><a class="result-link" href="https://mirror.example.tw/seongsu-13">2026首爾聖水洞13間美食盤點指南</a></td></tr>
+            <tr><td class="result-snippet">Exact duplicate title copy</td></tr>
+            <tr><td><a class="result-link" href="https://guide.example.tw/asakusa">2026東京自由行｜淺草寺雷門必吃美食10選</a></td></tr>
+            <tr><td class="result-snippet">Distinct guide A</td></tr>
+            <tr><td><a class="result-link" href="https://guide.example.tw/ueno">2026東京自由行｜上野阿美橫町購物攻略</a></td></tr>
+            <tr><td class="result-snippet">Distinct guide B</td></tr>
+          </table>
+        `
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+            const u = String(input)
+            if (u.includes("lite.duckduckgo.com")) return new Response(ddgDupHtml, { status: 200 })
+            if (u.includes("news.google.com")) return new Response("<rss><channel></channel></rss>", { status: 200 })
+            return new Response("{}", { status: 404 })
+        })
+        const respDdgDedup = await searchWorkerMod.default.fetch(
+            new Request("https://search-proxy.local/search?q=" + encodeURIComponent("首爾 聖水洞 美食") + "&limit=3", {
+                headers: { "x-tabidachi-key": "secret-track-a" },
+            }),
+            { PROXY_SECRET: "secret-track-a" },
+            {}
+        )
+        const jsonDdgDedup = await respDdgDedup.json()
+        expect(jsonDdgDedup.source).toBe("ddg")
+        expect(jsonDdgDedup.results.map((r: { url: string }) => r.url)).toEqual([
+            "https://blog.example.tw/seongsu-13?utm_source=a",
+            "https://guide.example.tw/asakusa",
+            "https://guide.example.tw/ueno",
+        ])
     })
 
     it("Track A (Grace Window FSM): supports 0ms settled merge even after 1800ms, immediate abort when DDG > 1800ms, and zero leaked timers", async () => {
@@ -680,10 +772,15 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
             ["Zürich", "Zurich"],
             ["São Paulo", "Sao Paulo"],
             ["İstanbul", "Istanbul"],
+            ["İstanbul".toLowerCase(), "Istanbul"],
+            ["DİYARBAKIR".toLowerCase(), "Diyarbakir"],
+            ["q\u0301cafe\u0301\u0308", "qcafe"],
             ["Iğdır", "Igdir"],
             ["Łódź", "Lodz"],
             ["København", "Kobenhavn"],
             ["Đà Nẵng", "Da Nang"],
+            ["Ðà Nẵng", "Da Nang"],
+            ["Seyðisfjörður", "Seydisfjordur"],
             ["Straße", "Strasse"],
             ["STRAẞE", "Strasse"],
             ["Cœur", "Coeur"],
@@ -691,6 +788,7 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         ]
         for (const [accented, asciiFolded] of accentPairs) {
             expect(normalizeForMatch(accented)).toBe(normalizeForMatch(asciiFolded))
+            expect(normalizeForMatch(accented.toLowerCase())).toBe(normalizeForMatch(asciiFolded))
         }
         for (const nfcChar of ["한", "성", "수", "동", "が", "ぎ", "ぐ", "げ", "ご", "パ", "ピ"]) {
             const outFromNfc = normalizeForMatch(nfcChar)
@@ -729,6 +827,13 @@ describe("Tracks A–C: Search Proxy Parallel Race, POIDetailDrawer Option A + L
         expect(extractCoreTokens("München Öffnungszeiten Eintritt")).toEqual(["munchen"])
         // Word boundary guard: "tarif" inside "starfish" must NOT be stripped
         expect(extractCoreTokens("Starfish Bay")).toEqual(["starfish", "bay"])
+        // Pre-lowercased Turkish İ ("i\u0307") must stay intact (never split into garbage token "di" causing spam bypass)
+        expect(extractCoreTokens("İstanbul".toLowerCase())).toEqual(["istanbul"])
+        expect(extractCoreTokens("DİYARBAKIR".toLowerCase())).toEqual(["diyarbakir"])
+        expect(isRelevantNewsItem("İstanbul", "İstanbul".toLowerCase() + " travel guide")).toBe(true)
+        expect(isRelevantNewsItem("DİYARBAKIR".toLowerCase(), "India dining discount news")).toBe(false)
+        // Non-East-Asian combining vowel marks (e.g. Devanagari) preserved intact
+        expect(extractCoreTokens("जयपुर महल")).toEqual(["जयपुर", "महल"])
         // Precomputed tokens shortcut honored
         expect(isRelevantNewsItem("ignored query", "München Marienplatz", "", ["munchen"])).toBe(true)
         expect(isRelevantNewsItem("ignored query", "London Bridge", "", ["munchen"])).toBe(false)
