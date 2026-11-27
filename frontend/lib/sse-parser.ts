@@ -12,6 +12,49 @@ export interface SSEEvent {
 }
 
 import * as authSession from './auth-session'
+import type { GroundingSource } from '@/components/chat/SourceCitation'
+
+const SAFE_HTTP_URI_RE = /^https?:\/\//i
+
+/**
+ * 清洗外部來源陣列：嚴格僅允許 http(s):// 協議，防禦 javascript:/data: XSS 注入。
+ */
+export function sanitizeGroundingSources(raw: unknown): GroundingSource[] {
+    if (!Array.isArray(raw)) return []
+    const cleaned: GroundingSource[] = []
+    for (const item of raw) {
+        if (!item || typeof item !== "object") continue
+        const rec = item as Record<string, unknown>
+        const rawUri = typeof rec.uri === "string"
+            ? rec.uri.trim()
+            : (typeof rec.url === "string" ? rec.url.trim() : "")
+        if (!rawUri || !SAFE_HTTP_URI_RE.test(rawUri)) continue
+        const source: GroundingSource = {
+            title: typeof rec.title === "string" ? rec.title.trim() : "",
+            uri: rawUri,
+        }
+        if (typeof rec.citation_index === "number" && Number.isFinite(rec.citation_index)) {
+            source.citation_index = rec.citation_index
+        }
+        if (typeof rec.category === "string" && rec.category.trim()) {
+            source.category = rec.category.trim()
+        }
+        if (rec.badge && typeof rec.badge === "object") {
+            const b = rec.badge as Record<string, unknown>
+            if (typeof b.text === "string" && b.text.trim()) {
+                source.badge = {
+                    text: b.text.trim(),
+                    ...(typeof b.color === "string" && b.color.trim() ? { color: b.color.trim() } : {}),
+                }
+            }
+        }
+        if (typeof rec.snippet === "string" && rec.snippet.trim()) {
+            source.snippet = rec.snippet.trim()
+        }
+        cleaned.push(source)
+    }
+    return cleaned
+}
 
 export interface SSEHandlers {
     onStart?: () => void
@@ -346,6 +389,7 @@ export interface StreamDeepResearchResult {
     supported: boolean
     text?: string
     engine?: string
+    sources?: GroundingSource[]
     error?: string
 }
 
@@ -401,8 +445,47 @@ export async function streamDeepResearch(
     let buffer = ""
     let collectedText = ""
     let engine = "gemini-flash-stream"
+    let collectedSources: GroundingSource[] | undefined = undefined
     let streamError: string | undefined
     let terminated = false
+
+    const processEvent = (ev: SSEEvent) => {
+        if (ev.event === "heartbeat") {
+            params.onHeartbeat?.()
+        } else if (ev.event === "thinking") {
+            try {
+                const d = JSON.parse(ev.data)
+                params.onThinking?.(String(d?.status || "researching"))
+            } catch {
+                params.onThinking?.(ev.data || "researching")
+            }
+        } else if (ev.event === "text") {
+            try {
+                const d = JSON.parse(ev.data)
+                if (typeof d?.text === "string") {
+                    collectedText += d.text
+                    params.onText?.(d.text)
+                }
+            } catch { /* ignore */ }
+        } else if (ev.event === "done") {
+            try {
+                const d = JSON.parse(ev.data)
+                engine = String(d?.engine || d?.model_used || engine)
+                if (Array.isArray(d?.sources)) {
+                    collectedSources = sanitizeGroundingSources(d.sources)
+                }
+            } catch { /* ignore */ }
+            terminated = true
+        } else if (ev.event === "error") {
+            try {
+                const d = JSON.parse(ev.data)
+                streamError = String(d?.message || "Deep research failed")
+            } catch {
+                streamError = ev.data || "Deep research failed"
+            }
+            terminated = true
+        }
+    }
 
     try {
         while (!terminated && !params.signal?.aborted) {
@@ -413,41 +496,21 @@ export async function streamDeepResearch(
             buffer = remaining
 
             for (const ev of events) {
-                if (params.signal?.aborted) break
-                if (ev.event === "heartbeat") {
-                    params.onHeartbeat?.()
-                } else if (ev.event === "thinking") {
-                    try {
-                        const d = JSON.parse(ev.data)
-                        params.onThinking?.(String(d?.status || "researching"))
-                    } catch {
-                        params.onThinking?.(ev.data || "researching")
-                    }
-                } else if (ev.event === "text") {
-                    try {
-                        const d = JSON.parse(ev.data)
-                        if (typeof d?.text === "string") {
-                            collectedText += d.text
-                            params.onText?.(d.text)
-                        }
-                    } catch { /* ignore */ }
-                } else if (ev.event === "done") {
-                    try {
-                        const d = JSON.parse(ev.data)
-                        engine = String(d?.engine || d?.model_used || engine)
-                    } catch { /* ignore */ }
-                    terminated = true
-                    break
-                } else if (ev.event === "error") {
-                    try {
-                        const d = JSON.parse(ev.data)
-                        streamError = String(d?.message || "Deep research failed")
-                    } catch {
-                        streamError = ev.data || "Deep research failed"
-                    }
-                    terminated = true
-                    break
-                }
+                if (params.signal?.aborted || terminated) break
+                processEvent(ev)
+            }
+        }
+
+        // EOF buffer flush（防最後一個 event: done 缺少尾端 \n\n 時遺失來源或引擎狀態）
+        const tail = decoder.decode()
+        if (tail) {
+            buffer += tail
+        }
+        if (buffer.trim() && !params.signal?.aborted && !terminated) {
+            const { events } = parseSSE(buffer + "\n\n", "")
+            for (const ev of events) {
+                if (params.signal?.aborted || terminated) break
+                processEvent(ev)
             }
         }
     } finally {
@@ -457,5 +520,7 @@ export async function streamDeepResearch(
     if (streamError) {
         return { supported: true, error: streamError }
     }
-    return { supported: true, text: collectedText, engine }
+    return collectedSources !== undefined
+        ? { supported: true, text: collectedText, engine, sources: collectedSources }
+        : { supported: true, text: collectedText, engine }
 }

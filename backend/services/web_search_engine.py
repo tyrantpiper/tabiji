@@ -8,16 +8,18 @@ Web Search & Reader Engine (Zero-Key Resilient Architecture)
 
 import os
 import asyncio
+import math
 import re
 import html
 import json
 import time
+import unicodedata
 import weakref
 import urllib.parse
 import ipaddress
 from collections import OrderedDict
 import httpx
-from typing import List, Dict, Optional, Any, Tuple
+from typing import Iterator, List, Dict, Optional, Any, Tuple
 from bs4 import BeautifulSoup
 from utils.url_safety import is_safe_url, is_safe_url_async, create_safe_client, SSRFSecurityError
 from services.link_resolver import _read_bounded_text
@@ -430,6 +432,672 @@ async def execute_web_search(
     return []
 
 
+# ==============================================================================
+# 📰 Cloud Run Direct Google News RSS Engine (Zero New Deps, 6h LRU, O(n) Safe)
+# ==============================================================================
+_NEWS_RSS_CACHE_MAX_SIZE = 128
+_NEWS_RSS_CACHE_TTL_SEC = 6 * 3600.0
+_NEWS_RSS_CACHE: "OrderedDict[str, Tuple[float, List[Dict[str, str]]]]" = OrderedDict()
+_NEWS_MAX_QUERY_ANALYZE_LEN = 500
+_NEWS_RSS_MAX_BYTES = 524288  # 512 KB hard cap
+
+# ASCII-only lowercase mapping (1-to-1 length invariant — immune to Turkish 'İ' -> 'i\u0307' index shift)
+_ASCII_LOWER_TRANS = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "abcdefghijklmnopqrstuvwxyz",
+)
+_XXE_DECL_RE = re.compile(r"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
+_XML_TAG_STRIP_RE = re.compile(r"<[^<>]{1,200}>")
+
+_NEWS_ACCEPT_LANG_BY_HL: Dict[str, str] = {
+    "zh-TW": "zh-TW,zh;q=0.9,ja;q=0.8,en;q=0.7",
+    "ja": "ja-JP,ja;q=0.9,en;q=0.7",
+    "ko": "ko-KR,ko;q=0.9,en;q=0.7",
+    "th": "th-TH,th;q=0.9,en;q=0.7",
+    "vi": "vi-VN,vi;q=0.9,en;q=0.7",
+    "en-US": "en-US,en;q=0.9",
+}
+
+_NEWS_TEMPORAL_RE = re.compile(
+    r"(?:營業時間|開放時間|休館|公休|票價|門票|價錢|價格|費用|預約|訂位|購票|最新|今天|明天|今年|公告|停駛|暫停|活動|祭典|櫻花|楓葉|天氣|匯率|"
+    r"営業時間|開館時間|定休日|休業|入場料|料金|予約|チケット|最新情報|天気|為替|開催|"
+    r"영업시간|휴무|입장료|가격|예약|티켓|최신|축제|날씨|환율|"
+    r"เวลาเปิดปิด|ราคา|ตั๋ว|จอง|ล่าสุด|เทศกาล|สภาพอากาศ|"
+    r"\b(?:ticket|tickets|price|prices|hours|opening|open|close|closed|reservation|booking|schedule|status|news|event|forecast|"
+    r"2025|2026|2027|2028|horaires?|billets?|tarifs?|prix|offnungszeiten|eintritt|horarios?|entradas?|precios?|orari|biglietti)\b)",
+    re.IGNORECASE,
+)
+
+# 長詞優先停用詞（與 cloudflare/search-proxy/worker.js 100% 對齊）
+_NEWS_CJK_STOPWORD_RE = re.compile(
+    r"(?:食べログ|맛집|おすすめ|オススメ|ランキング|アクセス|行き方|口コミ|まとめ|人気|観光|グルメ|"
+    r"가볼만한곳|추천|근처|인기|여행|코스|정보|후기|리뷰|어디|알려줘|"
+    r"ที่เที่ยว|ร้านอร่อย|ยอดนิยม|แนะนำ|รีวิว|เที่ยว|ใกล้|"
+    r"最熱門|這附近|有沒有|哪裡有|請問|幫我|推薦|附近|熱門|哪裡|哪家|這裡|這家|這個|這些|那些|"
+    r"一下|什麼|怎麼|可以|介紹|資訊|情報|攻略|心得|評價|行程|必吃|必去|值得|好吃|好玩|這)"
+)
+
+_ZH_TW_LOCALE_SIGNAL_RE = re.compile(
+    r"[這哪麼裡嗎呢吧站營鐵廣劃臺灣體賣關廳點麵訊價樂圓轉樓區號實處邊學國淺澀櫻獨繪氣經驗歡總覽藝藥覺證條專齋燒壽圖萬與對會濱澤驛]"
+)
+_ZH_TW_PHRASE_SIGNAL_RE = re.compile(
+    r"(?:推薦|附近|最熱門|必吃|必去|伴手禮|美食|景點|行程|攻略|自由行|好吃|好玩|營業時間|門票|票價|訂位)"
+)
+_JP_SHINJITAI_RE = re.compile(r"[駅浅渋桜図広転売営鉄払読両団県区発変沢楽歳辺観権実焼麺斎寿浜]")
+_VIET_UNIQUE_RE = re.compile(r"[ơưƠƯ\u1ea0-\u1ef9]")
+_VIET_SECONDARY_RE = re.compile(r"[ăđàáâãèéêìíòóôõùúýĂĐÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚÝ]")
+_HANGUL_TRAILING_PARTICLE_RE = re.compile(r"(?:에서|으로|부터|까지|에는|에도)$")
+
+_NEWS_LATIN_STOPWORDS = frozenset({
+    "the", "for", "and", "in", "of", "to", "a", "an", "is", "are", "at", "on", "with",
+    "how", "what", "when", "where", "who", "why", "from", "by", "about", "info", "guide",
+    "best", "top", "near", "nearby", "things", "visit", "trip", "tour", "blog", "review", "reviews",
+    "ngon", "du", "de", "la", "le", "les", "der", "die", "das", "und", "el", "los", "las", "del",
+    "ticket", "tickets", "price", "prices", "hours", "opening", "open", "close", "closed",
+    "2024", "2025", "2026", "2027", "2028",
+    "ptt", "dcard", "pantip", "openrice", "eater", "reddit",
+    "travel", "local", "tips", "recommendations", "recommendation", "hidden", "gems", "street", "food",
+    "japantravel", "koreatravel", "thailandtourism", "singaporetravel", "vietnamtravel", "traveleurope", "hongkongtravel",
+})
+
+_PUBLISHER_SEPARATORS: Tuple[str, ...] = (" - ", " – ", " — ", " | ", " ｜ ", "｜")
+_MERGE_TRACKING_PARAM_RE = re.compile(r"^(?:utm_.*|fbclid|gclid|oc)$", re.IGNORECASE)
+
+_LATIN_SPECIAL_FOLD: Dict[str, str] = {
+    "đ": "d",
+    "Đ": "d",
+    "ð": "d",
+    "Ð": "d",
+    "ø": "o",
+    "Ø": "o",
+    "ł": "l",
+    "Ł": "l",
+    "ı": "i",
+    "ß": "ss",
+    "ẞ": "ss",
+    "æ": "ae",
+    "Æ": "ae",
+    "œ": "oe",
+    "Œ": "oe",
+}
+
+
+def _is_latin_char(ch: str) -> bool:
+    cp = ord(ch)
+    if (0x41 <= cp <= 0x5A) or (0x61 <= cp <= 0x7A):
+        return True
+    if cp < 0x00C0:
+        return False
+    return "LATIN" in unicodedata.name(ch, "")
+
+
+def _normalize_for_match(text: Any) -> str:
+    """
+    線性 O(n) 跨語系正規化（對齊 worker.js）：
+    [:500] + NFC 保護韓文音節與日文濁音「が」不被拆裂，
+    僅對拉丁字及隨附 U+0300..U+036F 結合音標做 NFD 剝除與特殊字母折疊，最後小寫化。
+    """
+    s = unicodedata.normalize("NFC", str(text or "")[:_NEWS_MAX_QUERY_ANALYZE_LEN])
+    if not s:
+        return ""
+    out: List[str] = []
+    in_latin = False
+    for ch in s:
+        cp = ord(ch)
+        if _is_latin_char(ch):
+            in_latin = True
+            if cp <= 0x7A:
+                out.append(ch.lower())
+            else:
+                decomposed = unicodedata.normalize("NFD", ch)
+                for dc in decomposed:
+                    dcp = ord(dc)
+                    if 0x0300 <= dcp <= 0x036F:
+                        continue
+                    folded = _LATIN_SPECIAL_FOLD.get(dc)
+                    out.append(folded if folded is not None else dc.lower())
+        elif in_latin and (0x0300 <= cp <= 0x036F):
+            continue
+        else:
+            in_latin = False
+            out.append(ch.lower())
+    return "".join(out)
+
+
+def _resolve_news_locale(query: Any) -> Tuple[str, str, str]:
+    """依查詢字系解析 Google News RSS 語系參數 (hl, gl, ceid)（與 worker.js 100% 一致）。"""
+    q = unicodedata.normalize("NFC", str(query or "")[:_NEWS_MAX_QUERY_ANALYZE_LEN])
+    q_for_locale = re.sub(r"食べログ|맛집", " ", q)
+    kana_count = len(re.findall(r"[\u3040-\u30ff]", q_for_locale))
+    non_no_kana_count = len(re.findall(r"[\u3040-\u30ff]", q_for_locale.replace("の", "")))
+    han_count = len(re.findall(r"[\u4e00-\u9fff]", q_for_locale))
+    hangul_count = len(re.findall(r"[\uac00-\ud7af]", q_for_locale))
+    thai_count = len(re.findall(r"[\u0e00-\u0e7f]", q_for_locale))
+    viet_unique_count = len(_VIET_UNIQUE_RE.findall(q_for_locale))
+    viet_secondary_count = len(_VIET_SECONDARY_RE.findall(q_for_locale))
+    has_zh_tw_signal = bool(
+        _ZH_TW_LOCALE_SIGNAL_RE.search(q_for_locale) or _ZH_TW_PHRASE_SIGNAL_RE.search(q_for_locale)
+    )
+    has_jp_shinjitai = bool(_JP_SHINJITAI_RE.search(q_for_locale))
+
+    if not has_zh_tw_signal and han_count == 0 and kana_count == 0:
+        if hangul_count > 0:
+            return ("ko", "KR", "KR:ko")
+        if thai_count >= 2:
+            return ("th", "TH", "TH:th")
+        if viet_unique_count >= 1 and (viet_unique_count + viet_secondary_count) >= 2:
+            return ("vi", "VN", "VN:vi")
+
+    is_predominantly_japanese = (
+        not has_zh_tw_signal
+        and (
+            non_no_kana_count > 0
+            or (
+                kana_count > 0
+                and (han_count == 0 or has_jp_shinjitai or (kana_count / (kana_count + han_count)) >= 0.25)
+            )
+        )
+    )
+    if is_predominantly_japanese:
+        return ("ja", "JP", "JP:ja")
+    if han_count > 0 or kana_count > 0 or bool(re.search(r"[\u3040-\u30ff]", q)):
+        return ("zh-TW", "TW", "TW:zh-Hant")
+    return ("en-US", "US", "US:en")
+
+
+def _extract_news_core_tokens(query: Any) -> List[str]:
+    """萃取新聞相關性核驗之多語系核心詞（支援 CJK Bigram、韓文去助詞、泰文 4 字窗與非東亞 Unicode 詞）。"""
+    cleaned = _normalize_for_match(query)
+    cleaned = re.sub(r"site:\S+", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = _NEWS_TEMPORAL_RE.sub(" ", cleaned)
+    cleaned = _NEWS_CJK_STOPWORD_RE.sub(" ", cleaned)
+
+    tokens: List[str] = []
+    seen = set()
+
+    def _add(tok: str) -> None:
+        if tok and tok not in seen:
+            seen.add(tok)
+            tokens.append(tok)
+
+    # 1. CJK runs -> bigrams (length <= 2 kept as-is)
+    for run in re.findall(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]+", cleaned):
+        if len(run) <= 2:
+            _add(run)
+        else:
+            for i in range(len(run) - 1):
+                _add(run[i : i + 2])
+
+    # 2. Korean Hangul runs -> 詞幹替換（避免雙寫稀釋命中比例）
+    for run in re.findall(r"[\uac00-\ud7af]{2,}", cleaned):
+        if len(run) >= 4 and _HANGUL_TRAILING_PARTICLE_RE.search(run):
+            stem = _HANGUL_TRAILING_PARTICLE_RE.sub("", run)
+            _add(stem if len(stem) >= 2 else run)
+        else:
+            _add(run)
+
+    # 3. Thai runs -> 長度 <= 6 收整段，否則 4 字滑動窗（單段最多 12 個）
+    for run in re.findall(r"[\u0e00-\u0e7f]{2,}", cleaned):
+        if len(run) <= 6:
+            _add(run)
+        else:
+            added = 0
+            for i in range(len(run) - 3):
+                if added >= 12:
+                    break
+                _add(run[i : i + 4])
+                added += 1
+
+    # 4. 先遮罩東亞字系再抽其餘 Unicode 字母／數字（保留 "台北101" 之 "101" 與希臘/西里爾等語系）
+    non_east_asian = re.sub(
+        r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af\u0e00-\u0e7f]+",
+        " ",
+        cleaned,
+    )
+    buf: List[str] = []
+    for ch in non_east_asian:
+        cat = unicodedata.category(ch)[0]
+        if buf:
+            if cat in ("L", "N", "M"):
+                buf.append(ch)
+                continue
+            word = "".join(buf)
+            buf.clear()
+            if len(word) >= 2 and word not in _NEWS_LATIN_STOPWORDS:
+                _add(word)
+        if cat in ("L", "N"):
+            buf.append(ch)
+    if buf:
+        word = "".join(buf)
+        if len(word) >= 2 and word not in _NEWS_LATIN_STOPWORDS:
+            _add(word)
+
+    return tokens
+
+
+def _is_relevant_news_item(
+    query: str,
+    title: str,
+    source_name: str = "",
+    precomputed_tokens: Optional[List[str]] = None,
+) -> bool:
+    combined = (
+        f"{_normalize_for_match(title)} {_normalize_for_match(source_name)}"
+        if source_name
+        else _normalize_for_match(title)
+    )
+    tokens = precomputed_tokens if precomputed_tokens is not None else _extract_news_core_tokens(query)
+    if not tokens:
+        return True
+    hits = sum(1 for tok in tokens if tok in combined)
+    if len(tokens) == 1:
+        return hits >= 1
+    return hits >= max(1, math.ceil(len(tokens) * 0.34))
+
+
+def _iter_xml_blocks_linear(xml: str, tag: str) -> Iterator[str]:
+    """純線性 O(n) XML 標籤區塊迭代器（ASCII 等長小寫映射防土耳其 İ 位移，並略過自閉合 <tag/>）。"""
+    if not xml or not tag:
+        return
+    tag_low = tag.translate(_ASCII_LOWER_TRANS)
+    open_prefix = f"<{tag_low}"
+    close_tag = f"</{tag_low}>"
+    lowered = xml.translate(_ASCII_LOWER_TRANS)
+    n = len(xml)
+    pos = 0
+    prefix_len = len(open_prefix)
+    close_len = len(close_tag)
+
+    while pos < n:
+        start = lowered.find(open_prefix, pos)
+        if start == -1:
+            break
+        after_name = start + prefix_len
+        if after_name >= n:
+            break
+        boundary_ch = lowered[after_name]
+        if boundary_ch not in (">", "/", " ", "\t", "\n", "\r"):
+            pos = after_name
+            continue
+        gt = lowered.find(">", after_name)
+        if gt == -1:
+            break
+        if xml[after_name:gt].rstrip().endswith("/"):
+            pos = gt + 1
+            continue
+        end = lowered.find(close_tag, gt + 1)
+        if end == -1:
+            break
+        yield xml[gt + 1 : end]
+        pos = end + close_len
+
+
+def _strip_cdata_linear(text: str) -> str:
+    """純線性 O(n) CDATA 剝除器（免疫未閉合 <![CDATA[ 之 O(N^2) 回溯）。"""
+    if not text or "<![CDATA[" not in text:
+        return text or ""
+    out: List[str] = []
+    pos = 0
+    n = len(text)
+    marker = "<![CDATA["
+    end_marker = "]]>"
+    m_len = len(marker)
+    e_len = len(end_marker)
+    while pos < n:
+        idx = text.find(marker, pos)
+        if idx == -1:
+            out.append(text[pos:])
+            break
+        end = text.find(end_marker, idx + m_len)
+        if end == -1:
+            out.append(text[pos:])
+            break
+        out.append(text[pos:idx])
+        out.append(text[idx + m_len : end])
+        pos = end + e_len
+    return "".join(out)
+
+
+def _decode_rss_field(raw: str, *, strip_tags: bool = True) -> str:
+    cleaned = _strip_cdata_linear(raw or "")
+    cleaned = html.unescape(cleaned).replace("\xa0", " ")
+    if strip_tags:
+        cleaned = _XML_TAG_STRIP_RE.sub("", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _news_rss_cache_get(cache_key: str) -> Optional[List[Dict[str, str]]]:
+    entry = _NEWS_RSS_CACHE.get(cache_key)
+    if entry is None:
+        return None
+    expires_at, payload = entry
+    if time.monotonic() >= expires_at:
+        _NEWS_RSS_CACHE.pop(cache_key, None)
+        return None
+    _NEWS_RSS_CACHE.move_to_end(cache_key)
+    return [dict(item) for item in payload]
+
+
+def _news_rss_cache_set(cache_key: str, results: List[Dict[str, str]]) -> None:
+    if not results:
+        return
+    _NEWS_RSS_CACHE[cache_key] = (
+        time.monotonic() + _NEWS_RSS_CACHE_TTL_SEC,
+        [dict(item) for item in results],
+    )
+    _NEWS_RSS_CACHE.move_to_end(cache_key)
+    while len(_NEWS_RSS_CACHE) > _NEWS_RSS_CACHE_MAX_SIZE:
+        _NEWS_RSS_CACHE.popitem(last=False)
+
+
+async def fetch_google_news_rss(
+    query: str,
+    max_results: int = 5,
+    timeout: float = 3.2,
+) -> List[Dict[str, str]]:
+    """
+    Cloud Run 直連 Google News RSS 即時情報引擎：
+    - 6h 記憶體 LRU 快取（空結果絕不快取）
+    - 有界 512KB 串流讀取 + 大小寫 XXE 拒收 + 純線性 O(n) XML 解析
+    - 驗證最終重導向主機嚴格為 news.google.com（防 consent.google.com 302 浪費）
+    - 單請求 host_safe_cache 避免對同主機重複觸發阻塞式 DNS 查詢
+    """
+    trimmed = (query or "").strip()[:_NEWS_MAX_QUERY_ANALYZE_LEN]
+    if not trimmed or max_results <= 0:
+        return []
+
+    hl, gl, ceid = _resolve_news_locale(trimmed)
+    cache_key = f"{trimmed.lower()}|{hl}|{gl}|{max_results}"
+    cached = _news_rss_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    rss_url = (
+        f"https://news.google.com/rss/search?q={urllib.parse.quote(trimmed, safe='')}"
+        f"&hl={urllib.parse.quote(hl, safe='')}"
+        f"&gl={urllib.parse.quote(gl, safe='')}"
+        f"&ceid={urllib.parse.quote(ceid, safe='')}"
+    )
+    headers = {
+        "User-Agent": DIRECT_FETCH_USER_AGENT,
+        "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+        "Accept-Language": _NEWS_ACCEPT_LANG_BY_HL.get(hl, _NEWS_ACCEPT_LANG_BY_HL["en-US"]),
+    }
+
+    t0 = time.monotonic()
+    client = get_search_client()
+    try:
+        async with client.stream("GET", rss_url, headers=headers, timeout=timeout) as resp:
+            if resp.status_code != 200:
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                print(f"📰 [NewsRSS] status={resp.status_code} locale={ceid} count=0 elapsed_ms={elapsed_ms}")
+                return []
+
+            raw_final_url = getattr(resp, "url", None)
+            if isinstance(raw_final_url, (str, httpx.URL)):
+                final_url_str = str(raw_final_url).strip()
+                if final_url_str:
+                    final_host = (urllib.parse.urlsplit(final_url_str).hostname or "").lower().rstrip(".")
+                    if final_host != "news.google.com":
+                        elapsed_ms = int((time.monotonic() - t0) * 1000)
+                        print(f"📰 [NewsRSS] status=redirect_blocked locale={ceid} count=0 elapsed_ms={elapsed_ms}")
+                        return []
+
+            xml = await _read_bounded_text(resp, max_bytes=_NEWS_RSS_MAX_BYTES)
+    except asyncio.CancelledError:
+        raise
+    except SSRFSecurityError:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        print(f"📰 [NewsRSS] status=ssrf_blocked locale={ceid} count=0 elapsed_ms={elapsed_ms}")
+        return []
+    except Exception as e:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        print(f"📰 [NewsRSS] status=error locale={ceid} count=0 elapsed_ms={elapsed_ms} err={type(e).__name__}")
+        return []
+
+    if not xml or _XXE_DECL_RE.search(xml):
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        print(f"📰 [NewsRSS] status=xml_rejected locale={ceid} count=0 elapsed_ms={elapsed_ms}")
+        return []
+
+    core_tokens = _extract_news_core_tokens(trimmed)
+    host_safe_cache: Dict[Tuple[str, str, Optional[int]], bool] = {}
+    results: List[Dict[str, str]] = []
+    is_zh = hl.startswith("zh")
+
+    for block in _iter_xml_blocks_linear(xml, "item"):
+        raw_title = next(_iter_xml_blocks_linear(block, "title"), "")
+        raw_link = next(_iter_xml_blocks_linear(block, "link"), "")
+        raw_pub_date = next(_iter_xml_blocks_linear(block, "pubDate"), "")
+        raw_source = next(_iter_xml_blocks_linear(block, "source"), "")
+
+        title = _decode_rss_field(raw_title, strip_tags=True)
+        link = _decode_rss_field(raw_link, strip_tags=False)
+        pub_date = _decode_rss_field(raw_pub_date, strip_tags=False)
+        source_name = _decode_rss_field(raw_source, strip_tags=True)
+
+        if not title or not link or not link.startswith(("http://", "https://")):
+            continue
+        if not _is_relevant_news_item(trimmed, title, source_name, precomputed_tokens=core_tokens):
+            continue
+
+        try:
+            parsed_link = urllib.parse.urlsplit(link)
+            scheme = (parsed_link.scheme or "").lower()
+            host = (parsed_link.hostname or "").lower().rstrip(".")
+            port = parsed_link.port
+        except ValueError:
+            continue
+        if scheme not in ("http", "https") or not host or "@" in (parsed_link.netloc or ""):
+            continue
+
+        host_key = (scheme, host, port)
+        is_safe = host_safe_cache.get(host_key)
+        if is_safe is None:
+            is_safe = await is_safe_url_async(link)
+            host_safe_cache[host_key] = is_safe
+        if not is_safe:
+            continue
+
+        meta_parts: List[str] = []
+        if source_name:
+            meta_parts.append(f"來源: {source_name}" if is_zh else f"Source: {source_name}")
+        if pub_date:
+            meta_parts.append(f"發布: {pub_date}" if is_zh else f"Published: {pub_date}")
+        meta_suffix = f" ({' | '.join(meta_parts)})" if meta_parts else ""
+        snippet = (
+            f"[新聞/活動標題線索] {title}{meta_suffix}"
+            if is_zh
+            else f"[News/Event Headline Lead] {title}{meta_suffix}"
+        )
+
+        results.append({
+            "title": title,
+            "snippet": snippet,
+            "url": link,
+        })
+        if len(results) >= max_results:
+            break
+
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    print(f"📰 [NewsRSS] status=200 locale={ceid} count={len(results)} elapsed_ms={elapsed_ms}")
+    if results:
+        _news_rss_cache_set(cache_key, results)
+    return results
+
+
+def _is_google_news_url(url: Any) -> bool:
+    if not isinstance(url, str) or not url.strip():
+        return False
+    try:
+        host = (urllib.parse.urlsplit(url.strip()).hostname or "").lower().rstrip(".")
+        return host == "news.google.com"
+    except Exception:
+        return False
+
+
+def _strip_trailing_publisher(title: Any) -> str:
+    raw = unicodedata.normalize("NFC", str(title or "")[:_NEWS_MAX_QUERY_ANALYZE_LEN]).strip()
+    if not raw:
+        return ""
+    best_idx = -1
+    best_sep_len = 0
+    for sep in _PUBLISHER_SEPARATORS:
+        idx = raw.rfind(sep)
+        if idx > best_idx:
+            best_idx = idx
+            best_sep_len = len(sep)
+    if best_idx > 0:
+        head = raw[:best_idx].strip()
+        tail = raw[best_idx + best_sep_len :].strip()
+        if len(head) >= 4 and 1 <= len(tail) <= 40:
+            return head
+    return raw
+
+
+def _canonicalize_search_url(raw_url: Any) -> str:
+    trimmed = str(raw_url or "").strip()
+    if not trimmed:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(trimmed)
+        scheme = (parsed.scheme or "").lower()
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        if not scheme or not hostname:
+            return trimmed.lower().rstrip("/")
+        port = f":{parsed.port}" if parsed.port else ""
+        clean_path = (parsed.path or "").rstrip("/") or "/"
+        kept_qs = sorted(
+            (k, v)
+            for k, v in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            if not _MERGE_TRACKING_PARAM_RE.match(k)
+        )
+        query_str = urllib.parse.urlencode(kept_qs, doseq=True)
+        return f"{scheme}://{hostname}{port}{clean_path}" + (f"?{query_str}" if query_str else "")
+    except Exception:
+        return trimmed.lower().rstrip("/")
+
+
+def _normalize_raw_title_fingerprint(title: Any) -> str:
+    norm = _normalize_for_match(title)
+    return "".join(ch for ch in norm if unicodedata.category(ch)[0] in ("L", "N"))
+
+
+def _normalize_title_fingerprint(title: Any) -> str:
+    return _normalize_raw_title_fingerprint(_strip_trailing_publisher(title))
+
+
+def _is_duplicate_title_fingerprint(fp: str, seen_fps: List[str]) -> bool:
+    if not fp or len(fp) < 8:
+        return False
+    for seen in seen_fps:
+        if fp == seen:
+            return True
+        min_len = min(len(fp), len(seen))
+        max_len = max(len(fp), len(seen))
+        if min_len >= 10 and (min_len / max_len) >= 0.75 and (fp in seen or seen in fp):
+            return True
+    return False
+
+
+def dedupe_and_merge_search_results(
+    web_results: Optional[List[Dict[str, Any]]],
+    news_results: Optional[List[Dict[str, Any]]],
+    max_total: int = 6,
+    max_news: int = 3,
+) -> List[Dict[str, Any]]:
+    """
+    將網頁檢索結果（可能含 Cloudflare Worker 夾帶之 Google News）與直連 RSS 新聞依雙鍵去重合併：
+    - URL 標準化 + 雙層標題指紋 (fp + raw_fp) 嚴格去重
+    - 優先保留最多 (max_total - max_news) 筆 pure_web 與最多 max_news 筆新聞（直連 RSS 優先於 Worker 夾帶）
+    - 任一邊不足時由另一邊不重複項目動態補滿至 max_total
+    """
+    safe_total = max(0, int(max_total))
+    if safe_total == 0:
+        return []
+    safe_max_news = min(safe_total, max(0, int(max_news)))
+    web_quota = max(0, safe_total - safe_max_news)
+
+    pure_web: List[Dict[str, Any]] = []
+    worker_news: List[Dict[str, Any]] = []
+    for item in web_results or []:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or item.get("uri") or "").strip()
+        if not url:
+            continue
+        if _is_google_news_url(url):
+            worker_news.append(item)
+        else:
+            pure_web.append(item)
+
+    all_news: List[Dict[str, Any]] = []
+    for item in news_results or []:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or item.get("uri") or "").strip()
+        if url:
+            all_news.append(item)
+    all_news.extend(worker_news)
+
+    seen_urls = set()
+    seen_title_fps: List[str] = []
+
+    def _try_accept(item: Dict[str, Any]) -> bool:
+        url = str(item.get("url") or item.get("uri") or "").strip()
+        canon_url = _canonicalize_search_url(url)
+        if canon_url and canon_url in seen_urls:
+            return False
+        title = str(item.get("title") or "")
+        fp = _normalize_title_fingerprint(title)
+        raw_fp = _normalize_raw_title_fingerprint(title)
+        if _is_duplicate_title_fingerprint(fp, seen_title_fps) or (
+            raw_fp != fp and _is_duplicate_title_fingerprint(raw_fp, seen_title_fps)
+        ):
+            return False
+        if canon_url:
+            seen_urls.add(canon_url)
+        if len(fp) >= 8:
+            seen_title_fps.append(fp)
+        if len(raw_fp) >= 8 and raw_fp != fp:
+            seen_title_fps.append(raw_fp)
+        return True
+
+    selected_web: List[Dict[str, Any]] = []
+    overflow_web: List[Dict[str, Any]] = []
+    for idx, item in enumerate(pure_web):
+        if len(selected_web) >= web_quota:
+            overflow_web.extend(pure_web[idx:])
+            break
+        if _try_accept(item):
+            selected_web.append(item)
+
+    selected_news: List[Dict[str, Any]] = []
+    overflow_news: List[Dict[str, Any]] = []
+    for idx, item in enumerate(all_news):
+        if len(selected_news) >= safe_max_news:
+            overflow_news.extend(all_news[idx:])
+            break
+        if _try_accept(item):
+            selected_news.append(item)
+
+    merged: List[Dict[str, Any]] = selected_web + selected_news
+    if len(merged) < safe_total:
+        for item in overflow_web:
+            if len(merged) >= safe_total:
+                break
+            if _try_accept(item):
+                merged.append(item)
+    if len(merged) < safe_total:
+        for item in overflow_news:
+            if len(merged) >= safe_total:
+                break
+            if _try_accept(item):
+                merged.append(item)
+
+    return merged[:safe_total]
+
+
 # 社群媒體網址模式 (IG / Threads / FB / TikTok / X / Twitter，涵蓋行動版與短網址；嚴格錨定開頭防查詢參數偽冒)
 SOCIAL_MEDIA_PATTERN = re.compile(
     r"^\s*https?://(?:"
@@ -498,9 +1166,10 @@ _IG_SHARE_PATH_RE = re.compile(
 
 
 def __reset_web_search_cache_for_testing() -> None:
-    """顯式重置 Tier 0 URL 快取、6h 搜尋快取與 Singleflight 狀態，供 pytest 徹底隔離跨測試狀態。"""
+    """顯式重置 Tier 0 URL 快取、6h 搜尋快取、Google News RSS 快取與 Singleflight 狀態，供 pytest 徹底隔離跨測試狀態。"""
     _URL_READER_CACHE.clear()
     _WEB_SEARCH_CACHE.clear()
+    _NEWS_RSS_CACHE.clear()
     for bucket in list(_URL_INFLIGHT_BY_LOOP.values()):
         for entry in list(bucket.values()):
             task = entry[0] if entry else None

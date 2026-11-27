@@ -20,7 +20,7 @@ import RemoveItemPreviewCard, { extractRemoveFunctionCall } from "@/components/c
 import ExpensePreviewCard, { extractExpenseFunctionCall } from "@/components/chat/ExpensePreviewCard"
 import DeepResearchCard, { type DeepResearchData } from "@/components/chat/DeepResearchCard"
 import ChatComposer from "@/components/chat/ChatComposer"
-import { streamChat, streamDeepResearch } from "@/lib/sse-parser"
+import { streamChat, streamDeepResearch, sanitizeGroundingSources } from "@/lib/sse-parser"
 import { setSearchCache } from "@/lib/search-cache"
 import { toast } from "sonner"
 import { API_HOST } from "@/lib/api"
@@ -837,6 +837,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                     } else {
                         const finalOutput = streamRes.text || ""
                         const finalEngine = streamRes.engine || "gemini-flash-stream"
+                        const finalSources = streamRes.sources && streamRes.sources.length > 0 ? streamRes.sources : undefined
                         if (streamCardInserted) {
                             setMessages(prev => prev.map(m =>
                                 m.researchData?.id === streamId
@@ -848,6 +849,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                             status: "completed",
                                             outputText: finalOutput,
                                             engine: finalEngine,
+                                            ...(finalSources ? { sources: finalSources } : {}),
                                         }
                                     }
                                     : m
@@ -862,6 +864,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                     prompt: cleanPrompt,
                                     outputText: finalOutput,
                                     engine: finalEngine,
+                                    ...(finalSources ? { sources: finalSources } : {}),
                                 }
                             })])
                         }
@@ -990,6 +993,9 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                             if (activeResearchIdRef.current === interactionId) {
                                 activeResearchIdRef.current = null
                             }
+                            const pollSources = Array.isArray(pollData.sources)
+                                ? sanitizeGroundingSources(pollData.sources)
+                                : []
                             setMessages(prev => {
                                 const updated = [...prev]
                                 const targetIdx = updated.findIndex(m => m.researchData?.id === interactionId)
@@ -1003,6 +1009,7 @@ ${isStale ? '⚠️ Note: Data is over 3 hours old and may vary.' : ''}`
                                         prompt: cleanPrompt,
                                         outputText: pollData.output_text,
                                         engine: pollData.engine,
+                                        ...(pollSources.length > 0 ? { sources: pollSources } : {}),
                                         error: pollData.error
                                     }
                                 }

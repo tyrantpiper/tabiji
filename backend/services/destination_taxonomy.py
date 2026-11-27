@@ -696,6 +696,7 @@ def classify_and_filter_results(
         # 2. Domain Category Mapping
         parsed = urllib.parse.urlparse(url)
         netloc = parsed.netloc.lower()
+        host = (parsed.hostname or "").lower().rstrip(".")
 
         category = "general"
         badge = {"text": "🌐 旅遊指南", "color": "text-slate-500 bg-slate-500/10 border-slate-500/20"}
@@ -710,7 +711,13 @@ def classify_and_filter_results(
         if tax and "official_domains" in tax:
             official_rules.extend(tax["official_domains"])
 
-        if any(re.search(r, netloc) for r in official_rules):
+        if host == "news.google.com":
+            category = "news"
+            badge = {
+                "text": "📰 即時新聞",
+                "color": "text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/30 dark:border-sky-500/20",
+            }
+        elif any(re.search(r, netloc) for r in official_rules):
             category = "official"
             badge = {"text": "🏛️ 官方觀光局", "color": "text-emerald-500 bg-emerald-500/10 border-emerald-500/20"}
         # 在地論壇與食評
@@ -775,7 +782,8 @@ def classify_and_filter_results(
 
 def prune_and_align_citations(
     full_text: str, 
-    candidate_sources: List[Dict[str, Any]]
+    candidate_sources: List[Dict[str, Any]],
+    fallback_scan_limit: int = 3,
 ) -> List[Dict[str, Any]]:
     """
     AC-4 嚴格 1對1 對齊演算法：
@@ -813,7 +821,7 @@ def prune_and_align_citations(
             })
     else:
         # 兜底：若 LLM 漏寫 [i]，進行標題實體詞重疊匹配（含中日文連續字元切分與雜訊停用詞排除）
-        for idx, src in enumerate(candidate_sources[:3], 1):
+        for idx, src in enumerate(candidate_sources[:max(0, fallback_scan_limit)], 1):
             title = src.get("title", "")
             stripped_title = _CITATION_GENERIC_NOISE_RE.sub(" ", title)
             matched = False

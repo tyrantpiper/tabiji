@@ -36,7 +36,7 @@ _TITLE_NOISE_RE = re.compile(
 _CITY_TO_IATA: Tuple[Tuple[Tuple[str, ...], str], ...] = (
     (("東京", "tokyo", "成田", "羽田", "新宿", "澀谷", "渋谷", "淺草"), "TYO"),
     (("大阪", "osaka", "關西", "関西", "難波", "梅田", "京都", "kyoto", "奈良", "神戶"), "OSA"),
-    (("北海道", "札幌", "sapporo", "小樽", "富良野", "函館", "旭川", "新千歲"), "CTS"),
+    (("北海道", "hokkaido", "札幌", "sapporo", "小樽", "富良野", "函館", "旭川", "新千歲"), "CTS"),
     (("福岡", "fukuoka", "九州", "博多", "由布院", "熊本"), "FUK"),
     (("沖繩", "沖縄", "那霸", "okinawa", "naha", "石垣"), "OKA"),
     (("名古屋", "nagoya", "中部", "高山", "白川鄉"), "NGO"),
@@ -87,6 +87,159 @@ _CITY_TO_IATA: Tuple[Tuple[Tuple[str, ...], str], ...] = (
     (("奧克蘭", "auckland"), "AKL"),
     (("杜拜", "dubai"), "DXB"),
 )
+
+# IATA / 3-letter country code -> (zh_display_city, en_ascii_display_city)
+# All English values MUST remain strictly ASCII (e.g. CTS -> "Hokkaido", OKA -> "Okinawa", TPE -> "Taipei").
+_IATA_TO_DISPLAY_CITY: Dict[str, Tuple[str, str]] = {
+    "TYO": ("東京", "Tokyo"),
+    "NRT": ("東京", "Tokyo"),
+    "HND": ("東京", "Tokyo"),
+    "OSA": ("大阪", "Osaka"),
+    "KIX": ("大阪", "Osaka"),
+    "ITM": ("大阪", "Osaka"),
+    "UKB": ("神戶", "Kobe"),
+    "CTS": ("北海道", "Hokkaido"),
+    "SPK": ("札幌", "Sapporo"),
+    "HKD": ("函館", "Hakodate"),
+    "AKJ": ("旭川", "Asahikawa"),
+    "FUK": ("福岡", "Fukuoka"),
+    "KMJ": ("熊本", "Kumamoto"),
+    "KOJ": ("鹿兒島", "Kagoshima"),
+    "OKA": ("沖繩", "Okinawa"),
+    "ISG": ("石垣島", "Ishigaki"),
+    "NGO": ("名古屋", "Nagoya"),
+    "SDJ": ("仙台", "Sendai"),
+    "HIJ": ("廣島", "Hiroshima"),
+    "SEL": ("首爾", "Seoul"),
+    "ICN": ("首爾", "Seoul"),
+    "GMP": ("首爾", "Seoul"),
+    "PUS": ("釜山", "Busan"),
+    "CJU": ("濟州島", "Jeju"),
+    "TPE": ("台北", "Taipei"),
+    "TSA": ("台北", "Taipei"),
+    "KHH": ("高雄", "Kaohsiung"),
+    "RMQ": ("台中", "Taichung"),
+    "HKG": ("香港", "Hong Kong"),
+    "MFM": ("澳門", "Macau"),
+    "SIN": ("新加坡", "Singapore"),
+    "BKK": ("曼谷", "Bangkok"),
+    "DMK": ("曼谷", "Bangkok"),
+    "CNX": ("清邁", "Chiang Mai"),
+    "HKT": ("普吉島", "Phuket"),
+    "KUL": ("吉隆坡", "Kuala Lumpur"),
+    "DPS": ("峇里島", "Bali"),
+    "HAN": ("河內", "Hanoi"),
+    "SGN": ("胡志明市", "Ho Chi Minh City"),
+    "DAD": ("峴港", "Da Nang"),
+    "MNL": ("馬尼拉", "Manila"),
+    "LON": ("倫敦", "London"),
+    "LHR": ("倫敦", "London"),
+    "LGW": ("倫敦", "London"),
+    "STN": ("倫敦", "London"),
+    "PAR": ("巴黎", "Paris"),
+    "CDG": ("巴黎", "Paris"),
+    "ORY": ("巴黎", "Paris"),
+    "ROM": ("羅馬", "Rome"),
+    "FCO": ("羅馬", "Rome"),
+    "MIL": ("米蘭", "Milan"),
+    "MXP": ("米蘭", "Milan"),
+    "VCE": ("威尼斯", "Venice"),
+    "ZRH": ("蘇黎世", "Zurich"),
+    "MUC": ("慕尼黑", "Munich"),
+    "FRA": ("法蘭克福", "Frankfurt"),
+    "BER": ("柏林", "Berlin"),
+    "BCN": ("巴塞隆納", "Barcelona"),
+    "MAD": ("馬德里", "Madrid"),
+    "AMS": ("阿姆斯特丹", "Amsterdam"),
+    "VIE": ("維也納", "Vienna"),
+    "PRG": ("布拉格", "Prague"),
+    "HEL": ("赫爾辛基", "Helsinki"),
+    "REK": ("冰島", "Iceland"),
+    "KEF": ("冰島", "Iceland"),
+    "NYC": ("紐約", "New York"),
+    "JFK": ("紐約", "New York"),
+    "EWR": ("紐約", "New York"),
+    "LGA": ("紐約", "New York"),
+    "LAX": ("洛杉磯", "Los Angeles"),
+    "SFO": ("舊金山", "San Francisco"),
+    "SEA": ("西雅圖", "Seattle"),
+    "YVR": ("溫哥華", "Vancouver"),
+    "YTO": ("多倫多", "Toronto"),
+    "YYZ": ("多倫多", "Toronto"),
+    "SYD": ("雪梨", "Sydney"),
+    "MEL": ("墨爾本", "Melbourne"),
+    "AKL": ("奧克蘭", "Auckland"),
+    "DXB": ("杜拜", "Dubai"),
+    # 3-letter country code exception
+    "USA": ("美國", "USA"),
+}
+
+# Specific sub-cities sharing a metropolitan IATA hub (e.g. Kyoto/Nara/Kobe under OSA)
+_SPECIFIC_CITY_DISPLAY: Tuple[Tuple[Tuple[str, ...], Tuple[str, str]], ...] = (
+    (("京都", "kyoto"), ("京都", "Kyoto")),
+    (("奈良", "nara"), ("奈良", "Nara")),
+    (("神戶", "神户", "kobe"), ("神戶", "Kobe")),
+    (("函館", "hakodate"), ("函館", "Hakodate")),
+    (("旭川", "asahikawa"), ("旭川", "Asahikawa")),
+    (("小樽", "otaru"), ("小樽", "Otaru")),
+    (("富良野", "furano"), ("富良野", "Furano")),
+)
+
+_DISPLAY_EXTRA_NOISE_RE = re.compile(r"(?:親子|情侶|閨蜜|畢旅|必去|必吃|懶人包|冬季|夏季|春季|秋季)")
+
+
+def resolve_iata_to_display_city(destination: Optional[str], locale: str = "zh") -> str:
+    """
+    Pure in-memory reverse mapping from IATA code (e.g. 'CTS', 'NRT', 'KIX') or trip title
+    (e.g. '2026 北海道 5天4夜親子自由行') to a clean localized display city name.
+    - English outputs are strictly ASCII city names (never CJK aliases like '沖縄'/'臺北').
+    - Unknown 3-letter uppercase IATA codes return '' so bare airport codes never pollute RSS queries.
+    """
+    clean = (destination or "").strip()
+    if not clean:
+        return ""
+
+    is_en = bool(locale and str(locale).strip().lower().startswith("en"))
+    upper = clean.upper()
+
+    # 1. Exact 3-letter code (IATA airport/city or 3-letter country exception such as USA)
+    if _IATA_CODE_RE.fullmatch(upper):
+        mapped = _IATA_TO_DISPLAY_CITY.get(upper)
+        if mapped:
+            return mapped[1] if is_en else mapped[0]
+        if clean.isupper():
+            return ""
+        return clean
+
+    low = clean.lower()
+
+    # 2. Specific sub-cities sharing an IATA hub (e.g. Kyoto/Nara/Kobe inside trip titles)
+    for keywords, display_pair in _SPECIFIC_CITY_DISPLAY:
+        if any(kw in low for kw in keywords):
+            return display_pair[1] if is_en else display_pair[0]
+
+    # 3. Known local city/region keywords in trip titles (e.g. "2026 北海道 5天4夜親子自由行" -> "北海道")
+    for keywords, code in _CITY_TO_IATA:
+        if any(kw in low for kw in keywords):
+            mapped = _IATA_TO_DISPLAY_CITY.get(code)
+            if mapped:
+                return mapped[1] if is_en else mapped[0]
+
+    # 4. Parenthesized IATA code inside title (e.g. "行程 (CTS)")
+    paren = _IATA_IN_TEXT_RE.search(upper)
+    if paren:
+        mapped = _IATA_TO_DISPLAY_CITY.get(paren.group(1))
+        if mapped:
+            return mapped[1] if is_en else mapped[0]
+
+    # 5. Non-IATA trip title / city outside local map -> clean title noise
+    cleaned = _TITLE_NOISE_RE.sub(" ", clean)
+    cleaned = _DISPLAY_EXTRA_NOISE_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"[\s\-_/·・,，。!?()（）【】]+", " ", cleaned).strip()
+    if _IATA_CODE_RE.fullmatch(cleaned.upper()) and cleaned.isupper():
+        mapped = _IATA_TO_DISPLAY_CITY.get(cleaned.upper())
+        return (mapped[1] if is_en else mapped[0]) if mapped else ""
+    return cleaned[:40]
 
 _IATA_CACHE_MAX = 256
 _IATA_CACHE_TTL_SEC = 24 * 3600.0

@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useLanguage } from "@/lib/LanguageContext"
+import SourceCitation, { type GroundingSource } from "@/components/chat/SourceCitation"
 
 export interface DeepResearchData {
     id: string
@@ -14,6 +15,7 @@ export interface DeepResearchData {
     prompt: string
     outputText?: string | null
     engine?: string
+    sources?: GroundingSource[]
     error?: string
 }
 
@@ -118,6 +120,11 @@ export default function DeepResearchCard({
                             {data.outputText}
                         </ReactMarkdown>
                     </div>
+                )}
+
+                {/* 2.5 Live News & Web Source Citations */}
+                {isCompleted && data.sources && data.sources.length > 0 && (
+                    <SourceCitation sources={data.sources} />
                 )}
 
                 {/* 3. Error / Cancelled State */}

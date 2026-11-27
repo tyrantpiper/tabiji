@@ -19,6 +19,13 @@ interface SourceCitationProps {
     sources: GroundingSource[]
 }
 
+const SAFE_SOURCE_URI_RE = /^https?:\/\//i
+// 靜態完整宣告即時新聞徽章色票，確保 Tailwind CSS v4 編譯期必收錄相關 utility classes
+const NEWS_SOURCE_BADGE_COLOR =
+    "text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/30 dark:border-sky-500/20"
+const DEFAULT_SOURCE_BADGE_COLOR =
+    "text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700/60"
+
 /**
  * 📚 來源標籤 (Source Citation)
  * 
@@ -29,30 +36,38 @@ export default function SourceCitation({ sources }: SourceCitationProps) {
     const zh = lang === 'zh'
     if (!sources || sources.length === 0) return null
 
+    const safeSources = sources.filter(
+        (s) => Boolean(s && typeof s.uri === "string" && SAFE_SOURCE_URI_RE.test(s.uri.trim()))
+    )
+    if (safeSources.length === 0) return null
+
     return (
         <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
             <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 mr-0.5">
                 {zh ? '來源：' : 'Sources:'}
             </span>
-            {sources.map((source, idx) => {
-                const badgeColor = source.badge?.color || "text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700/60"
+            {safeSources.map((source, idx) => {
+                const badgeColor =
+                    source.badge?.color ||
+                    (source.category === "news" ? NEWS_SOURCE_BADGE_COLOR : DEFAULT_SOURCE_BADGE_COLOR)
                 const citationNum = source.citation_index || (idx + 1)
+                const safeUri = source.uri.trim()
                 const hostname = (() => {
                     try {
-                        return new URL(source.uri).hostname.replace(/^www\./, '')
+                        return new URL(safeUri).hostname.replace(/^www\./, '')
                     } catch {
-                        return source.uri
+                        return safeUri
                     }
                 })()
 
                 return (
                     <a
                         key={idx}
-                        href={source.uri}
+                        href={safeUri}
                         target="_blank"
                         rel="noopener noreferrer"
                         className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded-full border transition-all hover:scale-105 active:scale-95 ${badgeColor}`}
-                        title={source.snippet || source.title || source.uri}
+                        title={source.snippet || source.title || safeUri}
                     >
                         <span className="font-semibold text-[9px] opacity-80">[{citationNum}]</span>
                         {source.badge?.text && (
