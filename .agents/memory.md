@@ -48,4 +48,7 @@
 - **Single-Worker DNS Bulkhead & Bounded Streaming**: 單進程 Cloud Run (`1 vCPU / 1Gi`) 下出站 DNS 檢查隔離於獨立 4 執行緒艙壁並對白名單走 0ms 純 CPU 快車道，外部抓取一律採 `client.stream` 有界截斷、線性 $O(n)$ 正則與 Vercel 同款 `sandbox` CSP。
 - **4-Tier Zero-Cost Extraction Funnel & Two-Phase SSE**: 外部／IG 網頁萃取走 `LRU/Singleflight ➔ Markdown 協商 ➔ IG Embed (驗實質內容拒 CSR 空殼) ➔ Jina 官方標頭` 並對失效 GAS 404 熔斷 12h；SSE 串流採首字 TTFT 與出字後 25s 閒置雙階段超時，`>=140` 字元嚴禁 `event: reset`。
 - **WYSIWYS Coords Preservation & Map-Only Nav Gate**: 已預覽／手動確認座標以 `preserve_coords` ＋外國／跨城自洽檢核防鎖國誤蓋（續護撞名地標）；`link_url` 經 AI Schema ➔ 前端 ➔ 後端閘道 ➔ 讀取回退 4 層限縮地圖網域，非地圖連結自動去重歸入 `sub_items`（此地備忘錄）與 `website_link`。
+- **Antigravity Sandbox SSE & Fast-503 Rotation**: 深度研究專屬 `/api/agents/research/stream` 以遠端 Antigravity 沙盒為主聯網引擎（SSE 12s 心跳 + `CancelScope(shield=True)` 原子取消），Tier 2 移除免費金鑰必 429 之 `GoogleSearch()` 並採 `retry_5xx=False` 零空等輪替；嚴格隔離一般聊天。
+- **Datacenter ASN Search Reality & UI-Locale Authority**: 雲端機房 IP 直連 Google News RSS／裸爬 DDG 遭反爬降級（不可靠加長逾時解決），Cloud Run 預設關閉直連 RSS；`QueryRewrite` 嚴守前端介面 `locale` 主導權，純事實 `SEARCH` 卸載行程增刪工具防誤觸罐頭語。
+- **Default-Deny Pure-BFF & Cross-Stack Unicode Alignment**: 全前端 0 直連 PostgREST 資料表（如 `push_subscriptions`）採 `REVOKE ALL` Default-Deny、推播 Webhook 採獨立 Vault HMAC-SHA256、公開代理採純 IP 限流；`worker.js` 與 Python `web_search_engine.py` 維持 Latin-only NFD 21/21 對齊與線性無 ReDoS 掃描。
 

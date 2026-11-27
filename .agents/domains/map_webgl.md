@@ -3,6 +3,8 @@
 > **所屬領域**: MapLibre GL JS, WebGL Canvas, 3D Globe, 大圓航線, 手勢隔離, CSP Worker
 
 ## 🏛️ 架構決策 (Decisions)
+- **全天總覽路線跨海守衛、FOSSGIS Valhalla Polyline6 備援與 14 天邊緣快取契約 (AD-267)**: route.py 採合規 UA + WeakKeyDictionary Singleflight + 429 熔斷 + 分引擎獨立節流鎖（OSRM 與 Valhalla 互不互卡 1s），導入免 Key FOSSGIS Valhalla（Polyline6 1e-6 精度）備援，嚴禁將 straight-line 降級結果寫入 600s 快取，並於 edge-shield 啟用 /api/route SHA-256 14 天邊緣快取（僅快取真實道路結果）。MultiDayMasterMap.tsx 必套用跨海/超長途站點守衛、優先載入 selectedDay、單日超時 15s、過濾 lng===0、將 Ref 更新移入 useEffect 並於行程變更時清除陳舊 roadRoutesByDay。
+
 - **跨區確認座標保真（WYSIWYS）、外國/跨城自洽驗證與弱子字串拒寫契約 (AD-261)**: CreateItemRequest 支援 preserve_coords: bool = False，當前端 POIPreviewCard / BatchPOIPreviewCard 已視覺呈現有效座標或 ActivityEditModal 屬手動/搜尋/地圖解析座標時帶 preserve_coords=true，跳過單筆鎖國覆寫（但對無外國自洽線索之 HOMONYM_GUARD_KEYS 撞名地標仍強制自癒）。verify_and_heal_itinerary_coords 必納入 notes 與 address 並執行 is_self_consistent_foreign_place(..., allowed_countries)（攔截文字提母體國家卻帶外國座標之矛盾分店、排除裝飾性「の」與「大阪燒/廣島燒」料理尾詞）、is_self_consistent_explicit_city_place(...)（保護同國跨城明確城市景點，同時維持無城市線索單點幻覺攔截）與 _is_weak_out_of_country_match（於剝除空白前切分拉丁 token，拒絕短子字串誤撞覆寫有效原座標）。
 
 - **地圖搜尋真實視口偏置、競態序列鎖、L1 AND 精確過濾與 L2-1 宏觀分流契約 (AD-246)**: 前端所有地圖與表單搜尋入口一律省略 limit (嚴禁傳 limit: null) 與硬 bbox，lat/lng 直取 mapRef.getCenter()；必配 AbortController + 單調 requestSeqRef + selectedQuery state + INCOMPLETE_ZHUYIN_RE 早退 (不阻斷 Android Gboard 英文 isComposing)；L2 回應以 [...rawResults] 為主、去重後 localMapped 附尾，去重統一採 (normOsmType, osm_id) + 同名 <50m。useLocalGeocode.ts 強制 combineWith: 'AND'、空白/CJK 邊界 bigramTokenize 與同步 10 個日文新字體。點擊結果採 L2-1 智慧分流：isMacroGeoResult(r) 時僅在 isUsableMacroExtent (0.002° <= span <= 45° 擋跨洋領地) 通過才 fitBounds(..., { bearing: 0, pitch: 0 })，否則質心 flyTo 且不開啟 POIDetailDrawer；僅具體 POI 插紅針開抽屜。

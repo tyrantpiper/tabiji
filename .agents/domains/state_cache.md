@@ -67,6 +67,8 @@
 - **記憶體動態類別收割與零註冊表解耦法則 (Dynamic In-Memory Category Harvesting)**: 自訂分類嚴禁在後端建立 category 表與 CRUD 端點。類別自包含於 POI 的 custom:<emoji>:<name>:<colorHex> 字串中；UI 篩選器透過純函數 extractCategoriesFromPois 在記憶體中動態收割並依據 name 複合主鍵收斂，實現零伺服器負擔、離線天生相容與無 POI 時自動消退。
 
 ## 🛡️ 踩坑記錄 (Failed Paths)
+- **前端 'undefined' 字串穿透路由、SSE 缺 EOF flush/reader.cancel 與 Tailwind v4 動態類別消失陷阱 (FP-141)**: JS 中 'undefined' 為 truthy，前端缺 isValidUuid(id) 致 2 秒連打 16 筆 /api/trips/undefined/* 炸 500；chat-widget.tsx 誤讀不存在之 tripDetail.items?.length 致深度研究景點數恆為 0 並錯傳中文標題當 IATA；sse-parser.ts 缺 EOF flush 與中止 reader.cancel() 會漏末事件或洩漏連線；Tailwind v4 若未靜態完整寫出亮/暗色類別（如 border-sky-500/30 dark:border-sky-500/20）將遭編譯期裁除。
+
 - **AI Schema 誤將非地圖網址歸入 link_url、website_link 未渲染於此地備忘錄與 sw.js 建置雜訊陷阱 (FP-134)**: AI 工具宣告將 link_url 描述為官網或相關連結導致 IG Reel 污染導航網址，使 TimelineCard 導航鈕誤開 IG；且「此地備忘錄 -> 相關連結」實際渲染欄位為 sub_items 而非未掛載於彈窗的 website_link，若僅改存 website_link 使用者將看不到連結，必同步寫入 sub_items（去重）。另推送前必還原 next build 產出之 frontend/public/sw.js、sw.js.map 雜訊並清除根目錄 *.log 以通過 Root Hygiene Gate。
 
 - **暱稱清洗僅折疊 ASCII 空白、截斷後漏檢 null、撕裂 Emoji Grapheme、二次 updateProfile 反覆蓋與 ProfileView 競態陷阱 (FP-127)**: 前後端暱稱清洗若僅壓縮 ASCII 空格 ( {2,}) 會漏放全形空白/NBSP ('New\u3000Traveler')，未在 64 碼點截斷後重驗佔位名會讓 'null'+'e'+'\u0301'*61 截成 'null'，未剝除零寬/Bidi 碼點會放行隱形字串，原始切片會撕裂 ZWJ Emoji 與國旗對；若僅在 POST /api/auth/session 清洗而 LandingPage.handleLogin 與 ProfileView.handleSaveProfile 裸用 .trim()，20ms 後即以未清洗字串透過 localStorage 與 usersApi.updateProfile 反覆蓋 DB 並放行 '\u200b'/'null'/'undefined'，須抽離純模組 nickname-utils.ts 統一清洗；另 ProfileView 須以 isMountedRef/profileReqSeqRef/isEditingRef 與 user_uuid 核對封堵慢速舊回應覆蓋與跨帳號回滾競態。
