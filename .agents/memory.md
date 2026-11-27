@@ -51,4 +51,5 @@
 - **Antigravity Sandbox SSE & Fast-503 Rotation**: 深度研究專屬 `/api/agents/research/stream` 以遠端 Antigravity 沙盒為主聯網引擎（SSE 12s 心跳 + `CancelScope(shield=True)` 原子取消），Tier 2 移除免費金鑰必 429 之 `GoogleSearch()` 並採 `retry_5xx=False` 零空等輪替；嚴格隔離一般聊天。
 - **Datacenter ASN Search Reality & UI-Locale Authority**: 雲端機房 IP 直連 Google News RSS／裸爬 DDG 遭反爬降級（不可靠加長逾時解決），Cloud Run 預設關閉直連 RSS；`QueryRewrite` 嚴守前端介面 `locale` 主導權，純事實 `SEARCH` 卸載行程增刪工具防誤觸罐頭語。
 - **Default-Deny Pure-BFF & Cross-Stack Unicode Alignment**: 全前端 0 直連 PostgREST 資料表（如 `push_subscriptions`）採 `REVOKE ALL` Default-Deny、推播 Webhook 採獨立 Vault HMAC-SHA256、公開代理採純 IP 限流；`worker.js` 與 Python `web_search_engine.py` 維持 Latin-only NFD 21/21 對齊與線性無 ReDoS 掃描。
+- **RFC 1123 Host Gate & Single-Worker Linear Regex**: 單核 Cloud Run (`--workers 1 --timeout 0`) 下公開路徑正則必線性化且設輸入上限（`512`/`2048`），主機白名單一律套用 RFC 1035/1123 DNS 標籤驗證與 `http/https` 協定閘道，杜絕前導點／userinfo／ReDoS 繞過。
 
