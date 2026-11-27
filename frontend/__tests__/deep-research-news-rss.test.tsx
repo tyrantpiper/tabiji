@@ -310,4 +310,39 @@ describe("Deep Research v2 News RSS Frontend Contracts (AC-7 & Security)", () =>
         expect(seenEngines).toEqual(["antigravity", "gemini-flash-stream"])
         expect(resDegrade.engine).toBe("gemini-3.8-flash")
     })
+
+    it("streamDeepResearch cancels underlying reader on abort to trigger server disconnect cleanup", async () => {
+        const encoder = new TextEncoder()
+        const cancelSpy = vi.fn()
+        const controller = new AbortController()
+        let pulls = 0
+        const sseHanging = new ReadableStream({
+            pull(ctrl) {
+                pulls += 1
+                if (pulls === 1) {
+                    ctrl.enqueue(encoder.encode('event: thinking\ndata: {"status":"researching","engine":"antigravity"}\n\n'))
+                }
+            },
+            cancel() {
+                cancelSpy()
+            },
+        })
+        vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+            new Response(sseHanging, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+        )
+        const resAborted = await streamDeepResearch({
+            apiUrl: "https://api.example.test",
+            apiKey: "AIzaSyTestKey1234567890123456789012345678",
+            prompt: "Abort stream test",
+            signal: controller.signal,
+            onThinking: (_s, eng) => {
+                if (eng === "antigravity") {
+                    controller.abort()
+                }
+            },
+        })
+        expect(resAborted.supported).toBe(true)
+        expect(resAborted.engine).toBe("antigravity")
+        expect(cancelSpy).toHaveBeenCalledTimes(1)
+    })
 })

@@ -668,19 +668,26 @@ async def extract_search_queries_with_lite(
                             refined_code,
                             extracted_local,
                         )
+                        localized_extracted_dest = _localize_taxonomy_dest(extracted_dest, refined_code, is_en) if extracted_dest else ""
+                        if explicit_global:
+                            fallback_dest_label = explicit_global[1] if is_en else explicit_global[0]
+                        elif refined_dest["code"] != "GLOBAL":
+                            fallback_dest_label = _localize_taxonomy_dest(refined_dest["matched_name"], refined_dest["code"], is_en)
+                        else:
+                            fallback_dest_label = dest_meta["matched_destination"]
+                        if is_en and not _HAS_CJK_RE.search(str(user_msg or "")) and localized_extracted_dest and _HAS_CJK_RE.search(localized_extracted_dest):
+                            localized_extracted_dest = ""
+                        resolved_dest_label = localized_extracted_dest or fallback_dest_label
                         refined_meta = {
                             **dest_meta,
                             "destination_code": refined_code,
-                            "matched_destination": (
-                                extracted_dest
-                                or (explicit_global[0] if explicit_global else (refined_dest["matched_name"] if refined_dest["code"] != "GLOBAL" else dest_meta["matched_destination"]))
-                            ),
+                            "matched_destination": resolved_dest_label,
                             "local_region": refined_local_reg,
                             "global_region": refined_global_reg,
                         }
                         return {
                             "should_search": True,
-                            "destination": extracted_dest or refined_meta["matched_destination"],
+                            "destination": resolved_dest_label,
                             "local_query": extracted_local,
                             "global_query": extracted_global or global_q,
                             "search_query": extracted_local,

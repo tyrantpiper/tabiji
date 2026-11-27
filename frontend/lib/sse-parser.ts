@@ -491,10 +491,14 @@ export async function streamDeepResearch(
         }
     }
 
+    let readerDone = false
     try {
         while (!terminated && !params.signal?.aborted) {
             const { done, value } = await reader.read()
-            if (done) break
+            if (done) {
+                readerDone = true
+                break
+            }
             const chunk = decoder.decode(value, { stream: true })
             const { events, remaining } = parseSSE(chunk, buffer)
             buffer = remaining
@@ -518,6 +522,9 @@ export async function streamDeepResearch(
             }
         }
     } finally {
+        if (!readerDone && (params.signal?.aborted || terminated)) {
+            await reader.cancel().catch(() => { /* ignore cancel error */ })
+        }
         reader.releaseLock()
     }
 

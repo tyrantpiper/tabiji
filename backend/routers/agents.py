@@ -14,6 +14,7 @@ import inspect
 import json
 import os
 import re
+import threading
 import time
 import urllib.parse
 import uuid
@@ -136,6 +137,16 @@ async def _cancel_antigravity_best_effort(
         )
 
 
+def _consume_detached_task_exception(t: asyncio.Task) -> None:
+    """回收逾時或取消後仍於背景執行緒收尾之 Task 異常，避免 asyncio 輸出未回收例外警告。"""
+    if t.cancelled():
+        return
+    try:
+        t.exception()
+    except BaseException:
+        pass
+
+
 async def _run_blocking_with_heartbeat(
     fn,
     *,
@@ -156,7 +167,9 @@ async def _run_blocking_with_heartbeat(
             now_ts = time.monotonic()
             rem = deadline - now_ts
             if rem <= 0:
-                task.cancel()
+                task.add_done_callback(_consume_detached_task_exception)
+                if not task.done():
+                    task.cancel()
                 raise asyncio.TimeoutError(f"Blocking Antigravity call timed out after {timeout_sec}s")
             until_hb = max(0.001, heartbeat_sec - (now_ts - cur_hb))
             wait_step = min(rem, until_hb)
@@ -165,13 +178,16 @@ async def _run_blocking_with_heartbeat(
                 break
             now_after = time.monotonic()
             if now_after >= deadline:
-                task.cancel()
+                task.add_done_callback(_consume_detached_task_exception)
+                if not task.done():
+                    task.cancel()
                 raise asyncio.TimeoutError(f"Blocking Antigravity call timed out after {timeout_sec}s")
             if now_after - cur_hb >= heartbeat_sec:
                 cur_hb = now_after
                 yield ": heartbeat\n\n", None, cur_hb
         yield None, task.result(), cur_hb
     except BaseException:
+        task.add_done_callback(_consume_detached_task_exception)
         if not task.done():
             task.cancel()
         raise
@@ -744,19 +760,37 @@ _WORKSPACE_BACKTICK_RE = re.compile(r"`file:///workspace/[^`\r\n]{0,500}`", re.I
 _WORKSPACE_ANGLE_RE = re.compile(r"<file:///workspace/[^\s>\r\n]{0,500}>", re.IGNORECASE)
 _WORKSPACE_PAREN_RE = re.compile(r"\([ \t]*file:///workspace/[^\s\)\r\n]{0,500}[ \t]*\)", re.IGNORECASE)
 _WORKSPACE_BARE_RE = re.compile(r"file:///workspace/[^\s\)\]>\"'`\r\n]{0,500}", re.IGNORECASE)
-_MD_EXTERNAL_LINK_RE = re.compile(r"\[([^\]\r\n]{1,160})\]\((https?://[^\s\)\r\n]{4,1000})\)")
+_MD_EXTERNAL_LINK_RE = re.compile(
+    r"\[([^\]\r\n]{1,160})\]\((https?://[^\s\(\)\r\n]{4,800}(?:\([^\s\(\)\r\n]{1,120}\)[^\s\(\)\r\n]{0,200}){0,3})\)"
+)
+_NUMBERED_REF_MD_RE = re.compile(
+    r"(?m)^[ \t]*(?:\[(\d{1,2})\]|(\d{1,2})\.)[ \t]*[*_`]{0,3}\[([^\]\r\n]{1,160})\]\((https?://[^\s\(\)\r\n]{4,800}(?:\([^\s\(\)\r\n]{1,120}\)[^\s\(\)\r\n]{0,200}){0,3})\)"
+)
 _NUMBERED_REF_URL_RE = re.compile(
-    r"(?m)^[ \t]*(?:\[(\d{1,2})\]|(\d{1,2})\.)[ \t]*([^\r\n]{0,160}?)(https?://[^\s\)\]>\"'\r\n]{4,1000})"
+    r"(?m)^[ \t]*(?:\[(\d{1,2})\]|(\d{1,2})\.)[ \t]*([^\[\(\r\n]{0,160}?)(https?://[^\s\)\]>\"'\r\n]{4,1000})"
 )
 _URL_TRAILING_PUNCT = ".,;:!?)>]}'\"。，、；：！？）】》」』"
 _PRICING_MARKER_LINE_RE = re.compile(
-    r"(?m)^[ \t]*(?:（分潤標記追蹤碼[^\r\n]{0,80}）|\(Affiliate tracking marker[^\r\n]{0,80}\))[ \t]*\r?\n?",
+    r"(?m)^[ \t]*(?:[（(]分潤標記追蹤碼[^\r\n]{0,80}[）)]|[（(]Affiliate tracking marker[^\r\n]{0,80}[）)])[ \t]*\r?\n?",
     re.IGNORECASE,
 )
-_LEAKED_TRACKING_MARKER_RE = re.compile(
-    r"(?:（分潤標記追蹤碼[^\r\n）]{0,60}）|\(Affiliate tracking marker[^\r\n\)]{0,60}\)|\[(?:marker[:：\s]*)?602410\])",
-    re.IGNORECASE,
-)
+
+
+def _compile_leaked_tracking_marker_re(marker: str) -> re.Pattern:
+    clean_marker = (marker or "").strip()
+    if clean_marker and clean_marker != "602410":
+        marker_alt = f"(?:{re.escape(clean_marker)}|602410)"
+    else:
+        marker_alt = "602410"
+    return re.compile(
+        rf"(?:[（(【\[]\s*(?:分潤標記追蹤碼|affiliate\s+tracking\s+marker|追蹤碼|marker)\s*[:：=]?\s*{marker_alt}\s*[）)】\]]"
+        rf"|[（(【\[]\s*(?:分潤標記追蹤碼|affiliate\s+tracking\s+marker)[^\r\n）\)\]】]{{0,60}}[）)\]】]"
+        rf"|[【\[\(（]\s*(?:marker\s*[:：=]?\s*)?{marker_alt}\s*[】\]\)）])",
+        re.IGNORECASE,
+    )
+
+
+_DEFAULT_LEAKED_TRACKING_MARKER_RE = _compile_leaked_tracking_marker_re("602410")
 
 
 def _strip_internal_pricing_marker(pricing_text: str) -> str:
@@ -767,12 +801,34 @@ def _strip_internal_pricing_marker(pricing_text: str) -> str:
 
 
 def _strip_leaked_tracking_marker(text: str) -> str:
-    """縱深防禦：若模型仍於報告正文誤吐 [602410] 或分潤標記括號，於輸出前線性剝除。"""
+    """縱深防禦：若模型仍於報告正文誤吐 [602410]、【602410】、(marker: 602410) 或全半形分潤標記括號，於輸出前線性剝除（不破壞 URL 與程式碼縮排）。"""
     if not isinstance(text, str) or not text:
         return ""
-    if "602410" not in text and "分潤標記追蹤碼" not in text and "affiliate tracking marker" not in text.lower():
+    active_marker = (os.getenv("NEXT_PUBLIC_TP_MARKER") or os.getenv("TP_MARKER") or TP_MARKER or "602410").strip()
+    low = text.lower()
+    if (
+        "602410" not in text
+        and (not active_marker or active_marker not in text)
+        and "分潤標記追蹤碼" not in text
+        and "affiliate tracking marker" not in low
+    ):
         return text
-    cleaned = _LEAKED_TRACKING_MARKER_RE.sub("", text)
+    pattern = (
+        _DEFAULT_LEAKED_TRACKING_MARKER_RE
+        if active_marker in ("", "602410")
+        else _compile_leaked_tracking_marker_re(active_marker)
+    )
+    out_lines: List[str] = []
+    for line in text.splitlines():
+        if not pattern.search(line):
+            out_lines.append(line)
+            continue
+        indent_len = len(line) - len(line.lstrip(" \t"))
+        indent = line[:indent_len]
+        body = pattern.sub("", line[indent_len:])
+        body = re.sub(r"[ \t]{2,}", " ", body).strip()
+        out_lines.append(f"{indent}{body}" if body else "")
+    cleaned = "\n".join(out_lines)
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
@@ -854,10 +910,11 @@ def _sanitize_antigravity_markdown(text: str) -> str:
         body = _WORKSPACE_ANGLE_RE.sub("", body)
         body = _WORKSPACE_PAREN_RE.sub("", body)
         body = _WORKSPACE_BARE_RE.sub("", body)
-        # 僅清洗本行移除死鏈後殘留之空括號與多餘連續空白，絕不破壞其他行之程式碼縮排
+        # 僅清洗本行移除死鏈後殘留之空括號、空粗體與多餘連續空白，絕不破壞其他行之程式碼縮排
         body = re.sub(r"\([ \t]*\)", "", body)
+        body = re.sub(r"\*\*[ \t]*\*\*", "", body)
         body = re.sub(r"[ \t]{2,}", " ", body).rstrip()
-        if re.fullmatch(r"[-*•][ \t]*", body):
+        if re.fullmatch(r"(?:[-*•]|\d+\.)[ \t]*", body):
             continue
         out_lines.append(f"{indent}{body}" if body else "")
 
@@ -900,7 +957,7 @@ def _collect_urls_from_step_item(item: Any, bucket: List[Dict[str, str]], depth:
         return
 
     status = _get_str_field(item, "status").lower()
-    if status in ("error", "unsafe", "failed", "blocked"):
+    if status in ("error", "unsafe", "failed", "blocked", "paywall"):
         return
 
     raw_url = (
@@ -922,43 +979,54 @@ def _collect_urls_from_step_item(item: Any, bucket: List[Dict[str, str]], depth:
     if web_obj is not None and not isinstance(web_obj, (str, int, float, bool)):
         _collect_urls_from_step_item(web_obj, bucket, depth + 1)
 
-    for nested_key in ("results", "items", "sources", "grounding_chunks", "annotations"):
+    for nested_key in ("results", "items", "sources", "grounding_chunks", "annotations", "places"):
         nested = _get_field(item, nested_key)
         if isinstance(nested, list):
             _collect_urls_from_step_item(nested, bucket, depth + 1)
 
 
 def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -> List[Dict[str, str]]:
-    """自 interaction.steps 與報告正文萃取去重後之候選外部 http(s) 來源（合併最佳標題）。"""
+    """自 interaction.steps 與報告正文萃取去重後之候選外部 http(s) 來源（合併最佳標題，優先保留正文引文）。"""
     ordered_keys: List[str] = []
-    by_canon: Dict[str, Dict[str, str]] = {}
+    by_canon: Dict[str, Dict[str, Any]] = {}
 
-    def _upsert(url: str, title: str = "", snippet: str = "") -> None:
+    # 標題品質層級：Markdown 連結標題 (3) > steps 結構化標題 (2) > 編號清單前綴 (1)
+    def _upsert(url: str, title: str = "", snippet: str = "", *, title_rank: int = 1) -> Optional[str]:
         clean_url = _clean_extracted_url(url)
         if not clean_url:
-            return
+            return None
         canon = _canonicalize_antigravity_url(clean_url)
         clean_title = (title or "").strip()[:180]
         clean_snippet = (snippet or "").strip()[:240]
+        eff_rank = title_rank if clean_title else 0
         if canon not in by_canon:
             ordered_keys.append(canon)
             by_canon[canon] = {
                 "title": clean_title,
                 "url": clean_url,
                 "snippet": clean_snippet,
+                "_title_rank": eff_rank,
             }
         else:
             existing = by_canon[canon]
-            if clean_title and (not existing["title"] or len(clean_title) > len(existing["title"])):
+            if clean_title and (
+                not existing["title"]
+                or eff_rank > existing["_title_rank"]
+                or (eff_rank == existing["_title_rank"] and len(clean_title) > len(existing["title"]))
+            ):
                 existing["title"] = clean_title
+                existing["_title_rank"] = eff_rank
             if clean_snippet and not existing["snippet"]:
                 existing["snippet"] = clean_snippet
+        return canon
 
-    # 1. interaction.steps（url_context_result / google_search_result / retrieval_result / web / model_output annotations）
+    # 1. interaction.steps（url_context_result / google_search_result / google_maps_result / retrieval_result / web / model_output annotations）
     steps = _get_field(interaction, "steps")
     if isinstance(steps, list):
         step_bucket: List[Dict[str, str]] = []
         for step in steps[:200]:
+            if _get_field(step, "is_error") is True:
+                continue
             step_type = _get_str_field(step, "type").lower()
             if step_type == "model_output":
                 content = _get_field(step, "content")
@@ -970,6 +1038,7 @@ def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -
             elif step_type in (
                 "url_context_result",
                 "google_search_result",
+                "google_maps_result",
                 "retrieval_result",
                 "web",
                 "web_search_result",
@@ -986,10 +1055,12 @@ def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -
                 if gm is not None and not isinstance(gm, (str, int, float, bool)):
                     _collect_urls_from_step_item(gm, step_bucket)
         for cand in step_bucket:
-            _upsert(cand["url"], cand["title"], cand["snippet"])
+            _upsert(cand["url"], cand["title"], cand["snippet"], title_rank=2)
 
-    # 2. 報告正文外部 Markdown 連結 [title](https://...) 與編號參考清單
+    # 2. 報告正文外部 Markdown 連結 [title](https://...) 與明確編號參考清單
     numbered_order: Dict[str, int] = {}
+    text_link_keys: List[str] = []
+    seen_text_links = set()
     if sanitized_text:
         bounded_md = sanitized_text[:40000]
         for m in _MD_EXTERNAL_LINK_RE.finditer(bounded_md):
@@ -998,35 +1069,49 @@ def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -
             # 略過純數字標籤如 [1](https://...) 改以網域回退，除非無更好標題
             if link_title.isdigit():
                 link_title = ""
-            _upsert(link_url, link_title)
+            canon_md = _upsert(link_url, link_title, title_rank=3)
+            if canon_md and canon_md not in seen_text_links:
+                seen_text_links.add(canon_md)
+                text_link_keys.append(canon_md)
+        for m in _NUMBERED_REF_MD_RE.finditer(bounded_md):
+            ref_num_raw = m.group(1) or m.group(2)
+            link_title = (m.group(3) or "").strip()
+            link_url = (m.group(4) or "").strip()
+            if link_title.isdigit():
+                link_title = ""
+            canon_ref = _upsert(link_url, link_title, title_rank=3)
+            if canon_ref and ref_num_raw and ref_num_raw.isdigit():
+                ref_num = int(ref_num_raw)
+                if canon_ref not in numbered_order or ref_num < numbered_order[canon_ref]:
+                    numbered_order[canon_ref] = ref_num
         for m in _NUMBERED_REF_URL_RE.finditer(bounded_md):
             ref_num_raw = m.group(1) or m.group(2)
-            prefix_label = (m.group(3) or "").strip(" -:：|[]()•*")
+            prefix_label = (m.group(3) or "").strip(" -:：|[]()•*_`")
             link_url = (m.group(4) or "").strip()
-            _upsert(link_url, prefix_label)
-            clean_ref_url = _clean_extracted_url(link_url)
-            if clean_ref_url and ref_num_raw and ref_num_raw.isdigit():
-                canon_ref = _canonicalize_antigravity_url(clean_ref_url)
+            canon_ref = _upsert(link_url, prefix_label, title_rank=1)
+            if canon_ref and ref_num_raw and ref_num_raw.isdigit():
                 ref_num = int(ref_num_raw)
                 if canon_ref not in numbered_order or ref_num < numbered_order[canon_ref]:
                     numbered_order[canon_ref] = ref_num
 
-    # 若報告附帶明確編號參考清單（[1]/[2]/1.），優先依編號順序對齊內文引文，再接續其餘 steps 來源
-    if numbered_order:
-        numbered_keys = sorted(
-            [k for k in ordered_keys if k in numbered_order],
-            key=lambda k: (numbered_order[k], ordered_keys.index(k)),
-        )
-        unnumbered_keys = [k for k in ordered_keys if k not in numbered_order]
-        final_keys = numbered_keys + unnumbered_keys
-    else:
-        final_keys = ordered_keys
+    # 排序優先級：① 明確編號參考清單 ([1]/[2]/1.) ➔ ② 正文實際引用之 Markdown 連結 ➔ ③ 其餘 steps 來源
+    # 確保即使 steps 含 25+ 筆中繼搜尋結果，正文真正引用之官方連結也不會被 [:24] 裁切丟失
+    numbered_keys = sorted(
+        [k for k in ordered_keys if k in numbered_order],
+        key=lambda k: (numbered_order[k], ordered_keys.index(k)),
+    )
+    numbered_set = set(numbered_keys)
+    cited_unnumbered_keys = [k for k in text_link_keys if k not in numbered_set]
+    cited_set = numbered_set | set(cited_unnumbered_keys)
+    step_only_keys = [k for k in ordered_keys if k not in cited_set]
+    final_keys = numbered_keys + cited_unnumbered_keys + step_only_keys
 
     # 為無標題 URL 補上乾淨主機名稱（Wikipedia 自動解碼條目 slug 以通過主題相關性守衛並提升徽章可讀性）
     results: List[Dict[str, str]] = []
     for canon in final_keys:
         rec = by_canon[canon]
-        if not rec["title"]:
+        title_val = rec["title"]
+        if not title_val:
             try:
                 parsed = urllib.parse.urlsplit(rec["url"])
                 raw_host = (parsed.hostname or "").lower().rstrip(".")
@@ -1037,10 +1122,14 @@ def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -
                     decoded_slug = urllib.parse.unquote(slug).replace("_", " ").strip()
                     if decoded_slug:
                         wiki_title = f"{decoded_slug} - Wikipedia"[:180]
-                rec["title"] = wiki_title or clean_host or rec["url"]
+                title_val = wiki_title or clean_host or rec["url"]
             except ValueError:
-                rec["title"] = rec["url"]
-        results.append(rec)
+                title_val = rec["url"]
+        results.append({
+            "title": title_val,
+            "url": rec["url"],
+            "snippet": rec["snippet"],
+        })
     return results
 
 
@@ -1054,8 +1143,8 @@ async def _extract_antigravity_output_and_sources(
     """
     Antigravity 共用輸出與來源萃取器（同時供 SSE 與 GET /api/agents/interactions/{id} 使用）：
     1. 抽取文字並消毒所有 file:///workspace/... 死鏈
-    2. 自 interaction.steps 與正文萃取合法 http(s):// 外部連結並去重
-    3. 經 is_safe_url_async（單請求 host_safe_cache）驗證 SSRF 安全
+    2. 自 interaction.steps 與正文萃取合法 http(s):// 外部連結並去重（正文引文優先）
+    3. 經 is_safe_url_async（單請求 host_safe_cache + 4 併發艙壁）驗證 SSRF 安全
     4. 經 classify_and_filter_results 產生結構化 sources 徽章（最多 8 筆）
     """
     raw_text = _extract_raw_antigravity_text(interaction)
@@ -1064,8 +1153,8 @@ async def _extract_antigravity_output_and_sources(
     if not raw_candidates:
         return clean_text, []
 
-    host_safe_cache: Dict[Tuple[str, str, Optional[int]], bool] = {}
-    safe_candidates: List[Dict[str, str]] = []
+    parsed_candidates: List[Tuple[Tuple[str, str, Optional[int]], Dict[str, str]]] = []
+    unique_host_samples: Dict[Tuple[str, str, Optional[int]], str] = {}
     for cand in raw_candidates[:24]:
         url = cand["url"]
         try:
@@ -1078,16 +1167,26 @@ async def _extract_antigravity_output_and_sources(
         if scheme not in ("http", "https") or not host or "@" in (parsed.netloc or ""):
             continue
         host_key = (scheme, host, port)
-        is_safe = host_safe_cache.get(host_key)
-        if is_safe is None:
+        parsed_candidates.append((host_key, cand))
+        if host_key not in unique_host_samples:
+            unique_host_samples[host_key] = url
+
+    if not parsed_candidates:
+        return clean_text, []
+
+    dns_sem = asyncio.Semaphore(4)
+    host_safe_cache: Dict[Tuple[str, str, Optional[int]], bool] = {}
+
+    async def _check_host(h_key: Tuple[str, str, Optional[int]], sample_url: str) -> None:
+        async with dns_sem:
             try:
-                is_safe = await is_safe_url_async(url)
+                ok = await is_safe_url_async(sample_url)
             except Exception:
-                is_safe = False
-            host_safe_cache[host_key] = bool(is_safe)
-        if not is_safe:
-            continue
-        safe_candidates.append(cand)
+                ok = False
+            host_safe_cache[h_key] = bool(ok)
+
+    await asyncio.gather(*(_check_host(hk, su) for hk, su in unique_host_samples.items()))
+    safe_candidates = [cand for hk, cand in parsed_candidates if host_safe_cache.get(hk)]
 
     if not safe_candidates:
         return clean_text, []
@@ -1512,10 +1611,40 @@ async def stream_deep_research(
                 create_fn = getattr(interactions_api, "create", None)
                 last_heartbeat = time.monotonic()
                 if callable(create_fn):
+                    create_lock = threading.Lock()
+                    create_state: Dict[str, Any] = {"late_id": None, "aborted": False, "cancelled": False}
+                    create_completed_cleanly = False
+
+                    def _trigger_late_cancel(target_id: str) -> None:
+                        cancel_fn = getattr(interactions_api, "cancel", None)
+                        if not target_id or not callable(cancel_fn):
+                            return
+                        try:
+                            cancel_fn(id=target_id)
+                        except Exception as late_cancel_err:
+                            logger.warning(
+                                f"⚠️ [Agents Stream] Late Antigravity create cancel skipped ({target_id}): "
+                                f"{type(late_cancel_err).__name__}: {late_cancel_err}"
+                            )
+
+                    def _create_with_late_cancel(**create_kwargs):
+                        res = create_fn(**create_kwargs)
+                        raw_late = getattr(res, "id", None)
+                        clean_late = raw_late.strip() if isinstance(raw_late, str) and raw_late.strip() else ""
+                        should_cancel_here = False
+                        with create_lock:
+                            create_state["late_id"] = clean_late or None
+                            if create_state["aborted"] and clean_late and not create_state["cancelled"]:
+                                create_state["cancelled"] = True
+                                should_cancel_here = True
+                        if should_cancel_here:
+                            _trigger_late_cancel(clean_late)
+                        return res
+
                     try:
                         created = None
                         async for hb_chunk, res_val, last_heartbeat in _run_blocking_with_heartbeat(
-                            create_fn,
+                            _create_with_late_cancel,
                             timeout_sec=_ANTIGRAVITY_CREATE_TIMEOUT_SEC,
                             heartbeat_sec=_ANTIGRAVITY_HEARTBEAT_SEC,
                             last_heartbeat=last_heartbeat,
@@ -1533,6 +1662,7 @@ async def stream_deep_research(
                         raw_id = getattr(created, "id", None)
                         if isinstance(raw_id, str) and raw_id.strip():
                             interaction_id = raw_id.strip()
+                        create_completed_cleanly = True
                     except _INTERACTION_API_ERRORS as e:
                         err_status = _get_api_error_status(e)
                         err_msg_low = (_get_api_error_message(e) or "").lower()
@@ -1556,6 +1686,18 @@ async def stream_deep_research(
                         raise
                     except Exception as e:
                         logger.warning(f"⚠️ [Agents Stream] Antigravity interactions.create error: {e}; degrading to Tier 2")
+                    finally:
+                        if not create_completed_cleanly:
+                            cancel_here_id: Optional[str] = None
+                            with create_lock:
+                                create_state["aborted"] = True
+                                if create_state["late_id"] and not create_state["cancelled"]:
+                                    create_state["cancelled"] = True
+                                    cancel_here_id = create_state["late_id"]
+                            if cancel_here_id:
+                                await _cancel_antigravity_best_effort(
+                                    interactions_api, cancel_here_id, reason="create_abort"
+                                )
 
                 if interaction_id:
                     yield f'event: thinking\ndata: {json.dumps({"status": "researching", "engine": "antigravity"})}\n\n'
@@ -1847,16 +1989,28 @@ async def get_interaction_status(
             normalized_status = "failed"
         elif "cancel" in raw_status:
             normalized_status = "cancelled"
+        elif raw_status in ("incomplete", "budget_exceeded", "requires_action", "requires_continuation"):
+            # 非正常完結狀態：若有實質文字則保留成果視為 completed，若為空則轉為 failed 避免前端顯示空白勾選卡
+            partial_text = _sanitize_antigravity_markdown(_extract_raw_antigravity_text(interaction))
+            normalized_status = "completed" if partial_text.strip() else "failed"
         else:
             normalized_status = "completed"
 
-        clean_out_text, extracted_sources = await _extract_antigravity_output_and_sources(interaction)
+        if normalized_status == "completed":
+            clean_out_text, extracted_sources = await _extract_antigravity_output_and_sources(interaction)
+        else:
+            # 進行中／失敗／取消不觸發多餘出站 DNS 檢查或提前回傳未完成 sources
+            clean_out_text = _sanitize_antigravity_markdown(_extract_raw_antigravity_text(interaction))
+            extracted_sources = []
+
         resp_data: Dict[str, Any] = {
-            "id": interaction.id,
+            "id": getattr(interaction, "id", None) or interaction_id,
             "status": normalized_status,
             "output_text": clean_out_text or None,
             "engine": "antigravity",
         }
+        if normalized_status == "failed" and raw_status in ("incomplete", "budget_exceeded", "requires_action", "requires_continuation"):
+            resp_data["error"] = f"Antigravity interaction ended with status: {raw_status}"
         if extracted_sources:
             resp_data["sources"] = extracted_sources
         return resp_data

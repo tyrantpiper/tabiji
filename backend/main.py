@@ -2003,8 +2003,13 @@ async def stream_chat_generator(
                         if retain_place_card_tools
                         else ""
                     )
+                    citation_header_en = (
+                        "[Strict Dual-Perspective Citation & Place Card Guidance]:"
+                        if retain_place_card_tools
+                        else "[Strict Dual-Perspective Citation Guidance]:"
+                    )
                     grounding_text += (
-                        "\n[Strict Dual-Perspective Citation & Place Card Guidance]:\n"
+                        f"\n{citation_header_en}\n"
                         "1. Base your answer strictly on the search results above. Synthesize or compare [📍 Local Perspective] and [🌐 Global Traveler Insights].\n"
                         "2. Cite the matching reference number (e.g. [1], [3]) when mentioning specific facts or spots.\n"
                         "3. Never cite unrelated results; every factual claim must match its numbered source."
@@ -2030,8 +2035,13 @@ async def stream_chat_generator(
                         if retain_place_card_tools
                         else ""
                     )
+                    citation_header_zh = (
+                        "【嚴格雙重視角引用與空間卡片指引】："
+                        if retain_place_card_tools
+                        else "【嚴格雙重視角引用指引】："
+                    )
                     grounding_text += (
-                        "\n【嚴格雙重視角引用與空間卡片指引】：\n"
+                        f"\n{citation_header_zh}\n"
                         "1. 你的回答必須**嚴格依據上述搜尋結果**。請對比或整合【📍 在地視角】與【🌐 全球旅人觀點】進行客觀推薦。\n"
                         "2. 當提及具體事實、景點或推薦時，請在句末標註對應的來源編號（例如：在地人推薦這家拉麵[1]，而國際社群普遍建議[3]...）。\n"
                         "3. 嚴禁內文與來源脫節（各說各話）。你提及的內容必須能從對應的來源編號中得到印證。若某來源與旅遊無關，切勿採用。"

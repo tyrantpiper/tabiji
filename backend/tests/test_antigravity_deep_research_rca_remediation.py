@@ -987,4 +987,163 @@ async def test_hardening_factual_search_tight_regex_hangul_locale_and_accented_l
     assert captured_chat_kwargs[0]["tools"] is None
 
 
+@pytest.mark.asyncio
+async def test_adversarial_review_source_title_priority_parens_cited_order_step_error_and_running_poll_dns(monkeypatch):
+    import time as _time
+
+    # 1. Markdown numbered body/references never corrupt clean link titles; balanced Wikipedia parens preserved;
+    #    step-level is_error=True & paywall excluded; google_maps_result places extracted; cited links beat 25+ raw steps
+    many_steps = [
+        py_types.SimpleNamespace(
+            type="url_context_result",
+            result=[py_types.SimpleNamespace(status="success", url=f"https://rawstep{i}.example.com/p") for i in range(28)],
+        ),
+        py_types.SimpleNamespace(
+            type="url_context_result",
+            is_error=True,
+            result=[py_types.SimpleNamespace(status="success", url="https://step-err.example.com/bad")],
+        ),
+        py_types.SimpleNamespace(
+            type="url_context_result",
+            result=[py_types.SimpleNamespace(status="paywall", url="https://paywall.example.com/locked")],
+        ),
+        py_types.SimpleNamespace(
+            type="google_maps_result",
+            result=[
+                py_types.SimpleNamespace(
+                    places=[py_types.SimpleNamespace(name="Tokyo DisneySea", url="https://maps.google.com/?cid=999")]
+                )
+            ],
+        ),
+    ]
+    report_md = (
+        "## Plan\n"
+        "1. **Official Website** - [Tokyo Disney Resort](https://www.tokyodisneyresort.jp/en/)\n"
+        "2. Take the train to Maihama Station ([JR East](https://www.jreast.co.jp/multi/en/))\n"
+        "3. Read [Tokyo DisneySea](https://en.wikipedia.org/wiki/Tokyo_DisneySea_(park)) overview.\n"
+        "1. [file:///workspace/orphan_dead.csv](file:///workspace/orphan_dead.csv)\n"
+        "Leaked variants: (分潤標記追蹤碼: 602410) 【602410】 (marker: 602410)\n"
+        "## References\n"
+        "1. [Kiyomizu-dera Official](https://www.kiyomizudera.or.jp/en/)\n"
+    )
+    inter = py_types.SimpleNamespace(
+        id="int_adv_1",
+        status="completed",
+        output_text=report_md,
+        steps=many_steps,
+    )
+    dns_calls = []
+
+    async def fake_safe_dns(u: str) -> bool:
+        dns_calls.append(u)
+        return True
+
+    with patch.object(agents_router, "is_safe_url_async", side_effect=fake_safe_dns):
+        clean_md, srcs = await agents_router._extract_antigravity_output_and_sources(
+            inter, user_query="Tokyo DisneySea & Kiyomizu-dera 2026", locale="en", destination="TYO"
+        )
+
+    assert "file:///workspace/" not in clean_md
+    assert "602410" not in clean_md
+    assert "\n1.\n" not in clean_md
+    by_uri = {s["uri"]: s for s in srcs}
+    assert srcs[0]["uri"] == "https://www.kiyomizudera.or.jp/en/"
+    assert srcs[0]["title"] == "Kiyomizu-dera Official"
+    assert by_uri["https://www.tokyodisneyresort.jp/en/"]["title"] == "Tokyo Disney Resort"
+    assert by_uri["https://www.jreast.co.jp/multi/en/"]["title"] == "JR East"
+    assert "https://en.wikipedia.org/wiki/Tokyo_DisneySea_(park)" in by_uri
+    assert "https://step-err.example.com/bad" not in by_uri
+    assert "https://paywall.example.com/locked" not in by_uri
+    # Ensure legitimate affiliate URL is never stripped by tracking marker regex
+    assert "marker=602410" in agents_router._strip_leaked_tracking_marker(
+        "Link: https://tp.media/r?marker=602410&p=4114"
+    )
+
+    # 2. GET /api/agents/interactions/{id} skips DNS during running & maps empty budget_exceeded -> failed
+    poll_dns = []
+
+    async def _record_poll_dns(u: str) -> bool:
+        poll_dns.append(u)
+        return True
+
+    mock_poll_c = MagicMock()
+    mock_poll_c.interactions.get = MagicMock(
+        side_effect=[
+            py_types.SimpleNamespace(
+                id="int_run_nodns",
+                status="in_progress",
+                output_text="",
+                steps=[
+                    py_types.SimpleNamespace(
+                        type="url_context_result",
+                        result=[py_types.SimpleNamespace(status="success", url="https://www.japan.travel/en/spot/1/")],
+                    )
+                ],
+            ),
+            py_types.SimpleNamespace(id="int_budget_fail", status="budget_exceeded", output_text="", steps=[]),
+            py_types.SimpleNamespace(id="int_partial_ok", status="incomplete", output_text="# Partial useful report", steps=[]),
+        ]
+    )
+    tc = TestClient(app)
+    with patch("routers.agents.genai.Client", return_value=mock_poll_c), \
+         patch.object(agents_router, "is_safe_url_async", side_effect=_record_poll_dns):
+        r_run = tc.get("/api/agents/interactions/int_run_nodns", headers=HEADERS)
+        r_bgt = tc.get("/api/agents/interactions/int_budget_fail", headers=HEADERS)
+        r_par = tc.get("/api/agents/interactions/int_partial_ok", headers=HEADERS)
+    assert r_run.status_code == 200 and r_run.json()["status"] == "running" and "sources" not in r_run.json()
+    assert len(poll_dns) == 0, "Running poll must NOT run outbound DNS checks"
+    assert r_bgt.status_code == 200 and r_bgt.json()["status"] == "failed"
+    assert r_par.status_code == 200 and r_par.json()["status"] == "completed" and "Partial useful report" in r_par.json()["output_text"]
+
+    # 3. Slow interactions.create exceeding timeout cancels late orphan ID atomically when worker thread finishes
+    cancelled_late = []
+
+    def slow_create(**kwargs):
+        _time.sleep(0.14)
+        return py_types.SimpleNamespace(id="int_late_orphan_42", status="in_progress")
+
+    mock_late_c = MagicMock()
+    mock_late_c.interactions.create = MagicMock(side_effect=slow_create)
+    mock_late_c.interactions.cancel = MagicMock(side_effect=lambda id=None: cancelled_late.append(id))
+    mock_late_c.aio.models.generate_content = AsyncMock(return_value=_make_text_resp("# Fallback After Late Create"))
+    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_CREATE_TIMEOUT_SEC", 0.05)
+    monkeypatch.setattr(agents_router, "_ANTIGRAVITY_HEARTBEAT_SEC", 0.02)
+    with patch("routers.agents.genai.Client", return_value=mock_late_c), \
+         patch.object(agents_router, "_fetch_live_pricing_context", AsyncMock(return_value="")), \
+         patch.object(agents_router, "_fetch_live_research_intelligence", AsyncMock(return_value=("", []))):
+        r_late = tc.post(
+            "/api/agents/research/stream",
+            json={"prompt": "Tokyo slow create test", "locale": "en"},
+            headers=HEADERS,
+        )
+    assert r_late.status_code == 200
+    assert "Fallback After Late Create" in r_late.text
+    _time.sleep(0.22)
+    assert cancelled_late == ["int_late_orphan_42"]
+
+    # 4. extract_search_queries_with_lite in locale="en" keeps English destination metadata (never leaks Chinese explicit_global)
+    mock_en_lite = MagicMock()
+    mock_en_lite.aio.models.generate_content = AsyncMock(
+        return_value=_make_text_resp(
+            json.dumps({
+                "should_search": True,
+                "destination": "",
+                "local_query": "Blue Lagoon Iceland opening hours 2026",
+                "global_query": "Blue Lagoon Iceland hours reddit",
+            })
+        )
+    )
+    res_iceland = await destination_taxonomy.extract_search_queries_with_lite(
+        "What are the opening hours of Blue Lagoon in Iceland?",
+        trip_destination="2026 冰島極光自由行",
+        locale="en",
+        api_key=TEST_KEY,
+        genai_client=mock_en_lite,
+    )
+    assert res_iceland["destination"] == "Iceland"
+    assert res_iceland["metadata"]["matched_destination"] == "Iceland"
+    assert not destination_taxonomy._HAS_CJK_RE.search(res_iceland["destination"])
+
+
+
 
