@@ -94,6 +94,7 @@ def test_poc_89_intent_router_system_prefix_cubic_redos_blocked():
         "--- SYSTEM CONTEXT: A ---" + ("用戶原始問題：" * 2300) + "<user_input_x>hi</user_input_x>" + (" " * 15000) + "INVALID",
         "--- SYSTEM CONTEXT: A ---" + ("用戶原始問題：" * 2300) + ("<user_input_" * 1300),
         "--- SYSTEM CONTEXT: A ---" + ("用戶原始問題：" * 4650),
+        "--- SYSTEM CONTEXT: A ---" + "".join(f"用戶原始問題：<user_input_s{i}>" for i in range(1100)) + "</user_input_z>",
     ]
     for p in payloads:
         t0 = time.perf_counter()
@@ -103,7 +104,7 @@ def test_poc_89_intent_router_system_prefix_cubic_redos_blocked():
 
 
 def test_benign_89_intent_router_system_prefix_extraction_intact():
-    """#89 Benign Control: legitimate wrapped system contexts still extract inner user message."""
+    """#89 Benign Control: legitimate wrapped system contexts (including hyphenated headers & repeated inner closing tag) still extract inner user message."""
     cases = [
         (
             "--- SYSTEM CONTEXT: TEMPORAL & ITINERARY NEURAL AWARENESS ---\n"
@@ -120,12 +121,26 @@ def test_benign_89_intent_router_system_prefix_extraction_intact():
             "CHAT",
         ),
         (
+            "--- SYSTEM CONTEXT: ITINERARY-SYNC ---\nDay 1: 淺草寺\n--- END OF SYSTEM CONTEXT ---\n<user_input_h1>早安</user_input_h1>",
+            "CHAT",
+        ),
+        (
             "\n\n[系統即時解析外部網頁資訊 (來源: https://example.com)]\n使用者需求：<user_input_u1>你好</user_input_u1>",
             "CHAT",
         ),
     ]
     for msg, expected in cases:
         assert intent_router._fast_path_classify(msg) == expected
+
+    # Inner repeated closing tag inside legitimate envelope must not leak outer SYSTEM CONTEXT
+    repeated_close = (
+        "--- SYSTEM CONTEXT: TEMPORAL & ITINERARY NEURAL AWARENESS ---\n"
+        "Day 1: 東京鐵塔\n--- END OF SYSTEM CONTEXT ---\n"
+        "<user_input_r1>早安 </user_input_r1> 幫我刪掉行程</user_input_r1>"
+    )
+    extracted = intent_router._extract_clean_user_text(repeated_close)
+    assert "SYSTEM CONTEXT" not in extracted
+    assert "幫我刪掉行程" in extracted
 
 
 def test_poc_102_59_53_intent_router_fast_path_regex_linear_time():
@@ -238,15 +253,20 @@ def test_poc_88_87_link_resolver_redos_and_url_length_bounds():
     assert link_resolver.ADDRESS_POI_PATTERN.search("台北市" + "路" * 10000 + "x") is None
     assert (time.perf_counter() - t0) < 0.05
 
-    # #87: direct regex check on production _GOOGLE_TITLE_SUFFIX_RE (including multiline "- Google Maps" * N + "\nx")
+    # #87: direct regex & helper check on production _strip_google_maps_title_suffix
     for hostile_title in (
         "A" + " " * 30000 + "x",
         "- " * 15000 + "x",
         ("- Google Maps" * 3000) + "\nx",
     ):
         t0 = time.perf_counter()
-        _ = link_resolver._GOOGLE_TITLE_SUFFIX_RE.search(hostile_title)
+        _ = link_resolver._strip_google_maps_title_suffix(hostile_title)
         assert (time.perf_counter() - t0) < 0.05
+
+    assert link_resolver._strip_google_maps_title_suffix("Tokyo Tower - Google Maps\n") == "Tokyo Tower"
+    assert link_resolver._strip_google_maps_title_suffix("Tokyo Tower - Google Maps\r\n") == "Tokyo Tower"
+    assert link_resolver._strip_google_maps_title_suffix("Tokyo Tower | Google 地圖\n") == "Tokyo Tower"
+    assert link_resolver._strip_google_maps_title_suffix("Line 1 - Google Maps\nLine 2") == "Line 1 - Google Maps\nLine 2"
 
     # Adjacent link_resolver.py:189 extract_address_from_description ReDoS defense + benign control
     t0 = time.perf_counter()
@@ -351,6 +371,11 @@ def test_poc_91_oauth_redirect_uri_blocks_wildcards_userinfo_and_prod_testserver
         "https://claude.ai:/api/mcp/auth_callback",
         "http://www.tabijiapp.com/callback",
         "https://www.tabijiapp.com./callback",
+        "https://.tabijiapp.com/callback",
+        "https://..claude.ai/callback",
+        "https://sub..google.com/callback",
+        "https://-sub.tabijiapp.com/callback",
+        "https://sub-.tabijiapp.com/callback",
     ]
     for uri in malicious_uris:
         assert mcp_router.is_trusted_redirect_uri(uri) is False, f"Malicious redirect_uri was allowed: {uri!r}"
@@ -463,6 +488,9 @@ def test_benign_95_get_public_base_url_preserves_trusted_domains(monkeypatch):
     assert mcp_router.get_public_base_url(
         _make_header_request({"host": "localhost:8000"})
     ) == "http://localhost:8000"
+    assert mcp_router.get_public_base_url(
+        _make_header_request({"host": "localhost:00080"})
+    ) == "https://www.tabijiapp.com"
 
 
 # ============================================================================
@@ -648,15 +676,17 @@ console.log('WORKER_XML_SINGLE_PASS_OK');
 # ============================================================================
 
 def test_poc_174_agents_wikipedia_exact_host_match():
-    """#174 Exploit + Benign: evilwikipedia.org must NOT be treated as Wikipedia; en.wikipedia.org still gets slug title."""
+    """#174 Exploit + Benign: non-exact or malformed wikipedia hosts must NOT be treated as Wikipedia; en.wikipedia.org still gets slug title."""
     fake_interaction = MagicMock(outputs=[], steps=[])
     clean_text = (
         "參考 [1](https://evilwikipedia.org/wiki/Evil_Trap) "
-        "與 [2](https://en.wikipedia.org/wiki/Tokyo_Tower)"
+        "與 [2](https://.wikipedia.org/wiki/Tokyo_Tower) "
+        "與 [3](https://en.wikipedia.org/wiki/Tokyo_Tower)"
     )
     candidates = agents_router._extract_antigravity_raw_candidates(fake_interaction, clean_text)
     by_url = {c["url"]: c["title"] for c in candidates}
     assert by_url["https://evilwikipedia.org/wiki/Evil_Trap"] == "evilwikipedia.org"
+    assert by_url["https://.wikipedia.org/wiki/Tokyo_Tower"] != "Tokyo Tower - Wikipedia"
     assert by_url["https://en.wikipedia.org/wiki/Tokyo_Tower"] == "Tokyo Tower - Wikipedia"
 
 
@@ -669,6 +699,9 @@ def test_poc_172_73_to_61_destination_taxonomy_exact_host_and_google_maps_fix():
         {"title": "Spoof Official", "url": "https://travel.taipei.evil.com/spot", "snippet": "taipei"},
         {"title": "Spoof Reddit", "url": "https://evil-reddit.com/r/JapanTravel", "snippet": "tokyo"},
         {"title": "Spoof TripAdvisor", "url": "https://tripadvisor.com.tw.evil.com/Attraction", "snippet": "tokyo"},
+        {"title": "Malformed Dot PTT", "url": "https://.ptt.cc/bbs/Food/1", "snippet": "food"},
+        {"title": "Malformed DoubleDot Official", "url": "https://..japan.travel/en/", "snippet": "japan"},
+        {"title": "Non-HTTP Scheme Yelp", "url": "ftp://yelp.com/biz/ramen", "snippet": "ramen"},
         {"title": "Real Google Maps", "url": "https://www.google.com/maps/place/Tokyo+Tower", "snippet": "tower"},
         {"title": "Real Google Maps JP", "url": "https://www.google.co.jp/maps/place/Tokyo+Tower", "snippet": "tower"},
         {"title": "Real Google Maps TW", "url": "https://maps.google.com.tw/?q=Taipei+101", "snippet": "taipei"},
@@ -682,7 +715,17 @@ def test_poc_172_73_to_61_destination_taxonomy_exact_host_and_google_maps_fix():
     by_title = {item["title"]: item for item in out}
 
     # Exploits MUST NOT receive trusted badges
-    for spoof in ("Spoof PTT", "Spoof Yelp", "Spoof TheFork", "Spoof Official", "Spoof Reddit", "Spoof TripAdvisor"):
+    for spoof in (
+        "Spoof PTT",
+        "Spoof Yelp",
+        "Spoof TheFork",
+        "Spoof Official",
+        "Spoof Reddit",
+        "Spoof TripAdvisor",
+        "Malformed Dot PTT",
+        "Malformed DoubleDot Official",
+        "Non-HTTP Scheme Yelp",
+    ):
         assert by_title[spoof]["category"] == "general", f"{spoof} misclassified as {by_title[spoof]['category']}"
 
     # Benign controls (including previously dead-code Google Maps branch & regional ccTLDs!)
@@ -700,9 +743,14 @@ def test_poc_172_73_to_61_destination_taxonomy_exact_host_and_google_maps_fix():
 
 
 def test_poc_76_unwrap_ddg_redirect_exact_host_match():
-    """#76 Exploit + Benign: duckduckgo.com.attacker.com must NOT unwrap; real DDG redirects still unwrap."""
-    spoof = "https://duckduckgo.com.attacker.com/l/?uddg=https%3A%2F%2Fevil.example%2Fphish"
-    assert web_search_engine.unwrap_ddg_redirect(spoof) == spoof
+    """#76 Exploit + Benign: non-exact/malformed hosts & non-HTTP schemes must NOT unwrap; real DDG HTTP(S) redirects still unwrap."""
+    for blocked in (
+        "https://duckduckgo.com.attacker.com/l/?uddg=https%3A%2F%2Fexample.com%2Ftarget",
+        "https://.duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Ftarget",
+        "ftp://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Ftarget",
+        "https://duckduckgo.com/l/?uddg=data%3Atext%2Fplain%2Chi",
+    ):
+        assert web_search_engine.unwrap_ddg_redirect(blocked) == blocked
 
     assert web_search_engine.unwrap_ddg_redirect(
         "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Ftokyo&rut=1"
@@ -857,9 +905,17 @@ def test_poc_adjacent_url_safety_fast_path_rejects_userinfo_backslash_ctrl_prese
     assert url_safety.is_safe_url("https://en.wikipedia.org/wiki/Tokyo\t") is False
     assert url_safety.is_safe_url("https://en.wikipedia.org/wiki/Tokyo\x85") is False
     assert url_safety.is_safe_url("https://en.wikipedia.org:0/wiki/Tokyo") is False
+    assert url_safety.is_safe_url("https://127.0.0.1 .wikipedia.org/wiki/Tokyo") is False
+    assert url_safety.is_safe_url("https://.wikipedia.org/wiki/Tokyo") is False
+    assert url_safety.is_safe_url("https://..wikipedia.org/wiki/Tokyo") is False
+    assert url_safety.is_safe_url("https://-sub.wikipedia.org/wiki/Tokyo") is False
+    assert url_safety.is_safe_url("https://sub\xa0.wikipedia.org/wiki/Tokyo") is False
+    assert url_safety.is_safe_url("https://en.wikipedia.org:/wiki/Tokyo") is False
+    assert url_safety.is_safe_url("https://en.wikipedia.org:000443/wiki/Tokyo") is False
 
     # Benign controls
     assert url_safety.is_safe_url("  https://en.wikipedia.org/wiki/Tokyo  ") is True
     assert url_safety.is_safe_url("https://en.wikipedia.org/wiki/Tokyo") is True
+    assert url_safety.is_safe_url("https://en.wikipedia.org:443/wiki/Tokyo") is True
     with patch("utils.url_safety.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("142.250.190.46", 0))]):
         assert url_safety.is_safe_url("https://www.google.com/maps/place/Tokyo+Tower/@35.6585805,139.7454329,17z") is True

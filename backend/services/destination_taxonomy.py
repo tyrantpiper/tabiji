@@ -749,19 +749,30 @@ _GOOGLE_MAPS_DOMAINS = (
 )
 
 
+_VALID_DNS_HOST_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+
+
+def _is_valid_dns_host(host: str) -> bool:
+    return bool(host and len(host) <= 253 and _VALID_DNS_HOST_RE.fullmatch(host))
+
+
 def _host_matches(host: str, *domains: str) -> bool:
-    """精確主機名或點分隔子網域比對（防範 URL 子字串偽造與非預期徽章配對）"""
-    if not host:
+    """精確主機名或點分隔子網域比對（拒絕前導點/空標籤等畸形主機名，防範 URL 子字串偽造與非預期徽章配對）"""
+    if not _is_valid_dns_host(host):
         return False
     for domain in domains:
         d = domain.lower().lstrip(".")
-        if host == d or host.endswith(f".{d}"):
+        if d and (host == d or host.endswith(f".{d}")):
             return True
     return False
 
 
 def _is_google_maps_url(host: str, path: str) -> bool:
     """辨識 Google Maps 連結（修復原 '\"google.com/maps\" in netloc' 死碼，含區域網域與短網址）"""
+    if not _is_valid_dns_host(host):
+        return False
     if host == "maps.app.goo.gl":
         return True
     if host == "goo.gl" and (path == "/maps" or path.startswith("/maps/")):
@@ -813,7 +824,8 @@ def classify_and_filter_results(
         try:
             parsed = urllib.parse.urlparse(url)
             scheme = (parsed.scheme or "").lower()
-            host = (parsed.hostname or "").lower().rstrip(".")
+            raw_host = (parsed.hostname or "").lower()
+            host = raw_host[:-1] if raw_host.endswith(".") else raw_host
             path = (parsed.path or "").lower()
         except ValueError:
             continue
@@ -843,7 +855,9 @@ def classify_and_filter_results(
                 if cleaned_dom:
                     official_domains.append(cleaned_dom)
 
-        if scheme in ("http", "https") and host == "news.google.com":
+        if scheme not in ("http", "https"):
+            pass
+        elif host == "news.google.com":
             category = "news"
             badge = {
                 "text": "📰 即時新聞",

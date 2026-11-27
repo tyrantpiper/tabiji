@@ -56,6 +56,9 @@ _LOCAL_BASE_DOMAINS = frozenset({
 })
 TRUSTED_BASE_DOMAINS = set(_PROD_TRUSTED_BASE_DOMAINS | _LOCAL_BASE_DOMAINS)
 _SAFE_HOST_HEADER_RE = re.compile(r"^[a-z0-9.-]+(?::(\d{1,5}))?$")
+_REDIRECT_SAFE_HOSTNAME_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
 _CANONICAL_PUBLIC_BASE_URL = "https://www.tabijiapp.com"
 
 
@@ -78,9 +81,11 @@ def _parse_trusted_host_header(raw_value: Optional[str], *, allow_local: bool) -
     port_str = m.group(1)
     if port_str is not None:
         port_num = int(port_str)
-        if port_num < 1 or port_num > 65535:
+        if port_num < 1 or port_num > 65535 or port_str != str(port_num):
             return None
     hostname = candidate.split(":", 1)[0]
+    if len(hostname) > 253 or not _REDIRECT_SAFE_HOSTNAME_RE.fullmatch(hostname):
+        return None
     if hostname in _PROD_TRUSTED_BASE_DOMAINS:
         if port_str not in (None, "443"):
             return None
@@ -222,8 +227,6 @@ TRUSTED_VERCEL_PREVIEW_HOST_RE = re.compile(
     r"^travel-[a-z0-9-]+-tyrantpipers-projects\.vercel\.app$"
 )
 
-_REDIRECT_SAFE_HOSTNAME_RE = re.compile(r"^[a-z0-9.-]+$")
-
 
 def is_trusted_redirect_uri(redirect_uri: str) -> bool:
     """驗證 OAuth redirect_uri 是否屬於受信信任之網域，外部網域強制 HTTPS，嚴防 Open Redirect 與 Account Takeover"""
@@ -248,7 +251,12 @@ def is_trusted_redirect_uri(redirect_uri: str) -> bool:
         return False
 
     hostname = (parsed.hostname or "").lower()
-    if not hostname or hostname.endswith(".") or not _REDIRECT_SAFE_HOSTNAME_RE.fullmatch(hostname):
+    if (
+        not hostname
+        or len(hostname) > 253
+        or hostname.endswith(".")
+        or not _REDIRECT_SAFE_HOSTNAME_RE.fullmatch(hostname)
+    ):
         return False
     expected_netloc = hostname if port is None else f"{hostname}:{port}"
     if (parsed.netloc or "").lower() != expected_netloc:

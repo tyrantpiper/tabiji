@@ -190,6 +190,23 @@ _GOOGLE_TITLE_SUFFIX_RE = re.compile(
 )
 
 
+def _strip_google_maps_title_suffix(raw_title: str) -> str:
+    """去除 Google Maps 標題尾綴（支援 URL 解碼與尾端換行，無 .*$ 線性搜尋防 ReDoS）"""
+    if not raw_title or not isinstance(raw_title, str):
+        return ""
+    bounded = raw_title[:1500]
+    if "%" in bounded:
+        try:
+            bounded = unquote_plus(bounded)
+        except Exception:
+            pass
+    cleaned = bounded.strip()[:500]
+    suffix_match = _GOOGLE_TITLE_SUFFIX_RE.search(cleaned)
+    if suffix_match and "\n" not in cleaned[suffix_match.end():]:
+        return cleaned[:suffix_match.start()].strip()
+    return cleaned
+
+
 def extract_address_from_description(desc: str) -> str | None:
     """從 Google Maps 的 og:description 提取真實門牌 (例如: '老新台菜 · 807台灣高雄市三民區九如二路227號')"""
     if not desc or not isinstance(desc, str):
@@ -787,18 +804,8 @@ async def resolve_google_maps_link(url: str) -> Dict[str, Any]:
     result["address"] = resolved_address
 
     # 🧬 繁中地名清洗與解碼 (去除 URL 編碼與 - Google 地圖 後綴；無 .*$ 線性搜尋防 ReDoS)
-    raw_title = (result.get("metadata", {}).get("title") or result.get("query") or "")[:1500]
-    if "%" in raw_title:
-        try:
-            raw_title = unquote_plus(raw_title)
-        except Exception:
-            pass
-    raw_title = raw_title[:500]
-    suffix_match = _GOOGLE_TITLE_SUFFIX_RE.search(raw_title)
-    if suffix_match and "\n" not in raw_title[suffix_match.end():]:
-        clean_title = raw_title[:suffix_match.start()].strip()
-    else:
-        clean_title = raw_title.strip()
+    raw_title = result.get("metadata", {}).get("title") or result.get("query") or ""
+    clean_title = _strip_google_maps_title_suffix(raw_title)
 
     # 🇹🇼 台灣地址與景點名稱分離演算法 (Zero-Cost 分離純店名與純門牌)
     extracted_addr = None

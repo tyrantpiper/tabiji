@@ -20,7 +20,7 @@
       ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
-      "validator_details": "Eliminated O(N^3) overlapping quantifiers in SYSTEM_PREFIX_ANCHOR_RE with lstrip() + [:256] prefix slice and bounded non-overlapping grammar, eliminated O(N^2) boundary loop in _extract_clean_user_text, and linearized REMOVE_PATTERN/EXPENSE_PATTERN/ITINERARY_PATTERN (#89, #102, #59, #53). Verified <20ms on 20k-32k hostile payloads.",
+      "validator_details": "Eliminated O(N^3) overlapping quantifiers in SYSTEM_PREFIX_ANCHOR_RE with lstrip() + [:256] prefix slice and bounded non-overlapping grammar (preserving hyphenated first tokens), replaced O(N^2) boundary loop in _extract_clean_user_text with single-pass close-tag indexing (also preventing inner repeated close-tag context leakage), and linearized REMOVE_PATTERN/EXPENSE_PATTERN/ITINERARY_PATTERN (#89, #102, #59, #53). Verified <20ms on 20k-32k hostile payloads.",
       "remediated_at": "2026-11-27T14:35:00Z",
       "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
     },
@@ -61,7 +61,7 @@
       ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
-      "validator_details": "Bounded ADDRESS_POI_PATTERN with disjoint road character class + >300 char short-circuit, eliminated O(N^2) .*$ backtracking in #87 Google title suffix strip and extract_address_from_description, preserved encoded title decoding up to 1500 raw chars, and enforced max_length=2048 on link resolver routes (#88, #87).",
+      "validator_details": "Bounded ADDRESS_POI_PATTERN with disjoint road character class + >300 char short-circuit, eliminated O(N^2) .*$ backtracking in #87 Google title suffix strip (via _strip_google_maps_title_suffix preserving trailing-newline stripping) and extract_address_from_description, preserved encoded title decoding up to 1500 raw chars, and enforced max_length=2048 on link resolver routes (#88, #87).",
       "remediated_at": "2026-11-27T14:35:00Z",
       "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
     },
@@ -101,7 +101,7 @@
       ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
-      "validator_details": "Removed wildcard vercel.app and googleusercontent.com from OAuth redirect allowlist in favor of exact production/Google redirect hosts + project preview regex; rejected userinfo/backslash/C0+C1 control-chars/any-fragment/port-0/empty-colon/non-443/prod-testserver and preserved RFC 3986 %20 state encoding + existing callback query params; hardened get_public_base_url with strict host regex and canonical fallback (#91, #95).",
+      "validator_details": "Removed wildcard vercel.app and googleusercontent.com from OAuth redirect allowlist in favor of exact production/Google redirect hosts + project preview regex; enforced strict RFC 1123 DNS hostname grammar and rejected userinfo/backslash/C0+C1 control-chars/any-fragment/port-0/leading-zero-port/empty-colon/non-443/prod-testserver while preserving RFC 3986 %20 state encoding + existing callback query params; hardened get_public_base_url with strict host/port validation and canonical fallback (#91, #95).",
       "remediated_at": "2026-11-27T14:35:00Z",
       "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
     },
@@ -155,7 +155,7 @@
       ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
-      "validator_details": "Replaced substring URL checks with exact dot-delimited hostname matching across routers/agents.py (#174), services/destination_taxonomy.py (#172, #73-#61 + Google Maps path dead-code fix), services/web_search_engine.py (#76), and frontend/lib/utils.ts (#37).",
+      "validator_details": "Replaced substring URL checks with exact dot-delimited RFC 1123 hostname matching + HTTP(S) scheme gating across routers/agents.py (#174), services/destination_taxonomy.py (#172, #73-#61 + Google Maps path dead-code fix), services/web_search_engine.py (#76, also verifying HTTP(S) unwrapped targets), and frontend/lib/utils.ts (#37).",
       "remediated_at": "2026-11-27T14:35:00Z",
       "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py and frontend/__tests__/cloudinary-proxy-and-preferences-sentinel.test.ts"
     },
@@ -169,7 +169,7 @@
       ],
       "status": "REMEDIATED",
       "report_ref": "docs/security/reports/2026-11/security_sentinel_report_2026-11-25_security_hardening_planb.md",
-      "validator_details": "Enforced IP-only get_public_ip_rate_limit_key across /api/poi/ai-enrich (60/min), /api/geocode/{search,reverse,resolve-link,resolve-address} (60/min), /api/poi/resolve-link (30/min), and /api/poi/media-proxy (30/min) while preserving per-API-key isolation on /api/chat/stream; hardened url_safety fast-path and get_safe_ip against @ userinfo, backslashes, pre-strip C0/C1 control characters, and port 0.",
+      "validator_details": "Enforced IP-only get_public_ip_rate_limit_key across /api/poi/ai-enrich (60/min), /api/geocode/{search,reverse,resolve-link,resolve-address} (60/min), /api/poi/resolve-link (30/min), and /api/poi/media-proxy (30/min) while preserving per-API-key isolation on /api/chat/stream; hardened url_safety fast-path and get_safe_ip via shared _validate_and_parse_host against @ userinfo, backslashes, pre-strip C0/C1 control characters, authority whitespace, malformed DNS labels, empty/leading-zero ports, and port 0.",
       "remediated_at": "2026-11-27T14:35:00Z",
       "resolution": "Enforced in backend/tests/test_codeql_34_remediation_sentinel.py"
     },

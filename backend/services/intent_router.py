@@ -103,7 +103,7 @@ INVISIBLE_FORMAT_CHARS_RE = re.compile(
 
 # 🛡️ 系統合法前置與後置 Context 標記：涵蓋全庫所有系統脈絡包裝格式（非重疊有界正則，呼叫端先 lstrip 與 [:256] 切片防 O(N^3) ReDoS）
 SYSTEM_PREFIX_ANCHOR_RE = re.compile(
-    r"^(?:--- SYSTEM CONTEXT: (?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\)|[A-Za-z0-9_]{1,40}(?: [A-Za-z0-9_-]{1,40}){0,8}) ---|--- USER PREFERENCES|【系統背景|【當前行程脈絡】|用戶詢問關於「|The user is asking about \"[^\"\n]{1,200}\"\.|User is asking about [\"「]|"
+    r"^(?:--- SYSTEM CONTEXT: (?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\)|[A-Za-z0-9_][A-Za-z0-9_-]{0,39}(?: [A-Za-z0-9_-]{1,40}){0,8}) ---|--- USER PREFERENCES|【系統背景|【當前行程脈絡】|用戶詢問關於「|The user is asking about \"[^\"\n]{1,200}\"\.|User is asking about [\"「]|"
     r"📍 \*\*(?:附近|Nearby )|🔬 以下是來自維基百科|💰 \*\*(?:即時機票參考價格|Live Flight Fare Reference )|"
     r"\[系統即時解析外部網頁資訊|\[Live External Webpage Content \(Source: |\[SYSTEM REAL-TIME WEB PAGE ANALYSIS|\[系統提示：使用者上傳了一張圖片|\[System Notice: The uploaded image could not be parsed\]|\[SYSTEM HINT:|\[WEATHER\]|\[2026 Neural Weather\]|\[CURRENT TIME)"
 )
@@ -112,6 +112,7 @@ SYSTEM_BOUNDARY_END_RE = re.compile(
     re.DOTALL,
 )
 USER_INPUT_OPEN_TAG_RE = re.compile(r"<user_input_([a-zA-Z0-9_-]{1,64})>[ \t\r\n]{0,8}")
+USER_INPUT_CLOSE_TAG_RE = re.compile(r"</user_input_([a-zA-Z0-9_-]{1,64})>")
 SYSTEM_ALLOWED_SUFFIX_RE = re.compile(
     r"^(?:$|📍 \*\*(?:附近|Nearby )|--- SYSTEM CONTEXT: (?:TEMPORAL & ITINERARY NEURAL AWARENESS|NEURAL ITINERARY CONNECTION \(SLIDING WINDOW\)) ---|--- USER PREFERENCES|💰 \*\*(?:即時機票參考價格|Live Flight Fare Reference )|"
     r"\[CURRENT TIME|\[WEATHER\]|請根據以上(?:即時資料|資料)回答用戶問題|(?:Please )?[Aa]nswer the user's question based on)"
@@ -148,8 +149,11 @@ def _extract_clean_user_text(message: str, max_len: int = 500) -> str:
         if not candidate_starts:
             candidate_starts = [0]
         last_any_close = bounded_raw.rfind("</user_input_")
+        last_close_by_salt: Dict[str, int] = {}
+        if last_any_close != -1:
+            for close_m in USER_INPUT_CLOSE_TAG_RE.finditer(bounded_raw):
+                last_close_by_salt[close_m.group(1)] = close_m.start()
         last_open_start = -1
-        missing_close_salts: set[str] = set()
         unclosed_fallback: Optional[str] = None
         for start_pos in candidate_starts:
             if start_pos <= last_open_start:
@@ -165,13 +169,8 @@ def _extract_clean_user_text(message: str, max_len: int = 500) -> str:
                 break
             outer_salt = open_match.group(1)
             close_tag = f"</user_input_{outer_salt}>"
-            if outer_salt in missing_close_salts:
-                abs_close_idx = -1
-            else:
-                abs_close_idx = bounded_raw.find(close_tag, body_start)
-                if abs_close_idx == -1:
-                    missing_close_salts.add(outer_salt)
-            if abs_close_idx != -1:
+            abs_close_idx = last_close_by_salt.get(outer_salt, -1)
+            if abs_close_idx >= body_start:
                 if abs_close_idx >= last_any_close:
                     trailing = bounded_raw[abs_close_idx + len(close_tag):]
                     if _is_valid_outer_trailing(trailing):
@@ -188,7 +187,7 @@ def _extract_clean_user_text(message: str, max_len: int = 500) -> str:
             outer_salt = open_match.group(1)
             body_after_open = lstripped[open_match.end():]
             close_tag = f"</user_input_{outer_salt}>"
-            close_idx = body_after_open.find(close_tag)
+            close_idx = body_after_open.rfind(close_tag)
             if close_idx != -1:
                 trailing_after_close = body_after_open[close_idx + len(close_tag):]
                 if _is_valid_outer_trailing(trailing_after_close):

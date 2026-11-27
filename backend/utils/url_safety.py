@@ -49,6 +49,80 @@ class SSRFSecurityError(ValueError):
     pass
 
 
+_SAFE_DNS_HOSTNAME_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+
+
+def _validate_and_parse_host(url: str) -> Optional[tuple[str, str, Optional[Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]]]:
+    """
+    Validate URL syntax, authority, port, and hostname before any allowlist or DNS decision.
+    Rejects backslashes, C0/C1 control chars, whitespace in authority, userinfo (@),
+    empty/non-canonical/out-of-range ports, blocked hostnames, and malformed DNS labels.
+    Returns (raw_hostname, clean_host, parsed_ip_or_none) or None if invalid.
+    """
+    if not url or not isinstance(url, str):
+        return None
+    if "\\" in url or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in url):
+        return None
+    url_str = url.strip()
+    if not url_str:
+        return None
+    try:
+        parsed = urlparse(url_str)
+        port = parsed.port
+    except Exception:
+        return None
+
+    if port is not None and (port < 1 or port > 65535):
+        return None
+    if parsed.scheme.lower() not in ("http", "https"):
+        return None
+
+    netloc = parsed.netloc or ""
+    if parsed.username is not None or parsed.password is not None or "@" in netloc:
+        return None
+    if any(ch.isspace() for ch in netloc):
+        return None
+
+    raw_host = (parsed.hostname or "").lower()
+    if not raw_host:
+        return None
+
+    is_bracketed_ipv6 = netloc.startswith("[")
+    expected_host_part = f"[{raw_host}]" if is_bracketed_ipv6 else raw_host
+    expected_netloc = expected_host_part if port is None else f"{expected_host_part}:{port}"
+    if netloc.lower() != expected_netloc:
+        return None
+
+    clean_host = raw_host[:-1] if raw_host.endswith(".") else raw_host
+    if not clean_host or clean_host in BLOCKED_HOSTNAMES:
+        return None
+
+    # Direct IPv4 / integer IP / IPv6 literal check
+    try:
+        if clean_host.isdigit():
+            direct_ip = ipaddress.ip_address(int(clean_host))
+        else:
+            direct_ip = ipaddress.ip_address(clean_host)
+        return raw_host, clean_host, direct_ip
+    except (ValueError, OverflowError):
+        if is_bracketed_ipv6 or ":" in clean_host:
+            return None
+
+    # DNS hostname validation (ASCII RFC 1123 or valid IDNA punycode)
+    if clean_host.startswith(".") or clean_host.endswith(".") or ".." in clean_host:
+        return None
+    try:
+        ascii_host = clean_host if clean_host.isascii() else clean_host.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return None
+    if len(ascii_host) > 253 or not _SAFE_DNS_HOSTNAME_RE.fullmatch(ascii_host):
+        return None
+
+    return raw_host, ascii_host, None
+
+
 def is_ip_safe(ip: Union[str, ipaddress.IPv4Address, ipaddress.IPv6Address]) -> bool:
     """
     Checks if an IP address is safe for outbound communication.
@@ -90,41 +164,15 @@ def get_safe_ip(url: str) -> Optional[str]:
     Returns the IP string if safe, otherwise returns None.
     """
     try:
-        if not url or not isinstance(url, str):
+        parsed_host = _validate_and_parse_host(url)
+        if parsed_host is None:
             return None
-        if "\\" in url or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in url):
-            return None
-        url_str = url.strip()
-        if not url_str:
-            return None
-        parsed = urlparse(url_str)
-        port = parsed.port
-        if port is not None and (port < 1 or port > 65535):
-            return None
-        if parsed.scheme not in ["http", "https"]:
-            return None
-        if parsed.username is not None or parsed.password is not None or "@" in (parsed.netloc or ""):
-            return None
+        hostname, _clean_host, direct_ip = parsed_host
 
-        hostname = parsed.hostname
-        if not hostname:
-            return None
-
-        clean_host = hostname.lower().rstrip(".")
-        if not clean_host or clean_host in BLOCKED_HOSTNAMES:
-            return None
-
-        # Check if hostname itself is directly an IP literal or integer IP
-        try:
-            if clean_host.isdigit():
-                direct_ip = ipaddress.ip_address(int(clean_host))
-            else:
-                direct_ip = ipaddress.ip_address(clean_host.strip("[]"))
+        if direct_ip is not None:
             if not is_ip_safe(direct_ip):
                 return None
             return str(direct_ip)
-        except (ValueError, OverflowError):
-            pass
 
         # Resolve hostname to check real IP
         try:
@@ -146,49 +194,22 @@ def _classify_url_without_dns(url: str) -> Optional[bool]:
     """
     Pure-CPU SSRF pre-classification (no network/DNS I/O).
     Returns:
-      - False for invalid/disallowed schemes, malformed ports, BLOCKED_HOSTNAMES, or unsafe IP literals
+      - False for invalid/disallowed schemes, malformed ports/hostnames, BLOCKED_HOSTNAMES, or unsafe IP literals
       - True for whitelisted SAFE_WIKI_DOMAINS or public direct IP literals
       - None when blocking OS DNS resolution (socket.getaddrinfo) is required
     """
-    if not url or not isinstance(url, str):
+    parsed_host = _validate_and_parse_host(url)
+    if parsed_host is None:
         return False
 
-    if "\\" in url or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in url):
-        return False
-    url_str = url.strip()
-    if not url_str:
-        return False
-    try:
-        parsed = urlparse(url_str)
-        port = parsed.port
-    except Exception:
-        return False
-
-    if port is not None and (port < 1 or port > 65535):
-        return False
-
-    if parsed.scheme.lower() not in ("http", "https"):
-        return False
-
-    if parsed.username is not None or parsed.password is not None or "@" in (parsed.netloc or ""):
-        return False
-
-    hostname = parsed.hostname or ""
-    clean_host = hostname.lower().rstrip(".")
-    if not clean_host or clean_host in BLOCKED_HOSTNAMES:
-        return False
+    _raw_host, clean_host, direct_ip = parsed_host
+    if direct_ip is not None:
+        return is_ip_safe(direct_ip)
 
     if any(clean_host == domain or clean_host.endswith("." + domain) for domain in SAFE_WIKI_DOMAINS):
         return True
 
-    try:
-        if clean_host.isdigit():
-            direct_ip = ipaddress.ip_address(int(clean_host))
-        else:
-            direct_ip = ipaddress.ip_address(clean_host.strip("[]"))
-        return is_ip_safe(direct_ip)
-    except (ValueError, OverflowError):
-        return None
+    return None
 
 
 def is_safe_url(url: str) -> bool:

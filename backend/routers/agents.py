@@ -985,6 +985,11 @@ def _collect_urls_from_step_item(item: Any, bucket: List[Dict[str, str]], depth:
             _collect_urls_from_step_item(nested, bucket, depth + 1)
 
 
+_VALID_WIKI_HOST_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+
+
 def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -> List[Dict[str, str]]:
     """自 interaction.steps 與報告正文萃取去重後之候選外部 http(s) 來源（合併最佳標題，優先保留正文引文）。"""
     ordered_keys: List[str] = []
@@ -1114,10 +1119,18 @@ def _extract_antigravity_raw_candidates(interaction: Any, sanitized_text: str) -
         if not title_val:
             try:
                 parsed = urllib.parse.urlsplit(rec["url"])
-                raw_host = (parsed.hostname or "").lower().rstrip(".")
-                clean_host = raw_host.removeprefix("www.")
+                raw_host = (parsed.hostname or "").lower()
+                valid_host = raw_host[:-1] if raw_host.endswith(".") else raw_host
+                clean_host = valid_host.removeprefix("www.")
                 wiki_title = ""
-                if (clean_host == "wikipedia.org" or clean_host.endswith(".wikipedia.org")) and "/wiki/" in (parsed.path or ""):
+                if (
+                    parsed.scheme.lower() in ("http", "https")
+                    and valid_host
+                    and len(valid_host) <= 253
+                    and _VALID_WIKI_HOST_RE.fullmatch(valid_host)
+                    and (clean_host == "wikipedia.org" or clean_host.endswith(".wikipedia.org"))
+                    and "/wiki/" in (parsed.path or "")
+                ):
                     slug = parsed.path.split("/wiki/", 1)[1].split("/", 1)[0]
                     decoded_slug = urllib.parse.unquote(slug).replace("_", " ").strip()
                     if decoded_slug:

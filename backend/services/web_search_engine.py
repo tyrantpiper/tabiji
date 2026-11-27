@@ -76,23 +76,39 @@ async def close_search_client() -> None:
         _http_client = None
 
 
+_DDG_HOST_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+
+
 def unwrap_ddg_redirect(href: str) -> str:
     """
     解析 DuckDuckGo 搜尋結果中的重定向封裝：
     //duckduckgo.com/l/?uddg=<encoded_target>&rut=...
-    若為重定向則解碼出真實 URL，否則返回原 href。
+    若為合法 HTTP(S) 重定向且目標亦為 HTTP(S) 則解碼出真實 URL，否則返回原 href。
     """
     if not href:
         return ""
     try:
         norm_href = f"https:{href}" if href.startswith("//") else href
         parsed = urllib.parse.urlparse(norm_href)
-        host = (parsed.hostname or "").lower().rstrip(".")
-        if (host == "duckduckgo.com" or host.endswith(".duckduckgo.com")) and parsed.path.startswith("/l/"):
+        if parsed.scheme.lower() not in ("http", "https"):
+            return href
+        raw_host = (parsed.hostname or "").lower()
+        host = raw_host[:-1] if raw_host.endswith(".") else raw_host
+        if (
+            host
+            and len(host) <= 253
+            and _DDG_HOST_RE.fullmatch(host)
+            and (host == "duckduckgo.com" or host.endswith(".duckduckgo.com"))
+            and parsed.path.startswith("/l/")
+        ):
             qs = urllib.parse.parse_qs(parsed.query)
             target = qs.get("uddg")
             if target and target[0]:
-                return target[0]
+                target_scheme = (urllib.parse.urlparse(target[0]).scheme or "").lower()
+                if target_scheme in ("http", "https"):
+                    return target[0]
     except Exception:
         pass
     return href
